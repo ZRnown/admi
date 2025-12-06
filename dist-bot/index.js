@@ -425,6 +425,9 @@ async function reconcileAccounts(newConfig, logger) {
 }
 async function main() {
     const logger = new logger_js_1.FileLogger();
+    // 在启动时先确保文件存在。这是唯一一次允许创建默认文件的机会。
+    // 之后的热重载只负责读取，不会创建文件，避免在原子保存间隙时覆盖配置
+    await (0, config_js_1.ensureConfigFile)();
     const multi = await (0, config_js_1.getMultiConfig)();
     currentConfig = multi;
     // 只启动已请求登录的账号，不自动登录
@@ -487,8 +490,30 @@ async function main() {
                 if (!shouldReload) {
                     return; // 没有变化，跳过处理
                 }
-                const latest = await (0, config_js_1.getMultiConfig)();
-                await reconcileAccounts(latest, logger);
+                // 读取配置时可能遇到原子保存间隙（文件暂时不存在），需要重试
+                let latest = null;
+                let retries = 3;
+                while (retries > 0 && !latest) {
+                    try {
+                        latest = await (0, config_js_1.getMultiConfig)();
+                    }
+                    catch (e) {
+                        retries--;
+                        if (retries > 0) {
+                            // 可能是原子保存间隙，等待一小段时间后重试
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                        }
+                        else {
+                            // 重试失败，记录错误但不中断程序
+                            console.error("读取配置文件失败（可能是原子保存间隙）", e);
+                            await logger.error(`读取配置文件失败: ${String(e?.message || e)}`);
+                            return; // 放弃本次重载，等待下次轮询
+                        }
+                    }
+                }
+                if (latest) {
+                    await reconcileAccounts(latest, logger);
+                }
             }
             catch (e) {
                 console.error("自动重载配置失败", e);
