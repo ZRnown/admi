@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist-bot",
+    "module": "CommonJS",
+    "target": "ES2020",
+    "moduleResolution": "Node",
+    "rootDir": "./src",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "sourceMap": true,
+    "declaration": false,
+    "noEmit": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "app/**",
+    "components/**",
+    "lib/**",
+    "public/**",
+    "styles/**",
+    "dist/**",
+    "dist-bot/**"
+  ]
+}

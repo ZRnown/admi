@@ -1,0 +1,9 @@
+{
+  "channelWebhooks": {
+    "<sourceChannelId>": "https://discord.com/api/webhooks/xxx/yyy"
+  },
+  "blockedKeywords": [
+    "spam",
+    "广告"
+  ]
+}
