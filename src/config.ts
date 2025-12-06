@@ -105,18 +105,31 @@ function createDefaultAccount(): AccountConfig {
   };
 }
 
-async function ensureConfigFile() {
+// 导出 ensureConfigFile 供程序启动时调用，而不是在每次读取时调用
+// 这样可以避免在原子保存间隙时误判文件不存在而覆盖配置
+export async function ensureConfigFile() {
   if (!existsSync("./config.json")) {
     const defaultAccount = createDefaultAccount();
     const multi: MultiConfig = { accounts: [defaultAccount], activeId: defaultAccount.id };
     await writeFile("./config.json", JSON.stringify(multi, null, 2) + "\n");
+    console.log("Created default config.json");
   }
 }
 
+// 修改：readRawConfig 不再负责创建文件
+// 如果文件不存在或读取失败，抛出错误让上层处理（可能是在原子保存间隙，需要重试）
 async function readRawConfig(): Promise<any> {
-  await ensureConfigFile();
-  const buf = await readFile("./config.json");
-  return JSON.parse(buf.toString());
+  // 删除 await ensureConfigFile(); 
+  // 绝对不要在读取时创建文件，这会导致在原子保存间隙时覆盖用户配置
+  
+  try {
+    const buf = await readFile("./config.json");
+    return JSON.parse(buf.toString());
+  } catch (e) {
+    // 如果读取失败（例如文件正在写入中），抛出错误让上层处理
+    // 上层应该进行重试，而不是在这里写入默认配置
+    throw e;
+  }
 }
 
 function normalizeAccount(input: any, fallbackName = "未命名账号"): AccountConfig {

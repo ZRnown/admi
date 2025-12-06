@@ -2,5 +2,9 @@
   "44443b78-3dc7-4eb8-b183-afd1cde475ed": {
     "loginState": "online",
     "loginMessage": "登录成功"
+  },
+  "e0e1e4fb-29e3-4c14-9693-0a6aa2dcddf5": {
+    "loginState": "idle",
+    "loginMessage": "未请求登录"
   }
 }
