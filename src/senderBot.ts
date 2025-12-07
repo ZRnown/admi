@@ -149,32 +149,29 @@ export class SenderBot {
   }
 
   /**
-   * 检测文本是否全部是中文（只有全部是中文才返回 true，有英文就返回 false）
+   * 检测文本是否主要是中文（80%以上为中文字符）
    */
   private isChinese(text: string): boolean {
     if (!text || text.trim().length === 0) {
       return false;
     }
     
-    // 移除空白字符、标点符号和数字，只统计字母和中文字符
-    const cleanedText = text.replace(/[\s\d\p{P}]/gu, "");
+    // 移除空白字符，只统计实际字符
+    const cleanedText = text.replace(/\s/g, "");
     if (cleanedText.length === 0) {
       return false;
     }
     
-    // 检测是否有英文字母（包括大小写）
-    const hasEnglish = /[a-zA-Z]/.test(cleanedText);
+    // 统计中文字符数量（包括中文标点）
+    const chineseCharRegex = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/g;
+    const chineseMatches = cleanedText.match(chineseCharRegex);
+    const chineseCharCount = chineseMatches ? chineseMatches.length : 0;
     
-    // 如果有英文字母，说明不是纯中文，需要翻译
-    if (hasEnglish) {
-      return false;
-    }
+    // 计算中文字符占比
+    const chineseRatio = chineseCharCount / cleanedText.length;
     
-    // 如果没有英文字母，检查是否有中文字符
-    const hasChinese = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/.test(cleanedText);
-    
-    // 如果有中文字符且没有英文字母，认为是纯中文，不翻译
-    return hasChinese;
+    // 如果80%以上是中文字符，认为是中文文本，不翻译
+    return chineseRatio >= 0.8;
   }
 
   /**
