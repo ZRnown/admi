@@ -298,7 +298,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
   await logger.info(`账号 "${running.account.name}" 将在 ${delay / 1000} 秒后尝试重连...`);
   await writeStatus(accountId, "pending", `连接断开，${delay / 1000} 秒后重连...`);
   
-  const timer = setTimeout(async () => {
+  running.reconnectTimer = setTimeout(async () => {
     // 清除定时器引用
     const currentRunning = runningAccounts.get(accountId);
     if (currentRunning) {
@@ -380,13 +380,6 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       await reconnectAccount(accountId, logger, nextDelay);
     }
   }, delay);
-  
-  // 使用 unref() 让定时器不阻止进程退出（如果进程需要退出）
-  if (typeof timer.unref === "function") {
-    timer.unref();
-  }
-  
-  running.reconnectTimer = timer;
 }
 
 // 设置重连处理器
@@ -605,10 +598,7 @@ async function main() {
   };
 
   const scheduleReload = async () => {
-    if (pendingReload) {
-      clearTimeout(pendingReload);
-      pendingReload = null;
-    }
+    if (pendingReload) clearTimeout(pendingReload);
     pendingReload = setTimeout(async () => {
       pendingReload = null;
       try {
@@ -667,21 +657,9 @@ async function main() {
   }
 
   // 轮询兜底，每 2 秒检查一次触发文件（API 触发的操作）
-  // 注意：这个定时器会一直运行，但它是必要的，用于检查配置文件变化
-  // 可以考虑在程序退出时清理，但通常程序会一直运行
-  const pollInterval = setInterval(() => {
+  setInterval(() => {
     scheduleReload();
   }, 2000);
-  
-  // 在程序退出时清理定时器（虽然通常不会退出）
-  process.on("SIGINT", () => {
-    clearInterval(pollInterval);
-    process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    clearInterval(pollInterval);
-    process.exit(0);
-  });
 }
 
 process.on("unhandledRejection", async (reason: any) => {

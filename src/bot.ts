@@ -35,14 +35,10 @@ export class Bot {
   private logger = new FileLogger();
   // 使用 Set 来跟踪正在处理的消息ID，避免重复处理
   private processingMessages = new Set<string>();
-  // Map 最大条目数，超过时删除最旧的（保留最近 5000 条映射，减少内存占用）
-  private readonly MAX_MAP_SIZE = 5000;
+  // Map 最大条目数，超过时删除最旧的（保留最近 10000 条映射）
+  private readonly MAX_MAP_SIZE = 10000;
   // 定期保存定时器
   private saveMappingTimer?: NodeJS.Timeout;
-  // process 事件处理器引用，用于清理
-  private beforeExitHandler?: () => void;
-  private sigintHandler?: () => void;
-  private sigtermHandler?: () => void;
   
   constructor(client: Client, config: Config, senderBot: SenderBot, senderBotsBySource?: Map<string, SenderBot>) {
     this.config = config;
@@ -87,25 +83,17 @@ export class Bot {
     }, 5 * 60 * 1000);
 
     // 程序退出时保存映射
-    // 注意：由于 process 是全局的，多个 Bot 实例会重复添加监听器
-    // 但每个 Bot 实例的 saveMapping 是独立的，所以需要每个实例都保存
-    // 为了避免内存泄漏，每个实例都会在 cleanup 时移除自己的监听器
-    this.beforeExitHandler = () => {
+    process.on("beforeExit", () => {
       this.saveMapping().catch(() => {});
-    };
-    this.sigintHandler = () => {
+    });
+    process.on("SIGINT", () => {
       this.saveMapping().catch(() => {});
-      // 注意：不要在这里调用 process.exit(0)，因为 index.ts 中已经有处理
-    };
-    this.sigtermHandler = () => {
+      process.exit(0);
+    });
+    process.on("SIGTERM", () => {
       this.saveMapping().catch(() => {});
-      // 注意：不要在这里调用 process.exit(0)，因为 index.ts 中已经有处理
-    };
-    
-    // 为每个 Bot 实例添加监听器（每个实例需要保存自己的映射）
-    process.on("beforeExit", this.beforeExitHandler);
-    process.on("SIGINT", this.sigintHandler);
-    process.on("SIGTERM", this.sigtermHandler);
+      process.exit(0);
+    });
 
     // 为了支持"回复可跳转"，改为单条即时发送（如需保留堆叠，可另加配置开关）
   }
@@ -118,23 +106,8 @@ export class Bot {
       clearInterval(this.saveMappingTimer);
       this.saveMappingTimer = undefined;
     }
-    // 移除 process 事件监听器（如果存在）
-    if (this.beforeExitHandler) {
-      process.removeListener("beforeExit", this.beforeExitHandler);
-      this.beforeExitHandler = undefined;
-    }
-    if (this.sigintHandler) {
-      process.removeListener("SIGINT", this.sigintHandler);
-      this.sigintHandler = undefined;
-    }
-    if (this.sigtermHandler) {
-      process.removeListener("SIGTERM", this.sigtermHandler);
-      this.sigtermHandler = undefined;
-    }
     // 保存映射
     this.saveMapping().catch(() => {});
-    // 清理 processingMessages Set，释放内存
-    this.processingMessages.clear();
   }
 
   /**
@@ -236,21 +209,14 @@ export class Bot {
     
     // 5秒后自动清理，防止内存泄漏
     // 同时限制 Set 大小，防止在高频消息下无限增长
-    // 使用 WeakRef 或直接限制大小，避免定时器累积
-    const messageId = message.id;
-    const cleanupTimer = setTimeout(() => {
-      this.processingMessages.delete(messageId);
-      // 如果 Set 过大（超过 1000），清理最旧的条目（保留最新的 1000 条）
+    setTimeout(() => {
+      this.processingMessages.delete(message.id);
+      // 如果 Set 过大（超过 1000），清理最旧的条目
       if (this.processingMessages.size > 1000) {
         const toDelete = Array.from(this.processingMessages).slice(0, this.processingMessages.size - 1000);
         toDelete.forEach(id => this.processingMessages.delete(id));
       }
     }, 5000);
-    
-    // 使用 unref() 让定时器不阻止进程退出，减少内存占用
-    if (typeof cleanupTimer.unref === "function") {
-      cleanupTimer.unref();
-    }
 
     // 懒加载历史映射（进程首次消息时）
     if (this.sourceToTarget.size === 0) {

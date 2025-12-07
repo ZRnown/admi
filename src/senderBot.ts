@@ -74,8 +74,6 @@ export class SenderBot {
         let body = "";
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
-          // 确保响应流被完全消费，释放内存
-          res.destroy();
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             try {
               resolve(body ? JSON.parse(body) : null);
@@ -89,12 +87,8 @@ export class SenderBot {
       });
       req.setTimeout(15000, () => {
         req.destroy(new Error("Webhook multipart request timeout"));
-        reject(new Error("Webhook multipart request timeout"));
       });
-      req.on("error", (err) => {
-        req.destroy(); // 确保请求被销毁
-        reject(err);
-      });
+      req.on("error", (err) => reject(err));
       req.write(payload);
       req.end();
     });
@@ -128,25 +122,16 @@ export class SenderBot {
           total += b.length;
           if (total > MAX_DOWNLOAD_BYTES) {
             req.destroy(new Error("Download exceeded max size limit"));
-            res.destroy(); // 确保响应流被销毁
-            reject(new Error("Download exceeded max size limit"));
             return;
           }
           chunks.push(b);
         });
-        res.on("end", () => {
-          res.destroy(); // 确保响应流被销毁
-          resolve(Buffer.concat(chunks));
-        });
+        res.on("end", () => resolve(Buffer.concat(chunks)));
       });
       req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
         req.destroy(new Error("Download timeout"));
-        reject(new Error("Download timeout"));
       });
-      req.on("error", (e) => {
-        req.destroy(); // 确保请求被销毁
-        reject(e);
-      });
+      req.on("error", (e) => reject(e));
       req.end();
     });
   }
@@ -219,7 +204,6 @@ export class SenderBot {
           let body = "";
           res.on("data", (chunk) => (body += chunk));
           res.on("end", () => {
-            res.destroy(); // 确保响应流被销毁
             if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
               try {
                 const json = body ? JSON.parse(body) : null;
@@ -239,13 +223,10 @@ export class SenderBot {
           });
         });
         req.setTimeout(10000, () => {
-          req.destroy(); // 确保请求被销毁
+          req.destroy();
           resolve(null); // 超时也不影响消息发送
         });
-        req.on("error", () => {
-          req.destroy(); // 确保请求被销毁
-          resolve(null); // 错误也不影响消息发送
-        });
+        req.on("error", () => resolve(null)); // 错误也不影响消息发送
         req.write(payload);
         req.end();
       });
@@ -394,7 +375,6 @@ export class SenderBot {
         // Drain response data to free up memory
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
-          res.destroy(); // 确保响应流被销毁
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             try {
               const json = body ? JSON.parse(body) : null;
@@ -424,12 +404,8 @@ export class SenderBot {
       });
       req.setTimeout(15000, () => {
         req.destroy(new Error("Webhook request timeout"));
-        reject(new Error("Webhook request timeout"));
       });
-      req.on("error", (err) => {
-        req.destroy(); // 确保请求被销毁
-        reject(err);
-      });
+      req.on("error", (err) => reject(err));
       req.write(payload);
       req.end();
     });
@@ -452,7 +428,6 @@ export class SenderBot {
         let body = "";
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
-          res.destroy(); // 确保响应流被销毁
           try {
             const json = body ? JSON.parse(body) : {};
             resolve(json);
@@ -461,14 +436,7 @@ export class SenderBot {
           }
         });
       });
-      req.setTimeout(10000, () => {
-        req.destroy();
-        reject(new Error("Webhook info request timeout"));
-      });
-      req.on("error", (err) => {
-        req.destroy(); // 确保请求被销毁
-        reject(err);
-      });
+      req.on("error", (err) => reject(err));
       req.end();
     });
   }
