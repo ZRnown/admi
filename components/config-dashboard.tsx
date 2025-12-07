@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useEffect, useMemo, useState } from "react"
-import { Plus, Trash2, Settings, MessageSquare, ShieldAlert, Info, X } from "lucide-react"
+import { Plus, Trash2, Settings, MessageSquare, ShieldAlert, Info, X, Download } from "lucide-react"
 import {
   type ChannelMapping,
   type AccountFormConfig,
@@ -385,6 +385,45 @@ export function ConfigDashboard() {
     }))
   }
 
+  const handleExportConfig = async () => {
+    try {
+      // 从服务器获取最新配置（包含所有字段）
+      const res = await fetch("/api/config", { cache: "no-store" })
+      if (!res.ok) {
+        alert("获取配置失败，请重试")
+        return
+      }
+      
+      const data = await res.json()
+      
+      // 格式化 JSON（美化输出）
+      const jsonString = JSON.stringify(data, null, 2)
+      
+      // 创建 Blob 对象
+      const blob = new Blob([jsonString], { type: "application/json" })
+      
+      // 创建下载链接
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      
+      // 生成文件名（包含时间戳）
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5)
+      link.download = `discord-forwarder-config-${timestamp}.json`
+      
+      // 触发下载
+      document.body.appendChild(link)
+      link.click()
+      
+      // 清理
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      console.error("导出配置失败", e)
+      alert(`导出配置失败: ${String(e?.message || e)}`)
+    }
+  }
+
   const requestLogin = async () => {
     // 如果已经登录成功，不允许再次登录
     if (activeAccount.loginState === "online") {
@@ -575,6 +614,12 @@ export function ConfigDashboard() {
               className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
             >
               <Info className="w-3 h-3" /> 使用说明
+            </button>
+            <button
+              onClick={handleExportConfig}
+              className="inline-flex items-center gap-1 rounded-md border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50"
+            >
+              <Download className="w-3 h-3" /> 导出配置
             </button>
             {state.accounts.length > 1 && (
               <button
