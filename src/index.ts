@@ -59,6 +59,8 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const webhooks = account.channelWebhooks || {};
   const replacements = account.replacementsDictionary || {};
   const proxy = account.proxyUrl || env.PROXY_URL;
+  const enableTranslation = account.enableTranslation || false;
+  const deepseekApiKey = account.deepseekApiKey;
 
   if (Object.keys(webhooks).length > 0) {
     for (const [channelId, webhookUrl] of Object.entries(webhooks)) {
@@ -67,6 +69,8 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
         replacementsDictionary: replacements,
         webhookUrl,
         httpAgent,
+        enableTranslation,
+        deepseekApiKey,
       });
       prepares.push(sb.prepare());
       senderBotsBySource.set(channelId, sb);
@@ -150,7 +154,38 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
         partials: [Partials.Channel, Partials.Message, Partials.User],
       }) as any;
     } else {
-      client = new SelfBotClient();
+      // 优化：限制缓存大小，防止内存无限增长
+      // 禁用无用的缓存，特别是 GuildMemberManager 和 PresenceManager
+      // 注意：discord.js-selfbot-v13 的 API 可能与 discord.js 不同
+      // 如果类型错误，可以尝试使用 any 类型或检查 selfbot 的实际 API
+      try {
+        // 尝试使用 makeCache 配置（如果 selfbot 支持）
+        client = new SelfBotClient({
+          checkUpdate: false,
+          patchVoice: false,
+          // @ts-ignore - discord.js-selfbot-v13 可能使用不同的类型定义
+          makeCache: (manager: any) => {
+            const name = manager.constructor.name;
+            // 限制各种缓存的大小
+            if (name === "MessageManager") return manager.constructor.cache.withLimit(10);
+            if (name === "PresenceManager") return manager.constructor.cache.withLimit(0);
+            if (name === "GuildMemberManager") return manager.constructor.cache.withLimit(0);
+            if (name === "ThreadManager") return manager.constructor.cache.withLimit(0);
+            if (name === "ReactionManager") return manager.constructor.cache.withLimit(0);
+            if (name === "UserManager") return manager.constructor.cache.withLimit(100);
+            // 默认返回原始缓存
+            return manager.constructor.cache;
+          },
+        } as any);
+      } catch (e) {
+        // 如果配置失败，使用默认配置
+        // 至少禁用更新检查可以减少一些内存占用
+        client = new SelfBotClient({
+          checkUpdate: false,
+          patchVoice: false,
+        } as any);
+        logger.warn(`无法应用缓存限制配置，使用默认配置: ${String(e)}`);
+      }
     }
 
     const bot = new Bot(client, legacyConfig, defaultSenderBot, senderBotsBySource);
@@ -222,6 +257,10 @@ async function stopAccount(accountId: string, logger: FileLogger, manual: boolea
   }
   
   try {
+    // 清理 Bot 资源（包括定时器等）
+    if (running.bot && typeof (running.bot as any).cleanup === "function") {
+      (running.bot as any).cleanup();
+    }
     if ((running.client as any).destroy) {
       await (running.client as any).destroy();
     }
@@ -259,7 +298,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
   await logger.info(`账号 "${running.account.name}" 将在 ${delay / 1000} 秒后尝试重连...`);
   await writeStatus(accountId, "pending", `连接断开，${delay / 1000} 秒后重连...`);
   
-  running.reconnectTimer = setTimeout(async () => {
+  const timer = setTimeout(async () => {
     // 清除定时器引用
     const currentRunning = runningAccounts.get(accountId);
     if (currentRunning) {
@@ -286,7 +325,29 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
           partials: [Partials.Channel, Partials.Message, Partials.User],
         }) as any;
       } else {
-        client = new SelfBotClient();
+        // 优化：限制缓存大小，防止内存无限增长
+        try {
+          // @ts-ignore - discord.js-selfbot-v13 可能使用不同的类型定义
+          client = new SelfBotClient({
+            checkUpdate: false,
+            patchVoice: false,
+            makeCache: (manager: any) => {
+              const name = manager.constructor.name;
+              if (name === "MessageManager") return manager.constructor.cache.withLimit(10);
+              if (name === "PresenceManager") return manager.constructor.cache.withLimit(0);
+              if (name === "GuildMemberManager") return manager.constructor.cache.withLimit(0);
+              if (name === "ThreadManager") return manager.constructor.cache.withLimit(0);
+              if (name === "ReactionManager") return manager.constructor.cache.withLimit(0);
+              if (name === "UserManager") return manager.constructor.cache.withLimit(100);
+              return manager.constructor.cache;
+            },
+          } as any);
+        } catch (e) {
+          client = new SelfBotClient({
+            checkUpdate: false,
+            patchVoice: false,
+          } as any);
+        }
       }
       
       // 重新创建 Bot 实例
@@ -319,6 +380,13 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       await reconnectAccount(accountId, logger, nextDelay);
     }
   }, delay);
+  
+  // 使用 unref() 让定时器不阻止进程退出（如果进程需要退出）
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
+  
+  running.reconnectTimer = timer;
 }
 
 // 设置重连处理器
@@ -537,7 +605,10 @@ async function main() {
   };
 
   const scheduleReload = async () => {
-    if (pendingReload) clearTimeout(pendingReload);
+    if (pendingReload) {
+      clearTimeout(pendingReload);
+      pendingReload = null;
+    }
     pendingReload = setTimeout(async () => {
       pendingReload = null;
       try {
@@ -596,9 +667,21 @@ async function main() {
   }
 
   // 轮询兜底，每 2 秒检查一次触发文件（API 触发的操作）
-  setInterval(() => {
+  // 注意：这个定时器会一直运行，但它是必要的，用于检查配置文件变化
+  // 可以考虑在程序退出时清理，但通常程序会一直运行
+  const pollInterval = setInterval(() => {
     scheduleReload();
   }, 2000);
+  
+  // 在程序退出时清理定时器（虽然通常不会退出）
+  process.on("SIGINT", () => {
+    clearInterval(pollInterval);
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    clearInterval(pollInterval);
+    process.exit(0);
+  });
 }
 
 process.on("unhandledRejection", async (reason: any) => {

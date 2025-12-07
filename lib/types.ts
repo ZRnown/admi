@@ -29,8 +29,10 @@ export interface AccountFormConfig {
   replacements: ReplacementRule[]
   allowedUsersIds: string[]
   mutedUsersIds: string[]
-  /** 前端用来触发“重启账号”的计数器，改动即视为需要重启 */
+  /** 前端用来触发"重启账号"的计数器，改动即视为需要重启 */
   restartNonce?: number
+  enableTranslation?: boolean
+  deepseekApiKey?: string
 }
 
 export interface MultiAccountFormState {
@@ -64,6 +66,8 @@ export const createEmptyAccount = (name = "新账号"): AccountFormConfig => ({
   replacements: [],
   allowedUsersIds: [],
   mutedUsersIds: [],
+  enableTranslation: false,
+  deepseekApiKey: "",
 })
 
 const defaultAccount = createEmptyAccount("默认账号")

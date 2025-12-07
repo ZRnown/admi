@@ -29,11 +29,20 @@ export class Bot {
   config: Config;
   client: Client;
   // 源消息ID -> 目标消息ID映射（用于构建目标内跳转链接）
-  private sourceToTarget = new Map<string, { channelId: string; messageId: string }>();
+  // 使用带大小限制的 Map，防止内存无限增长
+  private sourceToTarget = new Map<string, { channelId: string; messageId: string; timestamp: number }>();
   private mapFile = path.resolve(process.cwd(), ".data", "message_map.json");
   private logger = new FileLogger();
   // 使用 Set 来跟踪正在处理的消息ID，避免重复处理
   private processingMessages = new Set<string>();
+  // Map 最大条目数，超过时删除最旧的（保留最近 5000 条映射，减少内存占用）
+  private readonly MAX_MAP_SIZE = 5000;
+  // 定期保存定时器
+  private saveMappingTimer?: NodeJS.Timeout;
+  // process 事件处理器引用，用于清理
+  private beforeExitHandler?: () => void;
+  private sigintHandler?: () => void;
+  private sigtermHandler?: () => void;
   
   constructor(client: Client, config: Config, senderBot: SenderBot, senderBotsBySource?: Map<string, SenderBot>) {
     this.config = config;
@@ -70,7 +79,62 @@ export class Bot {
       await this.processAndSend(message);
     });
 
+    // 定期保存映射（每 5 分钟保存一次，减少 I/O）
+    this.saveMappingTimer = setInterval(() => {
+      this.saveMapping().catch(err => {
+        this.logger.error(`定期保存映射失败: ${String(err)}`);
+      });
+    }, 5 * 60 * 1000);
+
+    // 程序退出时保存映射
+    // 注意：由于 process 是全局的，多个 Bot 实例会重复添加监听器
+    // 但每个 Bot 实例的 saveMapping 是独立的，所以需要每个实例都保存
+    // 为了避免内存泄漏，每个实例都会在 cleanup 时移除自己的监听器
+    this.beforeExitHandler = () => {
+      this.saveMapping().catch(() => {});
+    };
+    this.sigintHandler = () => {
+      this.saveMapping().catch(() => {});
+      // 注意：不要在这里调用 process.exit(0)，因为 index.ts 中已经有处理
+    };
+    this.sigtermHandler = () => {
+      this.saveMapping().catch(() => {});
+      // 注意：不要在这里调用 process.exit(0)，因为 index.ts 中已经有处理
+    };
+    
+    // 为每个 Bot 实例添加监听器（每个实例需要保存自己的映射）
+    process.on("beforeExit", this.beforeExitHandler);
+    process.on("SIGINT", this.sigintHandler);
+    process.on("SIGTERM", this.sigtermHandler);
+
     // 为了支持"回复可跳转"，改为单条即时发送（如需保留堆叠，可另加配置开关）
+  }
+
+  /**
+   * 清理资源，停止定时器等
+   */
+  cleanup() {
+    if (this.saveMappingTimer) {
+      clearInterval(this.saveMappingTimer);
+      this.saveMappingTimer = undefined;
+    }
+    // 移除 process 事件监听器（如果存在）
+    if (this.beforeExitHandler) {
+      process.removeListener("beforeExit", this.beforeExitHandler);
+      this.beforeExitHandler = undefined;
+    }
+    if (this.sigintHandler) {
+      process.removeListener("SIGINT", this.sigintHandler);
+      this.sigintHandler = undefined;
+    }
+    if (this.sigtermHandler) {
+      process.removeListener("SIGTERM", this.sigtermHandler);
+      this.sigtermHandler = undefined;
+    }
+    // 保存映射
+    this.saveMapping().catch(() => {});
+    // 清理 processingMessages Set，释放内存
+    this.processingMessages.clear();
   }
 
   /**
@@ -101,19 +165,63 @@ export class Bot {
     try {
       await this.ensureDataDir();
       const buf = await fs.readFile(this.mapFile, "utf-8");
-      const json = JSON.parse(buf) as Record<string, { channelId: string; messageId: string }>;
-      this.sourceToTarget = new Map(Object.entries(json));
+      const json = JSON.parse(buf) as Record<string, { channelId: string; messageId: string; timestamp?: number }>;
+      const now = Date.now();
+      // 加载时添加时间戳（如果旧数据没有时间戳，使用当前时间）
+      const entries: Array<[string, { channelId: string; messageId: string; timestamp: number }]> = 
+        Object.entries(json).map(([key, value]) => [
+          key,
+          { ...value, timestamp: value.timestamp || now }
+        ] as [string, { channelId: string; messageId: string; timestamp: number }]);
+      // 只保留最近的 MAX_MAP_SIZE 条
+      const sorted = entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
+      const limited = sorted.slice(0, this.MAX_MAP_SIZE);
+      this.sourceToTarget = new Map(limited);
+      if (entries.length > this.MAX_MAP_SIZE) {
+        this.logger.info(`Loaded ${this.MAX_MAP_SIZE} mappings (dropped ${entries.length - this.MAX_MAP_SIZE} old entries)`);
+      }
     } catch {}
   }
 
   private async saveMapping() {
     try {
       await this.ensureDataDir();
-      const obj = Object.fromEntries(this.sourceToTarget.entries());
+      // 只保存必要的字段，不保存 timestamp（减少文件大小）
+      const obj: Record<string, { channelId: string; messageId: string }> = {};
+      for (const [key, value] of this.sourceToTarget.entries()) {
+        obj[key] = { channelId: value.channelId, messageId: value.messageId };
+      }
       const tmp = this.mapFile + ".tmp";
       await fs.writeFile(tmp, JSON.stringify(obj), "utf-8");
       await fs.rename(tmp, this.mapFile);
     } catch {}
+  }
+
+  /**
+   * 限制 Map 大小，当超过 MAX_MAP_SIZE 时删除最旧的条目
+   * 优化：利用 Map 的自然顺序（插入顺序），直接删除头部元素，避免排序
+   */
+  private limitMapSize() {
+    if (this.sourceToTarget.size <= this.MAX_MAP_SIZE) {
+      return;
+    }
+    
+    // Map 保持插入顺序，第一个元素就是最旧的
+    // 直接删除头部元素，直到大小符合要求
+    let deletedCount = 0;
+    while (this.sourceToTarget.size > this.MAX_MAP_SIZE) {
+      const firstKey = this.sourceToTarget.keys().next().value;
+      if (firstKey) {
+        this.sourceToTarget.delete(firstKey);
+        deletedCount++;
+      } else {
+        break;
+      }
+    }
+    
+    if (deletedCount > 0) {
+      this.logger.debug(`Cleaned ${deletedCount} old mappings to prevent memory overflow`);
+    }
   }
 
   private async processAndSend(message: Message, tag?: string) {
@@ -127,9 +235,22 @@ export class Bot {
     this.processingMessages.add(message.id);
     
     // 5秒后自动清理，防止内存泄漏
-    setTimeout(() => {
-      this.processingMessages.delete(message.id);
+    // 同时限制 Set 大小，防止在高频消息下无限增长
+    // 使用 WeakRef 或直接限制大小，避免定时器累积
+    const messageId = message.id;
+    const cleanupTimer = setTimeout(() => {
+      this.processingMessages.delete(messageId);
+      // 如果 Set 过大（超过 1000），清理最旧的条目（保留最新的 1000 条）
+      if (this.processingMessages.size > 1000) {
+        const toDelete = Array.from(this.processingMessages).slice(0, this.processingMessages.size - 1000);
+        toDelete.forEach(id => this.processingMessages.delete(id));
+      }
     }, 5000);
+    
+    // 使用 unref() 让定时器不阻止进程退出，减少内存占用
+    if (typeof cleanupTimer.unref === "function") {
+      cleanupTimer.unref();
+    }
 
     // 懒加载历史映射（进程首次消息时）
     if (this.sourceToTarget.size === 0) {
@@ -323,11 +444,15 @@ export class Bot {
     if (message.reference) {
       try {
         const ref = await message.fetchReference();
-        let mapped = this.sourceToTarget.get(ref.id);
+        const mappedEntry = this.sourceToTarget.get(ref.id);
+        let mapped = mappedEntry ? { channelId: mappedEntry.channelId, messageId: mappedEntry.messageId } : undefined;
         // 不重发，改为：若无映射，尝试在目标历史中扫描已有消息并建立映射
         if (!mapped) {
           try {
-            mapped = await this.tryResolveMappingFromTarget(ref.id, senderForThis);
+            const found = await this.tryResolveMappingFromTarget(ref.id, senderForThis);
+            if (found) {
+              mapped = found;
+            }
           } catch (e) {
             console.error("scan target for mapping failed", e);
             this.logger.error(`scan target for mapping failed: ${String(e)}`);
@@ -444,11 +569,21 @@ export class Bot {
     if (results && results.length > 0) {
       const first = results[0];
       if (first.sourceMessageId) {
+        // 优化：先删除旧的（如果存在），确保重新 set 后它在 Map 的末尾（变为最新）
+        // 这样可以利用 Map 的自然顺序实现 LRU，无需排序
+        if (this.sourceToTarget.has(first.sourceMessageId)) {
+          this.sourceToTarget.delete(first.sourceMessageId);
+        }
+        
+        // 设置新的映射，由于是重新插入，它会位于 Map 的末尾（最新位置）
         this.sourceToTarget.set(first.sourceMessageId, {
           channelId: first.targetChannelId,
-          messageId: first.targetMessageId
+          messageId: first.targetMessageId,
+          timestamp: Date.now()
         });
-        await this.saveMapping();
+        // 限制 Map 大小，防止内存无限增长
+        this.limitMapSize();
+        // 不再每次保存，改为定期保存（由定时器处理）
         
         // 构建详细的转发日志（使用之前获取的webhookName）
         const authorTag = isWebhook 
@@ -521,8 +656,12 @@ export class Bot {
                 const footerText: string | undefined = e?.footer?.text;
                 if (footerText && footerText.trim() === `sid:${sourceId}`) {
                   const found = { channelId, messageId: m.id };
-                  this.sourceToTarget.set(sourceId, found);
-                  await this.saveMapping();
+                  // 优化：先删除旧的（如果存在），确保重新 set 后它在 Map 的末尾
+                  if (this.sourceToTarget.has(sourceId)) {
+                    this.sourceToTarget.delete(sourceId);
+                  }
+                  this.sourceToTarget.set(sourceId, { ...found, timestamp: Date.now() });
+                  this.limitMapSize();
                   this.logger.debug(`historyScan hit by footer: source=${sourceId} target=${channelId}/${m.id}`);
                   return found;
                 }
@@ -530,8 +669,12 @@ export class Bot {
               const content: string = (m.content || "") as string;
               if (content.includes(sourceId)) {
                 const found = { channelId, messageId: m.id };
-                this.sourceToTarget.set(sourceId, found);
-                await this.saveMapping();
+                // 优化：先删除旧的（如果存在），确保重新 set 后它在 Map 的末尾
+                if (this.sourceToTarget.has(sourceId)) {
+                  this.sourceToTarget.delete(sourceId);
+                }
+                this.sourceToTarget.set(sourceId, { ...found, timestamp: Date.now() });
+                this.limitMapSize();
                 this.logger.debug(`historyScan hit by content: source=${sourceId} target=${channelId}/${m.id}`);
                 return found;
               }

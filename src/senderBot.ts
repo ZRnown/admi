@@ -11,15 +11,21 @@ export class SenderBot {
   webhookGuildId?: string;
   defaultChannelId?: string;
   webhookName?: string;
+  enableTranslation?: boolean;
+  deepseekApiKey?: string;
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
     webhookUrl: string;
     httpAgent?: unknown; // 由 proxy-agent 创建的 Agent，可选
+    enableTranslation?: boolean;
+    deepseekApiKey?: string;
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
     this.httpAgent = options.httpAgent;
+    this.enableTranslation = options.enableTranslation || false;
+    this.deepseekApiKey = options.deepseekApiKey;
   }
 
   private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
@@ -68,6 +74,8 @@ export class SenderBot {
         let body = "";
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
+          // 确保响应流被完全消费，释放内存
+          res.destroy();
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             try {
               resolve(body ? JSON.parse(body) : null);
@@ -81,8 +89,12 @@ export class SenderBot {
       });
       req.setTimeout(15000, () => {
         req.destroy(new Error("Webhook multipart request timeout"));
+        reject(new Error("Webhook multipart request timeout"));
       });
-      req.on("error", (err) => reject(err));
+      req.on("error", (err) => {
+        req.destroy(); // 确保请求被销毁
+        reject(err);
+      });
       req.write(payload);
       req.end();
     });
@@ -116,16 +128,25 @@ export class SenderBot {
           total += b.length;
           if (total > MAX_DOWNLOAD_BYTES) {
             req.destroy(new Error("Download exceeded max size limit"));
+            res.destroy(); // 确保响应流被销毁
+            reject(new Error("Download exceeded max size limit"));
             return;
           }
           chunks.push(b);
         });
-        res.on("end", () => resolve(Buffer.concat(chunks)));
+        res.on("end", () => {
+          res.destroy(); // 确保响应流被销毁
+          resolve(Buffer.concat(chunks));
+        });
       });
       req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
         req.destroy(new Error("Download timeout"));
+        reject(new Error("Download timeout"));
       });
-      req.on("error", (e) => reject(e));
+      req.on("error", (e) => {
+        req.destroy(); // 确保请求被销毁
+        reject(e);
+      });
       req.end();
     });
   }
@@ -139,6 +160,97 @@ export class SenderBot {
       this.webhookName = info.name; // 保存 webhook 名称
     } catch {
       // 忽略失败，不影响基本发送
+    }
+  }
+
+  /**
+   * 检测文本是否包含中文字符
+   */
+  private isChinese(text: string): boolean {
+    // 检测中文字符（包括中文标点）
+    return /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/.test(text);
+  }
+
+  /**
+   * 调用 DeepSeek API 进行翻译
+   */
+  private async translateText(text: string): Promise<string | null> {
+    if (!this.enableTranslation || !this.deepseekApiKey || !text.trim()) {
+      return null;
+    }
+
+    // 如果源文本是中文，不翻译
+    if (this.isChinese(text)) {
+      return null;
+    }
+
+    try {
+      const url = new URL("https://api.deepseek.com/v1/chat/completions");
+      const payload = JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: "你是一个专业的翻译助手。请将用户输入的内容翻译成中文，只返回翻译结果，不要添加任何解释或说明。"
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 2000
+      });
+
+      const options: https.RequestOptions = {
+        method: "POST",
+        hostname: url.hostname,
+        path: url.pathname,
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.deepseekApiKey}`,
+          "Content-Length": Buffer.byteLength(payload)
+        },
+        agent: this.httpAgent as any
+      };
+
+      return await new Promise<string | null>((resolve, reject) => {
+        const req = https.request(options, (res) => {
+          let body = "";
+          res.on("data", (chunk) => (body += chunk));
+          res.on("end", () => {
+            res.destroy(); // 确保响应流被销毁
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                const json = body ? JSON.parse(body) : null;
+                const translatedText = json?.choices?.[0]?.message?.content?.trim();
+                if (translatedText) {
+                  resolve(translatedText);
+                } else {
+                  resolve(null);
+                }
+              } catch {
+                resolve(null);
+              }
+            } else {
+              // 翻译失败不影响消息发送，返回 null
+              resolve(null);
+            }
+          });
+        });
+        req.setTimeout(10000, () => {
+          req.destroy(); // 确保请求被销毁
+          resolve(null); // 超时也不影响消息发送
+        });
+        req.on("error", () => {
+          req.destroy(); // 确保请求被销毁
+          resolve(null); // 错误也不影响消息发送
+        });
+        req.write(payload);
+        req.end();
+      });
+    } catch {
+      return null; // 任何错误都不影响消息发送
     }
   }
 
@@ -166,6 +278,15 @@ export class SenderBot {
       let text = item.content || "";
       for (const [a, b] of Object.entries(this.replacementsDictionary)) {
         text = text.replaceAll(a, b);
+      }
+
+      // 如果启用了翻译，尝试翻译文本
+      if (this.enableTranslation && text.trim() && !this.isChinese(text)) {
+        const translated = await this.translateText(text);
+        if (translated) {
+          // 格式：原文 + 横线 + 翻译
+          text = `${text}\n\n---\n\n${translated}`;
+        }
       }
 
       // Discord limits: content 2000, embed.description 4096
@@ -273,6 +394,7 @@ export class SenderBot {
         // Drain response data to free up memory
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
+          res.destroy(); // 确保响应流被销毁
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             try {
               const json = body ? JSON.parse(body) : null;
@@ -302,8 +424,12 @@ export class SenderBot {
       });
       req.setTimeout(15000, () => {
         req.destroy(new Error("Webhook request timeout"));
+        reject(new Error("Webhook request timeout"));
       });
-      req.on("error", (err) => reject(err));
+      req.on("error", (err) => {
+        req.destroy(); // 确保请求被销毁
+        reject(err);
+      });
       req.write(payload);
       req.end();
     });
@@ -326,6 +452,7 @@ export class SenderBot {
         let body = "";
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
+          res.destroy(); // 确保响应流被销毁
           try {
             const json = body ? JSON.parse(body) : {};
             resolve(json);
@@ -334,7 +461,14 @@ export class SenderBot {
           }
         });
       });
-      req.on("error", (err) => reject(err));
+      req.setTimeout(10000, () => {
+        req.destroy();
+        reject(new Error("Webhook info request timeout"));
+      });
+      req.on("error", (err) => {
+        req.destroy(); // 确保请求被销毁
+        reject(err);
+      });
       req.end();
     });
   }

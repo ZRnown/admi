@@ -42,6 +42,9 @@ export interface LegacyConfig {
     limit?: number;
     channels?: string[];
   };
+  // 翻译功能配置
+  enableTranslation?: boolean;
+  deepseekApiKey?: string;
 }
 
 export interface AccountConfig extends LegacyConfig {
@@ -102,6 +105,8 @@ function createDefaultAccount(): AccountConfig {
     allowedUsersIds: [],
     mutedUsersIds: [],
     channelConfigs: {},
+    enableTranslation: false,
+    deepseekApiKey: undefined,
   };
 }
 
@@ -172,6 +177,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     allowedUsersIds: input?.allowedUsersIds || [],
     mutedUsersIds: input?.mutedUsersIds || [],
     channelConfigs: input?.channelConfigs || {},
+    enableTranslation: input?.enableTranslation === true,
+    deepseekApiKey: typeof input?.deepseekApiKey === "string" && input.deepseekApiKey.trim() ? input.deepseekApiKey.trim() : undefined,
   };
 }
 
@@ -221,6 +228,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       showMessageUpdates: false,
       showMessageDeletions: false,
       showDate: false,
+      enableTranslation: false,
+      deepseekApiKey: undefined,
     };
   }
   return {
@@ -243,6 +252,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     allowedUsersIds: account.allowedUsersIds,
     mutedUsersIds: account.mutedUsersIds,
     channelConfigs: account.channelConfigs,
+    enableTranslation: account.enableTranslation,
+    deepseekApiKey: account.deepseekApiKey,
   };
 }
 

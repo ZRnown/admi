@@ -50,6 +50,8 @@ const normalizeAccount = (input: any, index = 0): AccountFormConfig => ({
   allowedUsersIds: Array.isArray(input?.allowedUsersIds) ? input.allowedUsersIds.map(String) : [],
   mutedUsersIds: Array.isArray(input?.mutedUsersIds) ? input.mutedUsersIds.map(String) : [],
   restartNonce: typeof input?.restartNonce === "number" ? input.restartNonce : undefined,
+  enableTranslation: input?.enableTranslation === true,
+  deepseekApiKey: input?.deepseekApiKey || "",
 })
 
 const normalizeAccounts = (accounts: any[]): AccountFormConfig[] => {
@@ -714,6 +716,35 @@ export function ConfigDashboard() {
             <label htmlFor="showSourceIdentity" className="text-sm text-slate-700">
               使用源用户的昵称和头像进行转发（关闭则使用 Webhook 默认头像和名称）
             </label>
+          </div>
+          <div className="border-t border-slate-200 pt-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <input
+                id="enableTranslation"
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                checked={activeAccount.enableTranslation || false}
+                onChange={(e) => updateActiveAccount((acc) => ({ ...acc, enableTranslation: e.target.checked }))}
+              />
+              <label htmlFor="enableTranslation" className="text-sm text-slate-700">
+                启用自动翻译（使用 DeepSeek API，源为中文时不翻译）
+              </label>
+            </div>
+            {activeAccount.enableTranslation && (
+              <div className="space-y-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">DeepSeek API Key</label>
+                <input
+                  type="password"
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm"
+                  placeholder="sk-..."
+                  value={activeAccount.deepseekApiKey || ""}
+                  onChange={(e) => updateActiveAccount((acc) => ({ ...acc, deepseekApiKey: e.target.value }))}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  翻译后的消息格式：原文 + 横线分隔 + 翻译。如果源消息是中文，则不会翻译。
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

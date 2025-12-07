@@ -28,6 +28,8 @@ interface FrontendAccount {
   allowedUsersIds: string[];
   mutedUsersIds: string[];
   restartNonce?: number;
+  enableTranslation?: boolean;
+  deepseekApiKey?: string;
     }
 
 interface FrontendPayload {
@@ -68,6 +70,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     allowedUsersIds: (account.allowedUsersIds || []).map((id: any) => String(id)),
     mutedUsersIds: (account.mutedUsersIds || []).map((id: any) => String(id)),
     restartNonce: account.restartNonce,
+    enableTranslation: account.enableTranslation === true,
+    deepseekApiKey: account.deepseekApiKey || "",
   };
 }
 
@@ -144,6 +148,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     allowedUsersIds: Array.isArray(dto.allowedUsersIds) ? dto.allowedUsersIds : base.allowedUsersIds || [],
     mutedUsersIds: Array.isArray(dto.mutedUsersIds) ? dto.mutedUsersIds : base.mutedUsersIds || [],
     restartNonce: dto.restartNonce ?? base.restartNonce,
+    enableTranslation: dto.enableTranslation === true,
+    deepseekApiKey: typeof dto.deepseekApiKey === "string" && dto.deepseekApiKey.trim() ? dto.deepseekApiKey.trim() : undefined,
   };
 }
 
