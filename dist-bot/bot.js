@@ -10,11 +10,14 @@ const node_path_1 = __importDefault(require("node:path"));
 class Bot {
     constructor(client, config, senderBot, senderBotsBySource) {
         // 源消息ID -> 目标消息ID映射（用于构建目标内跳转链接）
+        // 使用带大小限制的 Map，防止内存无限增长
         this.sourceToTarget = new Map();
         this.mapFile = node_path_1.default.resolve(process.cwd(), ".data", "message_map.json");
         this.logger = new logger_js_1.FileLogger();
         // 使用 Set 来跟踪正在处理的消息ID，避免重复处理
         this.processingMessages = new Set();
+        // Map 最大条目数，超过时删除最旧的（保留最近 10000 条映射）
+        this.MAX_MAP_SIZE = 10000;
         this.config = config;
         this.senderBot = senderBot;
         this.client = client;
@@ -44,7 +47,36 @@ class Bot {
             // 简化监听器：所有处理逻辑都在 processAndSend 中
             await this.processAndSend(message);
         });
+        // 定期保存映射（每 5 分钟保存一次，减少 I/O）
+        this.saveMappingTimer = setInterval(() => {
+            this.saveMapping().catch(err => {
+                this.logger.error(`定期保存映射失败: ${String(err)}`);
+            });
+        }, 5 * 60 * 1000);
+        // 程序退出时保存映射
+        process.on("beforeExit", () => {
+            this.saveMapping().catch(() => { });
+        });
+        process.on("SIGINT", () => {
+            this.saveMapping().catch(() => { });
+            process.exit(0);
+        });
+        process.on("SIGTERM", () => {
+            this.saveMapping().catch(() => { });
+            process.exit(0);
+        });
         // 为了支持"回复可跳转"，改为单条即时发送（如需保留堆叠，可另加配置开关）
+    }
+    /**
+     * 清理资源，停止定时器等
+     */
+    cleanup() {
+        if (this.saveMappingTimer) {
+            clearInterval(this.saveMappingTimer);
+            this.saveMappingTimer = undefined;
+        }
+        // 保存映射
+        this.saveMapping().catch(() => { });
     }
     /**
      * 在不重启进程的情况下，更新运行时使用的配置和转发映射。
@@ -73,19 +105,60 @@ class Bot {
             await this.ensureDataDir();
             const buf = await node_fs_1.promises.readFile(this.mapFile, "utf-8");
             const json = JSON.parse(buf);
-            this.sourceToTarget = new Map(Object.entries(json));
+            const now = Date.now();
+            // 加载时添加时间戳（如果旧数据没有时间戳，使用当前时间）
+            const entries = Object.entries(json).map(([key, value]) => [
+                key,
+                { ...value, timestamp: value.timestamp || now }
+            ]);
+            // 只保留最近的 MAX_MAP_SIZE 条
+            const sorted = entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
+            const limited = sorted.slice(0, this.MAX_MAP_SIZE);
+            this.sourceToTarget = new Map(limited);
+            if (entries.length > this.MAX_MAP_SIZE) {
+                this.logger.info(`Loaded ${this.MAX_MAP_SIZE} mappings (dropped ${entries.length - this.MAX_MAP_SIZE} old entries)`);
+            }
         }
         catch { }
     }
     async saveMapping() {
         try {
             await this.ensureDataDir();
-            const obj = Object.fromEntries(this.sourceToTarget.entries());
+            // 只保存必要的字段，不保存 timestamp（减少文件大小）
+            const obj = {};
+            for (const [key, value] of this.sourceToTarget.entries()) {
+                obj[key] = { channelId: value.channelId, messageId: value.messageId };
+            }
             const tmp = this.mapFile + ".tmp";
             await node_fs_1.promises.writeFile(tmp, JSON.stringify(obj), "utf-8");
             await node_fs_1.promises.rename(tmp, this.mapFile);
         }
         catch { }
+    }
+    /**
+     * 限制 Map 大小，当超过 MAX_MAP_SIZE 时删除最旧的条目
+     * 优化：利用 Map 的自然顺序（插入顺序），直接删除头部元素，避免排序
+     */
+    limitMapSize() {
+        if (this.sourceToTarget.size <= this.MAX_MAP_SIZE) {
+            return;
+        }
+        // Map 保持插入顺序，第一个元素就是最旧的
+        // 直接删除头部元素，直到大小符合要求
+        let deletedCount = 0;
+        while (this.sourceToTarget.size > this.MAX_MAP_SIZE) {
+            const firstKey = this.sourceToTarget.keys().next().value;
+            if (firstKey) {
+                this.sourceToTarget.delete(firstKey);
+                deletedCount++;
+            }
+            else {
+                break;
+            }
+        }
+        if (deletedCount > 0) {
+            this.logger.debug(`Cleaned ${deletedCount} old mappings to prevent memory overflow`);
+        }
     }
     async processAndSend(message, tag) {
         // 检查是否正在处理此消息，避免重复处理
@@ -96,8 +169,14 @@ class Bot {
         // 标记消息为正在处理
         this.processingMessages.add(message.id);
         // 5秒后自动清理，防止内存泄漏
+        // 同时限制 Set 大小，防止在高频消息下无限增长
         setTimeout(() => {
             this.processingMessages.delete(message.id);
+            // 如果 Set 过大（超过 1000），清理最旧的条目
+            if (this.processingMessages.size > 1000) {
+                const toDelete = Array.from(this.processingMessages).slice(0, this.processingMessages.size - 1000);
+                toDelete.forEach(id => this.processingMessages.delete(id));
+            }
         }, 5000);
         // 懒加载历史映射（进程首次消息时）
         if (this.sourceToTarget.size === 0) {
@@ -297,11 +376,15 @@ class Bot {
         if (message.reference) {
             try {
                 const ref = await message.fetchReference();
-                let mapped = this.sourceToTarget.get(ref.id);
+                const mappedEntry = this.sourceToTarget.get(ref.id);
+                let mapped = mappedEntry ? { channelId: mappedEntry.channelId, messageId: mappedEntry.messageId } : undefined;
                 // 不重发，改为：若无映射，尝试在目标历史中扫描已有消息并建立映射
                 if (!mapped) {
                     try {
-                        mapped = await this.tryResolveMappingFromTarget(ref.id, senderForThis);
+                        const found = await this.tryResolveMappingFromTarget(ref.id, senderForThis);
+                        if (found) {
+                            mapped = found;
+                        }
                     }
                     catch (e) {
                         console.error("scan target for mapping failed", e);
@@ -420,11 +503,20 @@ class Bot {
         if (results && results.length > 0) {
             const first = results[0];
             if (first.sourceMessageId) {
+                // 优化：先删除旧的（如果存在），确保重新 set 后它在 Map 的末尾（变为最新）
+                // 这样可以利用 Map 的自然顺序实现 LRU，无需排序
+                if (this.sourceToTarget.has(first.sourceMessageId)) {
+                    this.sourceToTarget.delete(first.sourceMessageId);
+                }
+                // 设置新的映射，由于是重新插入，它会位于 Map 的末尾（最新位置）
                 this.sourceToTarget.set(first.sourceMessageId, {
                     channelId: first.targetChannelId,
-                    messageId: first.targetMessageId
+                    messageId: first.targetMessageId,
+                    timestamp: Date.now()
                 });
-                await this.saveMapping();
+                // 限制 Map 大小，防止内存无限增长
+                this.limitMapSize();
+                // 不再每次保存，改为定期保存（由定时器处理）
                 // 构建详细的转发日志（使用之前获取的webhookName）
                 const authorTag = isWebhook
                     ? (webhookName !== "unknown" ? webhookName : "Webhook")
@@ -503,8 +595,12 @@ class Bot {
                                 const footerText = e?.footer?.text;
                                 if (footerText && footerText.trim() === `sid:${sourceId}`) {
                                     const found = { channelId, messageId: m.id };
-                                    this.sourceToTarget.set(sourceId, found);
-                                    await this.saveMapping();
+                                    // 优化：先删除旧的（如果存在），确保重新 set 后它在 Map 的末尾
+                                    if (this.sourceToTarget.has(sourceId)) {
+                                        this.sourceToTarget.delete(sourceId);
+                                    }
+                                    this.sourceToTarget.set(sourceId, { ...found, timestamp: Date.now() });
+                                    this.limitMapSize();
                                     this.logger.debug(`historyScan hit by footer: source=${sourceId} target=${channelId}/${m.id}`);
                                     return found;
                                 }
@@ -512,8 +608,12 @@ class Bot {
                             const content = (m.content || "");
                             if (content.includes(sourceId)) {
                                 const found = { channelId, messageId: m.id };
-                                this.sourceToTarget.set(sourceId, found);
-                                await this.saveMapping();
+                                // 优化：先删除旧的（如果存在），确保重新 set 后它在 Map 的末尾
+                                if (this.sourceToTarget.has(sourceId)) {
+                                    this.sourceToTarget.delete(sourceId);
+                                }
+                                this.sourceToTarget.set(sourceId, { ...found, timestamp: Date.now() });
+                                this.limitMapSize();
                                 this.logger.debug(`historyScan hit by content: source=${sourceId} target=${channelId}/${m.id}`);
                                 return found;
                             }

@@ -45,6 +45,8 @@ async function buildSenderBots(account, logger) {
     const webhooks = account.channelWebhooks || {};
     const replacements = account.replacementsDictionary || {};
     const proxy = account.proxyUrl || env.PROXY_URL;
+    const enableTranslation = account.enableTranslation || false;
+    const deepseekApiKey = account.deepseekApiKey;
     if (Object.keys(webhooks).length > 0) {
         for (const [channelId, webhookUrl] of Object.entries(webhooks)) {
             const httpAgent = proxy ? new proxy_agent_1.ProxyAgent(proxy) : undefined;
@@ -52,6 +54,8 @@ async function buildSenderBots(account, logger) {
                 replacementsDictionary: replacements,
                 webhookUrl,
                 httpAgent,
+                enableTranslation,
+                deepseekApiKey,
             });
             prepares.push(sb.prepare());
             senderBotsBySource.set(channelId, sb);
@@ -123,7 +127,45 @@ async function startAccount(account, logger) {
             });
         }
         else {
-            client = new discord_js_selfbot_v13_1.Client();
+            // 优化：限制缓存大小，防止内存无限增长
+            // 禁用无用的缓存，特别是 GuildMemberManager 和 PresenceManager
+            // 注意：discord.js-selfbot-v13 的 API 可能与 discord.js 不同
+            // 如果类型错误，可以尝试使用 any 类型或检查 selfbot 的实际 API
+            try {
+                // 尝试使用 makeCache 配置（如果 selfbot 支持）
+                client = new discord_js_selfbot_v13_1.Client({
+                    checkUpdate: false,
+                    patchVoice: false,
+                    // @ts-ignore - discord.js-selfbot-v13 可能使用不同的类型定义
+                    makeCache: (manager) => {
+                        const name = manager.constructor.name;
+                        // 限制各种缓存的大小
+                        if (name === "MessageManager")
+                            return manager.constructor.cache.withLimit(10);
+                        if (name === "PresenceManager")
+                            return manager.constructor.cache.withLimit(0);
+                        if (name === "GuildMemberManager")
+                            return manager.constructor.cache.withLimit(0);
+                        if (name === "ThreadManager")
+                            return manager.constructor.cache.withLimit(0);
+                        if (name === "ReactionManager")
+                            return manager.constructor.cache.withLimit(0);
+                        if (name === "UserManager")
+                            return manager.constructor.cache.withLimit(100);
+                        // 默认返回原始缓存
+                        return manager.constructor.cache;
+                    },
+                });
+            }
+            catch (e) {
+                // 如果配置失败，使用默认配置
+                // 至少禁用更新检查可以减少一些内存占用
+                client = new discord_js_selfbot_v13_1.Client({
+                    checkUpdate: false,
+                    patchVoice: false,
+                });
+                logger.warn(`无法应用缓存限制配置，使用默认配置: ${String(e)}`);
+            }
         }
         const bot = new bot_js_1.Bot(client, legacyConfig, defaultSenderBot, senderBotsBySource);
         const runningInfo = {
@@ -189,6 +231,10 @@ async function stopAccount(accountId, logger, manual = true) {
         running.reconnectTimer = undefined;
     }
     try {
+        // 清理 Bot 资源（包括定时器等）
+        if (running.bot && typeof running.bot.cleanup === "function") {
+            running.bot.cleanup();
+        }
         if (running.client.destroy) {
             await running.client.destroy();
         }
@@ -250,7 +296,36 @@ async function reconnectAccount(accountId, logger, delay = 5000) {
                 });
             }
             else {
-                client = new discord_js_selfbot_v13_1.Client();
+                // 优化：限制缓存大小，防止内存无限增长
+                try {
+                    // @ts-ignore - discord.js-selfbot-v13 可能使用不同的类型定义
+                    client = new discord_js_selfbot_v13_1.Client({
+                        checkUpdate: false,
+                        patchVoice: false,
+                        makeCache: (manager) => {
+                            const name = manager.constructor.name;
+                            if (name === "MessageManager")
+                                return manager.constructor.cache.withLimit(10);
+                            if (name === "PresenceManager")
+                                return manager.constructor.cache.withLimit(0);
+                            if (name === "GuildMemberManager")
+                                return manager.constructor.cache.withLimit(0);
+                            if (name === "ThreadManager")
+                                return manager.constructor.cache.withLimit(0);
+                            if (name === "ReactionManager")
+                                return manager.constructor.cache.withLimit(0);
+                            if (name === "UserManager")
+                                return manager.constructor.cache.withLimit(100);
+                            return manager.constructor.cache;
+                        },
+                    });
+                }
+                catch (e) {
+                    client = new discord_js_selfbot_v13_1.Client({
+                        checkUpdate: false,
+                        patchVoice: false,
+                    });
+                }
             }
             // 重新创建 Bot 实例
             const legacyConfig = (0, config_js_1.accountToLegacyConfig)(running.account);
@@ -364,6 +439,9 @@ async function reconcileAccounts(newConfig, logger) {
         const mappingsChanged = JSON.stringify(account.channelWebhooks || {}) !== JSON.stringify(oldAccount.channelWebhooks || {}) ||
             JSON.stringify(account.replacementsDictionary || {}) !==
                 JSON.stringify(oldAccount.replacementsDictionary || {});
+        // 检测翻译配置变化
+        const translationChanged = account.enableTranslation !== oldAccount.enableTranslation ||
+            account.deepseekApiKey !== oldAccount.deepseekApiKey;
         const keywordsChanged = JSON.stringify(account.blockedKeywords || []) !== JSON.stringify(oldAccount.blockedKeywords || []) ||
             JSON.stringify(account.excludeKeywords || []) !== JSON.stringify(oldAccount.excludeKeywords || []) ||
             account.showSourceIdentity !== oldAccount.showSourceIdentity;
@@ -379,6 +457,7 @@ async function reconcileAccounts(newConfig, logger) {
             !tokenChanged &&
             !typeChanged &&
             !mappingsChanged &&
+            !translationChanged &&
             !keywordsChanged &&
             !restartRequested &&
             !loginRequestedBecameTrue) {
@@ -395,7 +474,7 @@ async function reconcileAccounts(newConfig, logger) {
             continue;
         }
         // 没有任何变化则跳过
-        if (!typeChanged && !tokenChanged && !mappingsChanged && !keywordsChanged && !restartRequested && !loginRequestedBecameTrue) {
+        if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !restartRequested && !loginRequestedBecameTrue) {
             continue;
         }
         // 只有在真正需要重启时才重启（配置变化导致的停止，不是手动停止）
@@ -407,7 +486,8 @@ async function reconcileAccounts(newConfig, logger) {
         }
         let senderBotsBySource = existing.senderBotsBySource;
         let defaultSenderBot = existing.defaultSenderBot;
-        if (mappingsChanged) {
+        // 如果映射或翻译配置变化，需要重新构建 SenderBot
+        if (mappingsChanged || translationChanged) {
             const built = await buildSenderBots(account, logger);
             senderBotsBySource = built.senderBotsBySource;
             defaultSenderBot = built.defaultSenderBot;
@@ -417,7 +497,7 @@ async function reconcileAccounts(newConfig, logger) {
         existing.account = account;
         existing.senderBotsBySource = senderBotsBySource;
         existing.defaultSenderBot = defaultSenderBot;
-        if (keywordsChanged || mappingsChanged) {
+        if (keywordsChanged || mappingsChanged || translationChanged) {
             await logger.info(`账号 "${account.name}" 配置已热更新`);
         }
     }

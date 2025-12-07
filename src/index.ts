@@ -475,6 +475,10 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       JSON.stringify(account.channelWebhooks || {}) !== JSON.stringify(oldAccount.channelWebhooks || {}) ||
       JSON.stringify(account.replacementsDictionary || {}) !==
         JSON.stringify(oldAccount.replacementsDictionary || {});
+    // 检测翻译配置变化
+    const translationChanged =
+      account.enableTranslation !== oldAccount.enableTranslation ||
+      account.deepseekApiKey !== oldAccount.deepseekApiKey;
     const keywordsChanged =
       JSON.stringify(account.blockedKeywords || []) !== JSON.stringify(oldAccount.blockedKeywords || []) ||
       JSON.stringify(account.excludeKeywords || []) !== JSON.stringify(oldAccount.excludeKeywords || []) ||
@@ -493,6 +497,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         !tokenChanged && 
         !typeChanged && 
         !mappingsChanged && 
+        !translationChanged &&
         !keywordsChanged && 
         !restartRequested &&
         !loginRequestedBecameTrue) {
@@ -511,7 +516,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     // 没有任何变化则跳过
-    if (!typeChanged && !tokenChanged && !mappingsChanged && !keywordsChanged && !restartRequested && !loginRequestedBecameTrue) {
+    if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !restartRequested && !loginRequestedBecameTrue) {
       continue;
     }
 
@@ -525,7 +530,8 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
 
     let senderBotsBySource = existing.senderBotsBySource;
     let defaultSenderBot = existing.defaultSenderBot;
-    if (mappingsChanged) {
+    // 如果映射或翻译配置变化，需要重新构建 SenderBot
+    if (mappingsChanged || translationChanged) {
       const built = await buildSenderBots(account, logger);
       senderBotsBySource = built.senderBotsBySource;
       defaultSenderBot = built.defaultSenderBot;
@@ -537,7 +543,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     existing.senderBotsBySource = senderBotsBySource;
     existing.defaultSenderBot = defaultSenderBot;
 
-    if (keywordsChanged || mappingsChanged) {
+    if (keywordsChanged || mappingsChanged || translationChanged) {
       await logger.info(`账号 "${account.name}" 配置已热更新`);
     }
   }

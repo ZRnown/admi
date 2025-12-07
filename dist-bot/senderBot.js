@@ -12,6 +12,8 @@ class SenderBot {
         this.replacementsDictionary = options.replacementsDictionary || {};
         this.webhookUrl = options.webhookUrl;
         this.httpAgent = options.httpAgent;
+        this.enableTranslation = options.enableTranslation || false;
+        this.deepseekApiKey = options.deepseekApiKey;
     }
     async postMultipart(body, files, wait = false) {
         const url = new node_url_1.URL(this.webhookUrl);
@@ -125,6 +127,125 @@ class SenderBot {
             // 忽略失败，不影响基本发送
         }
     }
+    /**
+     * 检测文本是否全部是中文（只有全部是中文才返回 true，有英文就返回 false）
+     */
+    isChinese(text) {
+        if (!text || text.trim().length === 0) {
+            return false;
+        }
+        // 移除空白字符、标点符号和数字，只统计字母和中文字符
+        const cleanedText = text.replace(/[\s\d\p{P}]/gu, "");
+        if (cleanedText.length === 0) {
+            return false;
+        }
+        // 检测是否有英文字母（包括大小写）
+        const hasEnglish = /[a-zA-Z]/.test(cleanedText);
+        // 如果有英文字母，说明不是纯中文，需要翻译
+        if (hasEnglish) {
+            return false;
+        }
+        // 如果没有英文字母，检查是否有中文字符
+        const hasChinese = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/.test(cleanedText);
+        // 如果有中文字符且没有英文字母，认为是纯中文，不翻译
+        return hasChinese;
+    }
+    /**
+     * 调用 DeepSeek API 进行翻译
+     */
+    async translateText(text) {
+        if (!this.enableTranslation) {
+            console.log("[翻译] 翻译功能未启用");
+            return null;
+        }
+        if (!this.deepseekApiKey) {
+            console.log("[翻译] DeepSeek API Key 未配置");
+            return null;
+        }
+        if (!text.trim()) {
+            return null;
+        }
+        // 如果源文本是中文，不翻译
+        if (this.isChinese(text)) {
+            console.log("[翻译] 源文本是中文，跳过翻译");
+            return null;
+        }
+        try {
+            const url = new node_url_1.URL("https://api.deepseek.com/v1/chat/completions");
+            const payload = JSON.stringify({
+                model: "deepseek-chat",
+                messages: [
+                    {
+                        role: "system",
+                        content: "你是一个专业的翻译助手。请将用户输入的内容中的英文部分翻译成中文，中文部分保持不变。如果内容完全是英文，则翻译成中文。如果内容包含中文，请保持中文不变，只翻译英文单词和句子。只返回翻译结果，不要添加任何解释或说明。"
+                    },
+                    {
+                        role: "user",
+                        content: text
+                    }
+                ],
+                temperature: 0.3,
+                max_tokens: 2000
+            });
+            const options = {
+                method: "POST",
+                hostname: url.hostname,
+                path: url.pathname,
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${this.deepseekApiKey}`,
+                    "Content-Length": Buffer.byteLength(payload)
+                },
+                agent: this.httpAgent
+            };
+            return await new Promise((resolve, reject) => {
+                const req = node_https_1.default.request(options, (res) => {
+                    let body = "";
+                    res.on("data", (chunk) => (body += chunk));
+                    res.on("end", () => {
+                        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                            try {
+                                const json = body ? JSON.parse(body) : null;
+                                const translatedText = json?.choices?.[0]?.message?.content?.trim();
+                                if (translatedText) {
+                                    console.log(`[翻译] 翻译成功: "${text.substring(0, 50)}..." -> "${translatedText.substring(0, 50)}..."`);
+                                    resolve(translatedText);
+                                }
+                                else {
+                                    console.log(`[翻译] API 返回格式异常，响应: ${body.substring(0, 200)}`);
+                                    resolve(null);
+                                }
+                            }
+                            catch (e) {
+                                console.error(`[翻译] 解析 API 响应失败:`, e, `响应: ${body.substring(0, 200)}`);
+                                resolve(null);
+                            }
+                        }
+                        else {
+                            // 翻译失败不影响消息发送，但记录错误
+                            console.error(`[翻译] API 请求失败: HTTP ${res.statusCode} ${res.statusMessage}, 响应: ${body.substring(0, 200)}`);
+                            resolve(null);
+                        }
+                    });
+                });
+                req.setTimeout(10000, () => {
+                    req.destroy();
+                    console.error("[翻译] 请求超时（10秒）");
+                    resolve(null); // 超时也不影响消息发送
+                });
+                req.on("error", (err) => {
+                    console.error("[翻译] 网络错误:", err);
+                    resolve(null); // 错误也不影响消息发送
+                });
+                req.write(payload);
+                req.end();
+            });
+        }
+        catch (e) {
+            console.error("[翻译] 异常:", e);
+            return null; // 任何错误都不影响消息发送
+        }
+    }
     async sendData(messagesToSend) {
         if (messagesToSend.length == 0)
             return;
@@ -133,6 +254,14 @@ class SenderBot {
             let text = item.content || "";
             for (const [a, b] of Object.entries(this.replacementsDictionary)) {
                 text = text.replaceAll(a, b);
+            }
+            // 如果启用了翻译，尝试翻译文本
+            if (this.enableTranslation && text.trim() && !this.isChinese(text)) {
+                const translated = await this.translateText(text);
+                if (translated) {
+                    // 格式：原文 + 横线 + 翻译
+                    text = `${text}\n\n---\n\n${translated}`;
+                }
             }
             // Discord limits: content 2000, embed.description 4096
             const MESSAGE_CHUNK = item.useEmbed ? 4096 : 2000;

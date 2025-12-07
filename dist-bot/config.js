@@ -40,6 +40,8 @@ function createDefaultAccount() {
         allowedUsersIds: [],
         mutedUsersIds: [],
         channelConfigs: {},
+        enableTranslation: false,
+        deepseekApiKey: undefined,
     };
 }
 // 导出 ensureConfigFile 供程序启动时调用，而不是在每次读取时调用
@@ -105,6 +107,8 @@ function normalizeAccount(input, fallbackName = "未命名账号") {
         allowedUsersIds: input?.allowedUsersIds || [],
         mutedUsersIds: input?.mutedUsersIds || [],
         channelConfigs: input?.channelConfigs || {},
+        enableTranslation: input?.enableTranslation === true,
+        deepseekApiKey: typeof input?.deepseekApiKey === "string" && input.deepseekApiKey.trim() ? input.deepseekApiKey.trim() : undefined,
     };
 }
 function migrateLegacyToMulti(raw) {
@@ -146,6 +150,8 @@ function accountToLegacyConfig(account) {
             showMessageUpdates: false,
             showMessageDeletions: false,
             showDate: false,
+            enableTranslation: false,
+            deepseekApiKey: undefined,
         };
     }
     return {
@@ -168,6 +174,8 @@ function accountToLegacyConfig(account) {
         allowedUsersIds: account.allowedUsersIds,
         mutedUsersIds: account.mutedUsersIds,
         channelConfigs: account.channelConfigs,
+        enableTranslation: account.enableTranslation,
+        deepseekApiKey: account.deepseekApiKey,
     };
 }
 async function getConfig() {
