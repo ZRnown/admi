@@ -149,29 +149,12 @@ export class SenderBot {
   }
 
   /**
-   * 检测文本是否主要是中文（80%以上为中文字符）
+   * 检测文本是否含有中文字符
+   * 只要含有中文，就不再触发翻译（避免把中文翻译为其他语言）
    */
-  private isChinese(text: string): boolean {
-    if (!text || text.trim().length === 0) {
-      return false;
-    }
-    
-    // 移除空白字符，只统计实际字符
-    const cleanedText = text.replace(/\s/g, "");
-    if (cleanedText.length === 0) {
-      return false;
-    }
-    
-    // 统计中文字符数量（包括中文标点）
-    const chineseCharRegex = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/g;
-    const chineseMatches = cleanedText.match(chineseCharRegex);
-    const chineseCharCount = chineseMatches ? chineseMatches.length : 0;
-    
-    // 计算中文字符占比
-    const chineseRatio = chineseCharCount / cleanedText.length;
-    
-    // 如果80%以上是中文字符，认为是中文文本，不翻译
-    return chineseRatio >= 0.8;
+  private hasChinese(text: string): boolean {
+    if (!text) return false;
+    return /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/u.test(text);
   }
 
   /**
@@ -192,9 +175,9 @@ export class SenderBot {
       return null;
     }
 
-    // 如果源文本是中文，不翻译
-    if (this.isChinese(text)) {
-      console.log("[翻译] 源文本是中文，跳过翻译");
+    // 只翻译纯英文内容：只要包含中文字符就直接跳过
+    if (this.hasChinese(text)) {
+      console.log("[翻译] 检测到中文，跳过翻译");
       return null;
     }
 
@@ -205,7 +188,7 @@ export class SenderBot {
         messages: [
           {
             role: "system",
-            content: "你是一个专业的翻译助手。请将用户输入的内容中的英文部分翻译成中文，中文部分保持不变。如果内容完全是英文，则翻译成中文。如果内容包含中文，请保持中文不变，只翻译英文单词和句子。只返回翻译结果，不要添加任何解释或说明。"
+            content: "You are a translator. Only translate English into Simplified Chinese. Do NOT translate or alter any Chinese text or any non-English tokens. Preserve punctuation, numbers, links, emojis, and spacing. Return only the translated result (Chinese), with any original non-English parts unchanged."
           },
           {
             role: "user",
