@@ -18,6 +18,8 @@ class Bot {
         this.processingMessages = new Set();
         // Map 最大条目数，超过时删除最旧的（保留最近 10000 条映射）
         this.MAX_MAP_SIZE = 10000;
+        // 记录去重清理定时器，便于热重载时释放
+        this.processingTimers = new Set();
         this.config = config;
         this.senderBot = senderBot;
         this.client = client;
@@ -53,15 +55,15 @@ class Bot {
                 this.logger.error(`定期保存映射失败: ${String(err)}`);
             });
         }, 5 * 60 * 1000);
-        // 程序退出时保存映射
-        process.on("beforeExit", () => {
+        // 程序退出时保存映射（使用 once 避免重复添加监听器）
+        process.once("beforeExit", () => {
             this.saveMapping().catch(() => { });
         });
-        process.on("SIGINT", () => {
+        process.once("SIGINT", () => {
             this.saveMapping().catch(() => { });
             process.exit(0);
         });
-        process.on("SIGTERM", () => {
+        process.once("SIGTERM", () => {
             this.saveMapping().catch(() => { });
             process.exit(0);
         });
@@ -70,13 +72,20 @@ class Bot {
     /**
      * 清理资源，停止定时器等
      */
-    cleanup() {
+    async cleanup() {
         if (this.saveMappingTimer) {
             clearInterval(this.saveMappingTimer);
             this.saveMappingTimer = undefined;
         }
+        // 清理未触发的消息去重定时器
+        for (const t of this.processingTimers) {
+            clearTimeout(t);
+        }
+        this.processingTimers.clear();
         // 保存映射
-        this.saveMapping().catch(() => { });
+        await this.saveMapping().catch((err) => {
+            this.logger.error(`cleanup saveMapping failed: ${String(err)}`);
+        });
     }
     /**
      * 在不重启进程的情况下，更新运行时使用的配置和转发映射。
@@ -170,14 +179,16 @@ class Bot {
         this.processingMessages.add(message.id);
         // 5秒后自动清理，防止内存泄漏
         // 同时限制 Set 大小，防止在高频消息下无限增长
-        setTimeout(() => {
+        const timer = setTimeout(() => {
             this.processingMessages.delete(message.id);
+            this.processingTimers.delete(timer);
             // 如果 Set 过大（超过 1000），清理最旧的条目
             if (this.processingMessages.size > 1000) {
                 const toDelete = Array.from(this.processingMessages).slice(0, this.processingMessages.size - 1000);
                 toDelete.forEach(id => this.processingMessages.delete(id));
             }
         }, 5000);
+        this.processingTimers.add(timer);
         // 懒加载历史映射（进程首次消息时）
         if (this.sourceToTarget.size === 0) {
             await this.loadMapping();
