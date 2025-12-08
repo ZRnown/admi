@@ -283,7 +283,7 @@ export class SenderBot {
       }
 
       // 如果启用了翻译，尝试翻译文本
-      if (this.enableTranslation && text.trim() && !this.isChinese(text)) {
+      if (this.enableTranslation && text.trim() && !this.hasChinese(text)) {
         const translated = await this.translateText(text);
         if (translated) {
           // 格式：原文 + 横线 + 翻译
