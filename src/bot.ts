@@ -84,15 +84,15 @@ export class Bot {
       });
     }, 5 * 60 * 1000);
 
-    // 程序退出时保存映射
-    process.on("beforeExit", () => {
+    // 程序退出时保存映射（使用 once 避免重复添加监听器）
+    process.once("beforeExit", () => {
       this.saveMapping().catch(() => {});
     });
-    process.on("SIGINT", () => {
+    process.once("SIGINT", () => {
       this.saveMapping().catch(() => {});
       process.exit(0);
     });
-    process.on("SIGTERM", () => {
+    process.once("SIGTERM", () => {
       this.saveMapping().catch(() => {});
       process.exit(0);
     });

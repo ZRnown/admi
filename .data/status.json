@@ -6,5 +6,9 @@
   "e0e1e4fb-29e3-4c14-9693-0a6aa2dcddf5": {
     "loginState": "online",
     "loginMessage": "登录成功"
+  },
+  "82f60c98-5e4b-4766-a6df-b9a20e959c15": {
+    "loginState": "online",
+    "loginMessage": "登录成功"
   }
 }

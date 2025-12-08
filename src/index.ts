@@ -26,6 +26,8 @@ interface RunningAccount {
   defaultSenderBot: SenderBot;
   isManuallyStopped: boolean; // 标记是否手动停止
   reconnectTimer?: NodeJS.Timeout; // 重连定时器
+  reconnectCount: number; // 重连次数
+  lastReconnectTime: number; // 上次重连时间
 }
 
 const runningAccounts = new Map<string, RunningAccount>();
@@ -198,6 +200,8 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       senderBotsBySource,
       defaultSenderBot,
       isManuallyStopped: false,
+      reconnectCount: 0,
+      lastReconnectTime: 0,
     };
     runningAccounts.set(account.id, runningInfo);
 
@@ -273,6 +277,27 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
     return;
   }
   
+  // 检查是否已经连接成功（避免重复重连）
+  const client = running.client as any;
+  if (client && client.user && client.ws && client.ws.readyState === 1) {
+    await logger.info(`账号 "${running.account.name}" 已经连接，跳过重连`);
+    await writeStatus(accountId, "online", "已连接");
+    return;
+  }
+  
+  // 限制重连次数：如果 5 分钟内重连超过 10 次，停止重连
+  const now = Date.now();
+  if (now - running.lastReconnectTime > 5 * 60 * 1000) {
+    // 超过 5 分钟，重置计数
+    running.reconnectCount = 0;
+  }
+  if (running.reconnectCount >= 10) {
+    await logger.error(`账号 "${running.account.name}" 重连次数过多（${running.reconnectCount}次），停止自动重连`);
+    await writeStatus(accountId, "error", "重连次数过多，请检查网络或 Token");
+    await stopAccount(accountId, logger, false);
+    return;
+  }
+  
   // 如果账号不再请求登录，不重连
   const currentConfig = await getMultiConfig();
   const account = currentConfig.accounts.find(a => a.id === accountId);
@@ -281,8 +306,10 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
     return;
   }
   
-  await logger.info(`账号 "${running.account.name}" 将在 ${delay / 1000} 秒后尝试重连...`);
-  await writeStatus(accountId, "pending", `连接断开，${delay / 1000} 秒后重连...`);
+  running.reconnectCount++;
+  running.lastReconnectTime = now;
+  await logger.info(`账号 "${running.account.name}" 将在 ${delay / 1000} 秒后尝试重连... (第 ${running.reconnectCount} 次)`);
+  await writeStatus(accountId, "pending", `连接断开，${delay / 1000} 秒后重连... (${running.reconnectCount}/10)`);
   
   running.reconnectTimer = setTimeout(async () => {
     // 清除定时器引用
@@ -297,14 +324,14 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
     try {
       // 清理旧的客户端
       try {
-        if ((running.client as any).destroy) {
-          await (running.client as any).destroy();
+        if ((currentRunning.client as any).destroy) {
+          await (currentRunning.client as any).destroy();
         }
       } catch {}
       
       // 重新创建客户端
       let client: Client;
-      if (running.account.type === "bot") {
+      if (currentRunning.account.type === "bot") {
         client = new BotClient({
           intents: [
             GatewayIntentBits.Guilds,
@@ -341,33 +368,59 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       }
       
       // 重新创建 Bot 实例
-      const legacyConfig = accountToLegacyConfig(running.account);
-      const bot = new Bot(client, legacyConfig, running.defaultSenderBot, running.senderBotsBySource);
+      const legacyConfig = accountToLegacyConfig(currentRunning.account);
+      const bot = new Bot(client, legacyConfig, currentRunning.defaultSenderBot, currentRunning.senderBotsBySource);
       
       // 更新运行信息
-      running.client = client;
-      running.bot = bot;
+      currentRunning.client = client;
+      currentRunning.bot = bot;
       
       // 设置断开重连监听
       setupReconnectHandlers(accountId, logger);
       
       // 尝试登录
       try {
-        await (client as any).login(running.account.token);
-        await logger.info(`账号 "${running.account.name}" 重连成功`);
+        await (client as any).login(currentRunning.account.token);
+        await logger.info(`账号 "${currentRunning.account.name}" 重连成功`);
         await writeStatus(accountId, "online", "重连成功");
+        // 重连成功，重置计数
+        currentRunning.reconnectCount = 0;
       } catch (e: any) {
         const msg = String(e?.message || e);
-        await logger.error(`账号 "${running.account.name}" 重连失败: ${msg}`);
+        await logger.error(`账号 "${currentRunning.account.name}" 重连失败: ${msg}`);
         await writeStatus(accountId, "error", `重连失败: ${msg}`);
-        // 如果重连失败，再次尝试（指数退避，最多30秒）
-        const nextDelay = Math.min(delay * 2, 30000);
-        await reconnectAccount(accountId, logger, nextDelay);
+        
+        // 检查是否应该继续重连
+        const shouldRetry = currentRunning && 
+                           !currentRunning.isManuallyStopped && 
+                           currentRunning.reconnectCount < 10;
+        
+        if (shouldRetry) {
+          // 如果重连失败，再次尝试（指数退避，最多30秒）
+          const nextDelay = Math.min(delay * 2, 30000);
+          await reconnectAccount(accountId, logger, nextDelay);
+        } else {
+          await logger.error(`账号 "${currentRunning.account.name}" 停止重连（已达到最大次数或已手动停止）`);
+          await stopAccount(accountId, logger, false);
+        }
       }
     } catch (e: any) {
-      await logger.error(`账号 "${running.account.name}" 重连过程出错: ${String(e?.message || e)}`);
-      const nextDelay = Math.min(delay * 2, 30000);
-      await reconnectAccount(accountId, logger, nextDelay);
+      const currentRunning = runningAccounts.get(accountId);
+      if (!currentRunning) return;
+      
+      await logger.error(`账号 "${currentRunning.account.name}" 重连过程出错: ${String(e?.message || e)}`);
+      
+      // 检查是否应该继续重连
+      const shouldRetry = !currentRunning.isManuallyStopped && 
+                         currentRunning.reconnectCount < 10;
+      
+      if (shouldRetry) {
+        const nextDelay = Math.min(delay * 2, 30000);
+        await reconnectAccount(accountId, logger, nextDelay);
+      } else {
+        await logger.error(`账号 "${currentRunning.account.name}" 停止重连（已达到最大次数或已手动停止）`);
+        await stopAccount(accountId, logger, false);
+      }
     }
   }, delay);
 }
@@ -473,6 +526,10 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       JSON.stringify(account.blockedKeywords || []) !== JSON.stringify(oldAccount.blockedKeywords || []) ||
       JSON.stringify(account.excludeKeywords || []) !== JSON.stringify(oldAccount.excludeKeywords || []) ||
       account.showSourceIdentity !== oldAccount.showSourceIdentity;
+    // 检测用户过滤配置变化
+    const userFilterChanged =
+      JSON.stringify(account.allowedUsersIds || []) !== JSON.stringify(oldAccount.allowedUsersIds || []) ||
+      JSON.stringify(account.mutedUsersIds || []) !== JSON.stringify(oldAccount.mutedUsersIds || []);
     const restartRequested = account.restartNonce !== oldAccount.restartNonce;
     // loginRequested 从 false 变为 true 时才认为是登录请求变化
     // loginNonce 的变化不应该触发重启（它只是用于触发登录，不应该在已登录时触发重启）
@@ -482,20 +539,40 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     // 如果账号已经在运行且登录成功，检查是否需要重启
     const isAlreadyLoggedIn = existing.client && (existing.client as any).user;
     
-    // 如果账号已经登录，且没有需要重启的变化，跳过处理
+    // 如果账号已经登录，且没有需要重启的变化，尝试热更新
     if (isAlreadyLoggedIn && 
         !tokenChanged && 
         !typeChanged && 
-        !mappingsChanged && 
-        !translationChanged &&
-        !keywordsChanged && 
         !restartRequested &&
         !loginRequestedBecameTrue) {
       // 如果是停止请求（loginRequested 从 true 变为 false），需要停止账号（手动停止）
       if (loginRequestedChanged && account.loginRequested === false && existing.account.loginRequested === true) {
         await stopAccount(account.id, logger, true); // 手动停止
+        continue;
       }
-      // 其他情况（包括只是 loginNonce 变化），跳过重启
+      
+      // 如果有配置变化，进行热更新（不重启）
+      if (mappingsChanged || translationChanged || keywordsChanged || userFilterChanged) {
+        let senderBotsBySource = existing.senderBotsBySource;
+        let defaultSenderBot = existing.defaultSenderBot;
+        // 如果映射或翻译配置变化，需要重新构建 SenderBot
+        if (mappingsChanged || translationChanged) {
+          const built = await buildSenderBots(account, logger);
+          senderBotsBySource = built.senderBotsBySource;
+          defaultSenderBot = built.defaultSenderBot;
+        }
+        
+        const legacyConfig = accountToLegacyConfig(account);
+        existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource);
+        existing.account = account;
+        existing.senderBotsBySource = senderBotsBySource;
+        existing.defaultSenderBot = defaultSenderBot;
+        
+        await logger.info(`账号 "${account.name}" 配置已热更新（无需重启）`);
+        continue;
+      }
+      
+      // 其他情况（包括只是 loginNonce 变化），跳过处理
       continue;
     }
 
@@ -506,7 +583,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     // 没有任何变化则跳过
-    if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !restartRequested && !loginRequestedBecameTrue) {
+    if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !userFilterChanged && !restartRequested && !loginRequestedBecameTrue) {
       continue;
     }
 

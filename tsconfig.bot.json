@@ -1,5 +1,4 @@
 {
-  "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "./dist-bot",
     "module": "CommonJS",
@@ -11,16 +10,13 @@
     "resolveJsonModule": true,
     "sourceMap": true,
     "declaration": false,
-    "noEmit": false
+    "noEmit": false,
+    "strict": true,
+    "lib": ["ES2021"]
   },
   "include": ["src/**/*.ts"],
   "exclude": [
-    "app/**",
-    "components/**",
-    "lib/**",
-    "public/**",
-    "styles/**",
-    "dist/**",
+    "node_modules",
     "dist-bot/**"
   ]
 }
