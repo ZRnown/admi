@@ -7,6 +7,7 @@
     "start:bot": "node dist-bot/index.js",
     "build:server": "tsc -p tsconfig.server.json",
     "start:server": "node dist-server/server.js",
+    "start": "node dist-server/server.js",
     "dev:server": "ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\"}' server.ts"
   },
   "dependencies": {

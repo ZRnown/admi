@@ -8,7 +8,7 @@
     "loginMessage": "登录成功"
   },
   "82f60c98-5e4b-4766-a6df-b9a20e959c15": {
-    "loginState": "online",
-    "loginMessage": "登录成功"
+    "loginState": "idle",
+    "loginMessage": "未请求登录"
   }
 }
