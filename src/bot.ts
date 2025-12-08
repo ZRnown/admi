@@ -39,6 +39,8 @@ export class Bot {
   private readonly MAX_MAP_SIZE = 10000;
   // 定期保存定时器
   private saveMappingTimer?: NodeJS.Timeout;
+  // 记录去重清理定时器，便于热重载时释放
+  private processingTimers = new Set<NodeJS.Timeout>();
   
   constructor(client: Client, config: Config, senderBot: SenderBot, senderBotsBySource?: Map<string, SenderBot>) {
     this.config = config;
@@ -101,13 +103,20 @@ export class Bot {
   /**
    * 清理资源，停止定时器等
    */
-  cleanup() {
+  async cleanup() {
     if (this.saveMappingTimer) {
       clearInterval(this.saveMappingTimer);
       this.saveMappingTimer = undefined;
     }
+    // 清理未触发的消息去重定时器
+    for (const t of this.processingTimers) {
+      clearTimeout(t);
+    }
+    this.processingTimers.clear();
     // 保存映射
-    this.saveMapping().catch(() => {});
+    await this.saveMapping().catch((err) => {
+      this.logger.error(`cleanup saveMapping failed: ${String(err)}`);
+    });
   }
 
   /**
@@ -209,14 +218,16 @@ export class Bot {
     
     // 5秒后自动清理，防止内存泄漏
     // 同时限制 Set 大小，防止在高频消息下无限增长
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       this.processingMessages.delete(message.id);
+      this.processingTimers.delete(timer);
       // 如果 Set 过大（超过 1000），清理最旧的条目
       if (this.processingMessages.size > 1000) {
         const toDelete = Array.from(this.processingMessages).slice(0, this.processingMessages.size - 1000);
         toDelete.forEach(id => this.processingMessages.delete(id));
       }
     }, 5000);
+    this.processingTimers.add(timer);
 
     // 懒加载历史映射（进程首次消息时）
     if (this.sourceToTarget.size === 0) {

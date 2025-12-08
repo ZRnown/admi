@@ -61,10 +61,11 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const proxy = account.proxyUrl || env.PROXY_URL;
   const enableTranslation = account.enableTranslation || false;
   const deepseekApiKey = account.deepseekApiKey;
+  // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
+  const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
 
   if (Object.keys(webhooks).length > 0) {
     for (const [channelId, webhookUrl] of Object.entries(webhooks)) {
-      const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
       const sb = new SenderBot({
         replacementsDictionary: replacements,
         webhookUrl,
@@ -204,21 +205,6 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     setupReconnectHandlers(account.id, logger);
 
     try {
-      // 检查是否已经登录，避免重复登录
-      if ((bot.client as any).user) {
-        await logger.info(`账号 "${account.name}" 已经登录，跳过重复登录`);
-        await writeStatus(account.id, "online", "登录成功");
-        return;
-      }
-      
-      // 检查是否正在登录中，避免重复登录
-      const ws = (bot.client as any).ws;
-      if (ws && (ws.readyState === 0 || ws.readyState === 1)) {
-        await logger.info(`账号 "${account.name}" 正在登录中或已连接，跳过重复登录`);
-        return;
-      }
-      
-      // 标记为正在登录，防止重复调用
       await logger.info(`账号 "${account.name}" 开始登录...`);
       await (bot.client as any).login(account.token);
       // 登录成功消息会在 bot.ts 的 ready 事件中输出，这里不再重复输出
@@ -259,7 +245,7 @@ async function stopAccount(accountId: string, logger: FileLogger, manual: boolea
   try {
     // 清理 Bot 资源（包括定时器等）
     if (running.bot && typeof (running.bot as any).cleanup === "function") {
-      (running.bot as any).cleanup();
+      await (running.bot as any).cleanup();
     }
     if ((running.client as any).destroy) {
       await (running.client as any).destroy();
@@ -301,8 +287,12 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
   running.reconnectTimer = setTimeout(async () => {
     // 清除定时器引用
     const currentRunning = runningAccounts.get(accountId);
-    if (currentRunning) {
-      currentRunning.reconnectTimer = undefined;
+    if (!currentRunning) {
+      return;
+    }
+    currentRunning.reconnectTimer = undefined;
+    if (currentRunning.isManuallyStopped) {
+      return;
     }
     try {
       // 清理旧的客户端
