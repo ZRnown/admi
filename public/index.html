@@ -59,6 +59,22 @@
   </div>
 
   <script>
+    // 兼容的 ID 生成函数
+    function genId() {
+      try {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+          return crypto.randomUUID();
+        }
+        if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.randomUUID) {
+          return globalThis.crypto.randomUUID();
+        }
+      } catch (e) {
+        // 降级方案
+      }
+      // 降级：使用时间戳 + 随机数
+      return `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    }
+
     let state = { accounts: [], activeId: "" };
     let saveTimer = null;
 
@@ -308,7 +324,7 @@
 
     function addAccount() {
       const newAcc = {
-        id: crypto.randomUUID(),
+        id: genId(),
         name: `账号${state.accounts.length + 1}`,
         type: 'selfbot',
         token: '',
@@ -343,7 +359,7 @@
     function addMapping() {
       const acc = getActiveAccount();
       if (!acc.mappings) acc.mappings = [];
-      acc.mappings.push({ id: crypto.randomUUID(), sourceChannelId: '', targetWebhookUrl: '', note: '' });
+      acc.mappings.push({ id: genId(), sourceChannelId: '', targetWebhookUrl: '', note: '' });
       saveConfig();
       render();
     }

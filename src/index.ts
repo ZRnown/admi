@@ -317,7 +317,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
     if (!currentRunning) {
       return;
     }
-    currentRunning.reconnectTimer = undefined;
+      currentRunning.reconnectTimer = undefined;
     if (currentRunning.isManuallyStopped) {
       return;
     }
@@ -396,9 +396,9 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
                            currentRunning.reconnectCount < 10;
         
         if (shouldRetry) {
-          // 如果重连失败，再次尝试（指数退避，最多30秒）
-          const nextDelay = Math.min(delay * 2, 30000);
-          await reconnectAccount(accountId, logger, nextDelay);
+        // 如果重连失败，再次尝试（指数退避，最多30秒）
+        const nextDelay = Math.min(delay * 2, 30000);
+        await reconnectAccount(accountId, logger, nextDelay);
         } else {
           await logger.error(`账号 "${currentRunning.account.name}" 停止重连（已达到最大次数或已手动停止）`);
           await stopAccount(accountId, logger, false);
@@ -415,8 +415,8 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
                          currentRunning.reconnectCount < 10;
       
       if (shouldRetry) {
-        const nextDelay = Math.min(delay * 2, 30000);
-        await reconnectAccount(accountId, logger, nextDelay);
+      const nextDelay = Math.min(delay * 2, 30000);
+      await reconnectAccount(accountId, logger, nextDelay);
       } else {
         await logger.error(`账号 "${currentRunning.account.name}" 停止重连（已达到最大次数或已手动停止）`);
         await stopAccount(accountId, logger, false);
