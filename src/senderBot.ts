@@ -166,15 +166,15 @@ export class SenderBot {
 
   /**
    * 判断是否需要翻译以及目标语言
-   * - 中文占比 >= 0.8：不翻译
-   * - 英文占比 >= 0.8：翻译成中文
+   * - 中文占比 > 0.5：不翻译
+   * - 英文占比 >= 0.5：翻译成中文
    * - 中英混合：按占比，中文多则翻译成英文，英文多则翻译成中文
    * - 都很少：不翻译
    */
   private chooseTranslateTarget(text: string): "zh" | "en" | null {
     const { chineseRatio, englishRatio } = this.languageStats(text);
-    if (chineseRatio >= 0.8) return null;
-    if (englishRatio >= 0.8) return "zh";
+    if (chineseRatio > 0.5) return null;
+    if (englishRatio >= 0.5) return "zh";
     if (chineseRatio === 0 && englishRatio === 0) return null;
     if (chineseRatio > englishRatio) return "en";
     if (englishRatio > chineseRatio) return "zh";
