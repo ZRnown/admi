@@ -67,7 +67,7 @@ class SenderBot {
                     }
                 });
             });
-            req.setTimeout(15000, () => {
+            req.setTimeout(30000, () => {
                 req.destroy(new Error("Webhook multipart request timeout"));
             });
             req.on("error", (err) => reject(err));
@@ -85,7 +85,7 @@ class SenderBot {
     }
     async downloadUrl(fileUrl) {
         const MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024; // 10MB limit
-        const DOWNLOAD_TIMEOUT_MS = 20000; // 20s
+        const DOWNLOAD_TIMEOUT_MS = 30000; // 30s
         const u = new node_url_1.URL(fileUrl);
         const options = {
             method: "GET",
@@ -128,18 +128,48 @@ class SenderBot {
         }
     }
     /**
-     * 检测文本是否含有中文字符
-     * 只要含有中文，就不再触发翻译（避免把中文翻译为其他语言）
+     * 统计中英文占比，返回中文比例与英文比例
      */
-    hasChinese(text) {
+    languageStats(text) {
         if (!text)
-            return false;
-        return /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/u.test(text);
+            return { chineseRatio: 0, englishRatio: 0 };
+        const chars = Array.from(text);
+        let cn = 0;
+        let en = 0;
+        for (const ch of chars) {
+            if (/[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/u.test(ch))
+                cn++;
+            else if (/[A-Za-z]/.test(ch))
+                en++;
+        }
+        const total = cn + en || 1;
+        return { chineseRatio: cn / total, englishRatio: en / total };
+    }
+    /**
+     * 判断是否需要翻译以及目标语言
+     * - 中文占比 >= 0.8：不翻译
+     * - 英文占比 >= 0.8：翻译成中文
+     * - 中英混合：按占比，中文多则翻译成英文，英文多则翻译成中文
+     * - 都很少：不翻译
+     */
+    chooseTranslateTarget(text) {
+        const { chineseRatio, englishRatio } = this.languageStats(text);
+        if (chineseRatio >= 0.8)
+            return null;
+        if (englishRatio >= 0.8)
+            return "zh";
+        if (chineseRatio === 0 && englishRatio === 0)
+            return null;
+        if (chineseRatio > englishRatio)
+            return "en";
+        if (englishRatio > chineseRatio)
+            return "zh";
+        return null;
     }
     /**
      * 调用 DeepSeek API 进行翻译
      */
-    async translateText(text) {
+    async translateText(text, target) {
         if (!this.enableTranslation) {
             console.log("[翻译] 翻译功能未启用");
             return null;
@@ -151,9 +181,10 @@ class SenderBot {
         if (!text.trim()) {
             return null;
         }
-        // 只翻译纯英文内容：只要包含中文字符就直接跳过
-        if (this.hasChinese(text)) {
-            console.log("[翻译] 检测到中文，跳过翻译");
+        // 只处理中英互译，其他语言不翻译
+        const { chineseRatio, englishRatio } = this.languageStats(text);
+        if (chineseRatio === 0 && englishRatio === 0) {
+            console.log("[翻译] 非中英内容，跳过翻译");
             return null;
         }
         try {
@@ -163,7 +194,9 @@ class SenderBot {
                 messages: [
                     {
                         role: "system",
-                        content: "You are a translator. Only translate English into Simplified Chinese. Do NOT translate or alter any Chinese text or any non-English tokens. Preserve punctuation, numbers, links, emojis, and spacing. Return only the translated result (Chinese), with any original non-English parts unchanged."
+                        content: target === "zh"
+                            ? "You are a translator. Translate English (and English parts in mixed text) into Simplified Chinese. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing Chinese or non-English text unchanged. Return only the translated result."
+                            : "You are a translator. Translate Chinese (and Chinese parts in mixed text) into English. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing English or non-Chinese text unchanged. Return only the translated result."
                     },
                     {
                         role: "user",
@@ -214,9 +247,9 @@ class SenderBot {
                         }
                     });
                 });
-                req.setTimeout(10000, () => {
+                req.setTimeout(20000, () => {
                     req.destroy();
-                    console.error("[翻译] 请求超时（10秒）");
+                    console.error("[翻译] 请求超时（20秒）");
                     resolve(null); // 超时也不影响消息发送
                 });
                 req.on("error", (err) => {
@@ -242,10 +275,11 @@ class SenderBot {
                 text = text.replaceAll(a, b);
             }
             // 如果启用了翻译，尝试翻译文本
-            if (this.enableTranslation && text.trim() && !this.hasChinese(text)) {
-                const translated = await this.translateText(text);
+            const targetLang = this.enableTranslation ? this.chooseTranslateTarget(text) : null;
+            if (targetLang && text.trim()) {
+                const translated = await this.translateText(text, targetLang);
                 if (translated) {
-                    // 格式：原文 + 横线 + 翻译
+                    // 保留原文 + 翻译
                     text = `${text}\n\n---\n\n${translated}`;
                 }
             }
@@ -304,7 +338,36 @@ class SenderBot {
                     if (item.useEmbed) {
                         payload.content = "";
                         const base = chunk ? [{ description: chunk }] : [];
-                        payload.embeds = [...base, ...(item.extraEmbeds || [])];
+                        let embeds = [...base, ...(item.extraEmbeds || [])];
+                        // 翻译 embed 字段（中英互译，非中英不翻译）
+                        if (this.enableTranslation && embeds.length > 0) {
+                            embeds = await Promise.all(embeds.map(async (e) => {
+                                const translateField = async (txt) => {
+                                    if (!txt)
+                                        return txt;
+                                    const target = this.chooseTranslateTarget(txt);
+                                    if (!target)
+                                        return txt;
+                                    const t = await this.translateText(txt, target);
+                                    return t || txt;
+                                };
+                                return {
+                                    ...e,
+                                    title: await translateField(e.title),
+                                    description: await translateField(e.description),
+                                    footer: e.footer ? { ...e.footer, text: await translateField(e.footer.text) } : e.footer,
+                                    author: e.author ? { ...e.author, name: await translateField(e.author.name) } : e.author,
+                                    fields: e.fields
+                                        ? await Promise.all(e.fields.map(async (f) => ({
+                                            ...f,
+                                            name: await translateField(f.name),
+                                            value: await translateField(f.value),
+                                        })))
+                                        : e.fields,
+                                };
+                            }));
+                        }
+                        payload.embeds = embeds;
                     }
                     else {
                         payload.content = chunk;
@@ -385,7 +448,7 @@ class SenderBot {
                     }
                 });
             });
-            req.setTimeout(15000, () => {
+            req.setTimeout(30000, () => {
                 req.destroy(new Error("Webhook request timeout"));
             });
             req.on("error", (err) => reject(err));
