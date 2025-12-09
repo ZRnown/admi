@@ -265,9 +265,9 @@ export class SenderBot {
             }
           });
         });
-        req.setTimeout(20000, () => {
+        req.setTimeout(60000, () => {
           req.destroy();
-          console.error("[翻译] 请求超时（20秒）");
+          console.error("[翻译] 请求超时（60秒）");
           resolve(null); // 超时也不影响消息发送
         });
         req.on("error", (err) => {
