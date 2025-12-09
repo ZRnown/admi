@@ -85,7 +85,7 @@ export class SenderBot {
           }
         });
       });
-      req.setTimeout(15000, () => {
+      req.setTimeout(30000, () => {
         req.destroy(new Error("Webhook multipart request timeout"));
       });
       req.on("error", (err) => reject(err));
@@ -105,7 +105,7 @@ export class SenderBot {
 
   private async downloadUrl(fileUrl: string): Promise<Buffer> {
     const MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024; // 10MB limit
-    const DOWNLOAD_TIMEOUT_MS = 20000; // 20s
+    const DOWNLOAD_TIMEOUT_MS = 30000; // 30s
     const u = new URL(fileUrl);
     const options: https.RequestOptions = {
       method: "GET",
@@ -238,7 +238,7 @@ export class SenderBot {
             }
           });
         });
-        req.setTimeout(10000, () => {
+        req.setTimeout(20000, () => {
           req.destroy();
           console.error("[翻译] 请求超时（10秒）");
           resolve(null); // 超时也不影响消息发送
@@ -423,7 +423,7 @@ export class SenderBot {
           }
         });
       });
-      req.setTimeout(15000, () => {
+      req.setTimeout(30000, () => {
         req.destroy(new Error("Webhook request timeout"));
       });
       req.on("error", (err) => reject(err));
