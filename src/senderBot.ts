@@ -303,135 +303,174 @@ export class SenderBot {
       targetChannelId: string;
     }> = [];
 
-    for (const item of messagesToSend) {
-      let text = item.content || "";
-      for (const [a, b] of Object.entries(this.replacementsDictionary)) {
-        text = text.replaceAll(a, b);
-      }
-
-      // 如果启用了翻译，尝试翻译文本；已含分隔线视为已翻译，跳过
-      const alreadyTranslated = text.includes("\n---\n");
-      const targetLang = !alreadyTranslated && this.enableTranslation ? this.chooseTranslateTarget(text) : null;
-      if (!alreadyTranslated && targetLang && text.trim()) {
-        const translated = await this.translateText(text, targetLang);
-        if (translated) {
-          // 原文在上，分割线，中间保持紧凑
-          text = `${text}\n---\n${translated}`;
+    // 并行处理所有消息的翻译和准备（提升并发性能）
+    // 注意：分片消息的分片之间仍需保持顺序，但不同消息可以并行
+    const processedMessages = await Promise.all(
+      messagesToSend.map(async (item) => {
+        let text = item.content || "";
+        for (const [a, b] of Object.entries(this.replacementsDictionary)) {
+          text = text.replaceAll(a, b);
         }
-      }
 
-      // Discord limits: content 2000, embed.description 4096
-      const MESSAGE_CHUNK = item.useEmbed ? 4096 : 2000;
-      const hasOnlyEmbeds = item.useEmbed === true && (item.extraEmbeds?.length || 0) > 0 && text.trim() === "";
-      const hasUploads = (item.uploads?.length || 0) > 0;
-      if (text.trim() === "" && !hasOnlyEmbeds && !hasUploads) continue;
+        // 如果启用了翻译，尝试翻译文本；已含分隔线视为已翻译，跳过
+        const alreadyTranslated = text.includes("\n---\n");
+        const targetLang = !alreadyTranslated && this.enableTranslation ? this.chooseTranslateTarget(text) : null;
+        if (!alreadyTranslated && targetLang && text.trim()) {
+          const translated = await this.translateText(text, targetLang);
+          if (translated) {
+            // 原文在上，分割线，中间保持紧凑
+            text = `${text}\n---\n${translated}`;
+          }
+        }
 
-      // 逐条发送（不分片回复映射会丢失），如超长则分段多条
-      // If there are uploads, we will send exactly one message with multipart form.
-      const loopCount = hasUploads ? 1 : Math.max(1, hasOnlyEmbeds ? 1 : Math.ceil(text.length / MESSAGE_CHUNK));
-      for (let idx = 0; idx < loopCount; idx++) {
-        const i = idx * MESSAGE_CHUNK;
-        const chunk = text.substring(i, i + MESSAGE_CHUNK);
-        let resp: any = null;
-        if (hasUploads) {
-          // Build multipart form with files and payload_json
-          const files = await this.downloadUploads(item.uploads!);
-          const desc = (chunk || "").slice(0, 4096);
-          const embed: any = {};
-          if (item.useEmbed && desc.trim() !== "") {
-            embed.description = desc;
-          }
-          const firstImage = files.find((f) => f.isImage);
-          if (item.useEmbed && firstImage) {
-            embed.image = { url: `attachment://${firstImage.filename}` };
-          }
-          const payload: any = {
-            content: item.useEmbed ? "" : (chunk || "").trim() || " ",
-            allowed_mentions: { parse: [], replied_user: false },
-          };
-          if (item.useEmbed && Object.keys(embed).length > 0) {
-            payload.embeds = [embed];
-          }
-          if (item.username) payload.username = item.username;
-          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
-          if (item.components && item.components.length > 0) {
-            payload.components = item.components;
-          }
-          // Provide attachments descriptors to map files indices for attachment://filename resolution
-          if (files.length > 0) {
-            payload.attachments = files.map((f, idx) => ({ id: idx, filename: f.filename }));
-          }
-          if (item.replyToTarget?.messageId) {
-            payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
-          }
-          resp = await this.postMultipart(payload, files, true);
-        } else {
-          const payload: any = {
-            allowed_mentions: { parse: [], replied_user: false }
-          };
-          if (item.useEmbed) {
-            payload.content = "";
-            const base = chunk ? [{ description: chunk }] : [];
-            let embeds: any[] = [...base, ...((item.extraEmbeds as any[]) || [])];
+        // Discord limits: content 2000, embed.description 4096
+        const MESSAGE_CHUNK = item.useEmbed ? 4096 : 2000;
+        const hasOnlyEmbeds = item.useEmbed === true && (item.extraEmbeds?.length || 0) > 0 && text.trim() === "";
+        const hasUploads = (item.uploads?.length || 0) > 0;
+        if (text.trim() === "" && !hasOnlyEmbeds && !hasUploads) {
+          return null; // 跳过空消息
+        }
 
-            // 翻译 embed 字段（中英互译，非中英不翻译）
-            if (this.enableTranslation && embeds.length > 0) {
-              const formatTranslated = (orig: string, t?: string | null) => {
-                if (!t || t.trim() === orig.trim()) return orig;
-                return `${orig}\n---\n${t}`;
-              };
-              embeds = await Promise.all(
-                embeds.map(async (e: any) => {
-                  const translateField = async (txt?: string) => {
-                    if (!txt) return txt;
-                    if (txt.includes("\n---\n")) return txt;
-                    const target = this.chooseTranslateTarget(txt);
-                    if (!target) return txt;
-                    const t = await this.translateText(txt, target);
-                    return formatTranslated(txt, t || undefined);
-                  };
-                  return {
-                    ...e,
-                    title: await translateField(e.title),
-                    description: await translateField(e.description),
-                    footer: e.footer ? { ...e.footer, text: await translateField(e.footer.text) } : e.footer,
-                    author: e.author ? { ...e.author, name: await translateField(e.author.name) } : e.author,
-                    fields: e.fields
-                      ? await Promise.all(
-                          e.fields.map(async (f: any) => ({
-                            ...f,
-                            name: await translateField(f.name),
-                            value: await translateField(f.value),
-                          }))
-                        )
-                      : e.fields,
-                  };
-                })
-              );
+        // 计算分片数量
+        const loopCount = hasUploads ? 1 : Math.max(1, hasOnlyEmbeds ? 1 : Math.ceil(text.length / MESSAGE_CHUNK));
+        
+        return {
+          item,
+          text,
+          loopCount,
+          hasUploads,
+          hasOnlyEmbeds,
+          MESSAGE_CHUNK,
+        };
+      })
+    );
+
+    // 过滤掉空消息，然后并行发送所有消息
+    // 注意：如果消息有回复关系，Discord API 会自动处理，不需要等待
+    const sendPromises = processedMessages
+      .filter((msg): msg is NonNullable<typeof msg> => msg !== null)
+      .map(async (processed) => {
+        const { item, text, loopCount, hasUploads, hasOnlyEmbeds, MESSAGE_CHUNK } = processed;
+        const itemResults: Array<{
+          sourceMessageId?: string;
+          targetMessageId: string;
+          targetChannelId: string;
+        }> = [];
+
+        // 分片消息的分片之间需要保持顺序（因为回复关系）
+        for (let idx = 0; idx < loopCount; idx++) {
+          const i = idx * MESSAGE_CHUNK;
+          const chunk = text.substring(i, i + MESSAGE_CHUNK);
+          let resp: any = null;
+          
+          if (hasUploads) {
+            // Build multipart form with files and payload_json
+            const files = await this.downloadUploads(item.uploads!);
+            const desc = (chunk || "").slice(0, 4096);
+            const embed: any = {};
+            if (item.useEmbed && desc.trim() !== "") {
+              embed.description = desc;
             }
-
-            payload.embeds = embeds;
+            const firstImage = files.find((f) => f.isImage);
+            if (item.useEmbed && firstImage) {
+              embed.image = { url: `attachment://${firstImage.filename}` };
+            }
+            const payload: any = {
+              content: item.useEmbed ? "" : (chunk || "").trim() || " ",
+              allowed_mentions: { parse: [], replied_user: false },
+            };
+            if (item.useEmbed && Object.keys(embed).length > 0) {
+              payload.embeds = [embed];
+            }
+            if (item.username) payload.username = item.username;
+            if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+            if (item.components && item.components.length > 0) {
+              payload.components = item.components;
+            }
+            // Provide attachments descriptors to map files indices for attachment://filename resolution
+            if (files.length > 0) {
+              payload.attachments = files.map((f, idx) => ({ id: idx, filename: f.filename }));
+            }
+            if (item.replyToTarget?.messageId) {
+              payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
+            }
+            resp = await this.postMultipart(payload, files, true);
           } else {
-            payload.content = chunk;
+            const payload: any = {
+              allowed_mentions: { parse: [], replied_user: false }
+            };
+            if (item.useEmbed) {
+              payload.content = "";
+              const base = chunk ? [{ description: chunk }] : [];
+              let embeds: any[] = [...base, ...((item.extraEmbeds as any[]) || [])];
+
+              // 翻译 embed 字段（中英互译，非中英不翻译）
+              if (this.enableTranslation && embeds.length > 0) {
+                const formatTranslated = (orig: string, t?: string | null) => {
+                  if (!t || t.trim() === orig.trim()) return orig;
+                  return `${orig}\n---\n${t}`;
+                };
+                embeds = await Promise.all(
+                  embeds.map(async (e: any) => {
+                    const translateField = async (txt?: string) => {
+                      if (!txt) return txt;
+                      if (txt.includes("\n---\n")) return txt;
+                      const target = this.chooseTranslateTarget(txt);
+                      if (!target) return txt;
+                      const t = await this.translateText(txt, target);
+                      return formatTranslated(txt, t || undefined);
+                    };
+                    return {
+                      ...e,
+                      title: await translateField(e.title),
+                      description: await translateField(e.description),
+                      footer: e.footer ? { ...e.footer, text: await translateField(e.footer.text) } : e.footer,
+                      author: e.author ? { ...e.author, name: await translateField(e.author.name) } : e.author,
+                      fields: e.fields
+                        ? await Promise.all(
+                            e.fields.map(async (f: any) => ({
+                              ...f,
+                              name: await translateField(f.name),
+                              value: await translateField(f.value),
+                            }))
+                          )
+                        : e.fields,
+                    };
+                  })
+                );
+              }
+
+              payload.embeds = embeds;
+            } else {
+              payload.content = chunk;
+            }
+            if (item.components && item.components.length > 0) {
+              payload.components = item.components;
+            }
+            if (item.username) payload.username = item.username;
+            if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+            if (item.replyToTarget?.messageId) {
+              payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
+            }
+            resp = await this.postToWebhook(payload, true);
           }
-          if (item.components && item.components.length > 0) {
-            payload.components = item.components;
+          
+          if (resp?.id && resp?.channel_id) {
+            itemResults.push({
+              sourceMessageId: i === 0 ? item.sourceMessageId : undefined,
+              targetMessageId: String(resp.id),
+              targetChannelId: String(resp.channel_id)
+            });
           }
-          if (item.username) payload.username = item.username;
-          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
-          if (item.replyToTarget?.messageId) {
-            payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
-          }
-          resp = await this.postToWebhook(payload, true);
         }
-        if (resp?.id && resp?.channel_id) {
-          results.push({
-            sourceMessageId: i === 0 ? item.sourceMessageId : undefined,
-            targetMessageId: String(resp.id),
-            targetChannelId: String(resp.channel_id)
-          });
-        }
-      }
+        
+        return itemResults;
+      });
+
+    // 等待所有消息发送完成，并收集结果
+    const allResults = await Promise.all(sendPromises);
+    for (const itemResults of allResults) {
+      results.push(...itemResults);
     }
 
     return results;
