@@ -314,8 +314,8 @@ export class SenderBot {
       if (targetLang && text.trim()) {
         const translated = await this.translateText(text, targetLang);
         if (translated) {
-          // 保留原文 + 翻译
-          text = `${text}\n\n---\n\n${translated}`;
+          // 原文在上，分割线，中间保持紧凑
+          text = `${text}\n---\n${translated}`;
         }
       }
 
@@ -375,6 +375,10 @@ export class SenderBot {
 
             // 翻译 embed 字段（中英互译，非中英不翻译）
             if (this.enableTranslation && embeds.length > 0) {
+              const formatTranslated = (orig: string, t?: string | null) => {
+                if (!t || t.trim() === orig.trim()) return orig;
+                return `${orig}\n---\n${t}`;
+              };
               embeds = await Promise.all(
                 embeds.map(async (e: any) => {
                   const translateField = async (txt?: string) => {
@@ -382,7 +386,7 @@ export class SenderBot {
                     const target = this.chooseTranslateTarget(txt);
                     if (!target) return txt;
                     const t = await this.translateText(txt, target);
-                    return t || txt;
+                    return formatTranslated(txt, t || undefined);
                   };
                   return {
                     ...e,
