@@ -309,9 +309,10 @@ export class SenderBot {
         text = text.replaceAll(a, b);
       }
 
-      // 如果启用了翻译，尝试翻译文本
-      const targetLang = this.enableTranslation ? this.chooseTranslateTarget(text) : null;
-      if (targetLang && text.trim()) {
+      // 如果启用了翻译，尝试翻译文本；已含分隔线视为已翻译，跳过
+      const alreadyTranslated = text.includes("\n---\n");
+      const targetLang = !alreadyTranslated && this.enableTranslation ? this.chooseTranslateTarget(text) : null;
+      if (!alreadyTranslated && targetLang && text.trim()) {
         const translated = await this.translateText(text, targetLang);
         if (translated) {
           // 原文在上，分割线，中间保持紧凑
@@ -383,6 +384,7 @@ export class SenderBot {
                 embeds.map(async (e: any) => {
                   const translateField = async (txt?: string) => {
                     if (!txt) return txt;
+                    if (txt.includes("\n---\n")) return txt;
                     const target = this.chooseTranslateTarget(txt);
                     if (!target) return txt;
                     const t = await this.translateText(txt, target);
