@@ -28,6 +28,7 @@ interface RunningAccount {
   reconnectTimer?: NodeJS.Timeout; // 重连定时器
   reconnectCount: number; // 重连次数
   lastReconnectTime: number; // 上次重连时间
+  isLoggingIn?: boolean; // 是否正在登录中，用于防止重复登录
 }
 
 const runningAccounts = new Map<string, RunningAccount>();
@@ -116,7 +117,9 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
   const existing = runningAccounts.get(account.id);
   if (existing) {
     const isAlreadyLoggedIn = existing.client && (existing.client as any).user;
-    const isLoggingIn = existing.client && (existing.client as any).ws && (existing.client as any).ws.readyState === 0;
+    const isLoggingIn =
+      existing.isLoggingIn ||
+      (existing.client && (existing.client as any).ws && (existing.client as any).ws.readyState === 0);
     
     // 如果账号已经登录或正在登录中，只更新配置，不重新创建
     if (isAlreadyLoggedIn || isLoggingIn) {
@@ -202,6 +205,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       isManuallyStopped: false,
       reconnectCount: 0,
       lastReconnectTime: 0,
+    isLoggingIn: true,
     };
     runningAccounts.set(account.id, runningInfo);
 
@@ -213,6 +217,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       await (bot.client as any).login(account.token);
       // 登录成功消息会在 bot.ts 的 ready 事件中输出，这里不再重复输出
       await writeStatus(account.id, "online", "登录成功");
+    runningInfo.isLoggingIn = false;
     } catch (e: any) {
       const msg = String(e?.message || e);
       console.error(e);
@@ -224,6 +229,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       } else {
         await stopAccount(account.id, logger, false);
       }
+    runningInfo.isLoggingIn = false;
     }
   } catch (e: any) {
     await logger.error(`启动账号 "${account.name}" 失败: ${String(e?.message || e)}`);
@@ -239,6 +245,7 @@ async function stopAccount(accountId: string, logger: FileLogger, manual: boolea
   if (manual) {
     running.isManuallyStopped = true;
   }
+  running.isLoggingIn = false;
   
   // 清除重连定时器
   if (running.reconnectTimer) {
@@ -374,6 +381,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       // 更新运行信息
       currentRunning.client = client;
       currentRunning.bot = bot;
+    currentRunning.isLoggingIn = true;
       
       // 设置断开重连监听
       setupReconnectHandlers(accountId, logger);
@@ -385,10 +393,12 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
         await writeStatus(accountId, "online", "重连成功");
         // 重连成功，重置计数
         currentRunning.reconnectCount = 0;
+      currentRunning.isLoggingIn = false;
       } catch (e: any) {
         const msg = String(e?.message || e);
         await logger.error(`账号 "${currentRunning.account.name}" 重连失败: ${msg}`);
         await writeStatus(accountId, "error", `重连失败: ${msg}`);
+      currentRunning.isLoggingIn = false;
         
         // 检查是否应该继续重连
         const shouldRetry = currentRunning && 
