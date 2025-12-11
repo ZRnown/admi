@@ -118,8 +118,7 @@
     // 渲染界面
     function render() {
       if (state.accounts.length === 0) {
-        document.getElementById('accountTabs').innerHTML = '<button onclick="addAccount()" class="inline-flex items-center gap-1 rounded-full border border-dashed border-indigo-300 px-4 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50">+ 添加账号</button>';
-        document.getElementById('configForm').innerHTML = '<div class="text-center py-12 text-slate-400"><p class="mb-4">暂无账号，请点击上方按钮添加第一个账号</p></div>';
+        document.getElementById('app').innerHTML = '<div class="text-center py-8 text-slate-400">暂无账号，请添加</div>';
         return;
       }
 
