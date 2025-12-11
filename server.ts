@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
+import { execSync } from "child_process";
 import path from "path";
 import { type AccountConfig, getMultiConfig, saveMultiConfig, type MultiConfig } from "./src/config";
 
@@ -305,9 +306,32 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
   }
 });
 
-// 启动服务器
-app.listen(PORT, () => {
+// 启动服务器（自动处理端口冲突）
+const server = app.listen(PORT, () => {
   console.log(`管理界面服务器运行在 http://localhost:${PORT}`);
   console.log(`后端 Bot 请单独运行: pnpm start:bot`);
+});
+
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ 错误：端口 ${PORT} 已被占用！`);
+    console.error(`\n解决方案：`);
+    console.error(`1. 杀掉占用端口的进程：`);
+    console.error(`   lsof -ti:${PORT} | xargs kill -9`);
+    console.error(`2. 或者使用其他端口：`);
+    console.error(`   PORT=3001 pnpm start:server`);
+    console.error(`\n当前占用端口的进程：`);
+    try {
+      const pid = execSync(`lsof -ti:${PORT}`, { encoding: 'utf-8' }).trim();
+      const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8' }).trim();
+      console.error(`   PID: ${pid}`);
+      console.error(`   命令: ${cmd.substring(0, 100)}...`);
+    } catch (e) {
+      console.error(`   无法获取进程信息`);
+    }
+    process.exit(1);
+  } else {
+    throw err;
+  }
 });
 
