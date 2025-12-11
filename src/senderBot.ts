@@ -307,32 +307,32 @@ export class SenderBot {
     // 注意：分片消息的分片之间仍需保持顺序，但不同消息可以并行
     const processedMessages = await Promise.all(
       messagesToSend.map(async (item) => {
-        let text = item.content || "";
-        for (const [a, b] of Object.entries(this.replacementsDictionary)) {
-          text = text.replaceAll(a, b);
-        }
+      let text = item.content || "";
+      for (const [a, b] of Object.entries(this.replacementsDictionary)) {
+        text = text.replaceAll(a, b);
+      }
 
         // 如果启用了翻译，尝试翻译文本；已含分隔线视为已翻译，跳过
         const alreadyTranslated = text.includes("\n---\n");
         const targetLang = !alreadyTranslated && this.enableTranslation ? this.chooseTranslateTarget(text) : null;
         if (!alreadyTranslated && targetLang && text.trim()) {
           const translated = await this.translateText(text, targetLang);
-          if (translated) {
+        if (translated) {
             // 原文在上，分割线，中间保持紧凑
             text = `${text}\n---\n${translated}`;
-          }
         }
+      }
 
-        // Discord limits: content 2000, embed.description 4096
-        const MESSAGE_CHUNK = item.useEmbed ? 4096 : 2000;
-        const hasOnlyEmbeds = item.useEmbed === true && (item.extraEmbeds?.length || 0) > 0 && text.trim() === "";
-        const hasUploads = (item.uploads?.length || 0) > 0;
+      // Discord limits: content 2000, embed.description 4096
+      const MESSAGE_CHUNK = item.useEmbed ? 4096 : 2000;
+      const hasOnlyEmbeds = item.useEmbed === true && (item.extraEmbeds?.length || 0) > 0 && text.trim() === "";
+      const hasUploads = (item.uploads?.length || 0) > 0;
         if (text.trim() === "" && !hasOnlyEmbeds && !hasUploads) {
           return null; // 跳过空消息
         }
 
         // 计算分片数量
-        const loopCount = hasUploads ? 1 : Math.max(1, hasOnlyEmbeds ? 1 : Math.ceil(text.length / MESSAGE_CHUNK));
+      const loopCount = hasUploads ? 1 : Math.max(1, hasOnlyEmbeds ? 1 : Math.ceil(text.length / MESSAGE_CHUNK));
         
         return {
           item,
@@ -358,50 +358,50 @@ export class SenderBot {
         }> = [];
 
         // 分片消息的分片之间需要保持顺序（因为回复关系）
-        for (let idx = 0; idx < loopCount; idx++) {
-          const i = idx * MESSAGE_CHUNK;
-          const chunk = text.substring(i, i + MESSAGE_CHUNK);
-          let resp: any = null;
+      for (let idx = 0; idx < loopCount; idx++) {
+        const i = idx * MESSAGE_CHUNK;
+        const chunk = text.substring(i, i + MESSAGE_CHUNK);
+        let resp: any = null;
           
-          if (hasUploads) {
-            // Build multipart form with files and payload_json
-            const files = await this.downloadUploads(item.uploads!);
-            const desc = (chunk || "").slice(0, 4096);
-            const embed: any = {};
-            if (item.useEmbed && desc.trim() !== "") {
-              embed.description = desc;
-            }
-            const firstImage = files.find((f) => f.isImage);
-            if (item.useEmbed && firstImage) {
-              embed.image = { url: `attachment://${firstImage.filename}` };
-            }
-            const payload: any = {
-              content: item.useEmbed ? "" : (chunk || "").trim() || " ",
-              allowed_mentions: { parse: [], replied_user: false },
-            };
-            if (item.useEmbed && Object.keys(embed).length > 0) {
-              payload.embeds = [embed];
-            }
-            if (item.username) payload.username = item.username;
-            if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
-            if (item.components && item.components.length > 0) {
-              payload.components = item.components;
-            }
-            // Provide attachments descriptors to map files indices for attachment://filename resolution
-            if (files.length > 0) {
-              payload.attachments = files.map((f, idx) => ({ id: idx, filename: f.filename }));
-            }
-            if (item.replyToTarget?.messageId) {
-              payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
-            }
-            resp = await this.postMultipart(payload, files, true);
-          } else {
-            const payload: any = {
-              allowed_mentions: { parse: [], replied_user: false }
-            };
-            if (item.useEmbed) {
-              payload.content = "";
-              const base = chunk ? [{ description: chunk }] : [];
+        if (hasUploads) {
+          // Build multipart form with files and payload_json
+          const files = await this.downloadUploads(item.uploads!);
+          const desc = (chunk || "").slice(0, 4096);
+          const embed: any = {};
+          if (item.useEmbed && desc.trim() !== "") {
+            embed.description = desc;
+          }
+          const firstImage = files.find((f) => f.isImage);
+          if (item.useEmbed && firstImage) {
+            embed.image = { url: `attachment://${firstImage.filename}` };
+          }
+          const payload: any = {
+            content: item.useEmbed ? "" : (chunk || "").trim() || " ",
+            allowed_mentions: { parse: [], replied_user: false },
+          };
+          if (item.useEmbed && Object.keys(embed).length > 0) {
+            payload.embeds = [embed];
+          }
+          if (item.username) payload.username = item.username;
+          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          if (item.components && item.components.length > 0) {
+            payload.components = item.components;
+          }
+          // Provide attachments descriptors to map files indices for attachment://filename resolution
+          if (files.length > 0) {
+            payload.attachments = files.map((f, idx) => ({ id: idx, filename: f.filename }));
+          }
+          if (item.replyToTarget?.messageId) {
+            payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
+          }
+          resp = await this.postMultipart(payload, files, true);
+        } else {
+          const payload: any = {
+            allowed_mentions: { parse: [], replied_user: false }
+          };
+          if (item.useEmbed) {
+            payload.content = "";
+            const base = chunk ? [{ description: chunk }] : [];
               let embeds: any[] = [...base, ...((item.extraEmbeds as any[]) || [])];
 
               // 翻译 embed 字段（中英互译，非中英不翻译）
@@ -441,28 +441,28 @@ export class SenderBot {
               }
 
               payload.embeds = embeds;
-            } else {
-              payload.content = chunk;
-            }
-            if (item.components && item.components.length > 0) {
-              payload.components = item.components;
-            }
-            if (item.username) payload.username = item.username;
-            if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
-            if (item.replyToTarget?.messageId) {
-              payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
-            }
-            resp = await this.postToWebhook(payload, true);
+          } else {
+            payload.content = chunk;
           }
-          
-          if (resp?.id && resp?.channel_id) {
-            itemResults.push({
-              sourceMessageId: i === 0 ? item.sourceMessageId : undefined,
-              targetMessageId: String(resp.id),
-              targetChannelId: String(resp.channel_id)
-            });
+          if (item.components && item.components.length > 0) {
+            payload.components = item.components;
           }
+          if (item.username) payload.username = item.username;
+          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          if (item.replyToTarget?.messageId) {
+            payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
+          }
+          resp = await this.postToWebhook(payload, true);
         }
+          
+        if (resp?.id && resp?.channel_id) {
+            itemResults.push({
+            sourceMessageId: i === 0 ? item.sourceMessageId : undefined,
+            targetMessageId: String(resp.id),
+            targetChannelId: String(resp.channel_id)
+          });
+        }
+      }
         
         return itemResults;
       });
