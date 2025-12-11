@@ -3,11 +3,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const dotenv_1 = __importDefault(require("dotenv"));
 const express_1 = __importDefault(require("express"));
 const crypto_1 = require("crypto");
 const fs_1 = require("fs");
+const child_process_1 = require("child_process");
 const path_1 = __importDefault(require("path"));
 const config_1 = require("./src/config");
+// 加载 .env 文件
+dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = (process.env.PORT ? parseInt(process.env.PORT, 10) : undefined) || 3000;
 // 中间件
@@ -260,9 +264,33 @@ app.post("/api/account/action", async (req, res) => {
         res.status(500).json({ error: String(e?.message || e) });
     }
 });
-// 启动服务器
-app.listen(PORT, () => {
+// 启动服务器（自动处理端口冲突）
+const server = app.listen(PORT, () => {
     console.log(`管理界面服务器运行在 http://localhost:${PORT}`);
     console.log(`后端 Bot 请单独运行: pnpm start:bot`);
+});
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.error(`\n❌ 错误：端口 ${PORT} 已被占用！`);
+        console.error(`\n解决方案：`);
+        console.error(`1. 杀掉占用端口的进程：`);
+        console.error(`   lsof -ti:${PORT} | xargs kill -9`);
+        console.error(`2. 或者使用其他端口：`);
+        console.error(`   PORT=3001 pnpm start:server`);
+        console.error(`\n当前占用端口的进程：`);
+        try {
+            const pid = (0, child_process_1.execSync)(`lsof -ti:${PORT}`, { encoding: 'utf-8' }).trim();
+            const cmd = (0, child_process_1.execSync)(`ps -p ${pid} -o command=`, { encoding: 'utf-8' }).trim();
+            console.error(`   PID: ${pid}`);
+            console.error(`   命令: ${cmd.substring(0, 100)}...`);
+        }
+        catch (e) {
+            console.error(`   无法获取进程信息`);
+        }
+        process.exit(1);
+    }
+    else {
+        throw err;
+    }
 });
 //# sourceMappingURL=server.js.map

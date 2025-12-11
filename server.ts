@@ -1,9 +1,13 @@
+import dotenv from "dotenv";
 import express, { Request, Response } from "express";
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import { execSync } from "child_process";
 import path from "path";
 import { type AccountConfig, getMultiConfig, saveMultiConfig, type MultiConfig } from "./src/config";
+
+// 加载 .env 文件
+dotenv.config();
 
 const app = express();
 const PORT = (process.env.PORT ? parseInt(process.env.PORT, 10) : undefined) || 3000;
