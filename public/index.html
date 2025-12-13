@@ -645,15 +645,30 @@
       render();
 
       try {
-        console.log('[前端] 机器人中转登录: 发送验证请求，accountId:', acc.id);
+        const requestBody = { accountId: acc.id, action: 'botRelayLogin' };
+        console.log('[前端] 机器人中转登录: 发送验证请求', requestBody);
+        
         const res = await fetch('/api/account/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: acc.id, action: 'botRelayLogin' })
+          body: JSON.stringify(requestBody)
         });
         
-        const data = await res.json();
-        console.log('[前端] 机器人中转登录响应:', { status: res.status, ok: res.ok, data });
+        console.log('[前端] 机器人中转登录响应状态:', res.status, res.statusText);
+        
+        let data;
+        try {
+          data = await res.json();
+          console.log('[前端] 机器人中转登录响应数据:', data);
+        } catch (parseError) {
+          const text = await res.text();
+          console.error('[前端] 机器人中转登录: 响应解析失败', { status: res.status, text, parseError });
+          acc.botRelayLoginState = 'error';
+          acc.botRelayLoginMessage = `响应解析失败: ${res.status} ${res.statusText}`;
+          saveConfig();
+          render();
+          return;
+        }
         
         // 无论res.ok是true还是false，都更新状态（因为验证失败时也会返回状态）
         if (data.botRelayLoginState) {

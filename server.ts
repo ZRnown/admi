@@ -315,8 +315,12 @@ app.post("/api/config", async (req: Request, res: Response) => {
 app.post("/api/account/action", async (req: Request, res: Response) => {
   try {
     const { accountId, action } = req.body;
+    
+    // 添加调试日志
+    console.log(`[API] /api/account/action 收到请求:`, { accountId, action, body: req.body });
 
     if (!accountId || !action) {
+      console.error(`[API] /api/account/action 缺少参数:`, { accountId, action });
       return res.status(400).json({ error: "Missing accountId or action" });
     }
 
@@ -324,10 +328,16 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
     const account = multi.accounts.find((a) => a.id === accountId);
 
     if (!account) {
+      console.error(`[API] /api/account/action 账号未找到:`, accountId);
       return res.status(404).json({ error: "Account not found" });
     }
+    
+    // 规范化 action（去除前后空格）
+    const normalizedAction = String(action).trim();
+    console.log(`[API] /api/account/action 处理 action:`, { original: action, normalized: normalizedAction, type: typeof action }, `账号:`, account.name);
 
-    if (action === "login") {
+    // 使用规范化后的 action 进行比较
+    if (normalizedAction === "login") {
       const status = await readStatus();
       const currentStatus = status[accountId];
       if (currentStatus?.loginState === "online") {
@@ -344,7 +354,7 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
       } catch {}
 
       return res.json({ ok: true, loginState: "pending", loginMessage: "正在登录..." });
-    } else if (action === "stop") {
+    } else if (normalizedAction === "stop") {
       account.loginRequested = false;
       account.loginNonce = Date.now();
       await saveMultiConfig(multi);
@@ -355,7 +365,7 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
       } catch {}
 
       return res.json({ ok: true, loginState: "idle", loginMessage: "已停止该账号登录" });
-    } else if (action === "botRelayLogin") {
+    } else if (normalizedAction === "botRelayLogin") {
       // 机器人中转登录逻辑：验证token是否有效
       console.log(`[机器人中转] 账号 "${account.name}" 开始验证 Token`);
       
@@ -470,7 +480,7 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
         await saveMultiConfig(multi);
         return res.json({ ok: false, botRelayLoginState: "error", botRelayLoginMessage: errorMsg });
       }
-    } else if (action === "botRelayStop") {
+    } else if (normalizedAction === "botRelayStop") {
       // 机器人中转停止逻辑
       account.botRelayLoginState = "idle";
       account.botRelayLoginMessage = "已停止";
@@ -482,7 +492,14 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
 
       return res.json({ ok: true, botRelayLoginState: "idle", botRelayLoginMessage: "已停止" });
     } else {
-      return res.status(400).json({ error: "Invalid action" });
+      console.error(`[API] /api/account/action 无效的 action:`, {
+        original: action,
+        normalized: normalizedAction,
+        type: typeof action,
+        accountId: accountId,
+        accountName: account.name
+      });
+      return res.status(400).json({ error: `Invalid action: "${action}" (normalized: "${normalizedAction}")` });
     }
   } catch (e: any) {
     res.status(500).json({ error: String(e?.message || e) });
