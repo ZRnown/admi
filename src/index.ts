@@ -29,6 +29,7 @@ interface RunningAccount {
   reconnectCount: number; // 重连次数
   lastReconnectTime: number; // 上次重连时间
   isLoggingIn?: boolean; // 是否正在登录中，用于防止重复登录
+  loginTimeout?: NodeJS.Timeout; // 登录超时定时器
 }
 
 const runningAccounts = new Map<string, RunningAccount>();
@@ -178,37 +179,25 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
         partials: [Partials.Channel, Partials.Message, Partials.User],
       }) as any;
     } else {
-      // 优化：限制缓存大小，防止内存无限增长
-      // 禁用无用的缓存，特别是 GuildMemberManager 和 PresenceManager
-      // 注意：discord.js-selfbot-v13 的 API 可能与 discord.js 不同
-      // 如果类型错误，可以尝试使用 any 类型或检查 selfbot 的实际 API
+      // User Token (Selfbot) 配置
+      // 注意：User Token 需要缓存自身信息和一定的上下文才能完成握手
+      // 不能将 UserManager 或 GuildMemberManager 设为 0，否则无法触发 ready 事件
       try {
-        // 尝试使用 makeCache 配置（如果 selfbot 支持）
+        // 使用宽松的配置，确保 Selfbot 能正常登录
         client = new SelfBotClient({
-          checkUpdate: false,
-          patchVoice: false,
-          // @ts-ignore - discord.js-selfbot-v13 可能使用不同的类型定义
-          makeCache: (manager: any) => {
-            const name = manager.constructor.name;
-            // 限制各种缓存的大小
-            if (name === "MessageManager") return manager.constructor.cache.withLimit(10);
-            if (name === "PresenceManager") return manager.constructor.cache.withLimit(0);
-            if (name === "GuildMemberManager") return manager.constructor.cache.withLimit(0);
-            if (name === "ThreadManager") return manager.constructor.cache.withLimit(0);
-            if (name === "ReactionManager") return manager.constructor.cache.withLimit(0);
-            if (name === "UserManager") return manager.constructor.cache.withLimit(100);
-            // 默认返回原始缓存
-            return manager.constructor.cache;
-          },
+          checkUpdate: false,  // 禁用检查更新，加快启动
+          patchVoice: false,   // 如果不用语音，禁用此项
+          syncStatus: false,   // 不同步状态，减少数据包
+          // 注意：暂时移除 makeCache 配置，因为过度限制会导致无法登录
+          // 如果确实需要限制内存，可以稍后使用更宽松的配置
         } as any);
       } catch (e) {
-        // 如果配置失败，使用默认配置
-        // 至少禁用更新检查可以减少一些内存占用
+        // 如果配置失败，使用最简配置
         client = new SelfBotClient({
           checkUpdate: false,
           patchVoice: false,
         } as any);
-        logger.warn(`无法应用缓存限制配置，使用默认配置: ${String(e)}`);
+        logger.warn(`无法应用 Selfbot 配置，使用默认配置: ${String(e)}`);
       }
     }
 
@@ -227,6 +216,16 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     };
     runningAccounts.set(account.id, runningInfo);
 
+    // 添加调试日志，查看底层 WebSocket 状态（仅对 User Token）
+    if (account.type === "selfbot") {
+      (client as any).on("debug", (info: string) => {
+        // 过滤掉心跳包日志，只看关键信息
+        if (!info.includes("Heartbeat") && !info.includes("heartbeat")) {
+          logger.debug(`[DEBUG ${account.name}] ${info}`);
+        }
+      });
+    }
+
     // 在 ready 事件中注册重连处理器，避免登录过程中的临时断开事件触发重连
     // 先注册 ready 事件，在 ready 后再注册 disconnect 监听器
     // 同时监听 ready 和 clientReady 以兼容不同版本
@@ -235,6 +234,11 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       if (currentRunning) {
         // 登录成功后，清除登录标志
         currentRunning.isLoggingIn = false;
+        // 清除登录超时定时器
+        if (currentRunning.loginTimeout) {
+          clearTimeout(currentRunning.loginTimeout);
+          currentRunning.loginTimeout = undefined;
+        }
         // 现在才注册重连处理器，避免登录过程中的临时断开事件
         setupReconnectHandlers(account.id, logger);
         await writeStatus(account.id, "online", "登录成功");
@@ -243,6 +247,15 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     };
     (bot.client as any).once("clientReady", readyHandler);
     (bot.client as any).once("ready", readyHandler);
+
+    // 设置登录超时检查（30秒）
+    runningInfo.loginTimeout = setTimeout(() => {
+      const currentRunning = runningAccounts.get(account.id);
+      if (currentRunning && currentRunning.isLoggingIn) {
+        logger.warn(`账号 "${account.name}" 登录超时 (30秒)，可能是网络问题或账号被风控`);
+        writeStatus(account.id, "error", "登录超时，可能是网络问题或需要验证").catch(() => {});
+      }
+    }, 30000);
 
     try {
       await logger.info(`账号 "${account.name}" 开始登录...`);
@@ -259,6 +272,11 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       
       await writeStatus(account.id, "error", isTokenInvalid ? "Token 无效" : msg);
       runningInfo.isLoggingIn = false;
+      // 清除登录超时定时器
+      if (runningInfo.loginTimeout) {
+        clearTimeout(runningInfo.loginTimeout);
+        runningInfo.loginTimeout = undefined;
+      }
       // 如果不是 Token 无效的错误，尝试重连
       if (!isTokenInvalid) {
         await reconnectAccount(account.id, logger, 5000);
@@ -397,22 +415,13 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
           partials: [Partials.Channel, Partials.Message, Partials.User],
         }) as any;
       } else {
-        // 优化：限制缓存大小，防止内存无限增长
+        // User Token (Selfbot) 配置 - 重连时使用相同配置
         try {
-          // @ts-ignore - discord.js-selfbot-v13 可能使用不同的类型定义
           client = new SelfBotClient({
             checkUpdate: false,
             patchVoice: false,
-            makeCache: (manager: any) => {
-              const name = manager.constructor.name;
-              if (name === "MessageManager") return manager.constructor.cache.withLimit(10);
-              if (name === "PresenceManager") return manager.constructor.cache.withLimit(0);
-              if (name === "GuildMemberManager") return manager.constructor.cache.withLimit(0);
-              if (name === "ThreadManager") return manager.constructor.cache.withLimit(0);
-              if (name === "ReactionManager") return manager.constructor.cache.withLimit(0);
-              if (name === "UserManager") return manager.constructor.cache.withLimit(100);
-              return manager.constructor.cache;
-            },
+            syncStatus: false,  // 不同步状态，减少数据包
+            // 注意：暂时移除 makeCache 配置，确保能正常登录
           } as any);
         } catch (e) {
           client = new SelfBotClient({
@@ -431,6 +440,15 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       currentRunning.bot = bot;
       currentRunning.isLoggingIn = true;
       
+      // 添加调试日志（仅对 User Token）
+      if (currentRunning.account.type === "selfbot") {
+        (client as any).on("debug", (info: string) => {
+          if (!info.includes("Heartbeat") && !info.includes("heartbeat")) {
+            logger.debug(`[DEBUG ${currentRunning.account.name}] ${info}`);
+          }
+        });
+      }
+
       // 在 ready 事件中注册重连处理器，避免重连过程中的临时断开事件
       // 同时监听 ready 和 clientReady 以兼容不同版本
       const readyHandler = async () => {
@@ -438,6 +456,11 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
         if (currentRunningAfterReady) {
           // 重连成功后，清除登录标志
           currentRunningAfterReady.isLoggingIn = false;
+          // 清除登录超时定时器
+          if (currentRunningAfterReady.loginTimeout) {
+            clearTimeout(currentRunningAfterReady.loginTimeout);
+            currentRunningAfterReady.loginTimeout = undefined;
+          }
           // 现在才注册重连处理器
           setupReconnectHandlers(accountId, logger);
           await writeStatus(accountId, "online", "重连成功");
@@ -448,6 +471,15 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       };
       (client as any).once("clientReady", readyHandler);
       (client as any).once("ready", readyHandler);
+
+      // 设置重连登录超时检查（30秒）
+      currentRunning.loginTimeout = setTimeout(() => {
+        const timeoutRunning = runningAccounts.get(accountId);
+        if (timeoutRunning && timeoutRunning.isLoggingIn) {
+          logger.warn(`账号 "${timeoutRunning.account.name}" 重连登录超时 (30秒)，可能是网络问题或账号被风控`);
+          writeStatus(accountId, "error", "重连登录超时，可能是网络问题或需要验证").catch(() => {});
+        }
+      }, 30000);
       
       // 尝试登录
       try {
@@ -458,6 +490,11 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
         await logger.error(`账号 "${currentRunning.account.name}" 重连失败: ${msg}`);
         await writeStatus(accountId, "error", `重连失败: ${msg}`);
         currentRunning.isLoggingIn = false;
+        // 清除登录超时定时器
+        if (currentRunning.loginTimeout) {
+          clearTimeout(currentRunning.loginTimeout);
+          currentRunning.loginTimeout = undefined;
+        }
         
         // 检查是否是Token无效的错误，如果是则不重连
         const isTokenInvalid = msg.includes("TOKEN_INVALID") || 
