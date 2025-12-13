@@ -64,6 +64,11 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const proxy = account.proxyUrl || env.PROXY_URL;
   const enableTranslation = account.enableTranslation || false;
   const deepseekApiKey = account.deepseekApiKey;
+  const translationProvider = account.translationProvider || "deepseek";
+  const translationApiKey = account.translationApiKey || account.deepseekApiKey;
+  const translationSecret = account.translationSecret;
+  const enableBotRelay = account.enableBotRelay || false;
+  const botRelayToken = account.botRelayToken;
   // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
   const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
 
@@ -75,6 +80,11 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
         httpAgent,
         enableTranslation,
         deepseekApiKey,
+        translationProvider,
+        translationApiKey,
+        translationSecret,
+        enableBotRelay,
+        botRelayToken,
       });
       prepares.push(sb.prepare());
       senderBotsBySource.set(channelId, sb);
@@ -222,11 +232,17 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       const msg = String(e?.message || e);
       console.error(e);
       await logger.error(`账号 "${account.name}" 登录失败: ${msg}`);
-      await writeStatus(account.id, "error", msg.includes("TOKEN_INVALID") ? "Token 无效" : msg);
+      const isTokenInvalid = msg.includes("TOKEN_INVALID") || 
+                            msg.includes("TokenInvalid") || 
+                            msg.includes("Token 无效") ||
+                            (e?.code === "TokenInvalid");
+      
+      await writeStatus(account.id, "error", isTokenInvalid ? "Token 无效" : msg);
       // 如果不是 Token 无效的错误，尝试重连
-      if (!msg.includes("TOKEN_INVALID")) {
+      if (!isTokenInvalid) {
         await reconnectAccount(account.id, logger, 5000);
       } else {
+        await logger.error(`账号 "${account.name}" Token 无效，停止登录`);
         await stopAccount(account.id, logger, false);
       }
     runningInfo.isLoggingIn = false;
@@ -399,6 +415,19 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
         await logger.error(`账号 "${currentRunning.account.name}" 重连失败: ${msg}`);
         await writeStatus(accountId, "error", `重连失败: ${msg}`);
       currentRunning.isLoggingIn = false;
+        
+        // 检查是否是Token无效的错误，如果是则不重连
+        const isTokenInvalid = msg.includes("TOKEN_INVALID") || 
+                              msg.includes("TokenInvalid") || 
+                              msg.includes("Token 无效") ||
+                              (e?.code === "TokenInvalid");
+        
+        if (isTokenInvalid) {
+          await logger.error(`账号 "${currentRunning.account.name}" Token 无效，停止重连`);
+          await writeStatus(accountId, "error", "Token 无效，请检查 Token 配置");
+          await stopAccount(accountId, logger, false);
+          return;
+        }
         
         // 检查是否应该继续重连
         const shouldRetry = currentRunning && 

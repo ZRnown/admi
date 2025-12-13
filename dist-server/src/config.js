@@ -109,6 +109,19 @@ function normalizeAccount(input, fallbackName = "未命名账号") {
         channelConfigs: input?.channelConfigs || {},
         enableTranslation: input?.enableTranslation === true,
         deepseekApiKey: typeof input?.deepseekApiKey === "string" && input.deepseekApiKey.trim() ? input.deepseekApiKey.trim() : undefined,
+        translationProvider: input?.translationProvider || "deepseek",
+        translationApiKey: typeof input?.translationApiKey === "string" && input.translationApiKey.trim() ? input.translationApiKey.trim() : undefined,
+        translationSecret: typeof input?.translationSecret === "string" && input.translationSecret.trim() ? input.translationSecret.trim() : undefined,
+        enableBotRelay: input?.enableBotRelay === true,
+        botRelayToken: typeof input?.botRelayToken === "string" && input.botRelayToken.trim() ? input.botRelayToken.trim() : undefined,
+        botRelayLoginState: typeof input?.botRelayLoginState === "string" ? input.botRelayLoginState : "idle",
+        botRelayLoginMessage: typeof input?.botRelayLoginMessage === "string" ? input.botRelayLoginMessage : "",
+        ignoreSelf: input?.ignoreSelf === true,
+        ignoreBot: input?.ignoreBot === true,
+        ignoreImages: input?.ignoreImages === true,
+        ignoreAudio: input?.ignoreAudio === true,
+        ignoreVideo: input?.ignoreVideo === true,
+        ignoreDocuments: input?.ignoreDocuments === true,
     };
 }
 function migrateLegacyToMulti(raw) {
@@ -152,6 +165,17 @@ function accountToLegacyConfig(account) {
             showDate: false,
             enableTranslation: false,
             deepseekApiKey: undefined,
+            translationProvider: "deepseek",
+            translationApiKey: undefined,
+            translationSecret: undefined,
+            enableBotRelay: false,
+            botRelayToken: undefined,
+            ignoreSelf: false,
+            ignoreBot: false,
+            ignoreImages: false,
+            ignoreAudio: false,
+            ignoreVideo: false,
+            ignoreDocuments: false,
         };
     }
     return {
@@ -176,6 +200,17 @@ function accountToLegacyConfig(account) {
         channelConfigs: account.channelConfigs,
         enableTranslation: account.enableTranslation,
         deepseekApiKey: account.deepseekApiKey,
+        translationProvider: account.translationProvider,
+        translationApiKey: account.translationApiKey,
+        translationSecret: account.translationSecret,
+        enableBotRelay: account.enableBotRelay,
+        botRelayToken: account.botRelayToken,
+        ignoreSelf: account.ignoreSelf,
+        ignoreBot: account.ignoreBot,
+        ignoreImages: account.ignoreImages,
+        ignoreAudio: account.ignoreAudio,
+        ignoreVideo: account.ignoreVideo,
+        ignoreDocuments: account.ignoreDocuments,
     };
 }
 async function getConfig() {

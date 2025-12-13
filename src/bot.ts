@@ -41,6 +41,8 @@ export class Bot {
   private saveMappingTimer?: NodeJS.Timeout;
   // 记录去重清理定时器，便于热重载时释放
   private processingTimers = new Set<NodeJS.Timeout>();
+  // 记录process监听器，便于清理
+  private processExitHandlers: Array<() => void> = [];
   
   constructor(client: Client, config: Config, senderBot: SenderBot, senderBotsBySource?: Map<string, SenderBot>) {
     this.config = config;
@@ -84,18 +86,25 @@ export class Bot {
       });
     }, 5 * 60 * 1000);
 
-    // 程序退出时保存映射（使用 once 避免重复添加监听器）
-    process.once("beforeExit", () => {
+    // 程序退出时保存映射（使用命名函数，便于清理）
+    const beforeExitHandler = () => {
       this.saveMapping().catch(() => {});
-    });
-    process.once("SIGINT", () => {
-      this.saveMapping().catch(() => {});
-      process.exit(0);
-    });
-    process.once("SIGTERM", () => {
+    };
+    const sigintHandler = () => {
       this.saveMapping().catch(() => {});
       process.exit(0);
-    });
+    };
+    const sigtermHandler = () => {
+      this.saveMapping().catch(() => {});
+      process.exit(0);
+    };
+    
+    process.once("beforeExit", beforeExitHandler);
+    process.once("SIGINT", sigintHandler);
+    process.once("SIGTERM", sigtermHandler);
+    
+    // 保存处理器引用，便于清理
+    this.processExitHandlers = [beforeExitHandler, sigintHandler, sigtermHandler];
 
     // 为了支持"回复可跳转"，改为单条即时发送（如需保留堆叠，可另加配置开关）
   }
@@ -113,6 +122,17 @@ export class Bot {
       clearTimeout(t);
     }
     this.processingTimers.clear();
+    // 移除process监听器（避免内存泄漏）
+    for (const handler of this.processExitHandlers) {
+      try {
+        process.removeListener("beforeExit", handler);
+        process.removeListener("SIGINT", handler);
+        process.removeListener("SIGTERM", handler);
+      } catch (e) {
+        // 忽略移除失败
+      }
+    }
+    this.processExitHandlers = [];
     // 保存映射
     await this.saveMapping().catch((err) => {
       this.logger.error(`cleanup saveMapping failed: ${String(err)}`);
@@ -252,6 +272,60 @@ export class Bot {
     
     this.logger.info(`${logPrefix} [START] Processing message: channel=${message.channelId} id=${message.id} ${authorInfo}`);
     this.logger.info(`${logPrefix} [CONTENT] content="${(message.content || "").substring(0, 200)}" contentLength=${message.content?.length || 0} embeds=${message.embeds?.length || 0} attachments=${message.attachments?.size || 0}`);
+    
+    // 忽略选项检查
+    try {
+      // 忽略自己的消息
+      if (this.config.ignoreSelf && message.author?.id === (this.client as any).user?.id) {
+        this.logger.info(`${logPrefix} [SKIP] Ignoring own message (ignoreSelf=true)`);
+        return;
+      }
+      
+      // 忽略机器人消息
+      if (this.config.ignoreBot && (message.author?.bot || isWebhook)) {
+        this.logger.info(`${logPrefix} [SKIP] Ignoring bot/webhook message (ignoreBot=true)`);
+        return;
+      }
+      
+      // 检查附件类型并忽略
+      if (message.attachments && message.attachments.size > 0) {
+        for (const att of message.attachments.values()) {
+          const ct = (att.contentType || "").toLowerCase();
+          const url = att.url.toLowerCase();
+          
+          // 忽略图片
+          if (this.config.ignoreImages && (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url))) {
+            this.logger.info(`${logPrefix} [SKIP] Ignoring image attachment (ignoreImages=true)`);
+            return;
+          }
+          
+          // 忽略音频
+          if (this.config.ignoreAudio && (ct.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(url))) {
+            this.logger.info(`${logPrefix} [SKIP] Ignoring audio attachment (ignoreAudio=true)`);
+            return;
+          }
+          
+          // 忽略视频
+          if (this.config.ignoreVideo && (ct.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi|flv)$/i.test(url))) {
+            this.logger.info(`${logPrefix} [SKIP] Ignoring video attachment (ignoreVideo=true)`);
+            return;
+          }
+          
+          // 忽略文档
+          if (this.config.ignoreDocuments && (
+            ct.includes("application/pdf") ||
+            ct.includes("application/msword") ||
+            ct.includes("application/vnd.openxmlformats") ||
+            /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)$/i.test(url)
+          )) {
+            this.logger.info(`${logPrefix} [SKIP] Ignoring document attachment (ignoreDocuments=true)`);
+            return;
+          }
+        }
+      }
+    } catch (e: any) {
+      this.logger.error(`${logPrefix} [ERROR] Ignore filter check failed: ${String(e?.message || e)}`);
+    }
     
     // 特别记录webhook消息的embeds信息（webhook消息通常只有embeds没有content）
     if (isWebhook && message.embeds && message.embeds.length > 0) {

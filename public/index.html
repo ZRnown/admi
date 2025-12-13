@@ -32,7 +32,7 @@
               <span>⬇️</span> 导出配置
             </button>
             <button onclick="removeAccount()" class="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
-              <span>🗑️</span> 删除当前账号
+              <span>🗑️</span> 删除当前实例
             </button>
           </div>
         </div>
@@ -40,11 +40,15 @@
           <button onclick="hideHelp()" class="float-right text-slate-400 hover:text-slate-600">✕</button>
           <p class="font-semibold text-slate-800">使用说明</p>
           <ul class="mt-2 list-disc space-y-1 pl-5">
-            <li>一个账号对应一个 Discord Token，可选择机器人 Token 或自用号 Token。</li>
-            <li>每个账号都可以单独配置转发规则、关键词、排除/替换规则。</li>
+            <li>一个转发实例对应一个 Discord Token，可选择机器人 Token 或自用号 Token。</li>
+            <li>每个转发实例都可以单独配置转发规则、关键词、排除/替换规则。</li>
             <li>转发时如需伪装为源用户，请勾选「使用源用户昵称和头像」。</li>
             <li>排除关键词会直接删除命中的词，而不会阻止整条消息转发。</li>
-            <li>可以添加多个账号并行运行，后端会为每个账号独立登录并转发。</li>
+            <li>可以添加多个转发实例并行运行，后端会为每个实例独立登录并转发。</li>
+            <li class="mt-3 font-semibold text-slate-700">关于 Token：</li>
+            <li class="pl-4">• 此 Token 与 Discord Bot Token 不同。</li>
+            <li class="pl-4">• 此 Token 在您更改密码时会发生变化。</li>
+            <li class="pl-4">• 如果启用了双因素认证（2FA），需要先禁用它才能获取 Token。</li>
           </ul>
         </div>
       </div>
@@ -80,22 +84,43 @@
 
     // 初始化
     async function init() {
-      await loadConfig();
-      document.getElementById('app').style.display = 'block';
-      render();
-      startStatusPolling();
+      try {
+        await loadConfig();
+        // 如果没有账号，创建一个默认账号
+        if (state.accounts.length === 0) {
+          addAccount();
+        }
+      } catch (e) {
+        console.error('初始化失败', e);
+        // 即使加载失败，也显示界面
+        if (state.accounts.length === 0) {
+          addAccount();
+        }
+      } finally {
+        document.getElementById('app').style.display = 'block';
+        render();
+        startStatusPolling();
+      }
     }
 
     // 加载配置
     async function loadConfig() {
       try {
         const res = await fetch('/api/config');
+        if (!res.ok) {
+          console.error('加载配置失败: HTTP', res.status);
+          return;
+        }
         const data = await res.json();
+        console.log('加载配置成功:', data);
         if (Array.isArray(data?.accounts)) {
           state = { accounts: data.accounts, activeId: data.activeId || data.accounts[0]?.id || "" };
+        } else {
+          console.warn('配置数据格式不正确:', data);
         }
       } catch (e) {
         console.error('加载配置失败', e);
+        throw e; // 重新抛出错误，让 init 处理
       }
     }
 
@@ -117,14 +142,38 @@
 
     // 渲染界面
     function render() {
+      // 确保 app 元素存在
+      const appEl = document.getElementById('app');
+      if (!appEl) {
+        console.error('找不到 app 元素');
+        return;
+      }
+
       if (state.accounts.length === 0) {
-        document.getElementById('app').innerHTML = '<div class="text-center py-8 text-slate-400">暂无账号，请添加</div>';
+        // 如果没有账号，显示提示和添加按钮
+        appEl.innerHTML = `
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center">
+            <p class="text-slate-400 mb-4">暂无转发实例</p>
+            <button onclick="addAccount(); render();" class="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+              + 添加转发实例
+            </button>
+          </div>
+        `;
         return;
       }
 
       const activeAccount = state.accounts.find(a => a.id === state.activeId) || state.accounts[0];
       
       // 渲染账号标签
+      // 渲染账号标签
+      const accountTabsEl = document.getElementById('accountTabs');
+      const configFormEl = document.getElementById('configForm');
+      
+      if (!accountTabsEl || !configFormEl) {
+        console.error('找不到必要的 DOM 元素');
+        return;
+      }
+
       let tabsHtml = state.accounts.map(acc => `
         <button onclick="switchAccount('${acc.id}')" 
           class="rounded-full px-3 py-1 text-sm font-medium transition ${
@@ -135,11 +184,11 @@
           ${acc.name || '未命名账号'}
         </button>
       `).join('');
-      tabsHtml += `<button onclick="addAccount()" class="inline-flex items-center gap-1 rounded-full border border-dashed border-indigo-300 px-3 py-1 text-sm font-medium text-indigo-600 hover:bg-indigo-50">+ 添加账号</button>`;
-      document.getElementById('accountTabs').innerHTML = tabsHtml;
+      tabsHtml += `<button onclick="addAccount(); render();" class="inline-flex items-center gap-1 rounded-full border border-dashed border-indigo-300 px-3 py-1 text-sm font-medium text-indigo-600 hover:bg-indigo-50">+ 添加转发实例</button>`;
+      accountTabsEl.innerHTML = tabsHtml;
 
       // 渲染配置表单
-      document.getElementById('configForm').innerHTML = renderAccountForm(activeAccount);
+      configFormEl.innerHTML = renderAccountForm(activeAccount);
     }
 
     // 渲染账号配置表单
@@ -149,25 +198,25 @@
       
       return `
         <!-- 基础设置 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 class="font-semibold text-slate-800">基础设置</h2>
           </div>
           <div class="p-6 space-y-4">
             <div class="grid gap-4 md:grid-cols-2">
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">账号名称</label>
-                <input type="text" value="${acc.name || ''}" onchange="updateField('name', this.value)" 
-                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">账号类型</label>
-                <select onchange="updateField('type', this.value)" 
-                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                  <option value="selfbot" ${acc.type === 'selfbot' ? 'selected' : ''}>用户 Token（SelfBot）</option>
-                  <option value="bot" ${acc.type === 'bot' ? 'selected' : ''}>机器人 Token</option>
-                </select>
-              </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">实例名称</label>
+              <input type="text" value="${acc.name || ''}" onchange="updateField('name', this.value)" 
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">账号类型</label>
+              <select onchange="updateField('type', this.value)" 
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="selfbot" ${acc.type === 'selfbot' ? 'selected' : ''}>💬 用户 Token（SelfBot）</option>
+                <option value="bot" ${acc.type === 'bot' ? 'selected' : ''}>🤖 机器人 Token</option>
+              </select>
+            </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">Discord Token</label>
@@ -200,34 +249,116 @@
             </div>
             <div class="border-t pt-4">
               <div class="flex items-center gap-2 mb-2">
+                <input type="checkbox" ${acc.enableBotRelay ? 'checked' : ''} ${acc.type === 'bot' ? 'disabled' : ''} onchange="updateField('enableBotRelay', this.checked)" 
+                  class="h-4 w-4 rounded border-slate-300 ${acc.type === 'bot' ? 'opacity-50 cursor-not-allowed' : ''}">
+                <label class="text-sm text-slate-700 ${acc.type === 'bot' ? 'text-slate-400' : ''}">机器人中转（通过机器人发送到目标群组）${acc.type === 'bot' ? '（机器人账号类型不支持）' : ''}</label>
+              </div>
+              ${acc.enableBotRelay && acc.type !== 'bot' ? `
+                <div class="mb-4">
+                  <label class="block text-sm font-medium text-slate-700 mb-1">机器人 Token</label>
+                  <div class="flex gap-2">
+                    <input type="password" value="${acc.botRelayToken || ''}" onchange="updateField('botRelayToken', this.value)" 
+                      placeholder="机器人 Token（用于中转发送）" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                    <button onclick="requestBotRelayLogin()" ${(acc.botRelayLoginState === 'pending' || acc.botRelayLoginState === 'online') ? 'disabled' : ''} 
+                      class="px-3 py-1.5 text-xs font-medium rounded-md ${(acc.botRelayLoginState === 'pending' || acc.botRelayLoginState === 'online') ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                      ${acc.botRelayLoginState === 'pending' ? '登录中...' : acc.botRelayLoginState === 'online' ? '已登录' : '登录'}
+                    </button>
+                    <button onclick="requestBotRelayStop()" ${acc.botRelayLoginState === 'pending' || (acc.botRelayLoginState !== 'online' && acc.botRelayLoginState !== 'error') ? 'disabled' : ''}
+                      class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${acc.botRelayLoginState === 'pending' || (acc.botRelayLoginState !== 'online' && acc.botRelayLoginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                      停止
+                    </button>
+                  </div>
+                  <div class="text-xs text-slate-500 mt-1">
+                    状态: <span class="px-2 py-0.5 rounded-full ${acc.botRelayLoginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.botRelayLoginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.botRelayLoginState || 'idle'}</span>
+                    ${acc.botRelayLoginMessage ? `<span class="ml-2">${acc.botRelayLoginMessage}</span>` : ''}
+                  </div>
+                </div>
+              ` : ''}
+              <div class="flex items-center gap-2 mb-2">
                 <input type="checkbox" ${acc.enableTranslation ? 'checked' : ''} onchange="updateField('enableTranslation', this.checked)" 
                   class="h-4 w-4 rounded border-slate-300">
-                <label class="text-sm text-slate-700">启用自动翻译（使用 DeepSeek API）</label>
+                <label class="text-sm text-slate-700">启用自动翻译</label>
               </div>
               ${acc.enableTranslation ? `
-                <div>
-                  <label class="block text-sm font-medium text-slate-700 mb-1">DeepSeek API Key</label>
-                  <input type="password" value="${acc.deepseekApiKey || ''}" onchange="updateField('deepseekApiKey', this.value)" 
-                    placeholder="sk-..." class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                <div class="mb-2">
+                  <label class="block text-sm font-medium text-slate-700 mb-1">翻译服务</label>
+                  <select onchange="updateField('translationProvider', this.value)" 
+                    class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                    <option value="deepseek" ${acc.translationProvider === 'deepseek' || !acc.translationProvider ? 'selected' : ''}>DeepSeek AI</option>
+                    <option value="google" ${acc.translationProvider === 'google' ? 'selected' : ''}>Google 翻译</option>
+                    <option value="baidu" ${acc.translationProvider === 'baidu' ? 'selected' : ''}>百度翻译</option>
+                    <option value="youdao" ${acc.translationProvider === 'youdao' ? 'selected' : ''}>有道智云翻译</option>
+                    <option value="openai" ${acc.translationProvider === 'openai' ? 'selected' : ''}>OpenAI</option>
+                  </select>
                 </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">API Key / App ID</label>
+                  <input type="password" value="${acc.translationApiKey || acc.deepseekApiKey || ''}" onchange="updateField('translationApiKey', this.value)" 
+                    placeholder="根据选择的翻译服务填写对应的 API Key" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                </div>
+                ${acc.translationProvider === 'baidu' || acc.translationProvider === 'youdao' ? `
+                  <div class="mt-2">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">App Secret / Secret Key</label>
+                    <input type="password" value="${acc.translationSecret || ''}" onchange="updateField('translationSecret', this.value)" 
+                      placeholder="百度/有道智云翻译需要填写 Secret Key" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                  </div>
+                ` : ''}
               ` : ''}
             </div>
           </div>
         </div>
 
+        <!-- 忽略选项 -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+            <h2 class="font-semibold text-slate-800">忽略选项</h2>
+            <p class="text-xs text-slate-500 mt-1">选择您想要忽略的项目</p>
+          </div>
+          <div class="p-6">
+            <div class="flex flex-wrap items-center gap-4">
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${acc.ignoreSelf ? 'checked' : ''} onchange="updateField('ignoreSelf', this.checked)" 
+                class="h-4 w-4 rounded border-slate-300"> 忽略自己的消息
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${acc.ignoreBot ? 'checked' : ''} onchange="updateField('ignoreBot', this.checked)" 
+                class="h-4 w-4 rounded border-slate-300"> 忽略机器人消息
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${acc.ignoreImages ? 'checked' : ''} onchange="updateField('ignoreImages', this.checked)" 
+                class="h-4 w-4 rounded border-slate-300"> 忽略图片
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${acc.ignoreAudio ? 'checked' : ''} onchange="updateField('ignoreAudio', this.checked)" 
+                class="h-4 w-4 rounded border-slate-300"> 忽略音频
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${acc.ignoreVideo ? 'checked' : ''} onchange="updateField('ignoreVideo', this.checked)" 
+                class="h-4 w-4 rounded border-slate-300"> 忽略视频
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${acc.ignoreDocuments ? 'checked' : ''} onchange="updateField('ignoreDocuments', this.checked)" 
+                class="h-4 w-4 rounded border-slate-300"> 忽略文档
+              </label>
+            </div>
+          </div>
+        </div>
+
         <!-- 转发规则 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
-          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 class="font-semibold text-slate-800">转发规则</h2>
-            <button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md hover:bg-indigo-100">+ 添加规则</button>
           </div>
           <div class="p-6 space-y-4" id="mappingsList">
             ${renderMappings(acc.mappings || [])}
           </div>
+          <div class="px-6 pb-4 flex justify-end">
+            <button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
+          </div>
         </div>
 
         <!-- 关键词过滤 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 class="font-semibold text-slate-800">关键词触发（至少命中一个才转发）</h2>
           </div>
@@ -245,7 +376,7 @@
         </div>
 
         <!-- 排除关键词 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 class="font-semibold text-slate-800">屏蔽关键词（命中则不转发）</h2>
           </div>
@@ -263,7 +394,7 @@
         </div>
 
         <!-- 替换规则 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 class="font-semibold text-slate-800">关键词替换</h2>
           </div>
@@ -276,7 +407,7 @@
 
     function renderMappings(mappings) {
       if (mappings.length === 0) {
-        return '<div class="text-center py-8 text-slate-400 text-sm">暂无转发规则，点击右上角添加</div>';
+        return '<div class="text-center py-8 text-slate-400 text-sm">暂无转发规则，点击下方添加</div>';
       }
       return mappings.map((m, idx) => `
         <div class="flex gap-3 items-center p-3 rounded-lg border border-slate-100 bg-slate-50/30">
@@ -313,6 +444,11 @@
     function updateField(field, value) {
       const acc = getActiveAccount();
       acc[field] = value;
+      // 如果删除机器人中转Token，自动重置状态
+      if (field === 'botRelayToken' && (!value || !value.trim())) {
+        acc.botRelayLoginState = 'idle';
+        acc.botRelayLoginMessage = '';
+      }
       saveConfig();
       render();
     }
@@ -325,7 +461,7 @@
     function addAccount() {
       const newAcc = {
         id: genId(),
-        name: `账号${state.accounts.length + 1}`,
+        name: `转发实例${state.accounts.length + 1}`,
         type: 'selfbot',
         token: '',
         proxyUrl: '',
@@ -339,7 +475,20 @@
         allowedUsersIds: [],
         mutedUsersIds: [],
         enableTranslation: false,
-        deepseekApiKey: ''
+        translationProvider: 'deepseek',
+        translationApiKey: '',
+        translationSecret: '',
+        deepseekApiKey: '',
+        enableBotRelay: false,
+        botRelayToken: '',
+        botRelayLoginState: 'idle',
+        botRelayLoginMessage: '',
+        ignoreSelf: false,
+        ignoreBot: false,
+        ignoreImages: false,
+        ignoreAudio: false,
+        ignoreVideo: false,
+        ignoreDocuments: false
       };
       state.accounts.push(newAcc);
       state.activeId = newAcc.id;
@@ -349,7 +498,7 @@
 
     function removeAccount() {
       if (state.accounts.length <= 1) return;
-      if (!confirm('确定要删除当前账号吗？')) return;
+      if (!confirm('确定要删除当前转发实例吗？')) return;
       state.accounts = state.accounts.filter(a => a.id !== state.activeId);
       state.activeId = state.accounts[0]?.id || '';
       saveConfig();
@@ -472,6 +621,93 @@
       render();
     }
 
+    async function requestBotRelayLogin() {
+      const acc = getActiveAccount();
+      // 如果已经在pending或online状态，不允许重复请求
+      if (acc.botRelayLoginState === 'online' || acc.botRelayLoginState === 'pending') {
+        console.log('[前端] 机器人中转登录: 状态为', acc.botRelayLoginState, '，跳过请求');
+        return;
+      }
+      
+      // 检查token是否存在
+      if (!acc.botRelayToken || !acc.botRelayToken.trim()) {
+        acc.botRelayLoginState = 'error';
+        acc.botRelayLoginMessage = 'Token 未配置';
+        saveConfig();
+        render();
+        return;
+      }
+      
+      // 立即更新本地状态为pending
+      acc.botRelayLoginState = 'pending';
+      acc.botRelayLoginMessage = '正在验证 Token...';
+      saveConfig();
+      render();
+
+      try {
+        console.log('[前端] 机器人中转登录: 发送验证请求，accountId:', acc.id);
+        const res = await fetch('/api/account/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id, action: 'botRelayLogin' })
+        });
+        
+        const data = await res.json();
+        console.log('[前端] 机器人中转登录响应:', { status: res.status, ok: res.ok, data });
+        
+        // 无论res.ok是true还是false，都更新状态（因为验证失败时也会返回状态）
+        if (data.botRelayLoginState) {
+          acc.botRelayLoginState = data.botRelayLoginState;
+          acc.botRelayLoginMessage = data.botRelayLoginMessage || '';
+          console.log('[前端] 机器人中转登录: 更新状态为', acc.botRelayLoginState, '消息:', acc.botRelayLoginMessage);
+        } else if (data.error) {
+          // 如果返回错误，设置为error状态
+          acc.botRelayLoginState = 'error';
+          acc.botRelayLoginMessage = data.error || '验证失败';
+          console.error('[前端] 机器人中转登录: 返回错误', data.error);
+        } else {
+          // 如果没有返回状态，根据res.ok判断
+          acc.botRelayLoginState = res.ok ? 'online' : 'error';
+          acc.botRelayLoginMessage = res.ok ? '验证成功' : (data.error || '验证失败');
+        }
+        
+        // 保存状态
+        saveConfig();
+      } catch (e) {
+        console.error('[前端] 机器人中转登录请求失败:', e);
+        acc.botRelayLoginState = 'error';
+        acc.botRelayLoginMessage = `请求失败: ${e?.message || '网络错误'}`;
+        saveConfig();
+      }
+      render();
+    }
+
+    async function requestBotRelayStop() {
+      const acc = getActiveAccount();
+      if (acc.botRelayLoginState === 'pending' || (acc.botRelayLoginState !== 'online' && acc.botRelayLoginState !== 'error')) return;
+      
+      acc.botRelayLoginState = 'idle';
+      acc.botRelayLoginMessage = '正在停止...';
+      render();
+
+      try {
+        const res = await fetch('/api/account/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id, action: 'botRelayStop' })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          acc.botRelayLoginState = data.botRelayLoginState || 'idle';
+          acc.botRelayLoginMessage = data.botRelayLoginMessage || '已停止';
+        }
+      } catch (e) {
+        acc.botRelayLoginState = acc.botRelayLoginState || 'idle';
+        acc.botRelayLoginMessage = '停止请求失败';
+      }
+      render();
+    }
+
     function showHelp() {
       document.getElementById('helpPanel').classList.remove('hidden');
     }
@@ -505,7 +741,12 @@
           if (Array.isArray(data?.accounts)) {
             const hasChange = data.accounts.some((ra, idx) => {
               const la = state.accounts[idx];
-              return la && (ra.loginState !== la.loginState || ra.loginMessage !== la.loginMessage);
+              if (!la) return false;
+              return (
+                ra.loginState !== la.loginState || 
+                ra.loginMessage !== la.loginMessage ||
+                (ra.botRelayLoginState !== undefined && (ra.botRelayLoginState !== la.botRelayLoginState || ra.botRelayLoginMessage !== la.botRelayLoginMessage))
+              );
             });
             if (hasChange) {
               state.accounts.forEach((acc, idx) => {
@@ -514,6 +755,28 @@
                   if (acc.loginState !== 'pending' || remote.loginState !== 'idle') {
                     acc.loginState = remote.loginState || acc.loginState;
                     acc.loginMessage = remote.loginMessage || acc.loginMessage;
+                  }
+                  // 更新机器人中转状态
+                  // 如果远程状态存在，且（远程不是pending 或 本地是pending），则更新
+                  // 这样可以确保：1) pending状态不会被非pending状态覆盖 2) pending状态可以被最终结果覆盖
+                  if (remote.botRelayLoginState !== undefined) {
+                    const shouldUpdate = remote.botRelayLoginState !== 'pending' || acc.botRelayLoginState === 'pending';
+                    if (shouldUpdate) {
+                      acc.botRelayLoginState = remote.botRelayLoginState;
+                      acc.botRelayLoginMessage = remote.botRelayLoginMessage || '';
+                    }
+                  }
+                  // 同步token，如果token被删除，重置状态
+                  if (remote.botRelayToken !== undefined) {
+                    const tokenChanged = remote.botRelayToken !== acc.botRelayToken;
+                    if (tokenChanged) {
+                      acc.botRelayToken = remote.botRelayToken || '';
+                      // 如果token被删除或清空，重置状态
+                      if (!remote.botRelayToken || !remote.botRelayToken.trim()) {
+                        acc.botRelayLoginState = 'idle';
+                        acc.botRelayLoginMessage = '';
+                      }
+                    }
                   }
                 }
               });

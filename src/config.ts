@@ -45,6 +45,21 @@ export interface LegacyConfig {
   // 翻译功能配置
   enableTranslation?: boolean;
   deepseekApiKey?: string;
+  translationProvider?: "deepseek" | "google" | "baidu" | "youdao" | "openai";
+  translationApiKey?: string;
+  translationSecret?: string;
+  // 机器人中转配置
+  enableBotRelay?: boolean;
+  botRelayToken?: string;
+  botRelayLoginState?: string;
+  botRelayLoginMessage?: string;
+  // 忽略选项
+  ignoreSelf?: boolean;
+  ignoreBot?: boolean;
+  ignoreImages?: boolean;
+  ignoreAudio?: boolean;
+  ignoreVideo?: boolean;
+  ignoreDocuments?: boolean;
 }
 
 export interface AccountConfig extends LegacyConfig {
@@ -179,6 +194,19 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     channelConfigs: input?.channelConfigs || {},
     enableTranslation: input?.enableTranslation === true,
     deepseekApiKey: typeof input?.deepseekApiKey === "string" && input.deepseekApiKey.trim() ? input.deepseekApiKey.trim() : undefined,
+    translationProvider: input?.translationProvider || "deepseek",
+    translationApiKey: typeof input?.translationApiKey === "string" && input.translationApiKey.trim() ? input.translationApiKey.trim() : undefined,
+    translationSecret: typeof input?.translationSecret === "string" && input.translationSecret.trim() ? input.translationSecret.trim() : undefined,
+    enableBotRelay: input?.enableBotRelay === true,
+    botRelayToken: typeof input?.botRelayToken === "string" && input.botRelayToken.trim() ? input.botRelayToken.trim() : undefined,
+    botRelayLoginState: typeof input?.botRelayLoginState === "string" ? input.botRelayLoginState : "idle",
+    botRelayLoginMessage: typeof input?.botRelayLoginMessage === "string" ? input.botRelayLoginMessage : "",
+    ignoreSelf: input?.ignoreSelf === true,
+    ignoreBot: input?.ignoreBot === true,
+    ignoreImages: input?.ignoreImages === true,
+    ignoreAudio: input?.ignoreAudio === true,
+    ignoreVideo: input?.ignoreVideo === true,
+    ignoreDocuments: input?.ignoreDocuments === true,
   };
 }
 
@@ -230,6 +258,17 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       showDate: false,
       enableTranslation: false,
       deepseekApiKey: undefined,
+    translationProvider: "deepseek",
+    translationApiKey: undefined,
+    translationSecret: undefined,
+    enableBotRelay: false,
+    botRelayToken: undefined,
+    ignoreSelf: false,
+    ignoreBot: false,
+    ignoreImages: false,
+    ignoreAudio: false,
+    ignoreVideo: false,
+    ignoreDocuments: false,
     };
   }
   return {
@@ -254,6 +293,17 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     channelConfigs: account.channelConfigs,
     enableTranslation: account.enableTranslation,
     deepseekApiKey: account.deepseekApiKey,
+    translationProvider: account.translationProvider,
+    translationApiKey: account.translationApiKey,
+    translationSecret: account.translationSecret,
+    enableBotRelay: account.enableBotRelay,
+    botRelayToken: account.botRelayToken,
+    ignoreSelf: account.ignoreSelf,
+    ignoreBot: account.ignoreBot,
+    ignoreImages: account.ignoreImages,
+    ignoreAudio: account.ignoreAudio,
+    ignoreVideo: account.ignoreVideo,
+    ignoreDocuments: account.ignoreDocuments,
   };
 }
 

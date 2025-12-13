@@ -47,6 +47,11 @@ async function buildSenderBots(account, logger) {
     const proxy = account.proxyUrl || env.PROXY_URL;
     const enableTranslation = account.enableTranslation || false;
     const deepseekApiKey = account.deepseekApiKey;
+    const translationProvider = account.translationProvider || "deepseek";
+    const translationApiKey = account.translationApiKey || account.deepseekApiKey;
+    const translationSecret = account.translationSecret;
+    const enableBotRelay = account.enableBotRelay || false;
+    const botRelayToken = account.botRelayToken;
     // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
     const httpAgent = proxy ? new proxy_agent_1.ProxyAgent(proxy) : undefined;
     if (Object.keys(webhooks).length > 0) {
@@ -57,6 +62,11 @@ async function buildSenderBots(account, logger) {
                 httpAgent,
                 enableTranslation,
                 deepseekApiKey,
+                translationProvider,
+                translationApiKey,
+                translationSecret,
+                enableBotRelay,
+                botRelayToken,
             });
             prepares.push(sb.prepare());
             senderBotsBySource.set(channelId, sb);
@@ -92,7 +102,8 @@ async function startAccount(account, logger) {
     const existing = runningAccounts.get(account.id);
     if (existing) {
         const isAlreadyLoggedIn = existing.client && existing.client.user;
-        const isLoggingIn = existing.client && existing.client.ws && existing.client.ws.readyState === 0;
+        const isLoggingIn = existing.isLoggingIn ||
+            (existing.client && existing.client.ws && existing.client.ws.readyState === 0);
         // 如果账号已经登录或正在登录中，只更新配置，不重新创建
         if (isAlreadyLoggedIn || isLoggingIn) {
             await logger.info(`账号 "${account.name}" 已经运行${isAlreadyLoggedIn ? "且已登录" : "且正在登录中"}，跳过重复启动，仅更新配置`);
@@ -178,6 +189,7 @@ async function startAccount(account, logger) {
             isManuallyStopped: false,
             reconnectCount: 0,
             lastReconnectTime: 0,
+            isLoggingIn: true,
         };
         runningAccounts.set(account.id, runningInfo);
         // 设置重连处理器
@@ -187,19 +199,26 @@ async function startAccount(account, logger) {
             await bot.client.login(account.token);
             // 登录成功消息会在 bot.ts 的 ready 事件中输出，这里不再重复输出
             await writeStatus(account.id, "online", "登录成功");
+            runningInfo.isLoggingIn = false;
         }
         catch (e) {
             const msg = String(e?.message || e);
             console.error(e);
             await logger.error(`账号 "${account.name}" 登录失败: ${msg}`);
-            await writeStatus(account.id, "error", msg.includes("TOKEN_INVALID") ? "Token 无效" : msg);
+            const isTokenInvalid = msg.includes("TOKEN_INVALID") ||
+                msg.includes("TokenInvalid") ||
+                msg.includes("Token 无效") ||
+                (e?.code === "TokenInvalid");
+            await writeStatus(account.id, "error", isTokenInvalid ? "Token 无效" : msg);
             // 如果不是 Token 无效的错误，尝试重连
-            if (!msg.includes("TOKEN_INVALID")) {
+            if (!isTokenInvalid) {
                 await reconnectAccount(account.id, logger, 5000);
             }
             else {
+                await logger.error(`账号 "${account.name}" Token 无效，停止登录`);
                 await stopAccount(account.id, logger, false);
             }
+            runningInfo.isLoggingIn = false;
         }
     }
     catch (e) {
@@ -215,6 +234,7 @@ async function stopAccount(accountId, logger, manual = true) {
     if (manual) {
         running.isManuallyStopped = true;
     }
+    running.isLoggingIn = false;
     // 清除重连定时器
     if (running.reconnectTimer) {
         clearTimeout(running.reconnectTimer);
@@ -348,6 +368,7 @@ async function reconnectAccount(accountId, logger, delay = 5000) {
             // 更新运行信息
             currentRunning.client = client;
             currentRunning.bot = bot;
+            currentRunning.isLoggingIn = true;
             // 设置断开重连监听
             setupReconnectHandlers(accountId, logger);
             // 尝试登录
@@ -357,11 +378,24 @@ async function reconnectAccount(accountId, logger, delay = 5000) {
                 await writeStatus(accountId, "online", "重连成功");
                 // 重连成功，重置计数
                 currentRunning.reconnectCount = 0;
+                currentRunning.isLoggingIn = false;
             }
             catch (e) {
                 const msg = String(e?.message || e);
                 await logger.error(`账号 "${currentRunning.account.name}" 重连失败: ${msg}`);
                 await writeStatus(accountId, "error", `重连失败: ${msg}`);
+                currentRunning.isLoggingIn = false;
+                // 检查是否是Token无效的错误，如果是则不重连
+                const isTokenInvalid = msg.includes("TOKEN_INVALID") ||
+                    msg.includes("TokenInvalid") ||
+                    msg.includes("Token 无效") ||
+                    (e?.code === "TokenInvalid");
+                if (isTokenInvalid) {
+                    await logger.error(`账号 "${currentRunning.account.name}" Token 无效，停止重连`);
+                    await writeStatus(accountId, "error", "Token 无效，请检查 Token 配置");
+                    await stopAccount(accountId, logger, false);
+                    return;
+                }
                 // 检查是否应该继续重连
                 const shouldRetry = currentRunning &&
                     !currentRunning.isManuallyStopped &&

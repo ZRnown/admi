@@ -13,6 +13,11 @@ export class SenderBot {
   webhookName?: string;
   enableTranslation?: boolean;
   deepseekApiKey?: string;
+  translationProvider?: "deepseek" | "google" | "baidu" | "youdao" | "openai";
+  translationApiKey?: string;
+  translationSecret?: string;
+  enableBotRelay?: boolean;
+  botRelayToken?: string;
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
@@ -20,12 +25,22 @@ export class SenderBot {
     httpAgent?: unknown; // 由 proxy-agent 创建的 Agent，可选
     enableTranslation?: boolean;
     deepseekApiKey?: string;
+    translationProvider?: "deepseek" | "google" | "baidu" | "youdao" | "openai";
+    translationApiKey?: string;
+    translationSecret?: string;
+    enableBotRelay?: boolean;
+    botRelayToken?: string;
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
     this.httpAgent = options.httpAgent;
     this.enableTranslation = options.enableTranslation || false;
     this.deepseekApiKey = options.deepseekApiKey;
+    this.translationProvider = options.translationProvider || "deepseek";
+    this.translationApiKey = options.translationApiKey || options.deepseekApiKey;
+    this.translationSecret = options.translationSecret;
+    this.enableBotRelay = options.enableBotRelay || false;
+    this.botRelayToken = options.botRelayToken;
   }
 
   private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
@@ -182,7 +197,7 @@ export class SenderBot {
   }
 
   /**
-   * 调用 DeepSeek API 进行翻译
+   * 调用翻译 API 进行翻译（支持多个翻译服务）
    */
   private async translateText(text: string, target: "zh" | "en"): Promise<string | null> {
     if (!this.enableTranslation) {
@@ -190,8 +205,9 @@ export class SenderBot {
       return null;
     }
     
-    if (!this.deepseekApiKey) {
-      console.log("[翻译] DeepSeek API Key 未配置");
+    const apiKey = this.translationApiKey || this.deepseekApiKey;
+    if (!apiKey) {
+      console.log("[翻译] API Key 未配置");
       return null;
     }
     
@@ -205,82 +221,298 @@ export class SenderBot {
       console.log("[翻译] 非中英内容，跳过翻译");
       return null;
     }
+
+    const provider = this.translationProvider || "deepseek";
+    
     try {
-      const url = new URL("https://api.deepseek.com/v1/chat/completions");
-      const payload = JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content:
-              target === "zh"
-                ? "You are a translator. Translate English (and English parts in mixed text) into Simplified Chinese. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing Chinese or non-English text unchanged. Return only the translated result."
-                : "You are a translator. Translate Chinese (and Chinese parts in mixed text) into English. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing English or non-Chinese text unchanged. Return only the translated result."
-          },
-          {
-            role: "user",
-            content: text
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 2000
-      });
-
-      const options: https.RequestOptions = {
-        method: "POST",
-        hostname: url.hostname,
-        path: url.pathname,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.deepseekApiKey}`,
-          "Content-Length": Buffer.byteLength(payload)
-        },
-        agent: this.httpAgent as any
-      };
-
-      return await new Promise<string | null>((resolve, reject) => {
-        const req = https.request(options, (res) => {
-          let body = "";
-          res.on("data", (chunk) => (body += chunk));
-          res.on("end", () => {
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              try {
-                const json = body ? JSON.parse(body) : null;
-                const translatedText = json?.choices?.[0]?.message?.content?.trim();
-                if (translatedText) {
-                  console.log(`[翻译] 翻译成功: "${text.substring(0, 50)}..." -> "${translatedText.substring(0, 50)}..."`);
-                  resolve(translatedText);
-                } else {
-                  console.log(`[翻译] API 返回格式异常，响应: ${body.substring(0, 200)}`);
-                  resolve(null);
-                }
-              } catch (e) {
-                console.error(`[翻译] 解析 API 响应失败:`, e, `响应: ${body.substring(0, 200)}`);
-                resolve(null);
-              }
-            } else {
-              // 翻译失败不影响消息发送，但记录错误
-              console.error(`[翻译] API 请求失败: HTTP ${res.statusCode} ${res.statusMessage}, 响应: ${body.substring(0, 200)}`);
-              resolve(null);
-            }
-          });
-        });
-        req.setTimeout(60000, () => {
-          req.destroy();
-          console.error("[翻译] 请求超时（60秒）");
-          resolve(null); // 超时也不影响消息发送
-        });
-        req.on("error", (err) => {
-          console.error("[翻译] 网络错误:", err);
-          resolve(null); // 错误也不影响消息发送
-        });
-        req.write(payload);
-        req.end();
-      });
+      switch (provider) {
+        case "deepseek":
+        case "openai":
+          return await this.translateWithAI(provider, apiKey, text, target);
+        case "google":
+          return await this.translateWithGoogle(apiKey, text, target);
+        case "baidu":
+          return await this.translateWithBaidu(apiKey, this.translationSecret || "", text, target);
+        case "youdao":
+          return await this.translateWithYoudao(apiKey, this.translationSecret || "", text, target);
+        default:
+          console.error(`[翻译] 不支持的翻译服务: ${provider}`);
+          return null;
+      }
     } catch (e) {
       console.error("[翻译] 异常:", e);
-      return null; // 任何错误都不影响消息发送
+      return null;
     }
+  }
+
+  private async translateWithAI(provider: "deepseek" | "openai", apiKey: string, text: string, target: "zh" | "en"): Promise<string | null> {
+    const baseUrl = provider === "deepseek" ? "https://api.deepseek.com" : "https://api.openai.com";
+    const model = provider === "deepseek" ? "deepseek-chat" : "gpt-3.5-turbo";
+    const url = new URL(`${baseUrl}/v1/chat/completions`);
+    
+    const payload = JSON.stringify({
+      model,
+      messages: [
+        {
+          role: "system",
+          content:
+            target === "zh"
+              ? "You are a translator. Translate English (and English parts in mixed text) into Simplified Chinese. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing Chinese or non-English text unchanged. Return only the translated result."
+              : "You are a translator. Translate Chinese (and Chinese parts in mixed text) into English. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing English or non-Chinese text unchanged. Return only the translated result."
+        },
+        {
+          role: "user",
+          content: text
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 2000
+    });
+
+    const options: https.RequestOptions = {
+      method: "POST",
+      hostname: url.hostname,
+      path: url.pathname,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Length": Buffer.byteLength(payload)
+      },
+      agent: this.httpAgent as any
+    };
+
+    return await new Promise<string | null>((resolve) => {
+      const req = https.request(options, (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              const json = body ? JSON.parse(body) : null;
+              const translatedText = json?.choices?.[0]?.message?.content?.trim();
+              if (translatedText) {
+                console.log(`[翻译] ${provider} 翻译成功`);
+                resolve(translatedText);
+              } else {
+                console.log(`[翻译] ${provider} API 返回格式异常`);
+                resolve(null);
+              }
+            } catch (e) {
+              console.error(`[翻译] ${provider} 解析响应失败:`, e);
+              resolve(null);
+            }
+          } else {
+            console.error(`[翻译] ${provider} API 请求失败: HTTP ${res.statusCode}`);
+            resolve(null);
+          }
+        });
+      });
+      req.setTimeout(60000, () => {
+        req.destroy();
+        console.error(`[翻译] ${provider} 请求超时`);
+        resolve(null);
+      });
+      req.on("error", (err) => {
+        console.error(`[翻译] ${provider} 网络错误:`, err);
+        resolve(null);
+      });
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private async translateWithGoogle(apiKey: string, text: string, target: "zh" | "en"): Promise<string | null> {
+    // Google Translate API v2 (需要付费)
+    const targetLang = target === "zh" ? "zh-CN" : "en";
+    const url = new URL(`https://translation.googleapis.com/language/translate/v2?key=${apiKey}`);
+    
+    const payload = JSON.stringify({
+      q: text,
+      target: targetLang,
+      format: "text"
+    });
+
+    const options: https.RequestOptions = {
+      method: "POST",
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload)
+      },
+      agent: this.httpAgent as any
+    };
+
+    return await new Promise<string | null>((resolve) => {
+      const req = https.request(options, (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              const json = body ? JSON.parse(body) : null;
+              const translatedText = json?.data?.translations?.[0]?.translatedText;
+              if (translatedText) {
+                console.log(`[翻译] Google 翻译成功`);
+                resolve(translatedText);
+              } else {
+                resolve(null);
+              }
+            } catch (e) {
+              console.error(`[翻译] Google 解析响应失败:`, e);
+              resolve(null);
+            }
+          } else {
+            console.error(`[翻译] Google API 请求失败: HTTP ${res.statusCode}`);
+            resolve(null);
+          }
+        });
+      });
+      req.setTimeout(60000, () => {
+        req.destroy();
+        console.error("[翻译] Google 请求超时");
+        resolve(null);
+      });
+      req.on("error", (err) => {
+        console.error("[翻译] Google 网络错误:", err);
+        resolve(null);
+      });
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private async translateWithBaidu(appId: string, secretKey: string, text: string, target: "zh" | "en"): Promise<string | null> {
+    // 百度翻译 API
+    const crypto = require("crypto");
+    const salt = Date.now().toString();
+    const from = target === "zh" ? "en" : "zh";
+    const to = target === "zh" ? "zh" : "en";
+    const sign = crypto.createHash("md5").update(appId + text + salt + secretKey).digest("hex");
+    
+    const url = new URL("https://fanyi-api.baidu.com/api/trans/vip/translate");
+    url.searchParams.set("q", text);
+    url.searchParams.set("from", from);
+    url.searchParams.set("to", to);
+    url.searchParams.set("appid", appId);
+    url.searchParams.set("salt", salt);
+    url.searchParams.set("sign", sign);
+
+    const options: https.RequestOptions = {
+      method: "GET",
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      agent: this.httpAgent as any
+    };
+
+    return await new Promise<string | null>((resolve) => {
+      const req = https.request(options, (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              const json = body ? JSON.parse(body) : null;
+              const translatedText = json?.trans_result?.[0]?.dst;
+              if (translatedText) {
+                console.log(`[翻译] 百度翻译成功`);
+                resolve(translatedText);
+              } else {
+                resolve(null);
+              }
+            } catch (e) {
+              console.error(`[翻译] 百度解析响应失败:`, e);
+              resolve(null);
+            }
+          } else {
+            console.error(`[翻译] 百度 API 请求失败: HTTP ${res.statusCode}`);
+            resolve(null);
+          }
+        });
+      });
+      req.setTimeout(60000, () => {
+        req.destroy();
+        console.error("[翻译] 百度请求超时");
+        resolve(null);
+      });
+      req.on("error", (err) => {
+        console.error("[翻译] 百度网络错误:", err);
+        resolve(null);
+      });
+      req.end();
+    });
+  }
+
+  private async translateWithYoudao(appKey: string, appSecret: string, text: string, target: "zh" | "en"): Promise<string | null> {
+    // 有道翻译 API
+    const crypto = require("crypto");
+    const salt = Date.now().toString();
+    const from = target === "zh" ? "EN" : "zh-CHS";
+    const to = target === "zh" ? "zh-CHS" : "EN";
+    const curtime = Math.round(Date.now() / 1000).toString();
+    const signStr = appKey + (text.length > 20 ? text.substring(0, 10) + text.length + text.substring(text.length - 10) : text) + salt + curtime + appSecret;
+    const sign = crypto.createHash("sha256").update(signStr).digest("hex");
+    
+    const url = new URL("https://openapi.youdao.com/api");
+    const payload = new URLSearchParams({
+      q: text,
+      from: from,
+      to: to,
+      appKey: appKey,
+      salt: salt,
+      sign: sign,
+      signType: "v3",
+      curtime: curtime
+    });
+
+    const options: https.RequestOptions = {
+      method: "POST",
+      hostname: url.hostname,
+      path: url.pathname,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(payload.toString())
+      },
+      agent: this.httpAgent as any
+    };
+
+    return await new Promise<string | null>((resolve) => {
+      const req = https.request(options, (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              const json = body ? JSON.parse(body) : null;
+              const translatedText = json?.translation?.[0];
+              if (translatedText && json.errorCode === "0") {
+                console.log(`[翻译] 有道翻译成功`);
+                resolve(translatedText);
+              } else {
+                resolve(null);
+              }
+            } catch (e) {
+              console.error(`[翻译] 有道解析响应失败:`, e);
+              resolve(null);
+            }
+          } else {
+            console.error(`[翻译] 有道 API 请求失败: HTTP ${res.statusCode}`);
+            resolve(null);
+          }
+        });
+      });
+      req.setTimeout(60000, () => {
+        req.destroy();
+        console.error("[翻译] 有道请求超时");
+        resolve(null);
+      });
+      req.on("error", (err) => {
+        console.error("[翻译] 有道网络错误:", err);
+        resolve(null);
+      });
+      req.write(payload.toString());
+      req.end();
+    });
   }
 
   async sendData(messagesToSend: Array<{
@@ -382,8 +614,11 @@ export class SenderBot {
           if (item.useEmbed && Object.keys(embed).length > 0) {
             payload.embeds = [embed];
           }
-          if (item.username) payload.username = item.username;
-          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          // Bot API不支持username和avatar_url，只在webhook模式下使用
+          if (!this.enableBotRelay) {
+            if (item.username) payload.username = item.username;
+            if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          }
           if (item.components && item.components.length > 0) {
             payload.components = item.components;
           }
@@ -394,7 +629,13 @@ export class SenderBot {
           if (item.replyToTarget?.messageId) {
             payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
           }
-          resp = await this.postMultipart(payload, files, true);
+          
+          // 如果启用机器人中转，使用Bot API发送，否则使用webhook
+          if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
+            resp = await this.postViaBotAPI(payload, files, this.defaultChannelId);
+          } else {
+            resp = await this.postMultipart(payload, files, true);
+          }
         } else {
           const payload: any = {
             allowed_mentions: { parse: [], replied_user: false }
@@ -447,12 +688,21 @@ export class SenderBot {
           if (item.components && item.components.length > 0) {
             payload.components = item.components;
           }
-          if (item.username) payload.username = item.username;
-          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          // Bot API不支持username和avatar_url，只在webhook模式下使用
+          if (!this.enableBotRelay) {
+            if (item.username) payload.username = item.username;
+            if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          }
           if (item.replyToTarget?.messageId) {
             payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
           }
-          resp = await this.postToWebhook(payload, true);
+          
+          // 如果启用机器人中转，使用Bot API发送，否则使用webhook
+          if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
+            resp = await this.postViaBotAPI(payload, [], this.defaultChannelId);
+          } else {
+            resp = await this.postToWebhook(payload, true);
+          }
         }
           
         if (resp?.id && resp?.channel_id) {
@@ -566,5 +816,134 @@ export class SenderBot {
       req.on("error", (err) => reject(err));
       req.end();
     });
+  }
+
+  /**
+   * 通过Discord Bot API发送消息（机器人中转模式）
+   */
+  private async postViaBotAPI(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, channelId: string): Promise<any> {
+    if (!this.botRelayToken) {
+      throw new Error("Bot relay token is not configured");
+    }
+
+    const url = new URL(`https://discord.com/api/v10/channels/${channelId}/messages`);
+
+    // 如果有文件，使用multipart/form-data
+    if (files.length > 0) {
+      const boundary = "----cascadeform" + Math.random().toString(16).slice(2);
+      const parts: Buffer[] = [];
+      const push = (chunk: string | Buffer) => parts.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+
+      // payload_json part
+      push(`--${boundary}\r\n`);
+      push(`Content-Disposition: form-data; name="payload_json"\r\n`);
+      push(`Content-Type: application/json\r\n\r\n`);
+      push(JSON.stringify(body));
+      push(`\r\n`);
+
+      // files
+      files.forEach((f, idx) => {
+        push(`--${boundary}\r\n`);
+        push(`Content-Disposition: form-data; name="files[${idx}]"; filename="${f.filename}"\r\n`);
+        push(`Content-Type: application/octet-stream\r\n\r\n`);
+        push(f.buffer);
+        push(`\r\n`);
+      });
+
+      // end boundary
+      push(`--${boundary}--\r\n`);
+
+      const payload = Buffer.concat(parts);
+
+      const options: https.RequestOptions = {
+        method: "POST",
+        hostname: url.hostname,
+        path: url.pathname,
+        headers: {
+          "Authorization": `Bot ${this.botRelayToken}`,
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": payload.byteLength
+        },
+        agent: this.httpAgent as any
+      };
+
+      return await new Promise<any>((resolve, reject) => {
+        const req = https.request(options, (res) => {
+          let responseBody = "";
+          res.on("data", (chunk) => (responseBody += chunk));
+          res.on("end", () => {
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                resolve(responseBody ? JSON.parse(responseBody) : null);
+              } catch {
+                resolve(null);
+              }
+            } else {
+              reject(new Error(`Bot API multipart failed ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`));
+            }
+          });
+        });
+        req.setTimeout(30000, () => {
+          req.destroy(new Error("Bot API multipart request timeout"));
+        });
+        req.on("error", (err) => reject(err));
+        req.write(payload);
+        req.end();
+      });
+    } else {
+      // 没有文件，使用JSON
+      const payload = JSON.stringify(body);
+
+      const options: https.RequestOptions = {
+        method: "POST",
+        hostname: url.hostname,
+        path: url.pathname,
+        headers: {
+          "Authorization": `Bot ${this.botRelayToken}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload)
+        },
+        agent: this.httpAgent as any
+      };
+
+      return await new Promise<any>((resolve, reject) => {
+        const req = https.request(options, (res) => {
+          let responseBody = "";
+          res.on("data", (chunk) => (responseBody += chunk));
+          res.on("end", () => {
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                resolve(responseBody ? JSON.parse(responseBody) : null);
+              } catch {
+                resolve(null);
+              }
+            } else {
+              // 如果400且包含message_reference可能不被支持，尝试去掉后重试一次
+              if (res.statusCode === 400) {
+                try {
+                  const parsed = JSON.parse(responseBody || "{}");
+                  const hasRef = body.message_reference ? true : false;
+                  if (hasRef) {
+                    const retryBody = { ...body };
+                    delete retryBody.message_reference;
+                    this.postViaBotAPI(retryBody, [], channelId).then(resolve).catch(reject);
+                    return;
+                  }
+                } catch (_) {
+                  // ignore parse errors
+                }
+              }
+              reject(new Error(`Bot API request failed with status ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`));
+            }
+          });
+        });
+        req.setTimeout(30000, () => {
+          req.destroy(new Error("Bot API request timeout"));
+        });
+        req.on("error", (err) => reject(err));
+        req.write(payload);
+        req.end();
+      });
+    }
   }
 }

@@ -10,5 +10,25 @@
   "82f60c98-5e4b-4766-a6df-b9a20e959c15": {
     "loginState": "online",
     "loginMessage": "登录成功"
+  },
+  "9a338c4e-f184-418e-b4f8-33743ba04a7a": {
+    "loginState": "online",
+    "loginMessage": "登录成功"
+  },
+  "a6af7623-17f0-4c87-9d38-2251ac8f8811": {
+    "loginState": "error",
+    "loginMessage": "未配置 Token"
+  },
+  "d846c667-d6df-4052-b59a-e3d9aaa8fb72": {
+    "loginState": "idle",
+    "loginMessage": "未请求登录"
+  },
+  "b628a3a0-dc2e-4a02-bfce-0cdf841d89c2": {
+    "loginState": "idle",
+    "loginMessage": "未请求登录"
+  },
+  "0d750624-38f1-4be2-a101-5f6cf0dc1fa9": {
+    "loginState": "idle",
+    "loginMessage": "未请求登录"
   }
 }

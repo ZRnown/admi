@@ -9,7 +9,10 @@ const crypto_1 = require("crypto");
 const fs_1 = require("fs");
 const child_process_1 = require("child_process");
 const path_1 = __importDefault(require("path"));
+const https_1 = __importDefault(require("https"));
+const proxy_agent_1 = require("proxy-agent");
 const config_1 = require("./src/config");
+const env_1 = require("./src/env");
 // 加载 .env 文件
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -75,14 +78,27 @@ function accountToFrontend(account) {
         mutedUsersIds: (account.mutedUsersIds || []).map((id) => String(id)),
         restartNonce: account.restartNonce,
         enableTranslation: account.enableTranslation === true,
+        translationProvider: account.translationProvider || "deepseek",
+        translationApiKey: account.translationApiKey || account.deepseekApiKey || "",
+        translationSecret: account.translationSecret || "",
         deepseekApiKey: account.deepseekApiKey || "",
+        enableBotRelay: account.enableBotRelay === true,
+        botRelayToken: account.botRelayToken || "",
+        botRelayLoginState: account.botRelayLoginState || "idle",
+        botRelayLoginMessage: account.botRelayLoginMessage || "",
+        ignoreSelf: account.ignoreSelf === true,
+        ignoreBot: account.ignoreBot === true,
+        ignoreImages: account.ignoreImages === true,
+        ignoreAudio: account.ignoreAudio === true,
+        ignoreVideo: account.ignoreVideo === true,
+        ignoreDocuments: account.ignoreDocuments === true,
     };
 }
 function dtoToAccount(dto, fallback) {
     const base = fallback ??
         {
             id: (0, crypto_1.randomUUID)(),
-            name: dto.name || "未命名账号",
+            name: dto.name || "未命名转发实例",
             type: dto.type === "bot" ? "bot" : "selfbot",
             token: dto.token || "",
             proxyUrl: dto.proxyUrl || "",
@@ -94,6 +110,19 @@ function dtoToAccount(dto, fallback) {
             replacementsDictionary: {},
             historyScan: { enabled: true },
             showChat: true,
+            enableTranslation: dto.enableTranslation === true,
+            translationProvider: dto.translationProvider || "deepseek",
+            translationApiKey: dto.translationApiKey || dto.deepseekApiKey || "",
+            translationSecret: dto.translationSecret || "",
+            deepseekApiKey: dto.deepseekApiKey || "",
+            enableBotRelay: dto.enableBotRelay === true,
+            botRelayToken: dto.botRelayToken || "",
+            ignoreSelf: dto.ignoreSelf === true,
+            ignoreBot: dto.ignoreBot === true,
+            ignoreImages: dto.ignoreImages === true,
+            ignoreAudio: dto.ignoreAudio === true,
+            ignoreVideo: dto.ignoreVideo === true,
+            ignoreDocuments: dto.ignoreDocuments === true,
         };
     const channelWebhooks = {};
     const channelNotes = {};
@@ -142,7 +171,18 @@ function dtoToAccount(dto, fallback) {
         mutedUsersIds: Array.isArray(dto.mutedUsersIds) ? dto.mutedUsersIds : base.mutedUsersIds || [],
         restartNonce: dto.restartNonce ?? base.restartNonce,
         enableTranslation: dto.enableTranslation === true,
+        translationProvider: dto.translationProvider || base.translationProvider || "deepseek",
+        translationApiKey: typeof dto.translationApiKey === "string" && dto.translationApiKey.trim() ? dto.translationApiKey.trim() : (typeof dto.deepseekApiKey === "string" && dto.deepseekApiKey.trim() ? dto.deepseekApiKey.trim() : base.translationApiKey),
+        translationSecret: typeof dto.translationSecret === "string" && dto.translationSecret.trim() ? dto.translationSecret.trim() : base.translationSecret,
         deepseekApiKey: typeof dto.deepseekApiKey === "string" && dto.deepseekApiKey.trim() ? dto.deepseekApiKey.trim() : undefined,
+        enableBotRelay: dto.enableBotRelay === true,
+        botRelayToken: typeof dto.botRelayToken === "string" && dto.botRelayToken.trim() ? dto.botRelayToken.trim() : base.botRelayToken,
+        ignoreSelf: dto.ignoreSelf === true,
+        ignoreBot: dto.ignoreBot === true,
+        ignoreImages: dto.ignoreImages === true,
+        ignoreAudio: dto.ignoreAudio === true,
+        ignoreVideo: dto.ignoreVideo === true,
+        ignoreDocuments: dto.ignoreDocuments === true,
     };
 }
 // API 路由
@@ -255,6 +295,132 @@ app.post("/api/account/action", async (req, res) => {
             }
             catch { }
             return res.json({ ok: true, loginState: "idle", loginMessage: "已停止该账号登录" });
+        }
+        else if (action === "botRelayLogin") {
+            // 机器人中转登录逻辑：验证token是否有效
+            console.log(`[机器人中转] 账号 "${account.name}" 开始验证 Token`);
+            if (!account.botRelayToken || !account.botRelayToken.trim()) {
+                console.error(`[机器人中转] 账号 "${account.name}" Token 未配置`);
+                account.botRelayLoginState = "error";
+                account.botRelayLoginMessage = "Token 未配置";
+                await (0, config_1.saveMultiConfig)(multi);
+                return res.json({ ok: false, botRelayLoginState: "error", botRelayLoginMessage: "Token 未配置" });
+            }
+            // 先设置pending状态并保存
+            account.botRelayLoginState = "pending";
+            account.botRelayLoginMessage = "正在验证 Token...";
+            await (0, config_1.saveMultiConfig)(multi);
+            console.log(`[机器人中转] 账号 "${account.name}" 状态已设置为 pending`);
+            // 验证机器人Token是否有效
+            try {
+                const token = account.botRelayToken.trim();
+                // 获取代理配置（如果有）
+                const env = (0, env_1.getEnv)();
+                const proxy = account.proxyUrl || env.PROXY_URL;
+                const httpAgent = proxy ? new proxy_agent_1.ProxyAgent(proxy) : undefined;
+                console.log(`[机器人中转] 账号 "${account.name}" 开始验证请求，使用代理: ${proxy ? '是' : '否'}`);
+                const options = {
+                    hostname: "discord.com",
+                    path: "/api/v10/users/@me",
+                    method: "GET",
+                    headers: {
+                        "Authorization": `Bot ${token}`,
+                        "Content-Type": "application/json",
+                        "User-Agent": "DiscordBot (https://discord.com, 1.0)"
+                    }
+                };
+                if (httpAgent) {
+                    options.agent = httpAgent;
+                }
+                const verifyResult = await new Promise((resolve) => {
+                    const req = https_1.default.request(options, (res) => {
+                        let body = "";
+                        res.on("data", (chunk) => (body += chunk));
+                        res.on("end", () => {
+                            console.log(`[机器人中转] 账号 "${account.name}" 验证响应: HTTP ${res.statusCode}`);
+                            if (res.statusCode === 200) {
+                                try {
+                                    const data = JSON.parse(body);
+                                    console.log(`[机器人中转] 账号 "${account.name}" 验证响应数据:`, { id: data.id, bot: data.bot, username: data.username });
+                                    if (data.id && data.bot === true) {
+                                        resolve({ success: true });
+                                    }
+                                    else if (data.id && !data.bot) {
+                                        resolve({ success: false, error: "Token 不是机器人 Token（是用户 Token）" });
+                                    }
+                                    else {
+                                        resolve({ success: false, error: "Token 不是机器人 Token" });
+                                    }
+                                }
+                                catch (e) {
+                                    console.error(`[机器人中转] 账号 "${account.name}" 解析响应失败:`, e);
+                                    resolve({ success: false, error: `解析响应失败: ${String(e?.message || e)}` });
+                                }
+                            }
+                            else if (res.statusCode === 401) {
+                                console.error(`[机器人中转] 账号 "${account.name}" Token 无效或已过期`);
+                                resolve({ success: false, error: "Token 无效或已过期" });
+                            }
+                            else {
+                                try {
+                                    const errorData = body ? JSON.parse(body) : {};
+                                    const errorMsg = errorData.message || `验证失败 (HTTP ${res.statusCode})`;
+                                    console.error(`[机器人中转] 账号 "${account.name}" 验证失败:`, errorMsg);
+                                    resolve({ success: false, error: errorMsg });
+                                }
+                                catch {
+                                    console.error(`[机器人中转] 账号 "${account.name}" 验证失败: HTTP ${res.statusCode}`);
+                                    resolve({ success: false, error: `验证失败 (HTTP ${res.statusCode})` });
+                                }
+                            }
+                        });
+                    });
+                    req.on("error", (err) => {
+                        console.error(`[机器人中转] 账号 "${account.name}" 网络错误:`, err);
+                        resolve({ success: false, error: `网络错误: ${err.message}` });
+                    });
+                    req.setTimeout(15000, () => {
+                        console.error(`[机器人中转] 账号 "${account.name}" 验证超时`);
+                        req.destroy();
+                        resolve({ success: false, error: "验证超时（15秒）" });
+                    });
+                    req.end();
+                });
+                // 根据验证结果更新状态
+                if (verifyResult.success) {
+                    account.botRelayLoginState = "online";
+                    account.botRelayLoginMessage = "验证成功";
+                    await (0, config_1.saveMultiConfig)(multi);
+                    console.log(`[机器人中转] 账号 "${account.name}" Token 验证成功，状态已更新为 online`);
+                    return res.json({ ok: true, botRelayLoginState: "online", botRelayLoginMessage: "验证成功" });
+                }
+                else {
+                    account.botRelayLoginState = "error";
+                    account.botRelayLoginMessage = verifyResult.error || "验证失败";
+                    await (0, config_1.saveMultiConfig)(multi);
+                    console.error(`[机器人中转] 账号 "${account.name}" Token 验证失败: ${verifyResult.error || "验证失败"}，状态已更新为 error`);
+                    return res.json({ ok: false, botRelayLoginState: "error", botRelayLoginMessage: verifyResult.error || "验证失败" });
+                }
+            }
+            catch (e) {
+                const errorMsg = `验证异常: ${String(e?.message || e)}`;
+                console.error(`[机器人中转] 账号 "${account.name}" Token 验证异常:`, e);
+                account.botRelayLoginState = "error";
+                account.botRelayLoginMessage = errorMsg;
+                await (0, config_1.saveMultiConfig)(multi);
+                return res.json({ ok: false, botRelayLoginState: "error", botRelayLoginMessage: errorMsg });
+            }
+        }
+        else if (action === "botRelayStop") {
+            // 机器人中转停止逻辑
+            account.botRelayLoginState = "idle";
+            account.botRelayLoginMessage = "已停止";
+            await (0, config_1.saveMultiConfig)(multi);
+            try {
+                await fs_1.promises.writeFile(triggerFile, Date.now().toString(), "utf-8");
+            }
+            catch { }
+            return res.json({ ok: true, botRelayLoginState: "idle", botRelayLoginMessage: "已停止" });
         }
         else {
             return res.status(400).json({ error: "Invalid action" });
