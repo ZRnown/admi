@@ -229,9 +229,16 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     // 在 ready 事件中注册重连处理器，避免登录过程中的临时断开事件触发重连
     // 先注册 ready 事件，在 ready 后再注册 disconnect 监听器
     // 同时监听 ready 和 clientReady 以兼容不同版本
+    let readyHandled = false; // 防止重复处理
     const readyHandler = async () => {
+      // 如果已经处理过，跳过
+      if (readyHandled) {
+        return;
+      }
+      
       const currentRunning = runningAccounts.get(account.id);
-      if (currentRunning) {
+      if (currentRunning && currentRunning.isLoggingIn) {
+        readyHandled = true;
         // 登录成功后，清除登录标志
         currentRunning.isLoggingIn = false;
         // 清除登录超时定时器
@@ -242,7 +249,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
         // 现在才注册重连处理器，避免登录过程中的临时断开事件
         setupReconnectHandlers(account.id, logger);
         await writeStatus(account.id, "online", "登录成功");
-        await logger.info(`账号 "${account.name}" 登录成功，已注册重连处理器`);
+        await logger.info(`账号 "${account.name}" 登录成功（通过 ready 事件），已注册重连处理器`);
       }
     };
     (bot.client as any).once("clientReady", readyHandler);
@@ -260,7 +267,30 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     try {
       await logger.info(`账号 "${account.name}" 开始登录...`);
       await (bot.client as any).login(account.token);
-      // 注意：状态更新和 isLoggingIn 清除现在在 ready 事件中处理
+      
+      // 登录调用完成后，检查是否已经登录成功（ready 事件可能已经触发）
+      // 等待一小段时间让 ready 事件有机会触发
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // 检查 client.user 是否存在，如果存在说明已经登录成功
+      const client = bot.client as any;
+      if (client.user && client.ws && client.ws.readyState === 1) {
+        // 已经登录成功，直接更新状态
+        const currentRunning = runningAccounts.get(account.id);
+        if (currentRunning && currentRunning.isLoggingIn) {
+          currentRunning.isLoggingIn = false;
+          if (currentRunning.loginTimeout) {
+            clearTimeout(currentRunning.loginTimeout);
+            currentRunning.loginTimeout = undefined;
+          }
+          setupReconnectHandlers(account.id, logger);
+          await writeStatus(account.id, "online", "登录成功");
+          await logger.info(`账号 "${account.name}" 登录成功（通过状态检查），已注册重连处理器`);
+          // 标记 ready 已处理，防止 readyHandler 重复处理
+          readyHandled = true;
+        }
+      }
+      // 注意：如果 ready 事件稍后触发，readyHandler 会检查 readyHandled 标志，不会重复操作
     } catch (e: any) {
       const msg = String(e?.message || e);
       console.error(e);
