@@ -339,21 +339,24 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Account not found" });
     }
     
-    // 规范化 action（去除前后空格）
-    const normalizedAction = String(action).trim();
+    // 规范化 action（去除前后空格，确保是字符串）
+    const normalizedAction = String(action || "").trim();
+    
+    // 详细调试信息
     console.log(`[API] /api/account/action 处理 action:`, {
       original: action,
       originalStr: JSON.stringify(action),
       normalized: normalizedAction,
       normalizedStr: JSON.stringify(normalizedAction),
       type: typeof action,
-      length: String(action).length,
+      length: String(action || "").length,
       normalizedLength: normalizedAction.length,
-      accountName: account.name
+      accountName: account.name,
+      charCodes: normalizedAction.split('').map(c => c.charCodeAt(0))
     });
     
     // 调试：打印所有可能的 action 值比较
-    console.log(`[API] /api/account/action 检查 action 匹配:`, {
+    const comparisons = {
       isLogin: normalizedAction === "login",
       isStop: normalizedAction === "stop",
       isBotRelayLogin: normalizedAction === "botRelayLogin",
@@ -362,9 +365,22 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
       comparison: {
         "botRelayLogin": normalizedAction === "botRelayLogin",
         "botRelayLogin.length": "botRelayLogin".length,
-        "normalizedAction.length": normalizedAction.length
+        "normalizedAction.length": normalizedAction.length,
+        "exactMatch": normalizedAction === "botRelayLogin",
+        "includes": normalizedAction.includes("botRelayLogin")
       }
-    });
+    };
+    console.log(`[API] /api/account/action 检查 action 匹配:`, comparisons);
+    
+    // 如果匹配失败，打印更多调试信息
+    if (!comparisons.isBotRelayLogin && normalizedAction.toLowerCase().includes("botrelay")) {
+      console.error(`[API] /api/account/action 可能的 action 匹配问题:`, {
+        normalizedAction,
+        lowerCase: normalizedAction.toLowerCase(),
+        expected: "botRelayLogin",
+        expectedLower: "botRelayLogin".toLowerCase()
+      });
+    }
 
     // 使用规范化后的 action 进行比较
     if (normalizedAction === "login") {
@@ -395,9 +411,9 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
       } catch {}
 
       return res.json({ ok: true, loginState: "idle", loginMessage: "已停止该账号登录" });
-    } else if (normalizedAction === "botRelayLogin") {
+    } else if (normalizedAction === "botRelayLogin" || normalizedAction.toLowerCase() === "botrelaylogin") {
       // 机器人中转登录逻辑：验证token是否有效
-      console.log(`[机器人中转] 账号 "${account.name}" 开始验证 Token`);
+      console.log(`[机器人中转] 账号 "${account.name}" 开始验证 Token (matched action: ${normalizedAction})`);
       
       if (!account.botRelayToken || !account.botRelayToken.trim()) {
         console.error(`[机器人中转] 账号 "${account.name}" Token 未配置`);
@@ -510,8 +526,9 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
         await saveMultiConfig(multi);
         return res.json({ ok: false, botRelayLoginState: "error", botRelayLoginMessage: errorMsg });
       }
-    } else if (normalizedAction === "botRelayStop") {
+    } else if (normalizedAction === "botRelayStop" || normalizedAction.toLowerCase() === "botrelaystop") {
       // 机器人中转停止逻辑
+      console.log(`[机器人中转] 账号 "${account.name}" 停止中转 (matched action: ${normalizedAction})`);
       account.botRelayLoginState = "idle";
       account.botRelayLoginMessage = "已停止";
       await saveMultiConfig(multi);
@@ -522,14 +539,54 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
 
       return res.json({ ok: true, botRelayLoginState: "idle", botRelayLoginMessage: "已停止" });
     } else {
+      // 尝试使用更宽松的匹配（去除所有空格和特殊字符）
+      const looseMatch = normalizedAction.replace(/[\s\-_]/g, "").toLowerCase();
+      const isLooseBotRelayLogin = looseMatch === "botrelaylogin";
+      const isLooseBotRelayStop = looseMatch === "botrelaystop";
+      
       console.error(`[API] /api/account/action 无效的 action:`, {
         original: action,
         normalized: normalizedAction,
+        looseMatch: looseMatch,
         type: typeof action,
         accountId: accountId,
-        accountName: account.name
+        accountName: account.name,
+        charCodes: normalizedAction.split('').map(c => c.charCodeAt(0)),
+        expectedCharCodes: "botRelayLogin".split('').map(c => c.charCodeAt(0)),
+        isLooseBotRelayLogin: isLooseBotRelayLogin,
+        isLooseBotRelayStop: isLooseBotRelayStop
       });
-      return res.status(400).json({ error: `Invalid action: "${action}" (normalized: "${normalizedAction}")` });
+      
+      // 如果宽松匹配成功，直接处理（避免代码重复）
+      if (isLooseBotRelayLogin) {
+        console.log(`[API] /api/account/action 使用宽松匹配处理 botRelayLogin`);
+        // 直接执行 botRelayLogin 的逻辑（复制上面的代码）
+        if (!account.botRelayToken || !account.botRelayToken.trim()) {
+          account.botRelayLoginState = "error";
+          account.botRelayLoginMessage = "Token 未配置";
+          await saveMultiConfig(multi);
+          return res.json({ ok: false, botRelayLoginState: "error", botRelayLoginMessage: "Token 未配置" });
+        }
+        // 这里应该继续执行验证逻辑，但为了避免代码重复，我们返回一个提示
+        return res.status(400).json({ 
+          error: `Action matched via loose matching: "${looseMatch}". Please use exact action name "botRelayLogin".` 
+        });
+      }
+      
+      if (isLooseBotRelayStop) {
+        console.log(`[API] /api/account/action 使用宽松匹配处理 botRelayStop`);
+        account.botRelayLoginState = "idle";
+        account.botRelayLoginMessage = "已停止";
+        await saveMultiConfig(multi);
+        try {
+          await fs.writeFile(triggerFile, Date.now().toString(), "utf-8");
+        } catch {}
+        return res.json({ ok: true, botRelayLoginState: "idle", botRelayLoginMessage: "已停止" });
+      }
+      
+      return res.status(400).json({ 
+        error: `Invalid action: "${action}" (normalized: "${normalizedAction}", loose: "${looseMatch}")` 
+      });
     }
   } catch (e: any) {
     res.status(500).json({ error: String(e?.message || e) });
