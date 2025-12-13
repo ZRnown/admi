@@ -23,6 +23,31 @@ export type Client<Ready extends boolean = boolean> =
   | SelfBotClient<Ready>
   | BotClient<Ready>;
 
+// 简单的定长去重缓存，无定时器，高性能
+class DedupeCache {
+  private items = new Set<string>();
+  private queue: string[] = [];
+  private limit: number;
+
+  constructor(limit = 2000) {
+    this.limit = limit;
+  }
+
+  has(id: string): boolean {
+    return this.items.has(id);
+  }
+
+  add(id: string) {
+    if (this.items.has(id)) return;
+    this.items.add(id);
+    this.queue.push(id);
+    if (this.queue.length > this.limit) {
+      const old = this.queue.shift();
+      if (old) this.items.delete(old);
+    }
+  }
+}
+
 export class Bot {
   senderBot: SenderBot; // default sender
   private senderBotsBySource?: Map<string, SenderBot>;
@@ -33,16 +58,20 @@ export class Bot {
   private sourceToTarget = new Map<string, { channelId: string; messageId: string; timestamp: number }>();
   private mapFile = path.resolve(process.cwd(), ".data", "message_map.json");
   private logger = new FileLogger();
-  // 使用 Set 来跟踪正在处理的消息ID，避免重复处理
-  private processingMessages = new Set<string>();
+  // 优化：使用无定时器的去重缓存
+  private processedIds = new DedupeCache(2000);
   // Map 最大条目数，超过时删除最旧的（保留最近 10000 条映射）
   private readonly MAX_MAP_SIZE = 10000;
   // 定期保存定时器
   private saveMappingTimer?: NodeJS.Timeout;
-  // 记录去重清理定时器，便于热重载时释放
-  private processingTimers = new Set<NodeJS.Timeout>();
+  // 标记数据是否变动，减少 I/O
+  private isMappingDirty = false;
   // 记录process监听器，便于清理
   private processExitHandlers: Array<() => void> = [];
+  
+  // 预编译正则
+  private readonly RE_TWITTER = /^<?https?:\/\/(?:x\.com|twitter\.com)\/\S+>?$/i;
+  private readonly RE_GIF = /^<?https?:\/\/(?:tenor\.com|giphy\.com)\/\S+>?$/i;
   
   constructor(client: Client, config: Config, senderBot: SenderBot, senderBotsBySource?: Map<string, SenderBot>) {
     this.config = config;
@@ -79,11 +108,13 @@ export class Bot {
       await this.processAndSend(message);
     });
 
-    // 定期保存映射（每 5 分钟保存一次，减少 I/O）
+    // 定期保存映射（每 5 分钟保存一次，只在数据变动时保存）
     this.saveMappingTimer = setInterval(() => {
-      this.saveMapping().catch(err => {
-        this.logger.error(`定期保存映射失败: ${String(err)}`);
-      });
+      if (this.isMappingDirty) {
+        this.saveMapping().catch(err => {
+          this.logger.error(`定期保存映射失败: ${String(err)}`);
+        });
+      }
     }, 5 * 60 * 1000);
 
     // 程序退出时保存映射（使用命名函数，便于清理）
@@ -117,11 +148,6 @@ export class Bot {
       clearInterval(this.saveMappingTimer);
       this.saveMappingTimer = undefined;
     }
-    // 清理未触发的消息去重定时器
-    for (const t of this.processingTimers) {
-      clearTimeout(t);
-    }
-    this.processingTimers.clear();
     // 移除process监听器（避免内存泄漏）
     for (const handler of this.processExitHandlers) {
       try {
@@ -133,10 +159,12 @@ export class Bot {
       }
     }
     this.processExitHandlers = [];
-    // 保存映射
-    await this.saveMapping().catch((err) => {
-      this.logger.error(`cleanup saveMapping failed: ${String(err)}`);
-    });
+    // 只在数据变动时保存映射
+    if (this.isMappingDirty) {
+      await this.saveMapping().catch((err) => {
+        this.logger.error(`cleanup saveMapping failed: ${String(err)}`);
+      });
+    }
   }
 
   /**
@@ -186,8 +214,18 @@ export class Bot {
   }
 
   private async saveMapping() {
+    if (this.sourceToTarget.size === 0) return;
     try {
       await this.ensureDataDir();
+      // 只保留最近 MAX_MAP_SIZE 条
+      if (this.sourceToTarget.size > this.MAX_MAP_SIZE) {
+        // Map 迭代器按插入顺序返回，删除最旧的（头部）
+        const deleteCount = this.sourceToTarget.size - this.MAX_MAP_SIZE;
+        const keys = this.sourceToTarget.keys();
+        for (let i = 0; i < deleteCount; i++) {
+          this.sourceToTarget.delete(keys.next().value);
+        }
+      }
       // 只保存必要的字段，不保存 timestamp（减少文件大小）
       const obj: Record<string, { channelId: string; messageId: string }> = {};
       for (const [key, value] of this.sourceToTarget.entries()) {
@@ -196,7 +234,10 @@ export class Bot {
       const tmp = this.mapFile + ".tmp";
       await fs.writeFile(tmp, JSON.stringify(obj), "utf-8");
       await fs.rename(tmp, this.mapFile);
-    } catch {}
+      this.isMappingDirty = false;
+    } catch (e) {
+      this.logger.error(`Save mapping failed: ${String(e)}`);
+    }
   }
 
   /**
@@ -227,31 +268,21 @@ export class Bot {
   }
 
   private async processAndSend(message: Message, tag?: string) {
-    // 检查是否正在处理此消息，避免重复处理
-    if (this.processingMessages.has(message.id)) {
-      this.logger.debug(`[DUPLICATE] Message ${message.id} is already being processed, skipping`);
+    // 使用无定时器的去重缓存
+    if (this.processedIds.has(message.id)) {
       return;
     }
-    
-    // 标记消息为正在处理
-    this.processingMessages.add(message.id);
-    
-    // 5秒后自动清理，防止内存泄漏
-    // 同时限制 Set 大小，防止在高频消息下无限增长
-    const timer = setTimeout(() => {
-      this.processingMessages.delete(message.id);
-      this.processingTimers.delete(timer);
-      // 如果 Set 过大（超过 1000），清理最旧的条目
-      if (this.processingMessages.size > 1000) {
-        const toDelete = Array.from(this.processingMessages).slice(0, this.processingMessages.size - 1000);
-        toDelete.forEach(id => this.processingMessages.delete(id));
-      }
-    }, 5000);
-    this.processingTimers.add(timer);
+    this.processedIds.add(message.id);
 
     // 懒加载历史映射（进程首次消息时）
     if (this.sourceToTarget.size === 0) {
       await this.loadMapping();
+    }
+
+    // 快速检查：路由映射是否存在，不存在则快速返回
+    const senderForThis = this.getSenderForChannel(message.channelId);
+    if (!senderForThis) {
+      return; // 快速返回，不做多余计算
     }
 
     // 记录消息处理开始，特别是webhook消息
@@ -366,13 +397,10 @@ export class Bot {
     // end of special handling removed
 
     // Twitter/X 单链接：以纯文本发送，触发 Discord 原生预览
-    try {
-      const isTwitterOnly = /^<?https?:\/\/(?:x\.com|twitter\.com)\/\S+>?$/i.test(rawContent);
-      if (isTwitterOnly) {
-        originalContent = rawContent.replace(/[<>]/g, "");
-        useEmbed = false;
-      }
-    } catch {}
+    if (this.RE_TWITTER.test(rawContent)) {
+      originalContent = rawContent.replace(/[<>]/g, "");
+      useEmbed = false;
+    }
 
     // GIF 链接的处理移动到附件收集之后
 
@@ -585,15 +613,9 @@ export class Bot {
     } catch {}
 
     // Tenor/Giphy：恢复为仅发送链接文本以触发 Discord 原生展开（不做直链抓取、不发送附件）
-    try {
-      const gifOnly = /^<?https?:\/\/(?:tenor\.com|giphy\.com)\/\S+>?$/i.test(rawContent);
-      if (gifOnly) {
-        const pageUrl = rawContent.replace(/[<>]/g, "");
-        originalContent = pageUrl;
-        useEmbed = false;
-      }
-    } catch (e) {
-      this.logger.error(`tenor/giphy handling failed: ${String(e)}`);
+    if (this.RE_GIF.test(rawContent)) {
+      originalContent = rawContent.replace(/[<>]/g, "");
+      useEmbed = false;
     }
 
     // 不借用被回复消息的图片：仅转发当前消息自身的附件到同一 Embed
@@ -634,7 +656,8 @@ export class Bot {
         });
         // 限制 Map 大小，防止内存无限增长
         this.limitMapSize();
-        // 不再每次保存，改为定期保存（由定时器处理）
+        // 标记数据已变动，等待定期保存
+        this.isMappingDirty = true;
         
         // 构建详细的转发日志（使用之前获取的webhookName）
         const authorTag = isWebhook 
