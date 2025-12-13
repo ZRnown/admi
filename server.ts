@@ -316,8 +316,15 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
   try {
     const { accountId, action } = req.body;
     
-    // 添加调试日志
-    console.log(`[API] /api/account/action 收到请求:`, { accountId, action, body: req.body });
+    // 添加详细的调试日志
+    console.log(`[API] /api/account/action 收到请求:`, {
+      accountId,
+      action,
+      actionType: typeof action,
+      actionValue: JSON.stringify(action),
+      body: JSON.stringify(req.body),
+      bodyKeys: Object.keys(req.body || {})
+    });
 
     if (!accountId || !action) {
       console.error(`[API] /api/account/action 缺少参数:`, { accountId, action });
@@ -334,7 +341,30 @@ app.post("/api/account/action", async (req: Request, res: Response) => {
     
     // 规范化 action（去除前后空格）
     const normalizedAction = String(action).trim();
-    console.log(`[API] /api/account/action 处理 action:`, { original: action, normalized: normalizedAction, type: typeof action }, `账号:`, account.name);
+    console.log(`[API] /api/account/action 处理 action:`, {
+      original: action,
+      originalStr: JSON.stringify(action),
+      normalized: normalizedAction,
+      normalizedStr: JSON.stringify(normalizedAction),
+      type: typeof action,
+      length: String(action).length,
+      normalizedLength: normalizedAction.length,
+      accountName: account.name
+    });
+    
+    // 调试：打印所有可能的 action 值比较
+    console.log(`[API] /api/account/action 检查 action 匹配:`, {
+      isLogin: normalizedAction === "login",
+      isStop: normalizedAction === "stop",
+      isBotRelayLogin: normalizedAction === "botRelayLogin",
+      isBotRelayStop: normalizedAction === "botRelayStop",
+      normalizedAction,
+      comparison: {
+        "botRelayLogin": normalizedAction === "botRelayLogin",
+        "botRelayLogin.length": "botRelayLogin".length,
+        "normalizedAction.length": normalizedAction.length
+      }
+    });
 
     // 使用规范化后的 action 进行比较
     if (normalizedAction === "login") {

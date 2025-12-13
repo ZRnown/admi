@@ -646,12 +646,19 @@
 
       try {
         const requestBody = { accountId: acc.id, action: 'botRelayLogin' };
-        console.log('[前端] 机器人中转登录: 发送验证请求', requestBody);
+        const requestBodyStr = JSON.stringify(requestBody);
+        console.log('[前端] 机器人中转登录: 发送验证请求', {
+          requestBody,
+          requestBodyStr,
+          accountId: acc.id,
+          action: 'botRelayLogin',
+          actionType: typeof 'botRelayLogin'
+        });
         
         const res = await fetch('/api/account/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
+          body: requestBodyStr
         });
         
         console.log('[前端] 机器人中转登录响应状态:', res.status, res.statusText);
