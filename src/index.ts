@@ -123,6 +123,14 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     return;
   }
 
+  // 检查是否有配置 webhook，如果没有则提前返回
+  const webhooks = account.channelWebhooks || {};
+  if (Object.keys(webhooks).length === 0) {
+    await logger.error(`账号 "${account.name}" 未配置 webhook，无法启动`);
+    await writeStatus(account.id, "error", "未配置转发规则（channelWebhooks）");
+    return;
+  }
+
   // 首先检查是否已经存在运行中的账号
   const existing = runningAccounts.get(account.id);
   if (existing) {
@@ -221,7 +229,8 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
 
     // 在 ready 事件中注册重连处理器，避免登录过程中的临时断开事件触发重连
     // 先注册 ready 事件，在 ready 后再注册 disconnect 监听器
-    (bot.client as any).once("ready", async () => {
+    // 同时监听 ready 和 clientReady 以兼容不同版本
+    const readyHandler = async () => {
       const currentRunning = runningAccounts.get(account.id);
       if (currentRunning) {
         // 登录成功后，清除登录标志
@@ -231,7 +240,9 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
         await writeStatus(account.id, "online", "登录成功");
         await logger.info(`账号 "${account.name}" 登录成功，已注册重连处理器`);
       }
-    });
+    };
+    (bot.client as any).once("clientReady", readyHandler);
+    (bot.client as any).once("ready", readyHandler);
 
     try {
       await logger.info(`账号 "${account.name}" 开始登录...`);
@@ -421,7 +432,8 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       currentRunning.isLoggingIn = true;
       
       // 在 ready 事件中注册重连处理器，避免重连过程中的临时断开事件
-      (client as any).once("ready", async () => {
+      // 同时监听 ready 和 clientReady 以兼容不同版本
+      const readyHandler = async () => {
         const currentRunningAfterReady = runningAccounts.get(accountId);
         if (currentRunningAfterReady) {
           // 重连成功后，清除登录标志
@@ -433,7 +445,9 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
           currentRunningAfterReady.reconnectCount = 0;
           await logger.info(`账号 "${currentRunningAfterReady.account.name}" 重连成功，已注册重连处理器`);
         }
-      });
+      };
+      (client as any).once("clientReady", readyHandler);
+      (client as any).once("ready", readyHandler);
       
       // 尝试登录
       try {
@@ -653,9 +667,15 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         let defaultSenderBot = existing.defaultSenderBot;
         // 如果映射或翻译配置变化，需要重新构建 SenderBot
         if (mappingsChanged || translationChanged) {
-          const built = await buildSenderBots(account, logger);
-          senderBotsBySource = built.senderBotsBySource;
-          defaultSenderBot = built.defaultSenderBot;
+          try {
+            const built = await buildSenderBots(account, logger);
+            senderBotsBySource = built.senderBotsBySource;
+            defaultSenderBot = built.defaultSenderBot;
+          } catch (e: any) {
+            await logger.error(`账号 "${account.name}" 重新构建 SenderBot 失败: ${String(e?.message || e)}`);
+            await writeStatus(account.id, "error", `配置错误: ${String(e?.message || e)}`);
+            continue; // 跳过这个账号，不更新配置
+          }
         }
         
         const legacyConfig = accountToLegacyConfig(account);
@@ -695,9 +715,15 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     let defaultSenderBot = existing.defaultSenderBot;
     // 如果映射或翻译配置变化，需要重新构建 SenderBot
     if (mappingsChanged || translationChanged) {
-      const built = await buildSenderBots(account, logger);
-      senderBotsBySource = built.senderBotsBySource;
-      defaultSenderBot = built.defaultSenderBot;
+      try {
+        const built = await buildSenderBots(account, logger);
+        senderBotsBySource = built.senderBotsBySource;
+        defaultSenderBot = built.defaultSenderBot;
+      } catch (e: any) {
+        await logger.error(`账号 "${account.name}" 重新构建 SenderBot 失败: ${String(e?.message || e)}`);
+        await writeStatus(account.id, "error", `配置错误: ${String(e?.message || e)}`);
+        continue; // 跳过这个账号，不更新配置
+      }
     }
 
     const legacyConfig = accountToLegacyConfig(account);

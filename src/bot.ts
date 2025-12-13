@@ -86,11 +86,15 @@ export class Bot {
     (this.client as any).removeAllListeners("warn");
     (this.client as any).removeAllListeners("messageCreate");
 
-    (this.client as any).on("ready", (clientArg: Client<true>) => {
+    // 使用 clientReady 替代 ready（Discord.js v15 兼容）
+    const readyHandler = (clientArg: Client<true>) => {
       const msg = `Logged into Discord as @${clientArg.user?.tag}!`;
       console.log(msg);
       this.logger.info(msg);
-    });
+    };
+    // 同时监听 ready 和 clientReady 以兼容不同版本
+    (this.client as any).on("clientReady", readyHandler);
+    (this.client as any).on("ready", readyHandler);
 
     // 监听客户端错误，避免 ECONNRESET 直接导致进程崩溃
     (this.client as any).on("error", (err: any) => {
@@ -117,25 +121,10 @@ export class Bot {
       }
     }, 5 * 60 * 1000);
 
-    // 程序退出时保存映射（使用命名函数，便于清理）
-    const beforeExitHandler = () => {
-      this.saveMapping().catch(() => {});
-    };
-    const sigintHandler = () => {
-      this.saveMapping().catch(() => {});
-      process.exit(0);
-    };
-    const sigtermHandler = () => {
-      this.saveMapping().catch(() => {});
-      process.exit(0);
-    };
-    
-    process.once("beforeExit", beforeExitHandler);
-    process.once("SIGINT", sigintHandler);
-    process.once("SIGTERM", sigtermHandler);
-    
-    // 保存处理器引用，便于清理
-    this.processExitHandlers = [beforeExitHandler, sigintHandler, sigtermHandler];
+    // 程序退出时保存映射
+    // 注意：不在每个 Bot 实例中添加 process 监听器，避免监听器泄漏
+    // 映射会在 cleanup 时保存，或者在定时器中定期保存
+    this.processExitHandlers = [];
 
     // 为了支持"回复可跳转"，改为单条即时发送（如需保留堆叠，可另加配置开关）
   }
@@ -148,17 +137,7 @@ export class Bot {
       clearInterval(this.saveMappingTimer);
       this.saveMappingTimer = undefined;
     }
-    // 移除process监听器（避免内存泄漏）
-    for (const handler of this.processExitHandlers) {
-      try {
-        process.removeListener("beforeExit", handler);
-        process.removeListener("SIGINT", handler);
-        process.removeListener("SIGTERM", handler);
-      } catch (e) {
-        // 忽略移除失败
-      }
-    }
-    this.processExitHandlers = [];
+    // 注意：process 监听器是全局的，不应该在这里移除（因为可能被其他实例使用）
     // 只在数据变动时保存映射
     if (this.isMappingDirty) {
       await this.saveMapping().catch((err) => {
