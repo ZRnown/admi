@@ -192,14 +192,23 @@ async function startAccount(account, logger) {
             isLoggingIn: true,
         };
         runningAccounts.set(account.id, runningInfo);
-        // 设置重连处理器
-        setupReconnectHandlers(account.id, logger);
+        // 在 ready 事件中注册重连处理器，避免登录过程中的临时断开事件触发重连
+        // 先注册 ready 事件，在 ready 后再注册 disconnect 监听器
+        bot.client.once("ready", async () => {
+            const currentRunning = runningAccounts.get(account.id);
+            if (currentRunning) {
+                // 登录成功后，清除登录标志
+                currentRunning.isLoggingIn = false;
+                // 现在才注册重连处理器，避免登录过程中的临时断开事件
+                setupReconnectHandlers(account.id, logger);
+                await writeStatus(account.id, "online", "登录成功");
+                await logger.info(`账号 "${account.name}" 登录成功，已注册重连处理器`);
+            }
+        });
         try {
             await logger.info(`账号 "${account.name}" 开始登录...`);
             await bot.client.login(account.token);
-            // 登录成功消息会在 bot.ts 的 ready 事件中输出，这里不再重复输出
-            await writeStatus(account.id, "online", "登录成功");
-            runningInfo.isLoggingIn = false;
+            // 注意：状态更新和 isLoggingIn 清除现在在 ready 事件中处理
         }
         catch (e) {
             const msg = String(e?.message || e);
@@ -210,6 +219,7 @@ async function startAccount(account, logger) {
                 msg.includes("Token 无效") ||
                 (e?.code === "TokenInvalid");
             await writeStatus(account.id, "error", isTokenInvalid ? "Token 无效" : msg);
+            runningInfo.isLoggingIn = false;
             // 如果不是 Token 无效的错误，尝试重连
             if (!isTokenInvalid) {
                 await reconnectAccount(account.id, logger, 5000);
@@ -218,7 +228,6 @@ async function startAccount(account, logger) {
                 await logger.error(`账号 "${account.name}" Token 无效，停止登录`);
                 await stopAccount(account.id, logger, false);
             }
-            runningInfo.isLoggingIn = false;
         }
     }
     catch (e) {
@@ -271,10 +280,23 @@ async function reconnectAccount(accountId, logger, delay = 5000) {
     }
     // 检查是否已经连接成功（避免重复重连）
     const client = running.client;
-    if (client && client.user && client.ws && client.ws.readyState === 1) {
-        await logger.info(`账号 "${running.account.name}" 已经连接，跳过重连`);
-        await writeStatus(accountId, "online", "已连接");
-        return;
+    // 更严格的检查：确保 client.user 存在（表示已登录），且 WebSocket 状态为 OPEN (1)
+    if (client && client.user && client.ws) {
+        const wsState = client.ws.readyState;
+        // WebSocket 状态：0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
+        if (wsState === 1) {
+            await logger.info(`账号 "${running.account.name}" 已经连接（readyState=${wsState}），跳过重连`);
+            await writeStatus(accountId, "online", "已连接");
+            // 清除可能存在的重连定时器
+            if (running.reconnectTimer) {
+                clearTimeout(running.reconnectTimer);
+                running.reconnectTimer = undefined;
+            }
+            return;
+        }
+        else {
+            await logger.debug(`账号 "${running.account.name}" WebSocket 状态: ${wsState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+        }
     }
     // 限制重连次数：如果 5 分钟内重连超过 10 次，停止重连
     const now = Date.now();
@@ -369,16 +391,24 @@ async function reconnectAccount(accountId, logger, delay = 5000) {
             currentRunning.client = client;
             currentRunning.bot = bot;
             currentRunning.isLoggingIn = true;
-            // 设置断开重连监听
-            setupReconnectHandlers(accountId, logger);
+            // 在 ready 事件中注册重连处理器，避免重连过程中的临时断开事件
+            client.once("ready", async () => {
+                const currentRunningAfterReady = runningAccounts.get(accountId);
+                if (currentRunningAfterReady) {
+                    // 重连成功后，清除登录标志
+                    currentRunningAfterReady.isLoggingIn = false;
+                    // 现在才注册重连处理器
+                    setupReconnectHandlers(accountId, logger);
+                    await writeStatus(accountId, "online", "重连成功");
+                    // 重连成功，重置计数
+                    currentRunningAfterReady.reconnectCount = 0;
+                    await logger.info(`账号 "${currentRunningAfterReady.account.name}" 重连成功，已注册重连处理器`);
+                }
+            });
             // 尝试登录
             try {
                 await client.login(currentRunning.account.token);
-                await logger.info(`账号 "${currentRunning.account.name}" 重连成功`);
-                await writeStatus(accountId, "online", "重连成功");
-                // 重连成功，重置计数
-                currentRunning.reconnectCount = 0;
-                currentRunning.isLoggingIn = false;
+                // 注意：状态更新和 isLoggingIn 清除现在在 ready 事件中处理
             }
             catch (e) {
                 const msg = String(e?.message || e);
@@ -442,6 +472,17 @@ function setupReconnectHandlers(accountId, logger) {
         const currentRunning = runningAccounts.get(accountId);
         if (!currentRunning || currentRunning.isManuallyStopped)
             return;
+        // 检查是否正在登录中，如果是则忽略断开事件（登录过程中可能有临时断开）
+        if (currentRunning.isLoggingIn) {
+            await logger.debug(`账号 "${currentRunning.account.name}" 登录中，忽略断开事件`);
+            return;
+        }
+        // 再次检查连接状态，可能已经自动恢复了
+        const client = currentRunning.client;
+        if (client && client.user && client.ws && client.ws.readyState === 1) {
+            await logger.debug(`账号 "${currentRunning.account.name}" 断开事件触发但连接已恢复，跳过重连`);
+            return;
+        }
         await logger.warn(`账号 "${currentRunning.account.name}" 连接断开`);
         await writeStatus(accountId, "error", "连接断开，正在重连...");
         await reconnectAccount(accountId, logger, 5000);
@@ -450,6 +491,17 @@ function setupReconnectHandlers(accountId, logger) {
         const currentRunning = runningAccounts.get(accountId);
         if (!currentRunning || currentRunning.isManuallyStopped)
             return;
+        // 检查是否正在登录中，如果是则忽略断开事件
+        if (currentRunning.isLoggingIn) {
+            await logger.debug(`账号 "${currentRunning.account.name}" 登录中，忽略 shard 断开事件`);
+            return;
+        }
+        // 再次检查连接状态
+        const client = currentRunning.client;
+        if (client && client.user && client.ws && client.ws.readyState === 1) {
+            await logger.debug(`账号 "${currentRunning.account.name}" shard 断开事件触发但连接已恢复，跳过重连`);
+            return;
+        }
         await logger.warn(`账号 "${currentRunning.account.name}" shard 断开`);
         await reconnectAccount(accountId, logger, 5000);
     };
@@ -614,33 +666,46 @@ async function main() {
     }
     const cfgPath = node_path_1.default.resolve(process.cwd(), "config.json");
     let pendingReload = null;
-    // 检查配置文件是否真的变化了
+    let checking = false; // 防止并发检查
+    // 检查配置文件是否真的变化了（异步版本，不阻塞事件循环）
     const hasConfigChanged = async () => {
-        try {
-            const stats = (0, node_fs_1.statSync)(cfgPath);
-            // 如果修改时间相同，说明文件没有变化
-            if (stats.mtimeMs === lastConfigMtime) {
-                return false;
-            }
-            // 读取文件内容并计算 hash
-            const content = await fs_1.promises.readFile(cfgPath, "utf-8");
-            const hash = (0, crypto_1.createHash)("md5").update(content).digest("hex");
-            // 如果 hash 相同，说明内容没有变化
-            if (hash === lastConfigHash) {
-                lastConfigMtime = stats.mtimeMs; // 更新修改时间，避免下次重复读取
-                return false;
-            }
-            // 文件内容变化了
-            lastConfigHash = hash;
-            lastConfigMtime = stats.mtimeMs;
-            return true;
-        }
-        catch (e) {
-            // 文件不存在或读取失败，返回 false
-            return false;
-        }
+        return new Promise((resolve) => {
+            (0, node_fs_1.stat)(cfgPath, async (err, stats) => {
+                if (err) {
+                    resolve(false);
+                    return;
+                }
+                // 如果修改时间相同，说明文件没有变化
+                if (stats.mtimeMs === lastConfigMtime) {
+                    resolve(false);
+                    return;
+                }
+                try {
+                    // 读取文件内容并计算 hash
+                    const content = await fs_1.promises.readFile(cfgPath, "utf-8");
+                    const hash = (0, crypto_1.createHash)("md5").update(content).digest("hex");
+                    // 如果 hash 相同，说明内容没有变化
+                    if (hash === lastConfigHash) {
+                        lastConfigMtime = stats.mtimeMs; // 更新修改时间，避免下次重复读取
+                        resolve(false);
+                        return;
+                    }
+                    // 文件内容变化了
+                    lastConfigHash = hash;
+                    lastConfigMtime = stats.mtimeMs;
+                    resolve(true);
+                }
+                catch (e) {
+                    // 读取失败，返回 false
+                    resolve(false);
+                }
+            });
+        });
     };
     const scheduleReload = async () => {
+        if (pendingReload || checking)
+            return; // 防止并发
+        checking = true;
         if (pendingReload)
             clearTimeout(pendingReload);
         pendingReload = setTimeout(async () => {
@@ -690,6 +755,9 @@ async function main() {
             catch (e) {
                 console.error("自动重载配置失败", e);
                 await logger.error(`自动重载配置失败: ${String(e?.message || e)}`);
+            }
+            finally {
+                checking = false; // 确保在所有情况下都重置标志
             }
         }, 100); // 缩短延迟到 100ms，更快响应
     };

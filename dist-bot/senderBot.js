@@ -89,34 +89,43 @@ class SenderBot {
         return results;
     }
     async downloadUrl(fileUrl) {
-        const MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024; // 10MB limit
+        // 定义最大下载大小 (15MB，留点 Buffer 给 Discord 的 25MB 限制)
+        const MAX_DOWNLOAD_SIZE = 15 * 1024 * 1024;
         const DOWNLOAD_TIMEOUT_MS = 30000; // 30s
         const u = new node_url_1.URL(fileUrl);
         const options = {
             method: "GET",
             hostname: u.hostname,
             path: u.pathname + u.search,
-            agent: this.httpAgent
+            agent: this.httpAgent,
+            timeout: DOWNLOAD_TIMEOUT_MS
         };
         return await new Promise((resolve, reject) => {
             const req = node_https_1.default.request(options, (res) => {
+                // 检查 Content-Length (如果有)
+                const sizeStr = res.headers['content-length'];
+                if (sizeStr && parseInt(sizeStr) > MAX_DOWNLOAD_SIZE) {
+                    req.destroy();
+                    return reject(new Error(`File too large (${sizeStr} bytes)`));
+                }
                 const chunks = [];
                 let total = 0;
                 res.on("data", (d) => {
-                    const b = d;
-                    total += b.length;
-                    if (total > MAX_DOWNLOAD_BYTES) {
-                        req.destroy(new Error("Download exceeded max size limit"));
+                    total += d.length;
+                    if (total > MAX_DOWNLOAD_SIZE) {
+                        req.destroy();
+                        reject(new Error("File download exceeded size limit"));
                         return;
                     }
-                    chunks.push(b);
+                    chunks.push(d);
                 });
                 res.on("end", () => resolve(Buffer.concat(chunks)));
+                res.on("error", reject);
             });
+            req.on("error", reject);
             req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
                 req.destroy(new Error("Download timeout"));
             });
-            req.on("error", (e) => reject(e));
             req.end();
         });
     }
@@ -175,22 +184,20 @@ class SenderBot {
      * 调用翻译 API 进行翻译（支持多个翻译服务）
      */
     async translateText(text, target) {
-        if (!this.enableTranslation) {
-            console.log("[翻译] 翻译功能未启用");
+        if (!this.enableTranslation || !text || text.length < 2) {
+            return null; // 忽略太短的
+        }
+        // 忽略纯 URL
+        if (/^https?:\/\/[^\s]+$/.test(text.trim())) {
             return null;
         }
         const apiKey = this.translationApiKey || this.deepseekApiKey;
         if (!apiKey) {
-            console.log("[翻译] API Key 未配置");
-            return null;
-        }
-        if (!text.trim()) {
             return null;
         }
         // 只处理中英互译，其他语言不翻译
         const { chineseRatio, englishRatio } = this.languageStats(text);
         if (chineseRatio === 0 && englishRatio === 0) {
-            console.log("[翻译] 非中英内容，跳过翻译");
             return null;
         }
         const provider = this.translationProvider || "deepseek";

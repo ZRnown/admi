@@ -223,7 +223,10 @@ export class Bot {
         const deleteCount = this.sourceToTarget.size - this.MAX_MAP_SIZE;
         const keys = this.sourceToTarget.keys();
         for (let i = 0; i < deleteCount; i++) {
-          this.sourceToTarget.delete(keys.next().value);
+          const key = keys.next().value;
+          if (key) {
+            this.sourceToTarget.delete(key);
+          }
         }
       }
       // 只保存必要的字段，不保存 timestamp（减少文件大小）
@@ -404,12 +407,7 @@ export class Bot {
 
     // GIF 链接的处理移动到附件收集之后
 
-    // 路由：仅当该源频道在映射中时才转发；未映射则跳过
-    const senderForThis = this.getSenderForChannel(message.channelId);
-    if (!senderForThis) {
-      this.logger.info(`${logPrefix} [SKIP] Channel ${message.channelId} not mapped in channelWebhooks`);
-      return;
-    }
+    // 路由：仅当该源频道在映射中时才转发；未映射则跳过（senderForThis 已在前面检查过）
     this.logger.info(`${logPrefix} [ROUTE] Found mapping for channel ${message.channelId}, will forward to webhook`);
 
     // 用户过滤：白名单（allowedUsersIds）与黑名单（mutedUsersIds）
