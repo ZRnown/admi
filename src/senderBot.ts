@@ -637,7 +637,8 @@ export class SenderBot {
             payload.embeds = [embed];
           }
           // Bot API不支持username和avatar_url，只在webhook模式下使用
-          if (!this.enableBotRelay) {
+          // 如果启用了"使用webhook转发"，也使用webhook模式（支持username和avatar_url）
+          if (!this.enableBotRelay || this.botRelayUseWebhook) {
             if (item.username) payload.username = item.username;
             if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
           }
@@ -652,12 +653,12 @@ export class SenderBot {
             payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
           }
           
-          // 如果启用机器人中转，使用Bot API发送，否则使用webhook
-          if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
+          // 如果启用机器人中转且未启用"使用webhook转发"，使用Bot API发送，否则使用webhook
+          if (this.enableBotRelay && !this.botRelayUseWebhook && this.botRelayToken && this.defaultChannelId) {
             resp = await this.postViaBotAPI(payload, files, this.defaultChannelId);
           } else {
             // 如果启用机器人中转但缺少必要参数，记录警告并回退到 webhook
-            if (this.enableBotRelay) {
+            if (this.enableBotRelay && !this.botRelayUseWebhook) {
               if (!this.botRelayToken) {
                 console.warn(`[SenderBot] 机器人中转已启用但 botRelayToken 未配置，回退到 webhook 模式`);
               } else if (!this.defaultChannelId) {
@@ -719,7 +720,8 @@ export class SenderBot {
             payload.components = item.components;
           }
           // Bot API不支持username和avatar_url，只在webhook模式下使用
-          if (!this.enableBotRelay) {
+          // 如果启用了"使用webhook转发"，也使用webhook模式（支持username和avatar_url）
+          if (!this.enableBotRelay || this.botRelayUseWebhook) {
             if (item.username) payload.username = item.username;
             if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
           }
