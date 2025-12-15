@@ -310,6 +310,11 @@ app.post("/api/config", async (req: Request, res: Response) => {
     }
 
     await saveMultiConfig(next);
+    // 通知 bot 进程重新加载配置
+    try {
+      await fs.mkdir(path.dirname(triggerFile), { recursive: true });
+      await fs.writeFile(triggerFile, Date.now().toString(), "utf-8");
+    } catch {}
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: String(e?.message || e) });
