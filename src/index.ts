@@ -70,6 +70,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const translationSecret = account.translationSecret;
   const enableBotRelay = account.enableBotRelay || false;
   const botRelayToken = account.botRelayToken;
+  const botRelayUseWebhook = account.botRelayUseWebhook || false;
   // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
   const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
 
@@ -86,6 +87,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
         translationSecret,
         enableBotRelay,
         botRelayToken,
+        botRelayUseWebhook,
       });
       prepares.push(sb.prepare());
       senderBotsBySource.set(channelId, sb);

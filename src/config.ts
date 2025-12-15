@@ -51,6 +51,7 @@ export interface LegacyConfig {
   // 机器人中转配置
   enableBotRelay?: boolean;
   botRelayToken?: string;
+  botRelayUseWebhook?: boolean; // 如果启用，即使开启了机器人中转，也使用webhook转发
   botRelayLoginState?: string;
   botRelayLoginMessage?: string;
   // 忽略选项
@@ -199,6 +200,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     translationSecret: typeof input?.translationSecret === "string" && input.translationSecret.trim() ? input.translationSecret.trim() : undefined,
     enableBotRelay: input?.enableBotRelay === true,
     botRelayToken: typeof input?.botRelayToken === "string" && input.botRelayToken.trim() ? input.botRelayToken.trim() : undefined,
+    botRelayUseWebhook: input?.botRelayUseWebhook === true,
     botRelayLoginState: typeof input?.botRelayLoginState === "string" ? input.botRelayLoginState : "idle",
     botRelayLoginMessage: typeof input?.botRelayLoginMessage === "string" ? input.botRelayLoginMessage : "",
     ignoreSelf: input?.ignoreSelf === true,
@@ -298,6 +300,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     translationSecret: account.translationSecret,
     enableBotRelay: account.enableBotRelay,
     botRelayToken: account.botRelayToken,
+    botRelayUseWebhook: account.botRelayUseWebhook,
     ignoreSelf: account.ignoreSelf,
     ignoreBot: account.ignoreBot,
     ignoreImages: account.ignoreImages,

@@ -255,6 +255,11 @@
               </div>
               ${acc.enableBotRelay && acc.type !== 'bot' ? `
                 <div class="mb-4">
+                  <div class="flex items-center gap-2 mb-2">
+                    <input type="checkbox" ${acc.botRelayUseWebhook ? 'checked' : ''} onchange="updateField('botRelayUseWebhook', this.checked)" 
+                      class="h-4 w-4 rounded border-slate-300">
+                    <label class="text-sm text-slate-700">使用 Webhook 转发（即使启用了机器人中转，也使用 Webhook 发送）</label>
+                  </div>
                   <label class="block text-sm font-medium text-slate-700 mb-1">机器人 Token</label>
                   <div class="flex gap-2">
                     <input type="password" value="${acc.botRelayToken || ''}" onchange="updateField('botRelayToken', this.value)" 
@@ -481,6 +486,7 @@
         deepseekApiKey: '',
         enableBotRelay: false,
         botRelayToken: '',
+        botRelayUseWebhook: false,
         botRelayLoginState: 'idle',
         botRelayLoginMessage: '',
         ignoreSelf: false,

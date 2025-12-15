@@ -18,6 +18,7 @@ export class SenderBot {
   translationSecret?: string;
   enableBotRelay?: boolean;
   botRelayToken?: string;
+  botRelayUseWebhook?: boolean; // 如果启用，即使开启了机器人中转，也使用webhook转发
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
@@ -30,6 +31,7 @@ export class SenderBot {
     translationSecret?: string;
     enableBotRelay?: boolean;
     botRelayToken?: string;
+    botRelayUseWebhook?: boolean;
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
@@ -41,6 +43,7 @@ export class SenderBot {
     this.translationSecret = options.translationSecret;
     this.enableBotRelay = options.enableBotRelay || false;
     this.botRelayToken = options.botRelayToken;
+    this.botRelayUseWebhook = options.botRelayUseWebhook || false;
   }
 
   private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
@@ -724,12 +727,12 @@ export class SenderBot {
             payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
           }
           
-          // 如果启用机器人中转，使用Bot API发送，否则使用webhook
-          if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
+          // 如果启用机器人中转且未启用"使用webhook转发"，使用Bot API发送，否则使用webhook
+          if (this.enableBotRelay && !this.botRelayUseWebhook && this.botRelayToken && this.defaultChannelId) {
             resp = await this.postViaBotAPI(payload, [], this.defaultChannelId);
           } else {
             // 如果启用机器人中转但缺少必要参数，记录警告并回退到 webhook
-            if (this.enableBotRelay) {
+            if (this.enableBotRelay && !this.botRelayUseWebhook) {
               if (!this.botRelayToken) {
                 console.warn(`[SenderBot] 机器人中转已启用但 botRelayToken 未配置，回退到 webhook 模式`);
               } else if (!this.defaultChannelId) {

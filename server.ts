@@ -52,6 +52,7 @@ interface FrontendAccount {
   deepseekApiKey?: string;
   enableBotRelay?: boolean;
   botRelayToken?: string;
+  botRelayUseWebhook?: boolean;
   botRelayLoginState?: string;
   botRelayLoginMessage?: string;
   ignoreSelf?: boolean;
@@ -132,6 +133,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     deepseekApiKey: account.deepseekApiKey || "",
     enableBotRelay: account.enableBotRelay === true,
     botRelayToken: account.botRelayToken || "",
+    botRelayUseWebhook: account.botRelayUseWebhook === true,
     botRelayLoginState: account.botRelayLoginState || "idle",
     botRelayLoginMessage: account.botRelayLoginMessage || "",
     ignoreSelf: account.ignoreSelf === true,
@@ -167,6 +169,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       deepseekApiKey: dto.deepseekApiKey || "",
       enableBotRelay: dto.enableBotRelay === true,
       botRelayToken: dto.botRelayToken || "",
+      botRelayUseWebhook: dto.botRelayUseWebhook === true,
       ignoreSelf: dto.ignoreSelf === true,
       ignoreBot: dto.ignoreBot === true,
       ignoreImages: dto.ignoreImages === true,
