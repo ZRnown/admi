@@ -201,8 +201,11 @@
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 class="font-semibold text-slate-800">基础设置</h2>
-            <p class="mt-1 text-xs text-slate-500">
-              1）先在下方“Discord 转发规则”中配置来源频道和目标 Discord Webhook。2）如需同步到飞书，在“飞书转发规则”里为相同来源频道填入飞书 Webhook。3）如需使用中转机器人，可在“机器人中转”区域添加并登录多个机器人，再在每条 Discord 规则中选择要使用的中转机器人。
+            <p class="mt-1 text-xs text-slate-500 space-y-1">
+              <span class="block">1）先在下方“Discord 转发规则”中配置来源频道和目标 Discord Webhook。</span>
+              <span class="block">2）如需同步到飞书，在“飞书转发规则”中为相同来源频道填写对应群的 Chat ID（oc_ 开头）。</span>
+              <span class="block">3）使用飞书前，请在飞书开发者后台创建企业自建应用，开通 <code class="px-1 bg-slate-100 rounded">im:resource:upload</code> 和 <code class="px-1 bg-slate-100 rounded">im:message:send_as_bot</code> 权限，发布应用版本，并将机器人拉入目标群。</span>
+              <span class="block">4）在项目根目录的 <code class="px-1 bg-slate-100 rounded">.env</code> 中配置 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_ID</code> 和 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_SECRET</code>，然后重启 Bot。</span>
             </p>
           </div>
           <div class="p-6 space-y-4">
@@ -348,10 +351,33 @@
                 <div class="flex items-center gap-2">
                   <input type="checkbox" ${acc.enableFeishuForward ? 'checked' : ''} onchange="updateField('enableFeishuForward', this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">飞书转发规则</span>
+                  <button type="button" onclick="toggleFeishuHelp()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">查看飞书配置说明</button>
+                  <button type="button" onclick="fetchFeishuChats()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">获取群列表</button>
                 </div>
                 ${acc.enableFeishuForward ? `<button onclick="addFeishuMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
               </div>
-              ${acc.enableFeishuForward ? renderFeishuMappings(acc) : '<div class="text-slate-400 text-sm">未启用飞书转发</div>'}
+              <div id="feishuHelp" class="hidden text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                <p>1）在飞书开发者后台创建企业自建应用，开通 <code class="px-1 bg-slate-100 rounded">im:resource:upload</code> 和 <code class="px-1 bg-slate-100 rounded">im:message:send_as_bot</code> 权限，并发布版本。</p>
+                <p>2）将该应用的机器人拉入目标群，在桌面端开启调试模式后，右键群聊-&gt;复制 ID-&gt;复制 Chat ID（以 <code class="px-1 bg-slate-100 rounded">oc_</code> 开头）。</p>
+                <p>3）在下方“飞书 Chat ID（oc_开头）”中为对应来源频道填写 Chat ID。</p>
+                <p>4）在此处填写飞书应用的 AppID 与 Secret（或在项目 <code class="px-1 bg-slate-100 rounded">.env</code> 中配置 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_ID</code> / <code class="px-1 bg-slate-100 rounded">FEISHU_APP_SECRET</code>）。</p>
+              </div>
+              ${acc.enableFeishuForward ? `
+                <div class="grid gap-3 md:grid-cols-2 items-end">
+                  <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">飞书 App ID</label>
+                    <input type="text" value="${acc.feishuAppId || ''}" onchange="updateField('feishuAppId', this.value)" 
+                      placeholder="cli_xxx" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">飞书 App Secret</label>
+                    <input type="password" value="${acc.feishuAppSecret || ''}" onchange="updateField('feishuAppSecret', this.value)" 
+                      placeholder="应用密钥，建议勿泄露" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono">
+                  </div>
+                </div>
+                <div id="feishuChats" class="mt-2 text-xs text-slate-500"></div>
+                ${renderFeishuMappings(acc)}
+              ` : '<div class="text-slate-400 text-sm">未启用飞书转发</div>'}
             </div>
           </div>
         </div>
@@ -441,7 +467,7 @@
               placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             <span class="text-slate-300">→</span>
             <input type="text" value="${m.feishuWebhook || ''}" onchange="updateFeishuWebhookEntry(${idx}, this.value)" 
-              placeholder="飞书 Webhook URL" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+              placeholder="飞书 Chat ID（oc_开头）" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx}, this.value)" 
               placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
             <button onclick="removeFeishuMapping(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
@@ -458,6 +484,65 @@
         feishuWebhook: hook,
         note: notes[source] || ''
       }));
+    }
+
+    function toggleFeishuHelp() {
+      const el = document.getElementById('feishuHelp');
+      if (!el) return;
+      el.classList.toggle('hidden');
+    }
+
+    async function fetchFeishuChats() {
+      const acc = getActiveAccount();
+      if (!acc.id) return;
+      const container = document.getElementById('feishuChats');
+      if (container) {
+        container.innerHTML = '<div class="text-xs text-slate-500">正在从飞书获取群列表...</div>';
+      }
+      try {
+        const res = await fetch('/api/feishu/chats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || `请求失败(${res.status})`);
+        }
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (container) {
+          if (items.length === 0) {
+            container.innerHTML = '<div class="text-xs text-slate-500">未获取到任何群，请确认机器人已被拉入群并具有权限。</div>';
+          } else {
+            container.innerHTML = `
+              <div class="mt-2 max-h-40 overflow-auto rounded border border-slate-200 bg-slate-50/60 p-2 text-xs text-slate-700 space-y-1">
+                ${items
+                  .map(
+                    (it) => `
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="truncate font-medium">${it.name || '未命名群'}</div>
+                      <div class="truncate font-mono text-[11px] text-slate-500">${it.chat_id || ''}</div>
+                    </div>
+                    <button type="button" onclick="navigator.clipboard && navigator.clipboard.writeText('${it.chat_id || ''}')" class="shrink-0 px-2 py-0.5 rounded border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">复制</button>
+                  </div>
+                `,
+                  )
+                  .join('')}
+              </div>
+              <div class="mt-1 text-[11px] text-slate-400">
+                提示：将上方 Chat ID（<code class="px-1 bg-slate-100 rounded">oc_...</code>）粘贴到对应规则的“飞书 Chat ID”中。
+                <a href="https://open.feishu.cn/" target="_blank" rel="noreferrer" class="ml-1 text-indigo-500 hover:underline">打开飞书开放平台</a>
+              </div>
+            `;
+          }
+        }
+      } catch (e) {
+        if (container) {
+          var msg = (e && e.message) ? e.message : e;
+          container.innerHTML = '<div class="text-xs text-red-500">获取失败：' + msg + '</div>';
+        }
+      }
     }
 
     function renderReplacements(replacements) {
@@ -558,6 +643,8 @@
         channelRelayMap: {},
         channelFeishuWebhooks: {},
         enableFeishuForward: false,
+        feishuAppId: '',
+        feishuAppSecret: '',
         ignoreSelf: false,
         ignoreBot: false,
         ignoreImages: false,

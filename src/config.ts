@@ -23,6 +23,9 @@ export interface LegacyConfig {
   enableFeishuForward?: boolean;
   // 是否启用 Discord 转发
   enableDiscordForward?: boolean;
+  // 飞书企业自建应用 AppID / Secret（可选，优先于环境变量）
+  feishuAppId?: string;
+  feishuAppSecret?: string;
   // 每个频道的备注，仅用于管理界面展示
   channelNotes?: Record<string, string>;
   mutedGuildsIds?: ChannelId[];
@@ -142,6 +145,8 @@ function createDefaultAccount(): AccountConfig {
     deepseekApiKey: undefined,
     enableFeishuForward: false,
     channelFeishuWebhooks: {},
+    feishuAppId: undefined,
+    feishuAppSecret: undefined,
     botRelays: [],
     channelRelayMap: {},
   };
@@ -229,6 +234,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     channelFeishuWebhooks,
     enableFeishuForward: input?.enableFeishuForward === true,
     enableDiscordForward: input?.enableDiscordForward !== false,
+    feishuAppId: typeof input?.feishuAppId === "string" && input.feishuAppId.trim() ? input.feishuAppId.trim() : undefined,
+    feishuAppSecret: typeof input?.feishuAppSecret === "string" && input.feishuAppSecret.trim() ? input.feishuAppSecret.trim() : undefined,
     channelNotes: input?.channelNotes || {},
     blockedKeywords: Array.isArray(input?.blockedKeywords) ? input.blockedKeywords : [],
     excludeKeywords: Array.isArray(input?.excludeKeywords) ? input.excludeKeywords : [],
@@ -299,6 +306,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       channelFeishuWebhooks: {},
       enableFeishuForward: false,
       enableDiscordForward: true,
+      feishuAppId: undefined,
+      feishuAppSecret: undefined,
       channelNotes: {},
       blockedKeywords: [],
       excludeKeywords: [],
@@ -338,6 +347,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     channelFeishuWebhooks: account.channelFeishuWebhooks,
     enableFeishuForward: account.enableFeishuForward,
     enableDiscordForward: account.enableDiscordForward,
+    feishuAppId: account.feishuAppId,
+    feishuAppSecret: account.feishuAppSecret,
     channelNotes: account.channelNotes,
     blockedKeywords: account.blockedKeywords,
     excludeKeywords: account.excludeKeywords,

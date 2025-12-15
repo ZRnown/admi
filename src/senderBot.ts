@@ -269,54 +269,54 @@ export class SenderBot {
     const model = provider === "deepseek" ? "deepseek-chat" : "gpt-3.5-turbo";
     const url = new URL(`${baseUrl}/v1/chat/completions`);
     
-    const payload = JSON.stringify({
+      const payload = JSON.stringify({
       model,
-      messages: [
-        {
-          role: "system",
+        messages: [
+          {
+            role: "system",
           content:
             target === "zh"
               ? "You are a translator. Translate English (and English parts in mixed text) into Simplified Chinese. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing Chinese or non-English text unchanged. Return only the translated result."
               : "You are a translator. Translate Chinese (and Chinese parts in mixed text) into English. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing English or non-Chinese text unchanged. Return only the translated result."
-        },
-        {
-          role: "user",
-          content: text
-        }
-      ],
-      temperature: 0.3,
-      max_tokens: 2000
-    });
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 2000
+      });
 
-    const options: https.RequestOptions = {
-      method: "POST",
-      hostname: url.hostname,
-      path: url.pathname,
-      headers: {
-        "Content-Type": "application/json",
+      const options: https.RequestOptions = {
+        method: "POST",
+        hostname: url.hostname,
+        path: url.pathname,
+        headers: {
+          "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
-        "Content-Length": Buffer.byteLength(payload)
-      },
-      agent: this.httpAgent as any
-    };
+          "Content-Length": Buffer.byteLength(payload)
+        },
+        agent: this.httpAgent as any
+      };
 
     return await new Promise<string | null>((resolve) => {
-      const req = https.request(options, (res) => {
-        let body = "";
-        res.on("data", (chunk) => (body += chunk));
-        res.on("end", () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            try {
-              const json = body ? JSON.parse(body) : null;
-              const translatedText = json?.choices?.[0]?.message?.content?.trim();
-              if (translatedText) {
+        const req = https.request(options, (res) => {
+          let body = "";
+          res.on("data", (chunk) => (body += chunk));
+          res.on("end", () => {
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                const json = body ? JSON.parse(body) : null;
+                const translatedText = json?.choices?.[0]?.message?.content?.trim();
+                if (translatedText) {
                 console.log(`[翻译] ${provider} 翻译成功`);
-                resolve(translatedText);
-              } else {
+                  resolve(translatedText);
+                } else {
                 console.log(`[翻译] ${provider} API 返回格式异常`);
-                resolve(null);
-              }
-            } catch (e) {
+                  resolve(null);
+                }
+              } catch (e) {
               console.error(`[翻译] ${provider} 解析响应失败:`, e);
               resolve(null);
             }
@@ -388,17 +388,17 @@ export class SenderBot {
         });
       });
       req.setTimeout(60000, () => {
-        req.destroy();
+          req.destroy();
         console.error("[翻译] Google 请求超时");
         resolve(null);
-      });
-      req.on("error", (err) => {
+        });
+        req.on("error", (err) => {
         console.error("[翻译] Google 网络错误:", err);
         resolve(null);
+        });
+        req.write(payload);
+        req.end();
       });
-      req.write(payload);
-      req.end();
-    });
   }
 
   private async translateWithBaidu(appId: string, secretKey: string, text: string, target: "zh" | "en"): Promise<string | null> {
@@ -510,7 +510,7 @@ export class SenderBot {
               } else {
                 resolve(null);
               }
-            } catch (e) {
+    } catch (e) {
               console.error(`[翻译] 有道解析响应失败:`, e);
               resolve(null);
             }
@@ -637,8 +637,8 @@ export class SenderBot {
           const useWebhookMode = !this.enableBotRelay;
 
           if (useWebhookMode) {
-            if (item.username) payload.username = item.username;
-            if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          if (item.username) payload.username = item.username;
+          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
           }
           
           if (item.components && item.components.length > 0) {
@@ -666,7 +666,7 @@ export class SenderBot {
               }
             }
             console.log(`[SenderBot] 使用 Webhook 发送消息（带附件）(enableBotRelay=${this.enableBotRelay}, username=${payload.username || 'none'}, avatarUrl=${payload.avatar_url ? 'yes' : 'no'})`);
-            resp = await this.postMultipart(payload, files, true);
+          resp = await this.postMultipart(payload, files, true);
           }
         } else {
           const payload: any = {
@@ -724,8 +724,8 @@ export class SenderBot {
           const useWebhookMode = !this.enableBotRelay;
           
           if (useWebhookMode) {
-            if (item.username) payload.username = item.username;
-            if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          if (item.username) payload.username = item.username;
+          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
           }
           
           if (item.replyToTarget?.messageId) {
@@ -746,7 +746,7 @@ export class SenderBot {
               }
             }
             console.log(`[SenderBot] 使用 Webhook 发送消息 (enableBotRelay=${this.enableBotRelay}, username=${payload.username || 'none'}, avatarUrl=${payload.avatar_url ? 'yes' : 'no'})`);
-            resp = await this.postToWebhook(payload, true);
+          resp = await this.postToWebhook(payload, true);
           }
         }
           

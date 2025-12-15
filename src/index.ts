@@ -101,9 +101,14 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   }
 
   if (Object.keys(feishuWebhooks).length > 0) {
-    for (const [channelId, webhookUrl] of Object.entries(feishuWebhooks)) {
-      if (!webhookUrl) continue;
-      const fs = new FeishuSender(webhookUrl.trim(), httpAgent);
+    for (const [channelId, chatId] of Object.entries(feishuWebhooks)) {
+      if (!chatId) continue;
+      const fs = new FeishuSender(
+        chatId.trim(),
+        httpAgent,
+        account.feishuAppId,
+        account.feishuAppSecret,
+      );
       feishuSendersBySource.set(channelId, fs);
     }
   }

@@ -44,6 +44,8 @@ interface FrontendAccount {
   channelFeishuWebhooks?: Record<string, string>;
   enableFeishuForward?: boolean;
   enableDiscordForward?: boolean;
+  feishuAppId?: string;
+  feishuAppSecret?: string;
   ignoreSelf?: boolean;
   ignoreBot?: boolean;
   ignoreImages?: boolean;
@@ -101,6 +103,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     channelFeishuWebhooks: account.channelFeishuWebhooks || {},
     enableFeishuForward: account.enableFeishuForward === true,
     enableDiscordForward: account.enableDiscordForward !== false,
+    feishuAppId: account.feishuAppId || "",
+    feishuAppSecret: account.feishuAppSecret || "",
     ignoreSelf: account.ignoreSelf === true,
     ignoreBot: account.ignoreBot === true,
     ignoreImages: account.ignoreImages === true,
@@ -123,6 +127,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       channelFeishuWebhooks: {},
       enableFeishuForward: false,
       enableDiscordForward: true,
+      feishuAppId: "",
+      feishuAppSecret: "",
       channelNotes: {},
       blockedKeywords: [],
       excludeKeywords: [],
@@ -194,6 +200,11 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     channelFeishuWebhooks,
     enableFeishuForward: dto.enableFeishuForward === true,
     enableDiscordForward: dto.enableDiscordForward !== false,
+    feishuAppId: typeof dto.feishuAppId === "string" && dto.feishuAppId.trim() ? dto.feishuAppId.trim() : base.feishuAppId,
+    feishuAppSecret:
+      typeof dto.feishuAppSecret === "string" && dto.feishuAppSecret.trim()
+        ? dto.feishuAppSecret.trim()
+        : base.feishuAppSecret,
     channelNotes,
     blockedKeywords: Array.isArray(dto.blockedKeywords) ? dto.blockedKeywords : [],
     excludeKeywords: Array.isArray(dto.excludeKeywords) ? dto.excludeKeywords : [],

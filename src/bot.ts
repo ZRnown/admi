@@ -124,9 +124,9 @@ export class Bot {
     // 定期保存映射（每 5 分钟保存一次，只在数据变动时保存）
     this.saveMappingTimer = setInterval(() => {
       if (this.isMappingDirty) {
-        this.saveMapping().catch(err => {
-          this.logger.error(`定期保存映射失败: ${String(err)}`);
-        });
+      this.saveMapping().catch(err => {
+        this.logger.error(`定期保存映射失败: ${String(err)}`);
+      });
       }
     }, 5 * 60 * 1000);
 
@@ -405,9 +405,9 @@ export class Bot {
 
     // Twitter/X 单链接：以纯文本发送，触发 Discord 原生预览
     if (this.RE_TWITTER.test(rawContent)) {
-      originalContent = rawContent.replace(/[<>]/g, "");
-      useEmbed = false;
-    }
+        originalContent = rawContent.replace(/[<>]/g, "");
+        useEmbed = false;
+      }
 
     // GIF 链接的处理移动到附件收集之后
 
@@ -621,7 +621,7 @@ export class Bot {
     // Tenor/Giphy：恢复为仅发送链接文本以触发 Discord 原生展开（不做直链抓取、不发送附件）
     if (this.RE_GIF.test(rawContent)) {
       originalContent = rawContent.replace(/[<>]/g, "");
-      useEmbed = false;
+        useEmbed = false;
     }
 
     // 不借用被回复消息的图片：仅转发当前消息自身的附件到同一 Embed
@@ -645,48 +645,48 @@ export class Bot {
     
     this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${finalContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed})`);
     if (senderForThis) {
-      const results = await senderForThis.sendData(toSend);
-      if (results && results.length > 0) {
-        const first = results[0];
-        if (first.sourceMessageId) {
-          if (this.sourceToTarget.has(first.sourceMessageId)) {
-            this.sourceToTarget.delete(first.sourceMessageId);
-          }
-          this.sourceToTarget.set(first.sourceMessageId, {
-            channelId: first.targetChannelId,
-            messageId: first.targetMessageId,
-            timestamp: Date.now()
-          });
-          this.limitMapSize();
-          this.isMappingDirty = true;
-          
-          const authorTag = isWebhook 
-            ? (webhookName !== "unknown" ? webhookName : "Webhook")
-            : (message.author?.tag || message.author?.username || "未知用户");
-          const contentPreview = (message.content || "").trim();
-          const contentDisplay = contentPreview.length > 100 
-            ? contentPreview.substring(0, 100) + "..." 
-            : contentPreview || "(无文本内容)";
-          const hasAttachments = (message.attachments?.size || 0) > 0;
-          const hasEmbeds = (message.embeds?.length || 0) > 0;
-          const isReply = !!message.reference;
-          const attachmentCount = message.attachments?.size || 0;
-          
-          let logMsg = `${logPrefix} [SUCCESS] 转发成功: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
-          logMsg += `\n  内容: ${contentDisplay}`;
-          if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
-          if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
-          if (isReply) logMsg += ` | 回复消息`;
-          if (isWebhook) logMsg += ` | Webhook消息`;
-          logMsg += `\n  源消息ID: ${first.sourceMessageId} -> 目标消息ID: ${first.targetMessageId}`;
-          
-          console.log(logMsg);
-          this.logger.info(logMsg);
-        } else {
-          this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId`);
+    const results = await senderForThis.sendData(toSend);
+    if (results && results.length > 0) {
+      const first = results[0];
+      if (first.sourceMessageId) {
+        if (this.sourceToTarget.has(first.sourceMessageId)) {
+          this.sourceToTarget.delete(first.sourceMessageId);
         }
+        this.sourceToTarget.set(first.sourceMessageId, {
+          channelId: first.targetChannelId,
+          messageId: first.targetMessageId,
+          timestamp: Date.now()
+        });
+        this.limitMapSize();
+          this.isMappingDirty = true;
+        
+        const authorTag = isWebhook 
+          ? (webhookName !== "unknown" ? webhookName : "Webhook")
+          : (message.author?.tag || message.author?.username || "未知用户");
+        const contentPreview = (message.content || "").trim();
+        const contentDisplay = contentPreview.length > 100 
+          ? contentPreview.substring(0, 100) + "..." 
+          : contentPreview || "(无文本内容)";
+        const hasAttachments = (message.attachments?.size || 0) > 0;
+        const hasEmbeds = (message.embeds?.length || 0) > 0;
+        const isReply = !!message.reference;
+        const attachmentCount = message.attachments?.size || 0;
+        
+        let logMsg = `${logPrefix} [SUCCESS] 转发成功: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
+        logMsg += `\n  内容: ${contentDisplay}`;
+        if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
+        if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
+        if (isReply) logMsg += ` | 回复消息`;
+        if (isWebhook) logMsg += ` | Webhook消息`;
+        logMsg += `\n  源消息ID: ${first.sourceMessageId} -> 目标消息ID: ${first.targetMessageId}`;
+        
+        console.log(logMsg);
+        this.logger.info(logMsg);
       } else {
-        this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results`);
+        this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId`);
+      }
+    } else {
+      this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results`);
       }
     }
 
@@ -696,7 +696,11 @@ export class Bot {
           content: finalContent,
           username: username,
           avatarUrl: avatarUrl,
-          attachments: uploads.map((u) => ({ url: u.url, filename: u.filename })),
+          attachments: uploads.map((u) => ({
+            url: u.url,
+            filename: u.filename,
+            isImage: u.isImage === true,
+          })),
           embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
         });
         this.logger.info(`${logPrefix} [FEISHU] 转发到飞书成功`);
