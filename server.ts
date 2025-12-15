@@ -233,6 +233,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     deepseekApiKey: typeof dto.deepseekApiKey === "string" && dto.deepseekApiKey.trim() ? dto.deepseekApiKey.trim() : undefined,
     enableBotRelay: dto.enableBotRelay === true,
     botRelayToken: typeof dto.botRelayToken === "string" && dto.botRelayToken.trim() ? dto.botRelayToken.trim() : base.botRelayToken,
+    botRelayUseWebhook: dto.botRelayUseWebhook === true,
     ignoreSelf: dto.ignoreSelf === true,
     ignoreBot: dto.ignoreBot === true,
     ignoreImages: dto.ignoreImages === true,
