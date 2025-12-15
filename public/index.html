@@ -251,34 +251,9 @@
               <div class="flex items-center gap-2 mb-2">
                 <input type="checkbox" ${acc.enableBotRelay ? 'checked' : ''} ${acc.type === 'bot' ? 'disabled' : ''} onchange="updateField('enableBotRelay', this.checked)" 
                   class="h-4 w-4 rounded border-slate-300 ${acc.type === 'bot' ? 'opacity-50 cursor-not-allowed' : ''}">
-                <label class="text-sm text-slate-700 ${acc.type === 'bot' ? 'text-slate-400' : ''}">机器人中转（通过机器人发送到目标群组）${acc.type === 'bot' ? '（机器人账号类型不支持）' : ''}</label>
+                <label class="text-sm text-slate-700 ${acc.type === 'bot' ? 'text-slate-400' : ''}">机器人中转（可为不同规则绑定不同的中转机器人）${acc.type === 'bot' ? '（机器人账号类型不支持）' : ''}</label>
               </div>
-              ${acc.enableBotRelay && acc.type !== 'bot' ? `
-                <div class="mb-4">
-                  <div class="flex items-center gap-2 mb-2">
-                    <input type="checkbox" ${acc.botRelayUseWebhook ? 'checked' : ''} onchange="updateField('botRelayUseWebhook', this.checked)" 
-                      class="h-4 w-4 rounded border-slate-300">
-                    <label class="text-sm text-slate-700">使用 Webhook 转发</label>
-                  </div>
-                  <label class="block text-sm font-medium text-slate-700 mb-1">机器人 Token</label>
-                  <div class="flex gap-2">
-                    <input type="password" value="${acc.botRelayToken || ''}" onchange="updateField('botRelayToken', this.value)" 
-                      placeholder="机器人 Token（用于中转发送）" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
-                    <button onclick="requestBotRelayLogin()" ${(acc.botRelayLoginState === 'pending' || acc.botRelayLoginState === 'online') ? 'disabled' : ''} 
-                      class="px-3 py-1.5 text-xs font-medium rounded-md ${(acc.botRelayLoginState === 'pending' || acc.botRelayLoginState === 'online') ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                      ${acc.botRelayLoginState === 'pending' ? '登录中...' : acc.botRelayLoginState === 'online' ? '已登录' : '登录'}
-                    </button>
-                    <button onclick="requestBotRelayStop()" ${acc.botRelayLoginState === 'pending' || (acc.botRelayLoginState !== 'online' && acc.botRelayLoginState !== 'error') ? 'disabled' : ''}
-                      class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${acc.botRelayLoginState === 'pending' || (acc.botRelayLoginState !== 'online' && acc.botRelayLoginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                      停止
-                    </button>
-                  </div>
-                  <div class="text-xs text-slate-500 mt-1">
-                    状态: <span class="px-2 py-0.5 rounded-full ${acc.botRelayLoginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.botRelayLoginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.botRelayLoginState || 'idle'}</span>
-                    ${acc.botRelayLoginMessage ? `<span class="ml-2">${acc.botRelayLoginMessage}</span>` : ''}
-                  </div>
-                </div>
-              ` : ''}
+              ${acc.enableBotRelay && acc.type !== 'bot' ? renderBotRelaySection(acc) : ''}
               <div class="flex items-center gap-2 mb-2">
                 <input type="checkbox" ${acc.enableTranslation ? 'checked' : ''} onchange="updateField('enableTranslation', this.checked)" 
                   class="h-4 w-4 rounded border-slate-300">
@@ -355,7 +330,7 @@
             <h2 class="font-semibold text-slate-800">转发规则</h2>
           </div>
           <div class="p-6 space-y-4" id="mappingsList">
-            ${renderMappings(acc.mappings || [])}
+            ${renderMappings(acc)}
           </div>
           <div class="px-6 pb-4 flex justify-end">
             <button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
@@ -410,7 +385,8 @@
       `;
     }
 
-    function renderMappings(mappings) {
+    function renderMappings(acc) {
+      const mappings = acc.mappings || [];
       if (mappings.length === 0) {
         return '<div class="text-center py-8 text-slate-400 text-sm">暂无转发规则，点击下方添加</div>';
       }
@@ -421,6 +397,10 @@
           <span class="text-slate-300">→</span>
           <input type="text" value="${m.targetWebhookUrl || ''}" onchange="updateMapping(${idx}, 'targetWebhookUrl', this.value)" 
             placeholder="目标 Webhook URL" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+          <select onchange="updateMappingRelay(${idx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
+            <option value="">Webhook 默认</option>
+            ${(acc.botRelays || []).map(r => `<option value="${r.id}" ${acc.channelRelayMap?.[m.sourceChannelId || ''] === r.id ? 'selected' : ''}>🤖 ${r.name || '中转机器人'}</option>`).join('')}
+          </select>
           <input type="text" value="${m.note || ''}" onchange="updateMapping(${idx}, 'note', this.value)" 
             placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
           <button onclick="removeMapping(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
@@ -441,6 +421,45 @@
       `).join('') + '<button onclick="addReplacement()" class="text-xs bg-slate-50 text-slate-700 px-2 py-1 rounded-md hover:bg-slate-100 mt-2">+ 添加替换规则</button>';
     }
 
+    function renderBotRelaySection(acc) {
+      const relays = acc.botRelays || [];
+      return `
+        <div class="mb-4 rounded-lg border border-slate-200 bg-slate-50/60 p-3 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="text-sm text-slate-700">配置多个中转机器人，稍后在每条转发规则中选择要使用的机器人。</div>
+            <div class="flex items-center gap-2">
+              <button onclick="requestRelayLoginAll()" class="text-xs bg-emerald-50 text-emerald-600 px-2 py-1 rounded-md hover:bg-emerald-100">一键验证</button>
+              <button onclick="addBotRelay()" class="text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md hover:bg-indigo-100">+ 添加中转机器人</button>
+            </div>
+          </div>
+          ${relays.length === 0 ? `<div class="text-sm text-slate-400">暂无中转机器人，请点击“添加”创建。</div>` : relays.map((r, idx) => `
+            <div class="grid gap-3 md:grid-cols-[1fr,1fr,auto] items-center bg-white/80 border border-slate-200 rounded-lg p-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-600 mb-1">名称</label>
+                <input type="text" value="${r.name || ''}" onchange="updateBotRelay(${idx}, 'name', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" placeholder="例如：Relay-1">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-600 mb-1">机器人 Token</label>
+                <input type="password" value="${r.token || ''}" onchange="updateBotRelay(${idx}, 'token', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none" placeholder="机器人 Token">
+              </div>
+              <div class="flex flex-col items-end justify-center gap-2 pt-5 md:pt-0">
+                <div class="text-xs">
+                  <span class="px-2 py-0.5 rounded-full ${r.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : r.loginState === 'error' ? 'bg-red-50 text-red-700' : r.loginState === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}">${r.loginState || 'idle'}</span>
+                  ${r.loginMessage ? `<span class="ml-1 text-slate-500">${r.loginMessage}</span>` : ''}
+                </div>
+                <div class="flex items-center gap-2">
+                  <button onclick="requestRelayLogin('${r.id}')" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">验证</button>
+                  <button onclick="removeBotRelay(${idx})" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">删除</button>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
     // 工具函数
     function getActiveAccount() {
       return state.accounts.find(a => a.id === state.activeId) || state.accounts[0];
@@ -449,11 +468,6 @@
     function updateField(field, value) {
       const acc = getActiveAccount();
       acc[field] = value;
-      // 如果删除机器人中转Token，自动重置状态
-      if (field === 'botRelayToken' && (!value || !value.trim())) {
-        acc.botRelayLoginState = 'idle';
-        acc.botRelayLoginMessage = '';
-      }
       saveConfig();
       render();
     }
@@ -485,10 +499,8 @@
         translationSecret: '',
         deepseekApiKey: '',
         enableBotRelay: false,
-        botRelayToken: '',
-        botRelayUseWebhook: false,
-        botRelayLoginState: 'idle',
-        botRelayLoginMessage: '',
+        botRelays: [],
+        channelRelayMap: {},
         ignoreSelf: false,
         ignoreBot: false,
         ignoreImages: false,
@@ -522,16 +534,44 @@
     function updateMapping(idx, field, value) {
       const acc = getActiveAccount();
       if (acc.mappings[idx]) {
+        const prevSource = acc.mappings[idx].sourceChannelId;
         acc.mappings[idx][field] = value;
+        if (field === 'sourceChannelId') {
+          if (!acc.channelRelayMap) acc.channelRelayMap = {};
+          if (prevSource && acc.channelRelayMap[prevSource]) {
+            const relayId = acc.channelRelayMap[prevSource];
+            delete acc.channelRelayMap[prevSource];
+            if (value) {
+              acc.channelRelayMap[String(value)] = relayId;
+            }
+          }
+        }
         saveConfig();
       }
     }
 
     function removeMapping(idx) {
       const acc = getActiveAccount();
+      const sourceId = acc.mappings[idx]?.sourceChannelId;
       acc.mappings.splice(idx, 1);
+      if (sourceId && acc.channelRelayMap && acc.channelRelayMap[sourceId]) {
+        delete acc.channelRelayMap[sourceId];
+      }
       saveConfig();
       render();
+    }
+
+    function updateMappingRelay(idx, relayId) {
+      const acc = getActiveAccount();
+      const mapping = acc.mappings?.[idx];
+      if (!mapping || !mapping.sourceChannelId) return;
+      if (!acc.channelRelayMap) acc.channelRelayMap = {};
+      if (relayId) {
+        acc.channelRelayMap[mapping.sourceChannelId] = relayId;
+      } else {
+        delete acc.channelRelayMap[mapping.sourceChannelId];
+      }
+      saveConfig();
     }
 
     function addKeyword(field, value) {
@@ -573,6 +613,111 @@
       acc.replacements.splice(idx, 1);
       saveConfig();
       render();
+    }
+
+    function addBotRelay() {
+      const acc = getActiveAccount();
+      if (!acc.botRelays) acc.botRelays = [];
+      acc.botRelays.push({ id: genId(), name: `中转机器人${acc.botRelays.length + 1}`, token: '', loginState: 'idle', loginMessage: '' });
+      saveConfig();
+      render();
+    }
+
+    function updateBotRelay(idx, field, value) {
+      const acc = getActiveAccount();
+      if (!acc.botRelays || !acc.botRelays[idx]) return;
+      acc.botRelays[idx][field] = value;
+      saveConfig();
+    }
+
+    function removeBotRelay(idx) {
+      const acc = getActiveAccount();
+      if (!acc.botRelays) return;
+      const removed = acc.botRelays[idx];
+      acc.botRelays.splice(idx, 1);
+      // 清理映射中使用该机器人的绑定
+      if (removed?.id && acc.channelRelayMap) {
+        Object.keys(acc.channelRelayMap).forEach((k) => {
+          if (acc.channelRelayMap[k] === removed.id) {
+            delete acc.channelRelayMap[k];
+          }
+        });
+      }
+      saveConfig();
+      render();
+    }
+
+    async function requestRelayLogin(relayId) {
+      const acc = getActiveAccount();
+      if (!relayId) return;
+      // 本地先置为 pending
+      acc.botRelays = (acc.botRelays || []).map((r) =>
+        r.id === relayId ? { ...r, loginState: 'pending', loginMessage: '正在验证 Token...' } : r
+      );
+      render();
+      try {
+        const res = await fetch('/api/account/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id, action: 'relayLogin', relayIds: [relayId] })
+        });
+        const data = await res.json();
+        if (data?.results) {
+          acc.botRelays = (acc.botRelays || []).map((r) => {
+            const hit = data.results[r.id];
+            return hit ? { ...r, loginState: hit.loginState, loginMessage: hit.loginMessage } : r;
+          });
+          saveConfig();
+        } else if (!res.ok) {
+          acc.botRelays = (acc.botRelays || []).map((r) =>
+            r.id === relayId ? { ...r, loginState: 'error', loginMessage: data?.error || `验证失败(${res.status})` } : r
+          );
+          saveConfig();
+        }
+        render();
+      } catch (e) {
+        console.error('relay login failed', e);
+        acc.botRelays = (acc.botRelays || []).map((r) =>
+          r.id === relayId ? { ...r, loginState: 'error', loginMessage: '请求失败' } : r
+        );
+        saveConfig();
+        render();
+      }
+    }
+
+    async function requestRelayLoginAll() {
+      const acc = getActiveAccount();
+      // 本地先置为 pending
+      acc.botRelays = (acc.botRelays || []).map((r) => ({ ...r, loginState: 'pending', loginMessage: '正在验证 Token...' }));
+      render();
+      try {
+        const res = await fetch('/api/account/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id, action: 'relayLogin' })
+        });
+        const data = await res.json();
+        if (data?.results) {
+          acc.botRelays = (acc.botRelays || []).map((r) => {
+            const hit = data.results[r.id];
+            return hit ? { ...r, loginState: hit.loginState, loginMessage: hit.loginMessage } : r;
+          });
+          saveConfig();
+        } else if (!res.ok) {
+          acc.botRelays = (acc.botRelays || []).map((r) => ({
+            ...r,
+            loginState: 'error',
+            loginMessage: data?.error || `验证失败(${res.status})`,
+          }));
+          saveConfig();
+        }
+        render();
+      } catch (e) {
+        console.error('relay login all failed', e);
+        acc.botRelays = (acc.botRelays || []).map((r) => ({ ...r, loginState: 'error', loginMessage: '请求失败' }));
+        saveConfig();
+        render();
+      }
     }
 
     async function requestLogin() {
@@ -627,93 +772,6 @@
       render();
     }
 
-    async function requestBotRelayLogin() {
-      const acc = getActiveAccount();
-      // 如果已经在pending或online状态，不允许重复请求
-      if (acc.botRelayLoginState === 'online' || acc.botRelayLoginState === 'pending') {
-        console.log('[前端] 机器人中转登录: 状态为', acc.botRelayLoginState, '，跳过请求');
-        return;
-      }
-      
-      // 检查token是否存在
-      if (!acc.botRelayToken || !acc.botRelayToken.trim()) {
-        acc.botRelayLoginState = 'error';
-        acc.botRelayLoginMessage = 'Token 未配置';
-        saveConfig();
-        render();
-        return;
-      }
-      
-      // 立即更新本地状态为pending
-      acc.botRelayLoginState = 'pending';
-      acc.botRelayLoginMessage = '正在验证 Token...';
-      saveConfig();
-      render();
-
-      try {
-        console.log('[前端] 机器人中转登录: 发送验证请求，accountId:', acc.id);
-        const res = await fetch('/api/account/action', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: acc.id, action: 'botRelayLogin' })
-        });
-        
-        const data = await res.json();
-        console.log('[前端] 机器人中转登录响应:', { status: res.status, ok: res.ok, data });
-        
-        // 无论res.ok是true还是false，都更新状态（因为验证失败时也会返回状态）
-        if (data.botRelayLoginState) {
-          acc.botRelayLoginState = data.botRelayLoginState;
-          acc.botRelayLoginMessage = data.botRelayLoginMessage || '';
-          console.log('[前端] 机器人中转登录: 更新状态为', acc.botRelayLoginState, '消息:', acc.botRelayLoginMessage);
-        } else if (data.error) {
-          // 如果返回错误，设置为error状态
-          acc.botRelayLoginState = 'error';
-          acc.botRelayLoginMessage = data.error || '验证失败';
-          console.error('[前端] 机器人中转登录: 返回错误', data.error);
-        } else {
-          // 如果没有返回状态，根据res.ok判断
-          acc.botRelayLoginState = res.ok ? 'online' : 'error';
-          acc.botRelayLoginMessage = res.ok ? '验证成功' : (data.error || '验证失败');
-        }
-        
-        // 保存状态
-        saveConfig();
-      } catch (e) {
-        console.error('[前端] 机器人中转登录请求失败:', e);
-        acc.botRelayLoginState = 'error';
-        acc.botRelayLoginMessage = `请求失败: ${e?.message || '网络错误'}`;
-        saveConfig();
-      }
-      render();
-    }
-
-    async function requestBotRelayStop() {
-      const acc = getActiveAccount();
-      if (acc.botRelayLoginState === 'pending' || (acc.botRelayLoginState !== 'online' && acc.botRelayLoginState !== 'error')) return;
-      
-      acc.botRelayLoginState = 'idle';
-      acc.botRelayLoginMessage = '正在停止...';
-      render();
-
-      try {
-        const res = await fetch('/api/account/action', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: acc.id, action: 'botRelayStop' })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          acc.botRelayLoginState = data.botRelayLoginState || 'idle';
-          acc.botRelayLoginMessage = data.botRelayLoginMessage || '已停止';
-        }
-      } catch (e) {
-        acc.botRelayLoginState = acc.botRelayLoginState || 'idle';
-        acc.botRelayLoginMessage = '停止请求失败';
-      }
-      render();
-    }
-
     function showHelp() {
       document.getElementById('helpPanel').classList.remove('hidden');
     }
@@ -750,8 +808,7 @@
               if (!la) return false;
               return (
                 ra.loginState !== la.loginState || 
-                ra.loginMessage !== la.loginMessage ||
-                (ra.botRelayLoginState !== undefined && (ra.botRelayLoginState !== la.botRelayLoginState || ra.botRelayLoginMessage !== la.botRelayLoginMessage))
+                ra.loginMessage !== la.loginMessage
               );
             });
             if (hasChange) {
@@ -761,38 +818,6 @@
                   if (acc.loginState !== 'pending' || remote.loginState !== 'idle') {
                     acc.loginState = remote.loginState || acc.loginState;
                     acc.loginMessage = remote.loginMessage || acc.loginMessage;
-                  }
-                  // 更新机器人中转状态
-                  // 如果远程状态存在，且（远程不是pending 或 本地是pending），则更新
-                  // 这样可以确保：1) pending状态不会被非pending状态覆盖 2) pending状态可以被最终结果覆盖
-                  if (remote.botRelayLoginState !== undefined) {
-                    // 如果远程状态不是 pending，或者本地状态是 pending，则更新
-                    // 这样可以确保：pending 状态不会被非 pending 状态覆盖，但 pending 状态可以被最终结果覆盖
-                    const shouldUpdate = remote.botRelayLoginState !== 'pending' || acc.botRelayLoginState === 'pending';
-                    if (shouldUpdate) {
-                      const oldState = acc.botRelayLoginState;
-                      const oldMessage = acc.botRelayLoginMessage;
-                      acc.botRelayLoginState = remote.botRelayLoginState;
-                      acc.botRelayLoginMessage = remote.botRelayLoginMessage || '';
-                      // 如果状态或消息发生变化，保存配置并重新渲染
-                      if (oldState !== acc.botRelayLoginState || oldMessage !== acc.botRelayLoginMessage) {
-                        saveConfig();
-                        // 立即渲染，不需要等待下一次轮询
-                        render();
-                      }
-                    }
-                  }
-                  // 同步token，如果token被删除，重置状态
-                  if (remote.botRelayToken !== undefined) {
-                    const tokenChanged = remote.botRelayToken !== acc.botRelayToken;
-                    if (tokenChanged) {
-                      acc.botRelayToken = remote.botRelayToken || '';
-                      // 如果token被删除或清空，重置状态
-                      if (!remote.botRelayToken || !remote.botRelayToken.trim()) {
-                        acc.botRelayLoginState = 'idle';
-                        acc.botRelayLoginMessage = '';
-                      }
-                    }
                   }
                 }
               });

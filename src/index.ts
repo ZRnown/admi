@@ -69,13 +69,15 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const translationApiKey = account.translationApiKey || account.deepseekApiKey;
   const translationSecret = account.translationSecret;
   const enableBotRelay = account.enableBotRelay || false;
-  const botRelayToken = account.botRelayToken;
-  const botRelayUseWebhook = account.botRelayUseWebhook || false;
+  const relayById = new Map((account.botRelays || []).map((r) => [r.id, r]));
   // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
   const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
 
   if (Object.keys(webhooks).length > 0) {
     for (const [channelId, webhookUrl] of Object.entries(webhooks)) {
+      const relayId = account.channelRelayMap?.[channelId];
+      const relayToken = relayId ? relayById.get(relayId)?.token?.trim() : undefined;
+      const useRelay = enableBotRelay && !!relayToken;
       const sb = new SenderBot({
         replacementsDictionary: replacements,
         webhookUrl,
@@ -85,9 +87,8 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
         translationProvider,
         translationApiKey,
         translationSecret,
-        enableBotRelay,
-        botRelayToken,
-        botRelayUseWebhook,
+        enableBotRelay: useRelay,
+        botRelayToken: relayToken,
       });
       prepares.push(sb.prepare());
       senderBotsBySource.set(channelId, sb);
@@ -697,6 +698,9 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       JSON.stringify(account.channelWebhooks || {}) !== JSON.stringify(oldAccount.channelWebhooks || {}) ||
       JSON.stringify(account.replacementsDictionary || {}) !==
         JSON.stringify(oldAccount.replacementsDictionary || {});
+    const relayChanged =
+      JSON.stringify(account.botRelays || []) !== JSON.stringify(oldAccount.botRelays || []) ||
+      JSON.stringify(account.channelRelayMap || {}) !== JSON.stringify(oldAccount.channelRelayMap || {});
     // 检测翻译配置变化
     const translationChanged =
       account.enableTranslation !== oldAccount.enableTranslation ||
@@ -731,11 +735,11 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       }
       
       // 如果有配置变化，进行热更新（不重启）
-      if (mappingsChanged || translationChanged || keywordsChanged || userFilterChanged) {
+      if (mappingsChanged || translationChanged || keywordsChanged || userFilterChanged || relayChanged) {
         let senderBotsBySource = existing.senderBotsBySource;
         let defaultSenderBot = existing.defaultSenderBot;
         // 如果映射或翻译配置变化，需要重新构建 SenderBot
-        if (mappingsChanged || translationChanged) {
+        if (mappingsChanged || translationChanged || relayChanged) {
           try {
             const built = await buildSenderBots(account, logger);
             senderBotsBySource = built.senderBotsBySource;
@@ -768,7 +772,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     // 没有任何变化则跳过
-    if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !userFilterChanged && !restartRequested && !loginRequestedBecameTrue) {
+    if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !userFilterChanged && !relayChanged && !restartRequested && !loginRequestedBecameTrue) {
       continue;
     }
 
@@ -783,7 +787,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     let senderBotsBySource = existing.senderBotsBySource;
     let defaultSenderBot = existing.defaultSenderBot;
     // 如果映射或翻译配置变化，需要重新构建 SenderBot
-    if (mappingsChanged || translationChanged) {
+    if (mappingsChanged || translationChanged || relayChanged) {
       try {
         const built = await buildSenderBots(account, logger);
         senderBotsBySource = built.senderBotsBySource;

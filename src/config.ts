@@ -50,10 +50,19 @@ export interface LegacyConfig {
   translationSecret?: string;
   // 机器人中转配置
   enableBotRelay?: boolean;
-  botRelayToken?: string;
-  botRelayUseWebhook?: boolean; // 如果启用，即使开启了机器人中转，也使用webhook转发
+  botRelayToken?: string; // 兼容旧版单一中转机器人
+  botRelayUseWebhook?: boolean; // 兼容旧版
   botRelayLoginState?: string;
   botRelayLoginMessage?: string;
+  // 新版多中转机器人
+  botRelays?: Array<{
+    id: string;
+    name: string;
+    token: string;
+    loginState?: string;
+    loginMessage?: string;
+  }>;
+  channelRelayMap?: Record<string, string>; // 源频道 -> relay id
   // 忽略选项
   ignoreSelf?: boolean;
   ignoreBot?: boolean;
@@ -102,6 +111,7 @@ function createDefaultAccount(): AccountConfig {
     loginNonce: undefined,
     loginState: "idle",
     loginMessage: "",
+    enableBotRelay: false,
     channelWebhooks: {},
     channelNotes: {},
     blockedKeywords: [],
@@ -123,7 +133,8 @@ function createDefaultAccount(): AccountConfig {
     channelConfigs: {},
     enableTranslation: false,
     deepseekApiKey: undefined,
-  botRelayUseWebhook: false,
+    botRelays: [],
+    channelRelayMap: {},
   };
 }
 
@@ -165,6 +176,32 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       ? input.replacementsDictionary
       : {};
 
+  // 兼容旧版单个 botRelayToken，升级为 botRelays
+  let botRelays: AccountConfig["botRelays"] = Array.isArray(input?.botRelays)
+    ? input.botRelays
+        .filter((x: any) => x && typeof x.token === "string" && x.token.trim())
+        .map((x: any) => ({
+          id: typeof x.id === "string" && x.id.trim() ? x.id.trim() : randomUUID(),
+          name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : "中转机器人",
+          token: x.token.trim(),
+          loginState: typeof x.loginState === "string" ? x.loginState : "idle",
+          loginMessage: typeof x.loginMessage === "string" ? x.loginMessage : "",
+        }))
+    : undefined;
+  if ((!botRelays || botRelays.length === 0) && typeof input?.botRelayToken === "string" && input.botRelayToken.trim()) {
+    botRelays = [
+      {
+        id: randomUUID(),
+        name: "中转机器人",
+        token: input.botRelayToken.trim(),
+        loginState: typeof input?.botRelayLoginState === "string" ? input.botRelayLoginState : "idle",
+        loginMessage: typeof input?.botRelayLoginMessage === "string" ? input.botRelayLoginMessage : "",
+      },
+    ];
+  }
+  const channelRelayMap: Record<string, string> =
+    input?.channelRelayMap && typeof input.channelRelayMap === "object" ? input.channelRelayMap : {};
+
   return {
     id,
     name,
@@ -201,9 +238,11 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     translationSecret: typeof input?.translationSecret === "string" && input.translationSecret.trim() ? input.translationSecret.trim() : undefined,
     enableBotRelay: input?.enableBotRelay === true,
     botRelayToken: typeof input?.botRelayToken === "string" && input.botRelayToken.trim() ? input.botRelayToken.trim() : undefined,
-    botRelayUseWebhook: input?.botRelayUseWebhook === true,
+    botRelayUseWebhook: input?.botRelayUseWebhook === true, // 兼容旧字段
     botRelayLoginState: typeof input?.botRelayLoginState === "string" ? input.botRelayLoginState : "idle",
     botRelayLoginMessage: typeof input?.botRelayLoginMessage === "string" ? input.botRelayLoginMessage : "",
+    botRelays,
+    channelRelayMap,
     ignoreSelf: input?.ignoreSelf === true,
     ignoreBot: input?.ignoreBot === true,
     ignoreImages: input?.ignoreImages === true,
@@ -265,8 +304,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     translationApiKey: undefined,
     translationSecret: undefined,
     enableBotRelay: false,
-    botRelayToken: undefined,
-  botRelayUseWebhook: false,
+    botRelays: [],
+    channelRelayMap: {},
     ignoreSelf: false,
     ignoreBot: false,
     ignoreImages: false,
@@ -301,8 +340,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     translationApiKey: account.translationApiKey,
     translationSecret: account.translationSecret,
     enableBotRelay: account.enableBotRelay,
-    botRelayToken: account.botRelayToken,
-    botRelayUseWebhook: account.botRelayUseWebhook,
+    botRelays: account.botRelays,
+    channelRelayMap: account.channelRelayMap,
     ignoreSelf: account.ignoreSelf,
     ignoreBot: account.ignoreBot,
     ignoreImages: account.ignoreImages,
