@@ -123,6 +123,7 @@ function createDefaultAccount(): AccountConfig {
     channelConfigs: {},
     enableTranslation: false,
     deepseekApiKey: undefined,
+  botRelayUseWebhook: false,
   };
 }
 
@@ -265,6 +266,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     translationSecret: undefined,
     enableBotRelay: false,
     botRelayToken: undefined,
+  botRelayUseWebhook: false,
     ignoreSelf: false,
     ignoreBot: false,
     ignoreImages: false,
