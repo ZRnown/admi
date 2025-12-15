@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({ ok: true, loginState: "idle", loginMessage: "已停止该账号登录" });
     } else if (action === "relayLogin") {
-      // 验证一个或多个中转机器人 token
+      // 登录一个或多个中转机器人 token
       const relayIdList = Array.isArray(relayIds)
         ? relayIds.filter((x: any) => typeof x === "string")
         : undefined;
@@ -114,9 +114,9 @@ export async function POST(req: NextRequest) {
               } else {
                 try {
                   const err = body ? JSON.parse(body) : {};
-                  resolve({ success: false, error: err.message || `验证失败 (HTTP ${rs.statusCode})` });
+                  resolve({ success: false, error: err.message || `登录失败 (HTTP ${rs.statusCode})` });
                 } catch {
-                  resolve({ success: false, error: `验证失败 (HTTP ${rs.statusCode})` });
+                  resolve({ success: false, error: `登录失败 (HTTP ${rs.statusCode})` });
                 }
               }
             });
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
           rq.on("error", (err: any) => resolve({ success: false, error: `网络错误: ${err.message}` }));
           rq.setTimeout(15000, () => {
             rq.destroy();
-            resolve({ success: false, error: "验证超时（15秒）" });
+            resolve({ success: false, error: "登录超时（15秒）" });
           });
           rq.end();
         });
@@ -142,14 +142,14 @@ export async function POST(req: NextRequest) {
           }
 
           relay.loginState = "pending";
-          relay.loginMessage = "正在验证 Token...";
+          relay.loginMessage = "正在登录 Token...";
           const resp = await verifyRelay(relay.token.trim());
           if (resp.success) {
             relay.loginState = "online";
-            relay.loginMessage = "验证成功";
+            relay.loginMessage = "登录成功";
           } else {
             relay.loginState = "error";
-            relay.loginMessage = resp.error || "验证失败";
+            relay.loginMessage = resp.error || "登录失败";
           }
           results[relay.id] = { loginState: relay.loginState, loginMessage: relay.loginMessage };
         }
@@ -165,7 +165,7 @@ export async function POST(req: NextRequest) {
         // 意外异常时，将目标 relay 标记为错误，避免停留在 pending
         for (const relay of targets) {
           relay.loginState = "error";
-          relay.loginMessage = `验证异常: ${String(e?.message || e)}`;
+          relay.loginMessage = `登录异常: ${String(e?.message || e)}`;
           results[relay.id] = { loginState: relay.loginState, loginMessage: relay.loginMessage };
         }
         await saveMultiConfig(multi);

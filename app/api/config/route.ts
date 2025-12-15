@@ -41,6 +41,9 @@ interface FrontendAccount {
   enableBotRelay?: boolean;
   botRelays?: Array<{ id: string; name: string; token: string; loginState?: string; loginMessage?: string }>;
   channelRelayMap?: Record<string, string>;
+  channelFeishuWebhooks?: Record<string, string>;
+  enableFeishuForward?: boolean;
+  enableDiscordForward?: boolean;
   ignoreSelf?: boolean;
   ignoreBot?: boolean;
   ignoreImages?: boolean;
@@ -95,6 +98,9 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     enableBotRelay: account.enableBotRelay === true,
     botRelays: account.botRelays || [],
     channelRelayMap: account.channelRelayMap || {},
+    channelFeishuWebhooks: account.channelFeishuWebhooks || {},
+    enableFeishuForward: account.enableFeishuForward === true,
+    enableDiscordForward: account.enableDiscordForward !== false,
     ignoreSelf: account.ignoreSelf === true,
     ignoreBot: account.ignoreBot === true,
     ignoreImages: account.ignoreImages === true,
@@ -114,6 +120,9 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       token: dto.token || "",
       proxyUrl: dto.proxyUrl || "",
       channelWebhooks: {},
+      channelFeishuWebhooks: {},
+      enableFeishuForward: false,
+      enableDiscordForward: true,
       channelNotes: {},
       blockedKeywords: [],
       excludeKeywords: [],
@@ -159,6 +168,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       }
     }
   }
+  const channelFeishuWebhooks =
+    dto.channelFeishuWebhooks && typeof dto.channelFeishuWebhooks === "object"
+      ? dto.channelFeishuWebhooks
+      : {};
 
   let loginRequested: boolean;
   if (fallback && fallback.loginRequested === true) {
@@ -178,6 +191,9 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     loginNonce: dto.loginNonce ?? base.loginNonce,
     showSourceIdentity: dto.showSourceIdentity === true,
     channelWebhooks,
+    channelFeishuWebhooks,
+    enableFeishuForward: dto.enableFeishuForward === true,
+    enableDiscordForward: dto.enableDiscordForward !== false,
     channelNotes,
     blockedKeywords: Array.isArray(dto.blockedKeywords) ? dto.blockedKeywords : [],
     excludeKeywords: Array.isArray(dto.excludeKeywords) ? dto.excludeKeywords : [],

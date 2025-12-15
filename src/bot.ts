@@ -11,6 +11,7 @@ import { Client as BotClient } from "discord.js";
 import { Config } from "./config.js";
 import { formatSize } from "./format.js";
 import { SenderBot } from "./senderBot.js";
+import { FeishuSender } from "./feishuSender.js";
 import { FileLogger } from "./logger.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -51,6 +52,7 @@ class DedupeCache {
 export class Bot {
   senderBot: SenderBot; // default sender
   private senderBotsBySource?: Map<string, SenderBot>;
+  private feishuSendersBySource?: Map<string, FeishuSender>;
   config: Config;
   client: Client;
   // 源消息ID -> 目标消息ID映射（用于构建目标内跳转链接）
@@ -73,11 +75,18 @@ export class Bot {
   private readonly RE_TWITTER = /^<?https?:\/\/(?:x\.com|twitter\.com)\/\S+>?$/i;
   private readonly RE_GIF = /^<?https?:\/\/(?:tenor\.com|giphy\.com)\/\S+>?$/i;
   
-  constructor(client: Client, config: Config, senderBot: SenderBot, senderBotsBySource?: Map<string, SenderBot>) {
+  constructor(
+    client: Client,
+    config: Config,
+    senderBot: SenderBot,
+    senderBotsBySource?: Map<string, SenderBot>,
+    feishuSendersBySource?: Map<string, FeishuSender>,
+  ) {
     this.config = config;
     this.senderBot = senderBot;
     this.client = client;
     this.senderBotsBySource = senderBotsBySource;
+    this.feishuSendersBySource = feishuSendersBySource;
 
     // 移除所有旧的事件监听器，避免重复注册
     (this.client as any).removeAllListeners("ready");
@@ -150,15 +159,25 @@ export class Bot {
    * 在不重启进程的情况下，更新运行时使用的配置和转发映射。
    * 供外部在检测到 config.json / .env 变更后调用。
    */
-  updateRuntimeConfig(config: Config, defaultSender: SenderBot, senderBotsBySource?: Map<string, SenderBot>) {
+  updateRuntimeConfig(
+    config: Config,
+    defaultSender: SenderBot,
+    senderBotsBySource?: Map<string, SenderBot>,
+    feishuSendersBySource?: Map<string, FeishuSender>,
+  ) {
     this.config = config;
     this.senderBot = defaultSender;
     this.senderBotsBySource = senderBotsBySource;
+    this.feishuSendersBySource = feishuSendersBySource;
     this.logger.info("runtime config updated: channelWebhooks / blockedKeywords 已刷新");
   }
 
   private getSenderForChannel(channelId: string): SenderBot | undefined {
     return this.senderBotsBySource?.get(channelId);
+  }
+
+  private getFeishuSenderForChannel(channelId: string): FeishuSender | undefined {
+    return this.feishuSendersBySource?.get(channelId);
   }
 
   private async ensureDataDir() {
@@ -263,12 +282,13 @@ export class Bot {
 
     // 快速检查：路由映射是否存在，不存在则快速返回
     const senderForThis = this.getSenderForChannel(message.channelId);
-    if (!senderForThis) {
+    const feishuSenderForThis = this.getFeishuSenderForChannel(message.channelId);
+    if (!senderForThis && !feishuSenderForThis) {
       return; // 快速返回，不做多余计算
     }
     
     // 记录消息检测日志（仅在启用机器人中转时，帮助调试）
-    if (senderForThis.enableBotRelay) {
+    if (senderForThis && senderForThis.enableBotRelay) {
       this.logger.info(`[Bot] 检测到消息 (id=${message.id}, channel=${message.channelId}, author=${message.author?.tag || 'unknown'})，准备转发`);
     }
 
@@ -392,7 +412,11 @@ export class Bot {
     // GIF 链接的处理移动到附件收集之后
 
     // 路由：仅当该源频道在映射中时才转发；未映射则跳过（senderForThis 已在前面检查过）
-    this.logger.info(`${logPrefix} [ROUTE] Found mapping for channel ${message.channelId}, will forward to webhook`);
+    if (senderForThis) {
+      this.logger.info(`${logPrefix} [ROUTE] Found mapping for channel ${message.channelId}, will forward to webhook`);
+    } else if (feishuSenderForThis) {
+      this.logger.info(`${logPrefix} [ROUTE] Found Feishu mapping for channel ${message.channelId}, will forward to Feishu`);
+    }
 
     // 用户过滤：白名单（allowedUsersIds）与黑名单（mutedUsersIds）
     // 注意：webhook 消息的 author 可能为 null，需要特殊处理
@@ -522,7 +546,7 @@ export class Bot {
         if (mapped) {
           replyToTarget = { channelId: mapped.channelId, messageId: mapped.messageId };
           // 无论是否有附件/Embed，都生成 CTA 行；有资产时用“查看附件”，否则用“查看消息”
-          if (senderForThis.webhookGuildId) {
+          if (senderForThis?.webhookGuildId) {
             const link = `https://discord.com/channels/${senderForThis.webhookGuildId}/${mapped.channelId}/${mapped.messageId}`;
             let display: string;
             if (this.config.showSourceIdentity) {
@@ -620,55 +644,65 @@ export class Bot {
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
     
     this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${finalContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed})`);
-    const results = await senderForThis.sendData(toSend);
-    if (results && results.length > 0) {
-      const first = results[0];
-      if (first.sourceMessageId) {
-        // 优化：先删除旧的（如果存在），确保重新 set 后它在 Map 的末尾（变为最新）
-        // 这样可以利用 Map 的自然顺序实现 LRU，无需排序
-        if (this.sourceToTarget.has(first.sourceMessageId)) {
-          this.sourceToTarget.delete(first.sourceMessageId);
+    if (senderForThis) {
+      const results = await senderForThis.sendData(toSend);
+      if (results && results.length > 0) {
+        const first = results[0];
+        if (first.sourceMessageId) {
+          if (this.sourceToTarget.has(first.sourceMessageId)) {
+            this.sourceToTarget.delete(first.sourceMessageId);
+          }
+          this.sourceToTarget.set(first.sourceMessageId, {
+            channelId: first.targetChannelId,
+            messageId: first.targetMessageId,
+            timestamp: Date.now()
+          });
+          this.limitMapSize();
+          this.isMappingDirty = true;
+          
+          const authorTag = isWebhook 
+            ? (webhookName !== "unknown" ? webhookName : "Webhook")
+            : (message.author?.tag || message.author?.username || "未知用户");
+          const contentPreview = (message.content || "").trim();
+          const contentDisplay = contentPreview.length > 100 
+            ? contentPreview.substring(0, 100) + "..." 
+            : contentPreview || "(无文本内容)";
+          const hasAttachments = (message.attachments?.size || 0) > 0;
+          const hasEmbeds = (message.embeds?.length || 0) > 0;
+          const isReply = !!message.reference;
+          const attachmentCount = message.attachments?.size || 0;
+          
+          let logMsg = `${logPrefix} [SUCCESS] 转发成功: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
+          logMsg += `\n  内容: ${contentDisplay}`;
+          if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
+          if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
+          if (isReply) logMsg += ` | 回复消息`;
+          if (isWebhook) logMsg += ` | Webhook消息`;
+          logMsg += `\n  源消息ID: ${first.sourceMessageId} -> 目标消息ID: ${first.targetMessageId}`;
+          
+          console.log(logMsg);
+          this.logger.info(logMsg);
+        } else {
+          this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId`);
         }
-        
-        // 设置新的映射，由于是重新插入，它会位于 Map 的末尾（最新位置）
-        this.sourceToTarget.set(first.sourceMessageId, {
-          channelId: first.targetChannelId,
-          messageId: first.targetMessageId,
-          timestamp: Date.now()
-        });
-        // 限制 Map 大小，防止内存无限增长
-        this.limitMapSize();
-        // 标记数据已变动，等待定期保存
-        this.isMappingDirty = true;
-        
-        // 构建详细的转发日志（使用之前获取的webhookName）
-        const authorTag = isWebhook 
-          ? (webhookName !== "unknown" ? webhookName : "Webhook")
-          : (message.author?.tag || message.author?.username || "未知用户");
-        const contentPreview = (message.content || "").trim();
-        const contentDisplay = contentPreview.length > 100 
-          ? contentPreview.substring(0, 100) + "..." 
-          : contentPreview || "(无文本内容)";
-        const hasAttachments = (message.attachments?.size || 0) > 0;
-        const hasEmbeds = (message.embeds?.length || 0) > 0;
-        const isReply = !!message.reference;
-        const attachmentCount = message.attachments?.size || 0;
-        
-        let logMsg = `${logPrefix} [SUCCESS] 转发成功: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
-        logMsg += `\n  内容: ${contentDisplay}`;
-        if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
-        if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
-        if (isReply) logMsg += ` | 回复消息`;
-        if (isWebhook) logMsg += ` | Webhook消息`;
-        logMsg += `\n  源消息ID: ${first.sourceMessageId} -> 目标消息ID: ${first.targetMessageId}`;
-        
-        console.log(logMsg);
-        this.logger.info(logMsg);
       } else {
-        this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId`);
+        this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results`);
       }
-    } else {
-      this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results`);
+    }
+
+    if (feishuSenderForThis) {
+      try {
+        await feishuSenderForThis.send({
+          content: finalContent,
+          username: username,
+          avatarUrl: avatarUrl,
+          attachments: uploads.map((u) => ({ url: u.url, filename: u.filename })),
+          embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
+        });
+        this.logger.info(`${logPrefix} [FEISHU] 转发到飞书成功`);
+      } catch (err: any) {
+        this.logger.error(`${logPrefix} [FEISHU] 转发失败: ${String(err?.message || err)}`);
+      }
     }
   }
 

@@ -201,6 +201,9 @@
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 class="font-semibold text-slate-800">基础设置</h2>
+            <p class="mt-1 text-xs text-slate-500">
+              1）先在下方“Discord 转发规则”中配置来源频道和目标 Discord Webhook。2）如需同步到飞书，在“飞书转发规则”里为相同来源频道填入飞书 Webhook。3）如需使用中转机器人，可在“机器人中转”区域添加并登录多个机器人，再在每条 Discord 规则中选择要使用的中转机器人。
+            </p>
           </div>
           <div class="p-6 space-y-4">
             <div class="grid gap-4 md:grid-cols-2">
@@ -329,11 +332,27 @@
           <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 class="font-semibold text-slate-800">转发规则</h2>
           </div>
-          <div class="p-6 space-y-4" id="mappingsList">
-            ${renderMappings(acc)}
-          </div>
-          <div class="px-6 pb-4 flex justify-end">
-            <button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
+          <div class="p-6 space-y-6" id="mappingsList">
+            <div class="space-y-3 ${acc.enableDiscordForward !== false ? '' : 'opacity-60'}">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" ${acc.enableDiscordForward !== false ? 'checked' : ''} onchange="updateField('enableDiscordForward', this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <span class="text-sm text-slate-800 font-medium">Discord 转发规则</span>
+                </div>
+                ${acc.enableDiscordForward !== false ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+              </div>
+              ${acc.enableDiscordForward !== false ? renderMappings(acc) : '<div class="text-slate-400 text-sm">已关闭 Discord 转发</div>'}
+            </div>
+            <div class="border-t pt-4 space-y-3 ${acc.enableFeishuForward ? '' : 'opacity-60'}">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" ${acc.enableFeishuForward ? 'checked' : ''} onchange="updateField('enableFeishuForward', this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <span class="text-sm text-slate-800 font-medium">飞书转发规则</span>
+                </div>
+                ${acc.enableFeishuForward ? `<button onclick="addFeishuMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+              </div>
+              ${acc.enableFeishuForward ? renderFeishuMappings(acc) : '<div class="text-slate-400 text-sm">未启用飞书转发</div>'}
+            </div>
           </div>
         </div>
 
@@ -388,24 +407,57 @@
     function renderMappings(acc) {
       const mappings = acc.mappings || [];
       if (mappings.length === 0) {
-        return '<div class="text-center py-8 text-slate-400 text-sm">暂无转发规则，点击下方添加</div>';
+        return '<div class="text-center py-8 text-slate-400 text-sm">暂无 Discord 规则，点击“添加规则”创建</div>';
       }
       return mappings.map((m, idx) => `
-        <div class="flex gap-3 items-center p-3 rounded-lg border border-slate-100 bg-slate-50/30">
-          <input type="text" value="${m.sourceChannelId || ''}" onchange="updateMapping(${idx}, 'sourceChannelId', this.value)" 
-            placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
-          <span class="text-slate-300">→</span>
-          <input type="text" value="${m.targetWebhookUrl || ''}" onchange="updateMapping(${idx}, 'targetWebhookUrl', this.value)" 
-            placeholder="目标 Webhook URL" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
-          <select onchange="updateMappingRelay(${idx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
-            <option value="">Webhook 默认</option>
-            ${(acc.botRelays || []).map(r => `<option value="${r.id}" ${acc.channelRelayMap?.[m.sourceChannelId || ''] === r.id ? 'selected' : ''}>🤖 ${r.name || '中转机器人'}</option>`).join('')}
-          </select>
-          <input type="text" value="${m.note || ''}" onchange="updateMapping(${idx}, 'note', this.value)" 
-            placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
-          <button onclick="removeMapping(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
+        <div class="flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
+          <div class="flex gap-3 items-center">
+            <input type="text" value="${m.sourceChannelId || ''}" onchange="updateMapping(${idx}, 'sourceChannelId', this.value)" 
+              placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+            <span class="text-slate-300">→</span>
+            <input type="text" value="${m.targetWebhookUrl || ''}" onchange="updateMapping(${idx}, 'targetWebhookUrl', this.value)" 
+              placeholder="Discord Webhook URL" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+            <select onchange="updateMappingRelay(${idx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
+              <option value="">Webhook 默认</option>
+              ${(acc.botRelays || []).map(r => `<option value="${r.id}" ${acc.channelRelayMap?.[m.sourceChannelId || ''] === r.id ? 'selected' : ''}>🤖 ${r.name || '中转机器人'}</option>`).join('')}
+            </select>
+            <input type="text" value="${m.note || ''}" onchange="updateMapping(${idx}, 'note', this.value)" 
+              placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
+            <button onclick="removeMapping(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
+          </div>
         </div>
       `).join('');
+    }
+
+    function renderFeishuMappings(acc) {
+      const entries = getFeishuMappings(acc);
+      if (entries.length === 0) {
+        return '<div class="text-center py-8 text-slate-400 text-sm">暂无飞书规则，点击“添加规则”创建</div>';
+      }
+      return entries.map((m, idx) => `
+        <div class="flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
+          <div class="flex gap-3 items-center">
+            <input type="text" value="${m.sourceChannelId || ''}" onchange="updateFeishuSource(${idx}, this.value)" 
+              placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+            <span class="text-slate-300">→</span>
+            <input type="text" value="${m.feishuWebhook || ''}" onchange="updateFeishuWebhookEntry(${idx}, this.value)" 
+              placeholder="飞书 Webhook URL" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+            <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx}, this.value)" 
+              placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
+            <button onclick="removeFeishuMapping(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function getFeishuMappings(acc) {
+      const hooks = acc.channelFeishuWebhooks || {};
+      const notes = acc.channelNotes || {};
+      return Object.entries(hooks).map(([source, hook]) => ({
+        sourceChannelId: source,
+        feishuWebhook: hook,
+        note: notes[source] || ''
+      }));
     }
 
     function renderReplacements(replacements) {
@@ -428,7 +480,8 @@
           <div class="flex items-center justify-between">
             <div class="text-sm text-slate-700">配置多个中转机器人，稍后在每条转发规则中选择要使用的机器人。</div>
             <div class="flex items-center gap-2">
-              <button onclick="requestRelayLoginAll()" class="text-xs bg-emerald-50 text-emerald-600 px-2 py-1 rounded-md hover:bg-emerald-100">一键验证</button>
+              <button onclick="requestRelayLoginAll()" class="text-xs bg-emerald-50 text-emerald-600 px-2 py-1 rounded-md hover:bg-emerald-100">一键登录</button>
+              <button onclick="requestRelayStopAll()" class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md hover:bg-slate-200">一键停止</button>
               <button onclick="addBotRelay()" class="text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md hover:bg-indigo-100">+ 添加中转机器人</button>
             </div>
           </div>
@@ -450,7 +503,8 @@
                   ${r.loginMessage ? `<span class="ml-1 text-slate-500">${r.loginMessage}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-2">
-                  <button onclick="requestRelayLogin('${r.id}')" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">验证</button>
+                  <button onclick="requestRelayLogin('${r.id}')" ${r.loginState === 'pending' || r.loginState === 'online' ? 'disabled' : ''} class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${r.loginState === 'pending' || r.loginState === 'online' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'} text-slate-600">登录</button>
+                  <button onclick="requestRelayStop('${r.id}')" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">停止</button>
                   <button onclick="removeBotRelay(${idx})" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">删除</button>
                 </div>
               </div>
@@ -499,8 +553,11 @@
         translationSecret: '',
         deepseekApiKey: '',
         enableBotRelay: false,
+        enableDiscordForward: true,
         botRelays: [],
         channelRelayMap: {},
+        channelFeishuWebhooks: {},
+        enableFeishuForward: false,
         ignoreSelf: false,
         ignoreBot: false,
         ignoreImages: false,
@@ -545,6 +602,14 @@
               acc.channelRelayMap[String(value)] = relayId;
             }
           }
+          if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
+          if (prevSource && acc.channelFeishuWebhooks[prevSource]) {
+            const feishu = acc.channelFeishuWebhooks[prevSource];
+            delete acc.channelFeishuWebhooks[prevSource];
+            if (value) {
+              acc.channelFeishuWebhooks[String(value)] = feishu;
+            }
+          }
         }
         saveConfig();
       }
@@ -572,6 +637,78 @@
         delete acc.channelRelayMap[mapping.sourceChannelId];
       }
       saveConfig();
+    }
+
+    function addFeishuMapping() {
+      const acc = getActiveAccount();
+      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
+      acc.channelFeishuWebhooks[''] = '';
+      saveConfig();
+      render();
+    }
+
+    function updateFeishuSource(idx, value) {
+      const acc = getActiveAccount();
+      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
+      const entries = Object.entries(acc.channelFeishuWebhooks);
+      const hit = entries[idx];
+      if (!hit) return;
+      const [oldSource, webhook] = hit;
+      const notes = acc.channelNotes || {};
+      delete acc.channelFeishuWebhooks[oldSource];
+      acc.channelFeishuWebhooks[value || ''] = webhook;
+      if (notes && Object.prototype.hasOwnProperty.call(notes, oldSource)) {
+        notes[value || ''] = notes[oldSource];
+        if (oldSource !== (value || '')) delete notes[oldSource];
+        acc.channelNotes = notes;
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateFeishuWebhookEntry(idx, value) {
+      const acc = getActiveAccount();
+      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
+      const entries = Object.entries(acc.channelFeishuWebhooks);
+      const hit = entries[idx];
+      if (!hit) return;
+      const [source] = hit;
+      if (value && value.trim()) {
+        acc.channelFeishuWebhooks[source] = value.trim();
+      } else {
+        delete acc.channelFeishuWebhooks[source];
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateFeishuNote(idx, value) {
+      const acc = getActiveAccount();
+      const entries = Object.entries(acc.channelFeishuWebhooks || {});
+      const hit = entries[idx];
+      if (!hit) return;
+      const [source] = hit;
+      if (!acc.channelNotes) acc.channelNotes = {};
+      if (value && value.trim()) {
+        acc.channelNotes[source] = value.trim();
+      } else {
+        delete acc.channelNotes[source];
+      }
+      saveConfig();
+    }
+
+    function removeFeishuMapping(idx) {
+      const acc = getActiveAccount();
+      const entries = Object.entries(acc.channelFeishuWebhooks || {});
+      const hit = entries[idx];
+      if (!hit) return;
+      const [source] = hit;
+      delete acc.channelFeishuWebhooks[source];
+      if (acc.channelNotes && acc.channelNotes[source] !== undefined) {
+        delete acc.channelNotes[source];
+      }
+      saveConfig();
+      render();
     }
 
     function addKeyword(field, value) {
@@ -650,9 +787,11 @@
     async function requestRelayLogin(relayId) {
       const acc = getActiveAccount();
       if (!relayId) return;
+      const current = (acc.botRelays || []).find(r => r.id === relayId);
+      if (current && (current.loginState === 'pending' || current.loginState === 'online')) return;
       // 本地先置为 pending
       acc.botRelays = (acc.botRelays || []).map((r) =>
-        r.id === relayId ? { ...r, loginState: 'pending', loginMessage: '正在验证 Token...' } : r
+        r.id === relayId ? { ...r, loginState: 'pending', loginMessage: '正在登录 Token...' } : r
       );
       render();
       try {
@@ -670,7 +809,7 @@
           saveConfig();
         } else if (!res.ok) {
           acc.botRelays = (acc.botRelays || []).map((r) =>
-            r.id === relayId ? { ...r, loginState: 'error', loginMessage: data?.error || `验证失败(${res.status})` } : r
+            r.id === relayId ? { ...r, loginState: 'error', loginMessage: data?.error || `登录失败(${res.status})` } : r
           );
           saveConfig();
         }
@@ -687,8 +826,11 @@
 
     async function requestRelayLoginAll() {
       const acc = getActiveAccount();
+      // 如果全部都在 pending/online 则跳过
+      const canLogin = (acc.botRelays || []).some(r => r.loginState !== 'pending' && r.loginState !== 'online');
+      if (!canLogin) return;
       // 本地先置为 pending
-      acc.botRelays = (acc.botRelays || []).map((r) => ({ ...r, loginState: 'pending', loginMessage: '正在验证 Token...' }));
+      acc.botRelays = (acc.botRelays || []).map((r) => ({ ...r, loginState: 'pending', loginMessage: '正在登录 Token...' }));
       render();
       try {
         const res = await fetch('/api/account/action', {
@@ -707,7 +849,7 @@
           acc.botRelays = (acc.botRelays || []).map((r) => ({
             ...r,
             loginState: 'error',
-            loginMessage: data?.error || `验证失败(${res.status})`,
+            loginMessage: data?.error || `登录失败(${res.status})`,
           }));
           saveConfig();
         }
@@ -718,6 +860,23 @@
         saveConfig();
         render();
       }
+    }
+
+    function requestRelayStop(relayId) {
+      const acc = getActiveAccount();
+      if (!relayId) return;
+      acc.botRelays = (acc.botRelays || []).map((r) =>
+        r.id === relayId ? { ...r, loginState: 'idle', loginMessage: '已停止' } : r
+      );
+      saveConfig();
+      render();
+    }
+
+    function requestRelayStopAll() {
+      const acc = getActiveAccount();
+      acc.botRelays = (acc.botRelays || []).map((r) => ({ ...r, loginState: 'idle', loginMessage: '已停止' }));
+      saveConfig();
+      render();
     }
 
     async function requestLogin() {

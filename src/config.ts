@@ -17,6 +17,12 @@ export interface ChannelConfig {
 export interface LegacyConfig {
   // 映射：源频道ID -> 目标Webhook URL（一对一）
   channelWebhooks?: Record<string, string>;
+  // 映射：源频道ID -> 飞书 Webhook URL
+  channelFeishuWebhooks?: Record<string, string>;
+  // 是否启用飞书转发
+  enableFeishuForward?: boolean;
+  // 是否启用 Discord 转发
+  enableDiscordForward?: boolean;
   // 每个频道的备注，仅用于管理界面展示
   channelNotes?: Record<string, string>;
   mutedGuildsIds?: ChannelId[];
@@ -112,6 +118,7 @@ function createDefaultAccount(): AccountConfig {
     loginState: "idle",
     loginMessage: "",
     enableBotRelay: false,
+    enableDiscordForward: true,
     channelWebhooks: {},
     channelNotes: {},
     blockedKeywords: [],
@@ -133,6 +140,8 @@ function createDefaultAccount(): AccountConfig {
     channelConfigs: {},
     enableTranslation: false,
     deepseekApiKey: undefined,
+    enableFeishuForward: false,
+    channelFeishuWebhooks: {},
     botRelays: [],
     channelRelayMap: {},
   };
@@ -175,6 +184,10 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     input?.replacementsDictionary && typeof input.replacementsDictionary === "object"
       ? input.replacementsDictionary
       : {};
+  const channelFeishuWebhooks: Record<string, string> =
+    input?.channelFeishuWebhooks && typeof input.channelFeishuWebhooks === "object"
+      ? input.channelFeishuWebhooks
+      : {};
 
   // 兼容旧版单个 botRelayToken，升级为 botRelays
   let botRelays: AccountConfig["botRelays"] = Array.isArray(input?.botRelays)
@@ -213,6 +226,9 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     loginState: typeof input?.loginState === "string" ? input.loginState : "idle",
     loginMessage: typeof input?.loginMessage === "string" ? input.loginMessage : "",
     channelWebhooks: input?.channelWebhooks || {},
+    channelFeishuWebhooks,
+    enableFeishuForward: input?.enableFeishuForward === true,
+    enableDiscordForward: input?.enableDiscordForward !== false,
     channelNotes: input?.channelNotes || {},
     blockedKeywords: Array.isArray(input?.blockedKeywords) ? input.blockedKeywords : [],
     excludeKeywords: Array.isArray(input?.excludeKeywords) ? input.excludeKeywords : [],
@@ -280,6 +296,9 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
   if (!account) {
     return {
       channelWebhooks: {},
+      channelFeishuWebhooks: {},
+      enableFeishuForward: false,
+      enableDiscordForward: true,
       channelNotes: {},
       blockedKeywords: [],
       excludeKeywords: [],
@@ -316,6 +335,9 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
   }
   return {
     channelWebhooks: account.channelWebhooks,
+    channelFeishuWebhooks: account.channelFeishuWebhooks,
+    enableFeishuForward: account.enableFeishuForward,
+    enableDiscordForward: account.enableDiscordForward,
     channelNotes: account.channelNotes,
     blockedKeywords: account.blockedKeywords,
     excludeKeywords: account.excludeKeywords,

@@ -15,6 +15,7 @@ import {
 } from "./config.js";
 import { getEnv } from "./env.js";
 import { SenderBot } from "./senderBot.js";
+import { FeishuSender } from "./feishuSender.js";
 import { ProxyAgent } from "proxy-agent";
 import { FileLogger } from "./logger.js";
 
@@ -24,6 +25,7 @@ interface RunningAccount {
   bot: Bot;
   senderBotsBySource: Map<string, SenderBot>;
   defaultSenderBot: SenderBot;
+  feishuSendersBySource?: Map<string, any>;
   isManuallyStopped: boolean; // 标记是否手动停止
   reconnectTimer?: NodeJS.Timeout; // 重连定时器
   reconnectCount: number; // 重连次数
@@ -57,10 +59,12 @@ async function writeStatus(accountId: string, state: string, message?: string) {
 async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const env = getEnv();
   const senderBotsBySource = new Map<string, SenderBot>();
+  const feishuSendersBySource = new Map<string, FeishuSender>();
   let defaultSenderBot: SenderBot | undefined;
   const prepares: Promise<any>[] = [];
 
   const webhooks = account.channelWebhooks || {};
+  const feishuWebhooks = account.enableFeishuForward ? account.channelFeishuWebhooks || {} : {};
   const replacements = account.replacementsDictionary || {};
   const proxy = account.proxyUrl || env.PROXY_URL;
   const enableTranslation = account.enableTranslation || false;
@@ -96,6 +100,14 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
     }
   }
 
+  if (Object.keys(feishuWebhooks).length > 0) {
+    for (const [channelId, webhookUrl] of Object.entries(feishuWebhooks)) {
+      if (!webhookUrl) continue;
+      const fs = new FeishuSender(webhookUrl.trim(), httpAgent);
+      feishuSendersBySource.set(channelId, fs);
+    }
+  }
+
   if (!defaultSenderBot) {
     throw new Error("At least one webhook must be configured via channelWebhooks.");
   }
@@ -105,7 +117,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   // 移除重复的 webhook 日志输出，只在日志文件中记录一次
   logger.info(`account "${account.name}" senderBots 构建完成，映射频道数=${senderBotsBySource.size}`);
 
-  return { senderBotsBySource, defaultSenderBot: defaultSenderBot! };
+  return { senderBotsBySource, defaultSenderBot: defaultSenderBot!, feishuSendersBySource };
 }
 
 async function startAccount(account: AccountConfig, logger: FileLogger) {
@@ -148,12 +160,13 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       await logger.info(`账号 "${account.name}" 已经运行${isAlreadyLoggedIn ? "且已登录" : "且正在登录中"}，跳过重复启动，仅更新配置`);
       
       // 更新配置
-      const { senderBotsBySource, defaultSenderBot } = await buildSenderBots(account, logger);
+      const { senderBotsBySource, defaultSenderBot, feishuSendersBySource } = await buildSenderBots(account, logger);
       const legacyConfig = accountToLegacyConfig(account);
       existing.account = account;
       existing.senderBotsBySource = senderBotsBySource;
+      (existing as any).feishuSendersBySource = feishuSendersBySource;
       existing.defaultSenderBot = defaultSenderBot;
-      existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource);
+      existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
       
       if (isAlreadyLoggedIn) {
         await writeStatus(account.id, "online", "登录成功");
@@ -167,7 +180,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
   }
 
   try {
-    const { senderBotsBySource, defaultSenderBot } = await buildSenderBots(account, logger);
+    const { senderBotsBySource, defaultSenderBot, feishuSendersBySource } = await buildSenderBots(account, logger);
     const legacyConfig = accountToLegacyConfig(account);
 
     let client: Client;
@@ -204,7 +217,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       }
     }
 
-    const bot = new Bot(client, legacyConfig, defaultSenderBot, senderBotsBySource);
+    const bot = new Bot(client, legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
 
     const runningInfo: RunningAccount = {
       account,
@@ -212,6 +225,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       bot,
       senderBotsBySource,
       defaultSenderBot,
+      feishuSendersBySource,
       isManuallyStopped: false,
       reconnectCount: 0,
       lastReconnectTime: 0,
@@ -263,7 +277,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       const currentRunning = runningAccounts.get(account.id);
       if (currentRunning && currentRunning.isLoggingIn) {
         logger.warn(`账号 "${account.name}" 登录超时 (30秒)，可能是网络问题或账号被风控`);
-        writeStatus(account.id, "error", "登录超时，可能是网络问题或需要验证").catch(() => {});
+        writeStatus(account.id, "error", "登录超时，可能是网络问题或需要登录").catch(() => {});
       }
     }, 30000);
 
@@ -510,7 +524,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
         const timeoutRunning = runningAccounts.get(accountId);
         if (timeoutRunning && timeoutRunning.isLoggingIn) {
           logger.warn(`账号 "${timeoutRunning.account.name}" 重连登录超时 (30秒)，可能是网络问题或账号被风控`);
-          writeStatus(accountId, "error", "重连登录超时，可能是网络问题或需要验证").catch(() => {});
+          writeStatus(accountId, "error", "重连登录超时，可能是网络问题或需要登录").catch(() => {});
         }
       }, 30000);
       
@@ -738,12 +752,14 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       if (mappingsChanged || translationChanged || keywordsChanged || userFilterChanged || relayChanged) {
         let senderBotsBySource = existing.senderBotsBySource;
         let defaultSenderBot = existing.defaultSenderBot;
+        let feishuSendersBySource = (existing as any).feishuSendersBySource;
         // 如果映射或翻译配置变化，需要重新构建 SenderBot
         if (mappingsChanged || translationChanged || relayChanged) {
           try {
             const built = await buildSenderBots(account, logger);
             senderBotsBySource = built.senderBotsBySource;
             defaultSenderBot = built.defaultSenderBot;
+            feishuSendersBySource = built.feishuSendersBySource;
           } catch (e: any) {
             await logger.error(`账号 "${account.name}" 重新构建 SenderBot 失败: ${String(e?.message || e)}`);
             await writeStatus(account.id, "error", `配置错误: ${String(e?.message || e)}`);
@@ -752,10 +768,11 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         }
         
         const legacyConfig = accountToLegacyConfig(account);
-        existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource);
+        existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
         existing.account = account;
         existing.senderBotsBySource = senderBotsBySource;
         existing.defaultSenderBot = defaultSenderBot;
+        (existing as any).feishuSendersBySource = feishuSendersBySource;
         
         await logger.info(`账号 "${account.name}" 配置已热更新（无需重启）`);
         continue;
@@ -786,12 +803,14 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
 
     let senderBotsBySource = existing.senderBotsBySource;
     let defaultSenderBot = existing.defaultSenderBot;
+    let feishuSendersBySource = (existing as any).feishuSendersBySource;
     // 如果映射或翻译配置变化，需要重新构建 SenderBot
     if (mappingsChanged || translationChanged || relayChanged) {
       try {
         const built = await buildSenderBots(account, logger);
         senderBotsBySource = built.senderBotsBySource;
         defaultSenderBot = built.defaultSenderBot;
+        feishuSendersBySource = built.feishuSendersBySource;
       } catch (e: any) {
         await logger.error(`账号 "${account.name}" 重新构建 SenderBot 失败: ${String(e?.message || e)}`);
         await writeStatus(account.id, "error", `配置错误: ${String(e?.message || e)}`);
@@ -800,10 +819,11 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     const legacyConfig = accountToLegacyConfig(account);
-    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource);
+    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
     existing.account = account;
     existing.senderBotsBySource = senderBotsBySource;
     existing.defaultSenderBot = defaultSenderBot;
+    (existing as any).feishuSendersBySource = feishuSendersBySource;
 
     if (keywordsChanged || mappingsChanged || translationChanged) {
       await logger.info(`账号 "${account.name}" 配置已热更新`);
