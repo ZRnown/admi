@@ -760,10 +760,20 @@
                   // 如果远程状态存在，且（远程不是pending 或 本地是pending），则更新
                   // 这样可以确保：1) pending状态不会被非pending状态覆盖 2) pending状态可以被最终结果覆盖
                   if (remote.botRelayLoginState !== undefined) {
+                    // 如果远程状态不是 pending，或者本地状态是 pending，则更新
+                    // 这样可以确保：pending 状态不会被非 pending 状态覆盖，但 pending 状态可以被最终结果覆盖
                     const shouldUpdate = remote.botRelayLoginState !== 'pending' || acc.botRelayLoginState === 'pending';
                     if (shouldUpdate) {
+                      const oldState = acc.botRelayLoginState;
+                      const oldMessage = acc.botRelayLoginMessage;
                       acc.botRelayLoginState = remote.botRelayLoginState;
                       acc.botRelayLoginMessage = remote.botRelayLoginMessage || '';
+                      // 如果状态或消息发生变化，保存配置并重新渲染
+                      if (oldState !== acc.botRelayLoginState || oldMessage !== acc.botRelayLoginMessage) {
+                        saveConfig();
+                        // 立即渲染，不需要等待下一次轮询
+                        render();
+                      }
                     }
                   }
                   // 同步token，如果token被删除，重置状态

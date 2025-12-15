@@ -266,6 +266,11 @@ export class Bot {
     if (!senderForThis) {
       return; // 快速返回，不做多余计算
     }
+    
+    // 记录消息检测日志（仅在启用机器人中转时，帮助调试）
+    if (senderForThis.enableBotRelay) {
+      this.logger.info(`[Bot] 检测到消息 (id=${message.id}, channel=${message.channelId}, author=${message.author?.tag || 'unknown'})，准备转发`);
+    }
 
     // 记录消息处理开始，特别是webhook消息
     // 在函数开始处声明一次 isWebhook，后续复用

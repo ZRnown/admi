@@ -170,8 +170,17 @@ export class SenderBot {
       this.webhookGuildId = info.guild_id;
       this.defaultChannelId = info.channel_id;
       this.webhookName = info.name; // 保存 webhook 名称
-    } catch {
-      // 忽略失败，不影响基本发送
+      
+      // 如果启用机器人中转但没有 channel_id，记录警告
+      if (this.enableBotRelay && !this.defaultChannelId) {
+        console.warn(`[SenderBot] 警告: 启用机器人中转但无法获取 channel_id，机器人中转可能无法工作`);
+      }
+    } catch (e: any) {
+      // 如果启用机器人中转，记录错误
+      if (this.enableBotRelay) {
+        console.error(`[SenderBot] 获取 webhook 信息失败，机器人中转可能无法工作: ${String(e?.message || e)}`);
+      }
+      // 忽略失败，不影响基本发送（webhook 模式）
     }
   }
 
@@ -644,6 +653,14 @@ export class SenderBot {
           if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
             resp = await this.postViaBotAPI(payload, files, this.defaultChannelId);
           } else {
+            // 如果启用机器人中转但缺少必要参数，记录警告并回退到 webhook
+            if (this.enableBotRelay) {
+              if (!this.botRelayToken) {
+                console.warn(`[SenderBot] 机器人中转已启用但 botRelayToken 未配置，回退到 webhook 模式`);
+              } else if (!this.defaultChannelId) {
+                console.warn(`[SenderBot] 机器人中转已启用但 defaultChannelId 未设置，回退到 webhook 模式`);
+              }
+            }
             resp = await this.postMultipart(payload, files, true);
           }
         } else {
@@ -711,6 +728,14 @@ export class SenderBot {
           if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
             resp = await this.postViaBotAPI(payload, [], this.defaultChannelId);
           } else {
+            // 如果启用机器人中转但缺少必要参数，记录警告并回退到 webhook
+            if (this.enableBotRelay) {
+              if (!this.botRelayToken) {
+                console.warn(`[SenderBot] 机器人中转已启用但 botRelayToken 未配置，回退到 webhook 模式`);
+              } else if (!this.defaultChannelId) {
+                console.warn(`[SenderBot] 机器人中转已启用但 defaultChannelId 未设置，回退到 webhook 模式`);
+              }
+            }
             resp = await this.postToWebhook(payload, true);
           }
         }
