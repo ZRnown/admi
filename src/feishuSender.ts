@@ -61,7 +61,9 @@ export class FeishuSender {
   private async uploadImage(imgUrl: string, token: string): Promise<string | null> {
     try {
       // 2.1 下载图片 Buffer
+      console.log(`[FeishuSender] 开始下载图片: ${imgUrl.substring(0, 80)}...`);
       const imgBuffer = await this.download(imgUrl);
+      console.log(`[FeishuSender] 图片下载完成，大小: ${imgBuffer.length} bytes`);
 
       // 2.2 构造 multipart/form-data 上传到飞书
       const boundary = "----FeishuBoundary" + Math.random().toString(16).slice(2);
@@ -95,20 +97,24 @@ export class FeishuSender {
         agent: this.httpAgent,
       };
 
+      console.log(`[FeishuSender] 开始上传图片到飞书，大小: ${payload.byteLength} bytes`);
       const res: any = await new Promise((resolve) => {
         const req = https.request(options, (r) => {
           let body = "";
           r.on("data", (c) => (body += c));
           r.on("end", () => {
             try {
-              resolve(JSON.parse(body));
+              const parsed = JSON.parse(body);
+              console.log(`[FeishuSender] 飞书上传响应: code=${parsed.code}, has_image_key=${!!parsed.data?.image_key}`);
+              resolve(parsed);
             } catch {
+              console.error(`[FeishuSender] 飞书上传响应解析失败: ${body.substring(0, 200)}`);
               resolve({});
             }
           });
         });
         req.on("error", (e) => {
-          console.error("飞书图片上传请求错误:", e);
+          console.error("[FeishuSender] 飞书图片上传请求错误:", e);
           resolve({});
         });
         req.write(payload);
@@ -118,12 +124,14 @@ export class FeishuSender {
       if (res.code === 0 && res.data?.image_key) {
         return res.data.image_key;
       } else {
-        console.error("飞书上传图片失败:", res);
-        return null;
+        const errorMsg = `飞书上传图片失败: code=${res.code || 'unknown'}, msg=${res.msg || 'unknown'}, error=${JSON.stringify(res.error || {})}`;
+        console.error(errorMsg);
+        throw new Error(errorMsg);
       }
-    } catch (e) {
-      console.error("图片处理异常:", e);
-      return null;
+    } catch (e: any) {
+      const errorMsg = `图片处理异常: ${String(e?.message || e)}`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
     }
   }
 
@@ -133,17 +141,32 @@ export class FeishuSender {
 
     // 如果有图片，先上传所有图片获取 image_key
     const imageKeys: string[] = [];
-    const attachments = data.attachments || [];
-    if (attachments.length > 0) {
-      for (const att of attachments) {
-        // 简单过滤：优先看 isImage 标记，其次看后缀
+    if (data.attachments && data.attachments.length > 0) {
+      console.log(`[FeishuSender] 开始处理 ${data.attachments.length} 个附件`);
+      for (const att of data.attachments) {
+        // 优先使用 isImage 标志，如果没有则通过 URL/文件名后缀判断
         const target = att.url || att.filename || "";
-        const looksLikeImage =
-          att.isImage === true || /\.(png|jpe?g|gif|bmp|webp)$/i.test(target);
-        if (!looksLikeImage) continue;
-        const key = await this.uploadImage(att.url, token);
-        if (key) imageKeys.push(key);
+        const isImage = att.isImage === true || (att.isImage !== false && /\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(target));
+        
+        if (isImage) {
+          console.log(`[FeishuSender] 识别为图片，开始上传: ${att.filename || 'unknown'} (${att.url.substring(0, 50)}...)`);
+          try {
+            const key = await this.uploadImage(att.url, token);
+            if (key) {
+              imageKeys.push(key);
+              console.log(`[FeishuSender] 图片上传成功: ${att.filename || att.url} -> image_key: ${key.substring(0, 20)}...`);
+            } else {
+              console.error(`[FeishuSender] 图片上传返回空 key: ${att.filename || att.url}`);
+            }
+          } catch (e: any) {
+            console.error(`[FeishuSender] 图片上传失败 (${att.filename || att.url}): ${String(e?.message || e)}`);
+            // 继续处理其他图片，不中断整个发送流程
+          }
+        } else {
+          console.log(`[FeishuSender] 跳过非图片附件: ${att.filename || 'unknown'}`);
+        }
       }
+      console.log(`[FeishuSender] 图片处理完成，成功上传 ${imageKeys.length} 张图片`);
     }
 
     // 构建富文本内容 Post
@@ -168,18 +191,6 @@ export class FeishuSender {
     // 添加图片元素
     for (const imgKey of imageKeys) {
       elements.push({ tag: "img", image_key: imgKey });
-    }
-
-    // 对于非图片附件，追加一个“附件列表”文本块，保证用户至少能点链接查看
-    const nonImageAttachments = attachments.filter((att) => att.isImage === false);
-    if (nonImageAttachments.length > 0) {
-      const lines = nonImageAttachments.map(
-        (att) => `- ${att.filename || "附件"}: ${att.url}`,
-      );
-      elements.push({
-        tag: "text",
-        text: `\n附件：\n${lines.join("\n")}`,
-      });
     }
 
     if (elements.length === 0) return;

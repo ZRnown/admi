@@ -24,7 +24,7 @@ interface RunningAccount {
   client: Client;
   bot: Bot;
   senderBotsBySource: Map<string, SenderBot>;
-  defaultSenderBot: SenderBot;
+  defaultSenderBot?: SenderBot; // 如果关闭 Discord 转发，可能为 undefined
   feishuSendersBySource?: Map<string, any>;
   isManuallyStopped: boolean; // 标记是否手动停止
   reconnectTimer?: NodeJS.Timeout; // 重连定时器
@@ -63,7 +63,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   let defaultSenderBot: SenderBot | undefined;
   const prepares: Promise<any>[] = [];
 
-  const webhooks = account.channelWebhooks || {};
+  const webhooks = account.enableDiscordForward !== false ? (account.channelWebhooks || {}) : {};
   const feishuWebhooks = account.enableFeishuForward ? account.channelFeishuWebhooks || {} : {};
   const replacements = account.replacementsDictionary || {};
   const proxy = account.proxyUrl || env.PROXY_URL;
@@ -113,7 +113,8 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
     }
   }
 
-  if (!defaultSenderBot) {
+  // 如果关闭了 Discord 转发，允许没有 defaultSenderBot
+  if (!defaultSenderBot && account.enableDiscordForward !== false) {
     throw new Error("At least one webhook must be configured via channelWebhooks.");
   }
 
@@ -122,7 +123,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   // 移除重复的 webhook 日志输出，只在日志文件中记录一次
   logger.info(`account "${account.name}" senderBots 构建完成，映射频道数=${senderBotsBySource.size}`);
 
-  return { senderBotsBySource, defaultSenderBot: defaultSenderBot!, feishuSendersBySource };
+  return { senderBotsBySource, defaultSenderBot, feishuSendersBySource };
 }
 
 async function startAccount(account: AccountConfig, logger: FileLogger) {
@@ -144,11 +145,12 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     return;
   }
 
-  // 检查是否有配置 webhook，如果没有则提前返回
-  const webhooks = account.channelWebhooks || {};
-  if (Object.keys(webhooks).length === 0) {
-    await logger.error(`账号 "${account.name}" 未配置 webhook，无法启动`);
-    await writeStatus(account.id, "error", "未配置转发规则（channelWebhooks）");
+  // 检查是否有配置转发规则（Discord 或飞书至少一个）
+  const webhooks = account.enableDiscordForward !== false ? (account.channelWebhooks || {}) : {};
+  const feishuWebhooks = account.enableFeishuForward ? (account.channelFeishuWebhooks || {}) : {};
+  if (Object.keys(webhooks).length === 0 && Object.keys(feishuWebhooks).length === 0) {
+    await logger.error(`账号 "${account.name}" 未配置任何转发规则（Discord 或飞书），无法启动`);
+    await writeStatus(account.id, "error", "未配置转发规则");
     return;
   }
 

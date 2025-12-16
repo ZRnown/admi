@@ -50,7 +50,7 @@ class DedupeCache {
 }
 
 export class Bot {
-  senderBot: SenderBot; // default sender
+  senderBot?: SenderBot; // default sender (可选，如果关闭 Discord 转发则为 undefined)
   private senderBotsBySource?: Map<string, SenderBot>;
   private feishuSendersBySource?: Map<string, FeishuSender>;
   config: Config;
@@ -78,7 +78,7 @@ export class Bot {
   constructor(
     client: Client,
     config: Config,
-    senderBot: SenderBot,
+    senderBot: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot>,
     feishuSendersBySource?: Map<string, FeishuSender>,
   ) {
@@ -161,7 +161,7 @@ export class Bot {
    */
   updateRuntimeConfig(
     config: Config,
-    defaultSender: SenderBot,
+    defaultSender: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot>,
     feishuSendersBySource?: Map<string, FeishuSender>,
   ) {
@@ -643,8 +643,15 @@ export class Bot {
 
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
     
+    // 检查 Discord 转发开关
+    const enableDiscordForward = this.config.enableDiscordForward !== false;
+    const shouldSendDiscord = senderForThis && enableDiscordForward;
+    if (senderForThis && !enableDiscordForward) {
+      this.logger.info(`${logPrefix} [SKIP] Discord 转发已关闭，跳过转发`);
+    }
+    
     this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${finalContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed})`);
-    if (senderForThis) {
+    if (shouldSendDiscord) {
     const results = await senderForThis.sendData(toSend);
     if (results && results.length > 0) {
       const first = results[0];
@@ -690,20 +697,23 @@ export class Bot {
       }
     }
 
-    if (feishuSenderForThis) {
+    // 检查飞书转发开关
+    const enableFeishuForward = this.config.enableFeishuForward === true;
+    const shouldSendFeishu = feishuSenderForThis && enableFeishuForward;
+    if (feishuSenderForThis && !enableFeishuForward) {
+      this.logger.info(`${logPrefix} [SKIP] 飞书转发已关闭，跳过转发`);
+    }
+    
+    if (shouldSendFeishu) {
       try {
         await feishuSenderForThis.send({
           content: finalContent,
           username: username,
           avatarUrl: avatarUrl,
-          attachments: uploads.map((u) => ({
-            url: u.url,
-            filename: u.filename,
-            isImage: u.isImage === true,
-          })),
+          attachments: uploads.map((u) => ({ url: u.url, filename: u.filename, isImage: u.isImage })),
           embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
         });
-        this.logger.info(`${logPrefix} [FEISHU] 转发到飞书成功`);
+        this.logger.info(`${logPrefix} [FEISHU] 转发到飞书成功 (附件数=${uploads.length}, 图片数=${uploads.filter(u => u.isImage).length})`);
       } catch (err: any) {
         this.logger.error(`${logPrefix} [FEISHU] 转发失败: ${String(err?.message || err)}`);
       }
