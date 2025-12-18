@@ -22,7 +22,12 @@ export class FeishuSender {
   private static token: string = "";
   private static tokenExpire: number = 0;
 
-  constructor(chatId: string, httpAgent?: any, appId?: string, appSecret?: string) {
+  constructor(
+    chatId: string,
+    httpAgent?: any,
+    appId?: string,
+    appSecret?: string,
+  ) {
     this.chatId = chatId;
     this.httpAgent = httpAgent;
     this.appId = appId || process.env.FEISHU_APP_ID || "";
@@ -169,7 +174,7 @@ export class FeishuSender {
       console.log(`[FeishuSender] 图片处理完成，成功上传 ${imageKeys.length} 张图片`);
     }
 
-    // 构建富文本内容 Post
+    // 构建富文本内容 Post（单一样式：头像昵称 + 内容 + embeds 描述 + 图片）
     const elements: any[] = [];
 
     const headerText = data.username ? `👤 ${data.username}:\n` : "";

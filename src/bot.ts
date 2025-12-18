@@ -525,6 +525,9 @@ export class Bot {
       this.logger.error(`${logPrefix} [ERROR] Exclude keyword filter check failed: ${String(e?.message || e)}`);
     }
     let replyToTarget: { channelId: string; messageId: string } | undefined;
+    // 给样式2使用的回复元信息（仅用于格式化文本）
+    let replyUserNameForStyle2: string | undefined;
+    let replyContentForStyle2: string | undefined;
     let ctaLine: string | undefined;
     if (message.reference) {
       try {
@@ -545,7 +548,7 @@ export class Bot {
         }
         if (mapped) {
           replyToTarget = { channelId: mapped.channelId, messageId: mapped.messageId };
-          // 无论是否有附件/Embed，都生成 CTA 行；有资产时用“查看附件”，否则用“查看消息”
+          // 无论是否有附件/Embed，都生成 CTA 行；有资产时用"查看附件"，否则用"查看消息"
           if (senderForThis?.webhookGuildId) {
             const link = `https://discord.com/channels/${senderForThis.webhookGuildId}/${mapped.channelId}/${mapped.messageId}`;
             let display: string;
@@ -560,6 +563,9 @@ export class Bot {
             const label = hasAssets ? "查看附件" : "查看消息";
             ctaLine = `↳ @${display}: [${label}](${link})`;
           }
+          // 记录被回复用户名称和内容（用于样式2显示）
+          replyUserNameForStyle2 = (ref.member as any)?.displayName || ref.author?.username || ref.author?.tag || "用户";
+          replyContentForStyle2 = ref.content || (ref.attachments?.size > 0 ? "[附件]" : ref.embeds?.length > 0 ? "[嵌入信息]" : "");
         }
       } catch (err) {
         console.error(err);
@@ -567,11 +573,46 @@ export class Bot {
       }
     }
 
-    // 拼装最终内容：CTA 在顶部
-    const parts: string[] = [];
-    if (ctaLine) parts.push(ctaLine);
-    if (originalContent) parts.push(originalContent);
-    const finalContent = parts.join("\n");
+    // 根据配置对 Discord->Discord 文本应用样式
+    const forwardStyle = (this.config as any).feishuStyle === "style2" ? "style2" : "style1";
+    const isReplyMessage = !!message.reference;
+    
+    // 样式1：保持原有逻辑（包含CTA）
+    // 样式2：普通消息直接发originalContent（不含CTA），回复消息时上面发originalContent，下面发embed
+    let discordContent: string;
+    let style2ReplyEmbed: any | undefined = undefined;
+    
+    // 飞书转发始终使用包含CTA的完整内容（不受样式影响）
+    const feishuParts: string[] = [];
+    if (ctaLine) feishuParts.push(ctaLine);
+    if (originalContent) feishuParts.push(originalContent);
+    const finalContent = feishuParts.join("\n");
+    
+    if (forwardStyle === "style1") {
+      // 样式1：拼装最终内容，CTA 在顶部
+      discordContent = finalContent;
+    } else {
+      // 样式2：普通消息直接发originalContent（不含CTA），回复消息时上面发originalContent，下面发embed
+      discordContent = originalContent || "";
+      useEmbed = false; // 样式2下，主内容不使用embed
+      
+      if (isReplyMessage && replyUserNameForStyle2) {
+        // 回复消息：生成一个蓝色嵌入块，包含粗体"💬 回复 用户名"、被回复内容和底部小时间
+        const now = new Date(message.createdTimestamp || Date.now());
+        const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+        const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(
+          now.getHours(),
+        )}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        
+        style2ReplyEmbed = {
+          color: 0x0000FF, // 蓝色
+          description: `**💬 回复 ${replyUserNameForStyle2}**\n${replyContentForStyle2 || ""}`,
+          footer: {
+            text: `⏰ ${ts}`
+          }
+        };
+      }
+    }
 
     // 根据配置决定是否伪装为源用户头像和昵称
     // 对于 webhook 消息，使用 webhook 的名称和头像
@@ -628,8 +669,29 @@ export class Bot {
 
     // 关键修复：将原消息的 embeds 传递给发送器
     // Webhook 消息通常只有 embeds 而没有 content，必须传递 embeds 才能转发
+    const channelTranslateMap: Record<string, boolean> = (this.config as any).channelTranslate || {};
+    const channelTranslateDirectionMap: Record<string, string> = (this.config as any).channelTranslateDirection || {};
+    const translationDirectionForThis = channelTranslateDirectionMap[message.channelId] || 
+      (this.config.enableTranslation === true ? "auto" : "off");
+    // 如果翻译方向为 "off"，则禁用翻译；否则根据配置决定是否启用
+    const enableTranslationForThis = translationDirectionForThis === "off" 
+      ? false
+      : (channelTranslateMap[message.channelId] !== undefined
+          ? channelTranslateMap[message.channelId]
+          : this.config.enableTranslation === true);
+
+    // 构建 extraEmbeds：样式2下回复消息时，添加回复信息的embed；样式1或普通消息时，传递原消息的embeds
+    let extraEmbeds: any[] | undefined = undefined;
+    if (forwardStyle === "style2" && style2ReplyEmbed) {
+      // 样式2回复消息：只添加回复信息的embed
+      extraEmbeds = [style2ReplyEmbed];
+    } else if (message.embeds && message.embeds.length > 0) {
+      // 样式1或其他情况：传递原消息的 embeds（这对于 webhook 消息至关重要）
+      extraEmbeds = message.embeds;
+    }
+    
     const toSend = [{
-      content: `${finalContent}`.trim(),
+      content: `${discordContent}`.trim(),
       sourceMessageId: message.id,
       replyToSourceMessageId: message.reference?.messageId,
       replyToTarget,
@@ -637,8 +699,9 @@ export class Bot {
       avatarUrl,
       useEmbed,
       uploads,
-      // 传递原消息的 embeds，这对于 webhook 消息至关重要
-      extraEmbeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined
+      extraEmbeds,
+      enableTranslationOverride: enableTranslationForThis,
+      translationDirection: translationDirectionForThis as any,
     }];
 
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
@@ -650,7 +713,7 @@ export class Bot {
       this.logger.info(`${logPrefix} [SKIP] Discord 转发已关闭，跳过转发`);
     }
     
-    this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${finalContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed})`);
+    this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${discordContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed}, style=${forwardStyle})`);
     if (shouldSendDiscord) {
     const results = await senderForThis.sendData(toSend);
     if (results && results.length > 0) {
@@ -697,13 +760,12 @@ export class Bot {
       }
     }
 
-    // 检查飞书转发开关
+    // 检查飞书转发开关（飞书不受样式开关影响，始终使用 finalContent）
     const enableFeishuForward = this.config.enableFeishuForward === true;
     const shouldSendFeishu = feishuSenderForThis && enableFeishuForward;
     if (feishuSenderForThis && !enableFeishuForward) {
       this.logger.info(`${logPrefix} [SKIP] 飞书转发已关闭，跳过转发`);
     }
-    
     if (shouldSendFeishu) {
       try {
         await feishuSenderForThis.send({

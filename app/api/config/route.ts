@@ -13,6 +13,10 @@ interface FrontendMapping {
   sourceChannelId: string;
   targetWebhookUrl: string;
   note?: string;
+  // 是否开启翻译
+  translate?: boolean;
+  // 翻译方向: off = 关闭翻译, auto = 自动检测, zh-en = 中译英, en-zh = 英译中
+  translateDirection?: "off" | "auto" | "zh-en" | "en-zh";
 }
 
 interface FrontendAccount {
@@ -52,21 +56,31 @@ interface FrontendAccount {
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
   ignoreDocuments?: boolean;
+  // Discord -> Discord 转发样式：style1 = 内嵌（默认），style2 = 纯文本 + 时间
+  feishuStyle?: "style1" | "style2";
 }
 
 interface FrontendPayload {
   accounts: FrontendAccount[];
   activeId?: string;
+  loginUser?: string;
+  loginPassword?: string;
 }
 
 function accountToFrontend(account: AccountConfig): FrontendAccount {
   const mappings: FrontendMapping[] = [];
+  const channelTranslate: Record<string, boolean> = (account as any).channelTranslate || {};
+  const channelTranslateDirection: Record<string, string> = (account as any).channelTranslateDirection || {};
   for (const [channelId, webhookUrl] of Object.entries(account.channelWebhooks || {})) {
     mappings.push({
       id: channelId,
       sourceChannelId: channelId,
       targetWebhookUrl: webhookUrl,
       note: account.channelNotes?.[channelId],
+      // UI 行为：如果全局翻译关闭，则默认为"off"；否则如果没有单独配置，则为"auto"
+      translateDirection: !account.enableTranslation 
+        ? "off"
+        : (channelTranslateDirection[channelId] as any) || "auto",
     });
   }
   const replacements = Object.entries(account.replacementsDictionary || {}).map(([from, to]) => ({
@@ -111,6 +125,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     ignoreAudio: account.ignoreAudio === true,
     ignoreVideo: account.ignoreVideo === true,
     ignoreDocuments: account.ignoreDocuments === true,
+    feishuStyle: account.feishuStyle || "style1",
   };
 }
 
@@ -150,10 +165,13 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       ignoreAudio: dto.ignoreAudio === true,
       ignoreVideo: dto.ignoreVideo === true,
       ignoreDocuments: dto.ignoreDocuments === true,
+      feishuStyle: "style1",
     } as AccountConfig);
 
   const channelWebhooks: Record<string, string> = {};
   const channelNotes: Record<string, string> = {};
+  const channelTranslate: Record<string, boolean> = {};
+  const channelTranslateDirection: Record<string, "off" | "auto" | "zh-en" | "en-zh"> = {};
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
       if (mapping?.sourceChannelId && mapping?.targetWebhookUrl) {
@@ -161,6 +179,16 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         channelWebhooks[key] = String(mapping.targetWebhookUrl);
         if (typeof mapping.note === "string" && mapping.note.trim()) {
           channelNotes[key] = mapping.note.trim();
+        }
+        if (mapping.translateDirection) {
+          if (mapping.translateDirection === "off") {
+            // 关闭翻译时，不设置该频道的翻译配置
+            // 如果之前有配置，会在前端删除
+          } else {
+            // 开启翻译时，设置翻译方向和启用状态
+            channelTranslateDirection[key] = mapping.translateDirection as any;
+            channelTranslate[key] = true;
+          }
         }
       }
     }
@@ -206,6 +234,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         ? dto.feishuAppSecret.trim()
         : base.feishuAppSecret,
     channelNotes,
+    channelTranslate,
+    channelTranslateDirection,
     blockedKeywords: Array.isArray(dto.blockedKeywords) ? dto.blockedKeywords : [],
     excludeKeywords: Array.isArray(dto.excludeKeywords) ? dto.excludeKeywords : [],
     replacementsDictionary,
@@ -250,6 +280,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     ignoreAudio: dto.ignoreAudio === true,
     ignoreVideo: dto.ignoreVideo === true,
     ignoreDocuments: dto.ignoreDocuments === true,
+    feishuStyle: dto.feishuStyle === "style2" ? "style2" : (base.feishuStyle || "style1"),
   };
 }
 
@@ -263,6 +294,8 @@ export async function GET() {
         ...(status[acc.id] || {}),
       })),
       activeId: multi.activeId || multi.accounts[0]?.id || "",
+      loginUser: multi.loginUser || "",
+      loginPassword: multi.loginPassword || "",
     };
     return NextResponse.json(payload);
   } catch (e: any) {
@@ -282,7 +315,12 @@ export async function POST(req: NextRequest) {
         return dtoToAccount(acc, currentAccount);
       });
       const activeId = typeof body.activeId === "string" ? body.activeId : accounts[0]?.id;
-      next = { accounts, activeId };
+      next = {
+        accounts,
+        activeId,
+        loginUser: typeof body.loginUser === "string" ? body.loginUser : current.loginUser,
+        loginPassword: typeof body.loginPassword === "string" ? body.loginPassword : current.loginPassword,
+      };
     } else {
       // 兼容旧版请求
       const id = randomUUID();

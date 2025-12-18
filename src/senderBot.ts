@@ -220,8 +220,8 @@ export class SenderBot {
   /**
    * 调用翻译 API 进行翻译（支持多个翻译服务）
    */
-  private async translateText(text: string, target: "zh" | "en"): Promise<string | null> {
-    if (!this.enableTranslation || !text || text.length < 2) {
+  private async translateText(text: string, target: "zh" | "en" | "zh-en" | "en-zh"): Promise<string | null> {
+    if (!text || text.length < 2) {
       return null; // 忽略太短的
     }
     
@@ -235,11 +235,38 @@ export class SenderBot {
       return null;
     }
 
-    // 只处理中英互译，其他语言不翻译
-    const { chineseRatio, englishRatio } = this.languageStats(text);
-    if (chineseRatio === 0 && englishRatio === 0) {
-      return null;
+    // 确定最终目标语言
+    let finalTarget: "zh" | "en";
+    if (target === "zh-en") {
+      finalTarget = "en";
+      console.log(`[翻译] 强制中译英: "${text.substring(0, 50)}..." -> 英文`);
+    } else if (target === "en-zh") {
+      finalTarget = "zh";
+      console.log(`[翻译] 强制英译中: "${text.substring(0, 50)}..." -> 中文`);
+    } else {
+      finalTarget = target;
     }
+
+    // 如果是强制翻译方向（zh-en 或 en-zh），则强制翻译，不检查语言统计
+    // 如果是自动检测（zh 或 en），则检查语言统计
+    if (target === "zh" || target === "en") {
+      // 只处理中英互译，其他语言不翻译
+      const { chineseRatio, englishRatio } = this.languageStats(text);
+      if (chineseRatio === 0 && englishRatio === 0) {
+        console.log(`[翻译] 跳过：文本不包含中英文`);
+        return null;
+      }
+      // 对于自动检测，如果文本已经是目标语言，则不翻译
+      if (target === "zh" && chineseRatio > 0.5) {
+        console.log(`[翻译] 跳过：文本主要是中文，不需要翻译成中文`);
+        return null; // 文本主要是中文，不需要翻译成中文
+      }
+      if (target === "en" && englishRatio >= 0.5) {
+        console.log(`[翻译] 跳过：文本主要是英文，不需要翻译成英文`);
+        return null; // 文本主要是英文，不需要翻译成英文
+      }
+    }
+    // 对于强制翻译方向（zh-en 或 en-zh），无论文本是什么语言都强制翻译
 
     const provider = this.translationProvider || "deepseek";
     
@@ -247,13 +274,13 @@ export class SenderBot {
       switch (provider) {
         case "deepseek":
         case "openai":
-          return await this.translateWithAI(provider, apiKey, text, target);
+          return await this.translateWithAI(provider, apiKey, text, finalTarget);
         case "google":
-          return await this.translateWithGoogle(apiKey, text, target);
+          return await this.translateWithGoogle(apiKey, text, finalTarget);
         case "baidu":
-          return await this.translateWithBaidu(apiKey, this.translationSecret || "", text, target);
+          return await this.translateWithBaidu(apiKey, this.translationSecret || "", text, finalTarget);
         case "youdao":
-          return await this.translateWithYoudao(apiKey, this.translationSecret || "", text, target);
+          return await this.translateWithYoudao(apiKey, this.translationSecret || "", text, finalTarget);
         default:
           console.error(`[翻译] 不支持的翻译服务: ${provider}`);
           return null;
@@ -276,8 +303,8 @@ export class SenderBot {
             role: "system",
           content:
             target === "zh"
-              ? "You are a translator. Translate English (and English parts in mixed text) into Simplified Chinese. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing Chinese or non-English text unchanged. Return only the translated result."
-              : "You are a translator. Translate Chinese (and Chinese parts in mixed text) into English. Preserve punctuation, numbers, links, emojis, and spacing. Keep any existing English or non-Chinese text unchanged. Return only the translated result."
+              ? "You are a translator. Translate the given text into Simplified Chinese. If the text is already in Chinese, translate it to Chinese anyway (it may be a different dialect or need refinement). If the text contains English or other languages, translate those parts to Chinese. Preserve punctuation, numbers, links, emojis, and spacing. Return only the translated result."
+              : "You are a translator. Translate the given text into English. If the text is already in English, translate it to English anyway (it may need refinement or correction). If the text contains Chinese or other languages, translate those parts to English. Preserve punctuation, numbers, links, emojis, and spacing. Return only the translated result."
           },
           {
             role: "user",
@@ -545,6 +572,10 @@ export class SenderBot {
     extraEmbeds?: any[];
     uploads?: Array<{ url: string; filename: string; isImage?: boolean; isVideo?: boolean }>;
     components?: any[];
+    // 可选：覆盖当前消息是否启用翻译；未设置则沿用实例级 enableTranslation
+    enableTranslationOverride?: boolean;
+    // 可选：覆盖翻译方向
+    translationDirection?: "auto" | "zh-en" | "en-zh" | "off";
   }>) {
     if (messagesToSend.length == 0) return;
 
@@ -565,12 +596,33 @@ export class SenderBot {
 
         // 如果启用了翻译，尝试翻译文本；已含分隔线视为已翻译，跳过
         const alreadyTranslated = text.includes("\n---\n");
-        const targetLang = !alreadyTranslated && this.enableTranslation ? this.chooseTranslateTarget(text) : null;
+        const enableForThis =
+          typeof item.enableTranslationOverride === "boolean"
+            ? item.enableTranslationOverride
+            : this.enableTranslation;
+        // 如果翻译方向为 "off"，则不翻译
+        let targetLang: "zh" | "en" | "zh-en" | "en-zh" | null = null;
+        if (!alreadyTranslated && enableForThis && item.translationDirection !== "off") {
+          if (item.translationDirection && item.translationDirection !== "auto") {
+            // 强制翻译方向
+            targetLang = item.translationDirection;
+            console.log(`[翻译] 使用强制翻译方向: ${targetLang}`);
+          } else {
+            // 自动检测
+            targetLang = this.chooseTranslateTarget(text);
+            if (targetLang) {
+              console.log(`[翻译] 自动检测翻译方向: ${targetLang}`);
+            }
+          }
+        }
         if (!alreadyTranslated && targetLang && text.trim()) {
           const translated = await this.translateText(text, targetLang);
         if (translated) {
             // 原文在上，分割线，中间保持紧凑
             text = `${text}\n---\n${translated}`;
+            console.log(`[翻译] 翻译成功: ${targetLang}`);
+        } else {
+            console.log(`[翻译] 翻译失败或跳过: ${targetLang}`);
         }
       }
 
@@ -631,7 +683,9 @@ export class SenderBot {
             allowed_mentions: { parse: [], replied_user: false },
           };
           if (item.useEmbed && Object.keys(embed).length > 0) {
-            payload.embeds = [embed];
+            payload.embeds = [embed, ...((item.extraEmbeds as any[]) || [])];
+          } else if (item.extraEmbeds && item.extraEmbeds.length > 0) {
+            payload.embeds = item.extraEmbeds;
           }
           // Bot API不支持username和avatar_url，只在webhook模式下使用
           const useWebhookMode = !this.enableBotRelay;
@@ -678,7 +732,12 @@ export class SenderBot {
               let embeds: any[] = [...base, ...((item.extraEmbeds as any[]) || [])];
 
               // 翻译 embed 字段（中英互译，非中英不翻译）
-              if (this.enableTranslation && embeds.length > 0) {
+              const enableEmbedTranslation =
+                typeof item.enableTranslationOverride === "boolean"
+                  ? item.enableTranslationOverride
+                  : this.enableTranslation;
+              // 如果翻译方向为 "off"，则不翻译 embed
+              if (enableEmbedTranslation && item.translationDirection !== "off" && embeds.length > 0) {
                 const formatTranslated = (orig: string, t?: string | null) => {
                   if (!t || t.trim() === orig.trim()) return orig;
                   return `${orig}\n---\n${t}`;
@@ -688,7 +747,11 @@ export class SenderBot {
                     const translateField = async (txt?: string) => {
                       if (!txt) return txt;
                       if (txt.includes("\n---\n")) return txt;
-                      const target = this.chooseTranslateTarget(txt);
+                      // 如果翻译方向为 "off"，则不翻译
+                      if (item.translationDirection === "off") return txt;
+                      const target = item.translationDirection && item.translationDirection !== "auto"
+                        ? item.translationDirection
+                        : this.chooseTranslateTarget(txt);
                       if (!target) return txt;
                       const t = await this.translateText(txt, target);
                       return formatTranslated(txt, t || undefined);
@@ -716,6 +779,9 @@ export class SenderBot {
               payload.embeds = embeds;
           } else {
             payload.content = chunk;
+            if (item.extraEmbeds && item.extraEmbeds.length > 0) {
+              payload.embeds = item.extraEmbeds;
+            }
           }
           if (item.components && item.components.length > 0) {
             payload.components = item.components;

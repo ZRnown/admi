@@ -79,6 +79,12 @@ export interface LegacyConfig {
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
   ignoreDocuments?: boolean;
+  // Discord -> Discord 转发样式：style1 = 当前内嵌样式；style2 = 纯文本样式（带时间等）
+  feishuStyle?: "style1" | "style2";
+  // 每个来源频道是否启用翻译（true = 开启翻译；未设置则回退到全局 enableTranslation）
+  channelTranslate?: Record<string, boolean>;
+  // 每个来源频道的翻译方向配置 (off = 关闭翻译, auto = 自动检测, zh-en = 中译英, en-zh = 英译中)
+  channelTranslateDirection?: Record<string, "off" | "auto" | "zh-en" | "en-zh">;
 }
 
 export interface AccountConfig extends LegacyConfig {
@@ -106,6 +112,9 @@ export interface AccountConfig extends LegacyConfig {
 export interface MultiConfig {
   accounts: AccountConfig[];
   activeId?: string;
+  // 管理面板登录用户名/密码（可选）
+  loginUser?: string;
+  loginPassword?: string;
 }
 
 function createDefaultAccount(): AccountConfig {
@@ -149,6 +158,9 @@ function createDefaultAccount(): AccountConfig {
     feishuAppSecret: undefined,
     botRelays: [],
     channelRelayMap: {},
+    feishuStyle: "style1",
+    channelTranslate: {},
+    channelTranslateDirection: {},
   };
 }
 
@@ -157,7 +169,12 @@ function createDefaultAccount(): AccountConfig {
 export async function ensureConfigFile() {
   if (!existsSync("./config.json")) {
     const defaultAccount = createDefaultAccount();
-    const multi: MultiConfig = { accounts: [defaultAccount], activeId: defaultAccount.id };
+    const multi: MultiConfig = { 
+      accounts: [defaultAccount], 
+      activeId: defaultAccount.id,
+      loginUser: "admin",
+      loginPassword: "admin123"
+    };
     await writeFile("./config.json", JSON.stringify(multi, null, 2) + "\n");
     console.log("Created default config.json");
   }
@@ -220,6 +237,13 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   const channelRelayMap: Record<string, string> =
     input?.channelRelayMap && typeof input.channelRelayMap === "object" ? input.channelRelayMap : {};
 
+  const feishuStyle: "style1" | "style2" =
+    input?.feishuStyle === "style2" ? "style2" : "style1";
+  const channelTranslate: Record<string, boolean> =
+    input?.channelTranslate && typeof input.channelTranslate === "object" ? input.channelTranslate : {};
+  const channelTranslateDirection: Record<string, "off" | "auto" | "zh-en" | "en-zh"> =
+    input?.channelTranslateDirection && typeof input.channelTranslateDirection === "object" ? input.channelTranslateDirection : {};
+
   return {
     id,
     name,
@@ -272,13 +296,24 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     ignoreAudio: input?.ignoreAudio === true,
     ignoreVideo: input?.ignoreVideo === true,
     ignoreDocuments: input?.ignoreDocuments === true,
+    feishuStyle,
+    channelTranslate,
+    channelTranslateDirection,
   };
 }
 
 function migrateLegacyToMulti(raw: any): MultiConfig {
   const legacy = raw as LegacyConfig;
   const account = normalizeAccount({ ...legacy, token: getEnv().DISCORD_TOKEN || "" }, "默认账号");
-  return { accounts: [account], activeId: account.id };
+  // 如果没有设置登录账密，使用默认值
+  const loginUser = (raw as any)?.loginUser || "admin";
+  const loginPassword = (raw as any)?.loginPassword || "admin123";
+  return {
+    accounts: [account],
+    activeId: account.id,
+    loginUser,
+    loginPassword,
+  };
 }
 
 export async function getMultiConfig(): Promise<MultiConfig> {
@@ -288,7 +323,10 @@ export async function getMultiConfig(): Promise<MultiConfig> {
       normalizeAccount(acc, idx === 0 ? "默认账号" : `账号${idx + 1}`),
     );
     const active = typeof raw.activeId === "string" ? raw.activeId : accounts[0]?.id;
-    return { accounts, activeId: active };
+    // 如果没有设置登录账密，使用默认值
+    const loginUser = (raw as any)?.loginUser || "admin";
+    const loginPassword = (raw as any)?.loginPassword || "admin123";
+    return { accounts, activeId: active, loginUser, loginPassword };
   }
   return migrateLegacyToMulti(raw);
 }
@@ -339,7 +377,10 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreImages: false,
     ignoreAudio: false,
     ignoreVideo: false,
-    ignoreDocuments: false,
+      ignoreDocuments: false,
+      feishuStyle: "style1",
+      channelTranslate: {},
+      channelTranslateDirection: {},
     };
   }
   return {
@@ -381,6 +422,9 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreAudio: account.ignoreAudio,
     ignoreVideo: account.ignoreVideo,
     ignoreDocuments: account.ignoreDocuments,
+    feishuStyle: account.feishuStyle,
+    channelTranslate: (account as any).channelTranslate || {},
+    channelTranslateDirection: (account as any).channelTranslateDirection || {},
   };
 }
 

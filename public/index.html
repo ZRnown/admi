@@ -7,15 +7,52 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-50 p-4 md:p-8 font-sans">
-  <div class="max-w-7xl mx-auto space-y-8">
+  <!-- 登录页面 -->
+  <div id="loginPage" class="max-w-md mx-auto mt-20">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-8">
+      <h1 class="text-2xl font-bold text-slate-900 text-center mb-2">Discord Forwarder Config</h1>
+      <p class="text-slate-500 text-center text-sm mb-6">可视化配置生成器 · 轻松管理转发规则</p>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">用户名</label>
+          <input type="text" id="loginUsername" placeholder="请输入用户名" 
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
+          <input type="password" id="loginPassword" placeholder="请输入密码" 
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            onkeydown="if(event.key==='Enter') handleLogin()">
+        </div>
+        <div id="loginError" class="hidden text-sm text-red-500 text-center"></div>
+        <button onclick="handleLogin()" 
+          class="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+          登录
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主配置页面 -->
+  <div id="mainPage" class="max-w-7xl mx-auto space-y-8" style="display: none;">
     <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-200">
       <div>
         <h1 class="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">Discord Forwarder Config</h1>
         <p class="text-slate-500 mt-1 text-sm md:text-base">可视化配置生成器 · 轻松管理转发规则</p>
       </div>
-      <div class="flex items-center gap-2 text-sm text-slate-500 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">
-        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-        本地自动保存中
+      <div class="flex items-center gap-3">
+        <button onclick="showChangePasswordModal()" 
+          class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
+          <span>🔐</span> 修改账密
+        </button>
+        <button onclick="handleLogout()" 
+          class="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
+          <span>🚪</span> 退出登录
+        </button>
+        <div class="flex items-center gap-2 text-sm text-slate-500 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">
+          <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+          本地自动保存中
+        </div>
       </div>
     </header>
 
@@ -62,6 +99,49 @@
     </footer>
   </div>
 
+  <!-- 修改密码弹窗 -->
+  <div id="changePasswordModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeChangePasswordModal()">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-md mx-4" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-slate-900">修改账密</h2>
+        <button onclick="closeChangePasswordModal()" class="text-slate-400 hover:text-slate-600">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">用户名</label>
+          <input type="text" id="newUsername" placeholder="留空则不启用登录保护" 
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">新密码</label>
+          <input type="password" id="newPassword" placeholder="留空则不修改密码" 
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">确认密码</label>
+          <input type="password" id="confirmPassword" placeholder="再次输入新密码" 
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            onkeydown="if(event.key==='Enter') saveNewPassword()">
+        </div>
+        <div id="passwordError" class="hidden text-sm text-red-500"></div>
+        <div class="flex gap-2">
+          <button onclick="closeChangePasswordModal()" 
+            class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            取消
+          </button>
+          <button onclick="saveNewPassword()" 
+            class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // 兼容的 ID 生成函数
     function genId() {
@@ -79,11 +159,35 @@
       return `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    let state = { accounts: [], activeId: "" };
+    let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "" };
     let saveTimer = null;
+    let isLoggedIn = false;
+
+    // 检查登录状态
+    function checkLoginStatus() {
+      const saved = localStorage.getItem('isLoggedIn');
+      return saved === 'true';
+    }
+
+    // 设置登录状态
+    function setLoginStatus(loggedIn) {
+      isLoggedIn = loggedIn;
+      localStorage.setItem('isLoggedIn', loggedIn ? 'true' : 'false');
+    }
 
     // 初始化
     async function init() {
+      // 检查是否已登录
+      if (!checkLoginStatus()) {
+        document.getElementById('loginPage').style.display = 'block';
+        document.getElementById('mainPage').style.display = 'none';
+        return;
+      }
+
+      // 已登录，显示主页面
+      document.getElementById('loginPage').style.display = 'none';
+      document.getElementById('mainPage').style.display = 'block';
+
       try {
         await loadConfig();
         // 如果没有账号，创建一个默认账号
@@ -103,6 +207,148 @@
       }
     }
 
+    // 处理登录
+    async function handleLogin() {
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value.trim();
+      const errorEl = document.getElementById('loginError');
+
+      if (!username || !password) {
+        errorEl.textContent = '请输入用户名和密码';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      // 加载配置以获取正确的账密
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) {
+          errorEl.textContent = '无法连接到服务器';
+          errorEl.classList.remove('hidden');
+          return;
+        }
+        const data = await res.json();
+        const configUser = data.loginUser || 'admin';
+        const configPassword = data.loginPassword || 'admin123';
+
+        // 如果配置中账密为空，使用默认值
+        const expectedUser = configUser || 'admin';
+        const expectedPassword = configPassword || 'admin123';
+
+        if (username === expectedUser && password === expectedPassword) {
+          setLoginStatus(true);
+          errorEl.classList.add('hidden');
+          // 重新初始化以显示主页面
+          await init();
+        } else {
+          errorEl.textContent = '用户名或密码错误';
+          errorEl.classList.remove('hidden');
+        }
+      } catch (e) {
+        console.error('登录失败', e);
+        errorEl.textContent = '登录失败，请重试';
+        errorEl.classList.remove('hidden');
+      }
+    }
+
+    // 处理退出登录
+    function handleLogout() {
+      if (confirm('确定要退出登录吗？')) {
+        setLoginStatus(false);
+        document.getElementById('loginPage').style.display = 'block';
+        document.getElementById('mainPage').style.display = 'none';
+        document.getElementById('app').style.display = 'none';
+        document.getElementById('loginUsername').value = '';
+        document.getElementById('loginPassword').value = '';
+      }
+    }
+
+    // 显示修改密码弹窗
+    function showChangePasswordModal() {
+      const modal = document.getElementById('changePasswordModal');
+      if (modal) {
+        modal.classList.remove('hidden');
+        document.getElementById('newUsername').value = state.loginUser || '';
+        document.getElementById('newPassword').value = '';
+        document.getElementById('confirmPassword').value = '';
+        document.getElementById('passwordError').classList.add('hidden');
+      }
+    }
+
+    // 关闭修改密码弹窗
+    function closeChangePasswordModal() {
+      const modal = document.getElementById('changePasswordModal');
+      if (modal) {
+        modal.classList.add('hidden');
+      }
+    }
+
+    // 保存新密码
+    async function saveNewPassword() {
+      const newUsername = document.getElementById('newUsername').value.trim();
+      const newPassword = document.getElementById('newPassword').value.trim();
+      const confirmPassword = document.getElementById('confirmPassword').value.trim();
+      const errorEl = document.getElementById('passwordError');
+
+      if (!newUsername) {
+        errorEl.textContent = '用户名不能为空';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      if (newPassword && newPassword !== confirmPassword) {
+        errorEl.textContent = '两次输入的密码不一致';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      // 更新配置
+      state.loginUser = newUsername;
+      // 如果密码为空，保持原密码不变；否则更新为新密码
+      if (newPassword) {
+        state.loginPassword = newPassword;
+      }
+
+      try {
+        // 构建保存的数据
+        const saveData = {
+          accounts: state.accounts,
+          activeId: state.activeId,
+          loginUser: state.loginUser
+        };
+        // 只有在新密码不为空时才更新密码
+        if (newPassword) {
+          saveData.loginPassword = state.loginPassword;
+        } else {
+          // 如果密码为空，从当前配置中获取原密码
+          const res = await fetch('/api/config');
+          const data = await res.json();
+          saveData.loginPassword = data.loginPassword || state.loginPassword;
+        }
+
+        // 直接调用 API 保存配置
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(saveData)
+        });
+        errorEl.classList.add('hidden');
+        closeChangePasswordModal();
+        if (newPassword) {
+          alert('账密修改成功！请使用新账密重新登录。');
+          handleLogout();
+        } else {
+          alert('用户名修改成功！');
+          // 重新加载配置以更新显示
+          await loadConfig();
+        }
+      } catch (e) {
+        console.error('保存失败', e);
+        errorEl.textContent = '保存失败，请重试';
+        errorEl.classList.remove('hidden');
+      }
+    }
+
     // 加载配置
     async function loadConfig() {
       try {
@@ -114,7 +360,12 @@
         const data = await res.json();
         console.log('加载配置成功:', data);
         if (Array.isArray(data?.accounts)) {
-          state = { accounts: data.accounts, activeId: data.activeId || data.accounts[0]?.id || "" };
+          state = {
+            accounts: data.accounts,
+            activeId: data.activeId || data.accounts[0]?.id || "",
+            loginUser: data.loginUser || "",
+            loginPassword: data.loginPassword || "",
+          };
         } else {
           console.warn('配置数据格式不正确:', data);
         }
@@ -253,7 +504,7 @@
                 class="h-4 w-4 rounded border-slate-300">
               <label class="text-sm text-slate-700">使用源用户的昵称和头像进行转发</label>
             </div>
-            <div class="border-t pt-4">
+            <div class="border-t pt-4 space-y-3">
               <div class="flex items-center gap-2 mb-2">
                 <input type="checkbox" ${acc.enableBotRelay ? 'checked' : ''} ${acc.type === 'bot' ? 'disabled' : ''} onchange="updateField('enableBotRelay', this.checked)" 
                   class="h-4 w-4 rounded border-slate-300 ${acc.type === 'bot' ? 'opacity-50 cursor-not-allowed' : ''}">
@@ -336,6 +587,14 @@
             <h2 class="font-semibold text-slate-800">转发规则</h2>
           </div>
           <div class="p-6 space-y-6" id="mappingsList">
+            <div class="flex flex-wrap items-center gap-2 mb-2">
+              <span class="text-xs text-slate-500">Discord 转发样式：</span>
+              <select onchange="updateField('feishuStyle', this.value)" 
+                class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none bg-white">
+                <option value="style1" ${acc.feishuStyle === 'style2' ? '' : 'selected'}>样式1：内嵌</option>
+                <option value="style2" ${acc.feishuStyle === 'style2' ? 'selected' : ''}>样式2：文本+时间</option>
+              </select>
+            </div>
             <div class="space-y-3 ${acc.enableDiscordForward !== false ? '' : 'opacity-60'}">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
@@ -348,7 +607,7 @@
             </div>
             <div class="border-t pt-4 space-y-3 ${acc.enableFeishuForward ? '' : 'opacity-60'}">
               <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                   <input type="checkbox" ${acc.enableFeishuForward ? 'checked' : ''} onchange="updateField('enableFeishuForward', this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">飞书转发规则</span>
                   <button type="button" onclick="toggleFeishuHelp()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">查看飞书配置说明</button>
@@ -430,6 +689,12 @@
       `;
     }
 
+    function updateGlobal(field, value) {
+      if (!state) return;
+      state[field] = value;
+      saveConfig();
+    }
+
     function renderMappings(acc) {
       const mappings = acc.mappings || [];
       if (mappings.length === 0) {
@@ -437,7 +702,7 @@
       }
       return mappings.map((m, idx) => `
         <div class="flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
-          <div class="flex gap-3 items-center">
+          <div class="flex gap-3 items-center flex-wrap">
             <input type="text" value="${m.sourceChannelId || ''}" onchange="updateMapping(${idx}, 'sourceChannelId', this.value)" 
               placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             <span class="text-slate-300">→</span>
@@ -449,6 +714,14 @@
             </select>
             <input type="text" value="${m.note || ''}" onchange="updateMapping(${idx}, 'note', this.value)" 
               placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
+            <select onchange="updateMapping(${idx}, 'translateDirection', this.value)" 
+              ${!acc.enableTranslation ? 'disabled' : ''} 
+              class="px-2 py-1 rounded border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none ${!acc.enableTranslation ? 'opacity-50 cursor-not-allowed' : ''}">
+              <option value="off" ${(!acc.enableTranslation || m.translateDirection === 'off' || (!m.translateDirection && !acc.enableTranslation)) ? 'selected' : ''}>关闭翻译</option>
+              <option value="auto" ${(acc.enableTranslation && (m.translateDirection === 'auto' || (!m.translateDirection && acc.enableTranslation))) ? 'selected' : ''}>自动检测</option>
+              <option value="zh-en" ${m.translateDirection === 'zh-en' ? 'selected' : ''}>中 → 英</option>
+              <option value="en-zh" ${m.translateDirection === 'en-zh' ? 'selected' : ''}>英 → 中</option>
+            </select>
             <button onclick="removeMapping(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
           </div>
         </div>
@@ -607,6 +880,17 @@
     function updateField(field, value) {
       const acc = getActiveAccount();
       acc[field] = value;
+      // 当启用自动翻译时，自动将所有频道的翻译方向设为"自动检测"
+      if (field === 'enableTranslation' && value === true) {
+        if (!acc.channelTranslateDirection) acc.channelTranslateDirection = {};
+        if (acc.mappings) {
+          acc.mappings.forEach(m => {
+            if (m.sourceChannelId) {
+              acc.channelTranslateDirection[m.sourceChannelId] = 'auto';
+            }
+          });
+        }
+      }
       saveConfig();
       render();
     }
@@ -696,6 +980,40 @@
             if (value) {
               acc.channelFeishuWebhooks[String(value)] = feishu;
             }
+          }
+          if (!acc.channelTranslate) acc.channelTranslate = {};
+          if (prevSource && Object.prototype.hasOwnProperty.call(acc.channelTranslate, prevSource)) {
+            const tr = acc.channelTranslate[prevSource];
+            delete acc.channelTranslate[prevSource];
+            if (value) {
+              acc.channelTranslate[String(value)] = tr;
+            }
+          }
+          if (!acc.channelTranslateDirection) acc.channelTranslateDirection = {};
+          if (prevSource && Object.prototype.hasOwnProperty.call(acc.channelTranslateDirection, prevSource)) {
+            const dir = acc.channelTranslateDirection[prevSource];
+            delete acc.channelTranslateDirection[prevSource];
+            if (value) {
+              acc.channelTranslateDirection[String(value)] = dir;
+            }
+          }
+        }
+        if (field === 'translateDirection') {
+          if (!acc.channelTranslateDirection) acc.channelTranslateDirection = {};
+          const sourceId = acc.mappings[idx].sourceChannelId;
+          if (value === 'off') {
+            // 关闭翻译时，删除该频道的翻译配置
+            if (acc.channelTranslateDirection[sourceId]) {
+              delete acc.channelTranslateDirection[sourceId];
+            }
+            if (acc.channelTranslate && acc.channelTranslate[sourceId]) {
+              delete acc.channelTranslate[sourceId];
+            }
+          } else {
+            // 开启翻译时，设置翻译方向
+            acc.channelTranslateDirection[sourceId] = value;
+            if (!acc.channelTranslate) acc.channelTranslate = {};
+            acc.channelTranslate[sourceId] = true;
           }
         }
         saveConfig();

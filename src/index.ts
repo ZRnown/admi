@@ -308,7 +308,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
             currentRunning.loginTimeout = undefined;
           }
           setupReconnectHandlers(account.id, logger);
-          await writeStatus(account.id, "online", "登录成功");
+      await writeStatus(account.id, "online", "登录成功");
           await logger.info(`账号 "${account.name}" 登录成功（通过状态检查），已注册重连处理器`);
           // 标记 ready 已处理，防止 readyHandler 重复处理
           readyHandled = true;
@@ -516,7 +516,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
             currentRunningAfterReady.loginTimeout = undefined;
           }
           // 现在才注册重连处理器
-          setupReconnectHandlers(accountId, logger);
+      setupReconnectHandlers(accountId, logger);
           await writeStatus(accountId, "online", "重连成功");
           // 重连成功，重置计数
           currentRunningAfterReady.reconnectCount = 0;
@@ -814,9 +814,9 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     // 如果映射或翻译配置变化，需要重新构建 SenderBot
     if (mappingsChanged || translationChanged || relayChanged) {
       try {
-        const built = await buildSenderBots(account, logger);
-        senderBotsBySource = built.senderBotsBySource;
-        defaultSenderBot = built.defaultSenderBot;
+      const built = await buildSenderBots(account, logger);
+      senderBotsBySource = built.senderBotsBySource;
+      defaultSenderBot = built.defaultSenderBot;
         feishuSendersBySource = built.feishuSendersBySource;
       } catch (e: any) {
         await logger.error(`账号 "${account.name}" 重新构建 SenderBot 失败: ${String(e?.message || e)}`);
@@ -873,32 +873,32 @@ async function main() {
           return;
         }
         
-        // 如果修改时间相同，说明文件没有变化
-        if (stats.mtimeMs === lastConfigMtime) {
+      // 如果修改时间相同，说明文件没有变化
+      if (stats.mtimeMs === lastConfigMtime) {
           resolve(false);
           return;
-        }
-        
+      }
+      
         try {
-          // 读取文件内容并计算 hash
-          const content = await fs.readFile(cfgPath, "utf-8");
-          const hash = createHash("md5").update(content).digest("hex");
-          
-          // 如果 hash 相同，说明内容没有变化
-          if (hash === lastConfigHash) {
-            lastConfigMtime = stats.mtimeMs; // 更新修改时间，避免下次重复读取
+      // 读取文件内容并计算 hash
+      const content = await fs.readFile(cfgPath, "utf-8");
+      const hash = createHash("md5").update(content).digest("hex");
+      
+      // 如果 hash 相同，说明内容没有变化
+      if (hash === lastConfigHash) {
+        lastConfigMtime = stats.mtimeMs; // 更新修改时间，避免下次重复读取
             resolve(false);
             return;
-          }
-          
-          // 文件内容变化了
-          lastConfigHash = hash;
-          lastConfigMtime = stats.mtimeMs;
+      }
+      
+      // 文件内容变化了
+      lastConfigHash = hash;
+      lastConfigMtime = stats.mtimeMs;
           resolve(true);
-        } catch (e) {
+    } catch (e) {
           // 读取失败，返回 false
           resolve(false);
-        }
+    }
       });
     });
   };
