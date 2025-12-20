@@ -628,7 +628,8 @@ export class SenderBot {
 
       // Discord limits: content 2000, embed.description 4096
       const MESSAGE_CHUNK = item.useEmbed ? 4096 : 2000;
-      const hasOnlyEmbeds = item.useEmbed === true && (item.extraEmbeds?.length || 0) > 0 && text.trim() === "";
+      // 判断是否只有 embeds：无论 useEmbed 是否为 true，只要有 extraEmbeds 且没有文本内容，就认为是 only embeds
+      const hasOnlyEmbeds = (item.extraEmbeds?.length || 0) > 0 && text.trim() === "";
       const hasUploads = (item.uploads?.length || 0) > 0;
         if (text.trim() === "" && !hasOnlyEmbeds && !hasUploads) {
           return null; // 跳过空消息
@@ -778,9 +779,15 @@ export class SenderBot {
 
               payload.embeds = embeds;
           } else {
-            payload.content = chunk;
+            // useEmbed 为 false 的情况：设置文本内容，如果有 extraEmbeds 也一并添加
+            payload.content = chunk || ""; // 即使 chunk 为空也设置为空字符串，避免 undefined
             if (item.extraEmbeds && item.extraEmbeds.length > 0) {
+              // 如果有 extraEmbeds，即使 content 为空也要发送（允许只有 embeds 的消息）
               payload.embeds = item.extraEmbeds;
+              // 如果 content 为空但有 embeds，确保 content 至少是空字符串（Discord API 要求）
+              if (!payload.content || payload.content.trim() === "") {
+                payload.content = "";
+              }
             }
           }
           if (item.components && item.components.length > 0) {

@@ -683,8 +683,12 @@ export class Bot {
     // 构建 extraEmbeds：样式2下回复消息时，添加回复信息的embed；样式1或普通消息时，传递原消息的embeds
     let extraEmbeds: any[] | undefined = undefined;
     if (forwardStyle === "style2" && style2ReplyEmbed) {
-      // 样式2回复消息：只添加回复信息的embed
-      extraEmbeds = [style2ReplyEmbed];
+      // 样式2回复消息：添加回复信息的embed，同时保留原消息的embeds（如果有）
+      const allEmbeds: any[] = [style2ReplyEmbed];
+      if (message.embeds && message.embeds.length > 0) {
+        allEmbeds.push(...message.embeds);
+      }
+      extraEmbeds = allEmbeds;
     } else if (message.embeds && message.embeds.length > 0) {
       // 样式1或其他情况：传递原消息的 embeds（这对于 webhook 消息至关重要）
       extraEmbeds = message.embeds;
