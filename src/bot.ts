@@ -595,7 +595,12 @@ export class Bot {
       // 样式2：普通消息直接发originalContent（不含CTA），回复消息时上面发originalContent，下面发embed
       discordContent = originalContent || "";
       useEmbed = false; // 样式2下，主内容不使用embed
-      
+
+      // 但是，如果消息只有embeds（比如webhook消息），即使在style2模式下也需要使用embed模式
+      if (!hasText && message.embeds && message.embeds.length > 0) {
+        useEmbed = true;
+      }
+
       if (isReplyMessage && replyUserNameForStyle2) {
         // 回复消息：生成一个蓝色嵌入块，包含粗体"💬 回复 用户名"、被回复内容和底部小时间
         const now = new Date(message.createdTimestamp || Date.now());
@@ -603,7 +608,7 @@ export class Bot {
         const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(
           now.getHours(),
         )}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-        
+
         style2ReplyEmbed = {
           color: 0x0000FF, // 蓝色
           description: `**💬 回复 ${replyUserNameForStyle2}**\n${replyContentForStyle2 || ""}`,
