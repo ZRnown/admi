@@ -689,6 +689,9 @@ export class Bot {
         allEmbeds.push(...message.embeds);
       }
       extraEmbeds = allEmbeds;
+    } else if (forwardStyle === "style2" && message.embeds && message.embeds.length > 0) {
+      // 样式2普通消息：传递原消息的 embeds（修复 webhook 消息转发问题）
+      extraEmbeds = message.embeds;
     } else if (message.embeds && message.embeds.length > 0) {
       // 样式1或其他情况：传递原消息的 embeds（这对于 webhook 消息至关重要）
       extraEmbeds = message.embeds;
