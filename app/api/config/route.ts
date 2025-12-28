@@ -181,13 +181,14 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           channelNotes[key] = mapping.note.trim();
         }
         if (mapping.translateDirection) {
-          if (mapping.translateDirection === "off") {
-            // 关闭翻译时，不设置该频道的翻译配置
-            // 如果之前有配置，会在前端删除
-          } else {
-            // 开启翻译时，设置翻译方向和启用状态
-            channelTranslateDirection[key] = mapping.translateDirection as any;
+          // 明确设置翻译方向，包括"off"
+          channelTranslateDirection[key] = mapping.translateDirection as any;
+          if (mapping.translateDirection !== "off") {
+            // 开启翻译时，设置启用状态
             channelTranslate[key] = true;
+          } else {
+            // 关闭翻译时，确保启用状态为false
+            channelTranslate[key] = false;
           }
         }
       }
