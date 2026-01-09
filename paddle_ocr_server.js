@@ -1,12 +1,9 @@
 /**
- * PaddleOCR 集成服务器
- * 基于Node.js的轻量级OCR服务器，使用PaddleOCR进行文字识别
+ * RapidOCR (ONNX Runtime) 集成服务器
+ * 专为 4H4G 服务器优化：高准确率、低内存占用、CPU推理快
  *
- * 安装依赖：
- * npm install paddleocr onnxruntime-node
- *
- * 或者使用Python后端：
- * pip install paddlepaddle paddleocr
+ * 必需依赖：
+ * pip install rapidocr_onnxruntime
  */
 
 const http = require('http');
@@ -17,212 +14,172 @@ const path = require('path');
 const PORT = 9003;
 
 /**
- * 方式1：使用PaddleOCR Node.js绑定
- * 需要：npm install paddleocr onnxruntime-node
- */
-async function recognizeWithPaddleOCRJS(imageBuffer) {
-  try {
-    const PaddleOCR = require('paddleocr');
-    const ocr = new PaddleOCR();
-
-    const result = await ocr.ocr(imageBuffer);
-
-    console.log(`[PaddleOCR] 识别到 ${result.length} 个文本块`);
-
-    return {
-      code: 0,
-      msg: 'success',
-      data: result.map(item => ({
-        box: item.box,
-        score: item.confidence || 1.0,
-        text: item.text
-      }))
-    };
-  } catch (error) {
-    console.error('[PaddleOCR] JS绑定识别失败:', error);
-    throw error;
-  }
-}
-
-/**
- * 方式2：调用Python PaddleOCR后端
- * 需要：pip install paddlepaddle paddleocr
+ * 调用 Python RapidOCR
+ * 使用 ONNX Runtime，无需安装完整的 PaddlePaddle，适合轻量级服务器
  */
 function recognizeWithPythonOCR(imageBuffer, callback) {
-  const imageTempPath = path.join(__dirname, 'temp_ocr.png');
+  const imageTempPath = path.join(__dirname, `temp_${Date.now()}.png`);
   fs.writeFileSync(imageTempPath, imageBuffer);
 
   const pythonScript = `
-import paddleocr
+
 import sys
 import json
+import traceback
 
-# 读取图片
-image_path = '${imageTempPath}'
+# 添加用户Python包路径
+sys.path.insert(0, '/Users/wanghaixin/Library/Python/3.9/lib/python/site-packages')
 
-# 初始化OCR引擎（轻量级模型，适合低配置服务器）
-ocr = paddleocr.PaddleOCR(
-    use_angle_cls=True, 
-    lang='ch',  # 中英文混合识别
-    use_gpu=False,  # 使用CPU，适合4G4H服务器
-    det_model_dir='./',
-    rec_model_dir='./',
-    cls_model_dir='./',
-    show_log=False
-)
+try:
+    from rapidocr_onnxruntime import RapidOCR
 
-# 识别文字
-result = ocr.ocr(image_path, cls=True)
+    # 初始化 OCR 引擎
+    # det_use_gpu=False, cls_use_gpu=False, rec_use_gpu=False 确保在 CPU 模式下运行
+    # RapidOCR 会自动下载并加载 PP-OCRv4 模型 (高准确率)
+    engine = RapidOCR()
 
-# 转换为标准格式
-output = []
-for line in result:
-    if line:
-        points = line[0]
-        text_info = line[1]
-        output.append({
-            "box": [[p[0], p[1]] for p in points],
-            "score": text_info[1],
-            "text": text_info[0]
-        })
+    image_path = '${imageTempPath}'
 
-# 输出JSON
-print(json.dumps({"code": 0, "msg": "success", "data": output}))
+    # 执行识别
+    result, elapse = engine(image_path)
+
+    output = []
+    if result:
+        for item in result:
+            # item 结构: [det_box, text, score]
+            # det_box 是 [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+            box = item[0]
+            text = item[1]
+            score = item[2]
+
+            output.append({
+                "box": box,
+                "score": score,
+                "text": text
+            })
+
+    print(json.dumps({"code": 0, "msg": "success", "data": output}, ensure_ascii=False))
+
+except Exception as e:
+    # 捕获所有异常并以 JSON 格式输出，方便 Node.js 捕获
+    error_msg = str(e) + "\\n" + traceback.format_exc()
+    print(json.dumps({"code": 1, "msg": error_msg, "data": []}, ensure_ascii=False))
+
 `;
 
   const pythonProcess = spawn('python3', ['-c', pythonScript], {
     cwd: __dirname
   });
 
-  let output = '';
-  let error = '';
+  let outputData = '';
+  let errorData = '';
 
   pythonProcess.stdout.on('data', (data) => {
-    output += data.toString();
+    outputData += data.toString();
   });
 
   pythonProcess.stderr.on('data', (data) => {
-    error += data.toString();
+    errorData += data.toString();
   });
 
   pythonProcess.on('close', (code) => {
     // 清理临时文件
     try {
-      fs.unlinkSync(imageTempPath);
+      if (fs.existsSync(imageTempPath)) {
+        fs.unlinkSync(imageTempPath);
+      }
     } catch (e) {
-      console.warn('[OCR] 清理临时文件失败:', e);
+      console.warn('[OCR Server] 清理临时文件失败:', e);
     }
 
     if (code !== 0) {
-      console.error('[Python OCR] 执行失败:', error);
-      callback(new Error('Python OCR执行失败'));
+      console.error('[RapidOCR] Python 进程异常退出:', errorData || outputData);
+      callback(new Error('OCR 进程异常退出'));
       return;
     }
 
     try {
-      const result = JSON.parse(output);
-      callback(null, result);
+      // Python print 的内容可能包含换行符，取最后一行有效的 JSON
+      const lines = outputData.trim().split('\n');
+      const lastLine = lines[lines.length - 1];
+      const result = JSON.parse(lastLine);
+
+      if (result.code !== 0) {
+        console.error('[RapidOCR] 内部错误:', result.msg);
+        callback(new Error('RapidOCR 识别出错: ' + result.msg));
+      } else {
+        callback(null, result);
+      }
     } catch (e) {
-      console.error('[Python OCR] 解析响应失败:', e);
-      callback(new Error('解析OCR响应失败'));
+      console.error('[RapidOCR] 解析响应失败. 原始内容:', outputData);
+      console.error('[RapidOCR] 标准错误输出:', errorData);
+      callback(new Error('解析 OCR 响应失败'));
     }
   });
 }
 
 /**
- * 方式3：调用外部OCR API
- * 适用于部署在单独的服务器上的OCR服务
- */
-async function recognizeWithExternalAPI(imageBuffer, apiUrl = 'http://your-ocr-server/ocr') {
-  return new Promise((resolve, reject) => {
-    const boundary = '----OCR' + Math.random().toString(16).slice(2);
-    const url = new URL(apiUrl);
-
-    const parts = [];
-    parts.push(`--${boundary}\r\n`);
-    parts.push(`Content-Disposition: form-data; name="image"; filename="image.jpg"\r\n`);
-    parts.push(`Content-Type: application/octet-stream\r\n\r\n`);
-    parts.push(imageBuffer);
-    parts.push(`\r\n--${boundary}--\r\n`);
-
-    const payload = Buffer.concat(parts.map(p => typeof p === 'string' ? Buffer.from(p) : p));
-
-    const options = {
-      method: 'POST',
-      hostname: url.hostname,
-      path: url.pathname,
-      headers: {
-        'Content-Type': `multipart/form-data; boundary=${boundary}`,
-        'Content-Length': payload.length
-      },
-      timeout: 60000
-    };
-
-    const req = http.request(options, (res) => {
-      let body = '';
-      res.on('data', (chunk) => (body += chunk));
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          try {
-            const result = JSON.parse(body);
-            resolve(result);
-          } catch (e) {
-            reject(new Error('解析响应失败'));
-          }
-        } else {
-          reject(new Error(`OCR API调用失败: HTTP ${res.statusCode}`));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.setTimeout(60000, () => {
-      req.destroy();
-      reject(new Error('请求超时'));
-    });
-
-    req.write(payload);
-    req.end();
-  });
-}
-
-/**
- * HTTP服务器实现
+ * HTTP服务器请求处理
  */
 function parseMultipartRequest(req, callback) {
   const chunks = [];
-
-  req.on('data', (chunk) => {
-    chunks.push(chunk);
-  });
-
+  req.on('data', (chunk) => chunks.push(chunk));
   req.on('end', () => {
     try {
       const buffer = Buffer.concat(chunks);
-      const boundary = extractBoundary(req.headers['content-type']);
+      const contentType = req.headers['content-type'];
+      if (!contentType) return callback(new Error('缺少 Content-Type'));
 
-      if (!boundary) {
-        callback(new Error('无法找到boundary'));
-        return;
-      }
+      const boundaryMatch = contentType.match(/boundary=([^;]+)/);
+      if (!boundaryMatch) return callback(new Error('无法找到 boundary'));
 
-      const parts = buffer.split(Buffer.from(`--${boundary}`));
+      const boundary = boundaryMatch[1].trim();
+      const boundaryBuffer = Buffer.from(`--${boundary}`);
+      const endBoundaryBuffer = Buffer.from(`--${boundary}--`);
+
       const result = {};
 
-      for (const part of parts) {
-        if (part.length === 0 || part.toString().startsWith('--')) continue;
+      let start = 0;
+      while (start < buffer.length) {
+        // 查找下一个boundary
+        const boundaryIndex = buffer.indexOf(boundaryBuffer, start);
+        if (boundaryIndex === -1) break;
 
-        const headersEnd = part.indexOf('\r\n\r\n');
-        if (headersEnd === -1) continue;
+        // 检查是否是结束boundary
+        const endBoundaryIndex = buffer.indexOf(endBoundaryBuffer, start);
+        if (endBoundaryIndex !== -1 && endBoundaryIndex < boundaryIndex) {
+          break;
+        }
 
-        const headers = part.slice(0, headersEnd).toString();
-        const body = part.slice(headersEnd + 4);
+        // 移动到boundary之后
+        start = boundaryIndex + boundaryBuffer.length;
 
+        // 跳过 \r\n
+        if (start + 1 < buffer.length && buffer[start] === 13 && buffer[start + 1] === 10) {
+          start += 2;
+        } else if (start < buffer.length && buffer[start] === 10) {
+          start += 1;
+        }
+
+        // 查找头部结束位置
+        const headerEndIndex = buffer.indexOf(Buffer.from('\r\n\r\n'), start);
+        if (headerEndIndex === -1) continue;
+
+        // 解析头部
+        const headers = buffer.slice(start, headerEndIndex).toString();
         const nameMatch = headers.match(/name="([^"]+)"/);
         if (!nameMatch) continue;
 
-        const name = nameMatch[1];
-        result[name] = body;
+        // 获取数据部分
+        const dataStart = headerEndIndex + 4;
+        const nextBoundaryIndex = buffer.indexOf(boundaryBuffer, dataStart);
+        const dataEnd = nextBoundaryIndex !== -1 ? nextBoundaryIndex - 2 : buffer.length; // 减去 \r\n
+
+        if (dataEnd > dataStart) {
+          result[nameMatch[1]] = buffer.slice(dataStart, dataEnd);
+        }
+
+        start = dataEnd;
       }
 
       callback(null, result);
@@ -232,14 +189,7 @@ function parseMultipartRequest(req, callback) {
   });
 }
 
-function extractBoundary(contentType) {
-  if (!contentType) return null;
-  const match = contentType.match(/boundary=([^;]+)/);
-  if (!match) return null;
-  return match[1].trim();
-}
-
-async function handleOCRRequest(req, res) {
+function handleOCRRequest(req, res) {
   if (req.method !== 'POST') {
     res.writeHead(405, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: '只支持POST方法' }));
@@ -252,81 +202,45 @@ async function handleOCRRequest(req, res) {
     if (err) {
       console.error('[OCR Server] 解析请求失败:', err);
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        error: '解析请求失败',
-        message: err.message
-      }));
+      res.end(JSON.stringify({ error: '解析请求失败', message: err.message }));
       return;
     }
 
-    const imageBuffer = formData['image'];
+    // 兼容不同的字段名 (image 或 image_file)
+    const imageBuffer = formData['image'] || formData['image_file'];
+
     if (!imageBuffer) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: '缺少image字段' }));
+      res.end(JSON.stringify({ error: '缺少图片数据 (image 或 image_file)' }));
       return;
     }
 
     console.log(`[OCR Server] 图片大小: ${imageBuffer.length} bytes`);
 
-    // 选择OCR方式（根据你的环境选择）
-
-    // 方式1: PaddleOCR Node.js绑定（推荐，性能最好）
-    // recognizeWithPaddleOCRJS(imageBuffer)
-    //   .then(result => sendResponse(res, result))
-    //   .catch(error => sendError(res, error));
-
-    // 方式2: Python PaddleOCR（推荐，准确率最高）
     recognizeWithPythonOCR(imageBuffer, (error, result) => {
       if (error) {
-        sendError(res, error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'OCR识别失败', message: error.message }));
       } else {
-        sendResponse(res, result);
+        console.log(`[OCR Server] 识别完成，返回 ${result.data?.length || 0} 个文本块`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
       }
     });
-
-    // 方式3: 外部API（适用于分布式部署）
-    // recognizeWithExternalAPI(imageBuffer)
-    //   .then(result => sendResponse(res, result))
-    //   .catch(error => sendError(res, error));
   });
-}
-
-function sendResponse(res, result) {
-  console.log(`[OCR Server] 识别完成，返回 ${result.data?.length || 0} 个文本块`);
-
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(result));
-}
-
-function sendError(res, error) {
-  console.error('[OCR Server] OCR失败:', error.message);
-
-  res.writeHead(500, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
-    error: 'OCR识别失败',
-    message: error.message
-  }));
 }
 
 function handleHealth(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
-    status: 'ok',
-    service: 'PaddleOCR Server',
-    version: '1.0.0',
-    timestamp: new Date().toISOString()
-  }));
+  res.end(JSON.stringify({ status: 'ok', service: 'RapidOCR Server' }));
 }
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  console.log(`[OCR Server] ${req.method} ${req.url}`);
-
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(200);
@@ -344,35 +258,11 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log('========================================');
-  console.log('PaddleOCR Server');
+  console.log('RapidOCR Server (ONNX Runtime)');
   console.log('========================================');
-  console.log(`服务器地址: http://localhost:${PORT}`);
-  console.log(`健康检查: http://localhost:${PORT}/health`);
-  console.log(`OCR端点: http://localhost:${PORT}/ocr`);
-  console.log('');
-  console.log('支持三种OCR方式：');
-  console.log('1. PaddleOCR Node.js绑定（性能最好）');
-  console.log('2. Python PaddleOCR（准确率最高）');
-  console.log('3. 外部API调用（分布式部署）');
-  console.log('');
-  console.log('请根据注释选择合适的方式');
+  console.log(`监听地址: http://127.0.0.1:${PORT}`);
+  console.log('适用环境: 4H4G 服务器，高准确率，低内存');
   console.log('========================================');
-});
-
-process.on('SIGTERM', () => {
-  console.log('[OCR Server] 正在关闭...');
-  server.close(() => {
-    console.log('[OCR Server] 已关闭');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('[OCR Server] 正在关闭...');
-  server.close(() => {
-    console.log('[OCR Server] 已关闭');
-    process.exit(0);
-  });
 });

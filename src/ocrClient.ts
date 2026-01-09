@@ -1,5 +1,9 @@
 import { promises as fs } from "fs";
+
 import nodeHttps from "https";
+
+import nodeHttp from "http"; // 新增引入 http
+
 import nodeUrl from "url";
 
 export interface OCRResult {
@@ -61,15 +65,19 @@ export class OCRClient {
   private async downloadImage(imageUrl: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const url = new nodeUrl.URL(imageUrl);
+      // 动态选择 http 或 https
+      const requestLib = url.protocol === "https:" ? nodeHttps : nodeHttp;
+
       const options: any = {
         method: "GET",
         hostname: url.hostname,
+        port: url.port, // 显式传递端口
         path: url.pathname + url.search,
         agent: this.httpAgent,
         timeout: 30000, // 30秒超时
       };
 
-      const req = nodeHttps.request(options, (res) => {
+      const req = requestLib.request(options, (res) => {
         const chunks: Buffer[] = [];
 
         res.on("data", (chunk) => chunks.push(chunk));
@@ -110,9 +118,11 @@ export class OCRClient {
     const boundary = "----OCRBoundary" + Math.random().toString(16).slice(2);
     const url = new nodeUrl.URL(`${this.serverUrl}/ocr`);
 
+    // !!! 修复点：根据 OCR 服务器的协议选择正确的模块 !!!
+    const requestLib = url.protocol === "https:" ? nodeHttps : nodeHttp;
+
     const parts: (string | Buffer)[] = [];
 
-    // 添加图片字段
     parts.push(`--${boundary}\r\n`);
     parts.push(`Content-Disposition: form-data; name="image_file"; filename="image.jpg"\r\n`);
     parts.push(`Content-Type: application/octet-stream\r\n\r\n`);
@@ -124,17 +134,20 @@ export class OCRClient {
     const options: any = {
       method: "POST",
       hostname: url.hostname,
+      port: url.port, // !!! 修复点：显式传递端口，否则 http 默认80，https 默认443 !!!
       path: url.pathname,
       headers: {
         "Content-Type": `multipart/form-data; boundary=${boundary}`,
         "Content-Length": payload.length,
       },
+      // 注意：如果是本地 OCR 服务，通常不需要代理，如果配置了 httpAgent 可能会导致连接本地失败
+      // 这里保留 agent 但请确保 config 中没有对 localhost 配置代理
       agent: this.httpAgent,
       timeout: 30000, // OCR超时时间30秒，平衡性能和准确性
     };
 
     return new Promise((resolve, reject) => {
-      const req = nodeHttps.request(options, (res) => {
+      const req = requestLib.request(options, (res) => {
         let body = "";
 
         res.on("data", (chunk) => body += chunk);

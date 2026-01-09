@@ -6,7 +6,7 @@
   <title>Discord Forwarder Config</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-50 p-4 md:p-8 font-sans">
+<body class="bg-white p-4 md:p-8 font-sans">
   <!-- 登录页面 -->
   <div id="loginPage" class="max-w-md mx-auto mt-20">
     <div class="rounded-xl border border-slate-200 shadow-lg p-8">
@@ -711,11 +711,17 @@
 
     function renderMappings(acc) {
       const mappings = acc.mappings || [];
+      console.log('[DEBUG] renderMappings - mappings长度:', mappings.length);
+      console.log('[DEBUG] renderMappings - 当前页:', pagination.discordPage);
+      console.log('[DEBUG] renderMappings - 第一个mapping ID:', mappings[0]?.id);
+
       const { discordPage, pageSize } = pagination;
       const totalPages = Math.ceil(mappings.length / pageSize) || 1;
       const startIdx = (discordPage - 1) * pageSize;
       const endIdx = startIdx + pageSize;
       const currentPageMappings = mappings.slice(startIdx, endIdx);
+
+      console.log('[DEBUG] renderMappings - 当前页显示数量:', currentPageMappings.length);
 
       if (mappings.length === 0) {
         return '<div class="text-center py-8 text-slate-400 text-sm">暂无 Discord 规则，点击"添加规则"创建</div>';
@@ -810,7 +816,20 @@
     function getFeishuMappings(acc) {
       const hooks = acc.channelFeishuWebhooks || {};
       const notes = acc.channelNotes || {};
-      return Object.entries(hooks).map(([source, hook]) => ({
+
+      // 将entries转换为数组，并按照特定顺序排序
+      const entries = Object.entries(hooks);
+
+      // 排序规则：以'new_'开头的key排在前面，然后是其他key
+      entries.sort(([a], [b]) => {
+        const aIsNew = a.startsWith('new_');
+        const bIsNew = b.startsWith('new_');
+        if (aIsNew && !bIsNew) return -1;
+        if (!aIsNew && bIsNew) return 1;
+        return 0; // 保持其他相对顺序
+      });
+
+      return entries.map(([source, hook]) => ({
         sourceChannelId: source,
         feishuWebhook: hook,
         note: notes[source] || ''
@@ -1034,7 +1053,15 @@
     function addMapping() {
       const acc = getActiveAccount();
       if (!acc.mappings) acc.mappings = [];
-      acc.mappings.push({ id: genId(), sourceChannelId: '', targetWebhookUrl: '', note: '' });
+
+      const newMapping = { id: genId(), sourceChannelId: '', targetWebhookUrl: '', note: '' };
+      console.log('[DEBUG] 添加新规则到开头:', newMapping.id);
+
+      // 添加到数组开头，这样会显示在第一页第一行
+      acc.mappings.unshift(newMapping);
+      console.log('[DEBUG] 当前mappings长度:', acc.mappings.length);
+      console.log('[DEBUG] 第一个mapping ID:', acc.mappings[0]?.id);
+
       pagination.discordPage = 1;
       saveConfig();
       render();
@@ -1111,11 +1138,32 @@
 
     function removeMapping(idx) {
       const acc = getActiveAccount();
+      if (!acc.mappings || idx >= acc.mappings.length) return;
+
       const sourceId = acc.mappings[idx]?.sourceChannelId;
       acc.mappings.splice(idx, 1);
       if (sourceId && acc.channelRelayMap && acc.channelRelayMap[sourceId]) {
         delete acc.channelRelayMap[sourceId];
       }
+
+      // 删除后调整分页
+      const { discordPage, pageSize } = pagination;
+      const totalPages = Math.ceil(acc.mappings.length / pageSize) || 1;
+
+      if (discordPage > totalPages) {
+        // 如果当前页超出范围，跳转到最后一页
+        pagination.discordPage = totalPages;
+      }
+
+      // 如果当前页没有内容了，跳转到第一页
+      const currentPageStart = (pagination.discordPage - 1) * pageSize;
+      const currentPageEnd = currentPageStart + pageSize;
+      const currentPageItems = acc.mappings.slice(currentPageStart, currentPageEnd);
+
+      if (currentPageItems.length === 0 && pagination.discordPage > 1) {
+        pagination.discordPage = 1;
+      }
+
       saveConfig();
       render();
     }
@@ -1145,7 +1193,9 @@
     function addFeishuMapping() {
       const acc = getActiveAccount();
       if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-      acc.channelFeishuWebhooks[''] = '';
+      // 使用时间戳作为key，确保新规则排在前面
+      const newKey = 'new_' + Date.now();
+      acc.channelFeishuWebhooks[newKey] = '';
       pagination.feishuPage = 1;
       saveConfig();
       render();
@@ -1206,11 +1256,32 @@
       const entries = Object.entries(acc.channelFeishuWebhooks || {});
       const hit = entries[idx];
       if (!hit) return;
+
       const [source] = hit;
       delete acc.channelFeishuWebhooks[source];
       if (acc.channelNotes && acc.channelNotes[source] !== undefined) {
         delete acc.channelNotes[source];
       }
+
+      // 删除后调整分页
+      const updatedEntries = Object.entries(acc.channelFeishuWebhooks || {});
+      const { feishuPage, pageSize } = pagination;
+      const totalPages = Math.ceil(updatedEntries.length / pageSize) || 1;
+
+      if (feishuPage > totalPages) {
+        // 如果当前页超出范围，跳转到最后一页
+        pagination.feishuPage = totalPages;
+      }
+
+      // 如果当前页没有内容了，跳转到第一页
+      const currentPageStart = (pagination.feishuPage - 1) * pageSize;
+      const currentPageEnd = currentPageStart + pageSize;
+      const currentPageItems = updatedEntries.slice(currentPageStart, currentPageEnd);
+
+      if (currentPageItems.length === 0 && pagination.feishuPage > 1) {
+        pagination.feishuPage = 1;
+      }
+
       saveConfig();
       render();
     }
@@ -1301,7 +1372,8 @@
 
     function removeBotRelay(idx) {
       const acc = getActiveAccount();
-      if (!acc.botRelays) return;
+      if (!acc.botRelays || idx >= acc.botRelays.length) return;
+
       const removed = acc.botRelays[idx];
       acc.botRelays.splice(idx, 1);
       // 清理映射中使用该机器人的绑定
@@ -1312,6 +1384,14 @@
           }
         });
       }
+
+      // 删除后调整分页，确保不会超出页面范围
+      const { botRelayPage, pageSize } = pagination;
+      const totalPages = Math.ceil(acc.botRelays.length / pageSize) || 1;
+      if (botRelayPage > totalPages) {
+        pagination.botRelayPage = totalPages;
+      }
+
       saveConfig();
       render();
     }
