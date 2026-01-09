@@ -9,7 +9,7 @@
 <body class="bg-slate-50 p-4 md:p-8 font-sans">
   <!-- 登录页面 -->
   <div id="loginPage" class="max-w-md mx-auto mt-20">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-8">
+    <div class="rounded-xl border border-slate-200 shadow-lg p-8">
       <h1 class="text-2xl font-bold text-slate-900 text-center mb-2">Discord Forwarder Config</h1>
       <p class="text-slate-500 text-center text-sm mb-6">可视化配置生成器 · 轻松管理转发规则</p>
       <div class="space-y-4">
@@ -101,7 +101,7 @@
 
   <!-- 修改密码弹窗 -->
   <div id="changePasswordModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeChangePasswordModal()">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-md mx-4" onclick="event.stopPropagation()">
+    <div class="rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-md mx-4" onclick="event.stopPropagation()">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold text-slate-900">修改账密</h2>
         <button onclick="closeChangePasswordModal()" class="text-slate-400 hover:text-slate-600">
@@ -162,6 +162,7 @@
     let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "" };
     let saveTimer = null;
     let isLoggedIn = false;
+    let pagination = { discordPage: 1, feishuPage: 1, botRelayPage: 1, pageSize: 10 };
 
     // 检查登录状态
     function checkLoginStatus() {
@@ -450,7 +451,7 @@
       return `
         <!-- 基础设置 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+          <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">基础设置</h2>
             <p class="mt-1 text-xs text-slate-500 space-y-1">
               <span class="block">1）先在下方“Discord 转发规则”中配置来源频道和目标 Discord Webhook。</span>
@@ -540,14 +541,13 @@
                       placeholder="百度/有道智云翻译需要填写 Secret Key" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
                   </div>
                 ` : ''}
-              ` : ''}
+               ` : ''}
+              </div>
             </div>
-          </div>
-        </div>
 
-        <!-- 忽略选项 -->
+          <!-- 忽略选项 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+          <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">忽略选项</h2>
             <p class="text-xs text-slate-500 mt-1">选择您想要忽略的项目</p>
           </div>
@@ -583,14 +583,14 @@
 
         <!-- 转发规则 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+          <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">转发规则</h2>
           </div>
           <div class="p-6 space-y-6" id="mappingsList">
             <div class="flex flex-wrap items-center gap-2 mb-2">
               <span class="text-xs text-slate-500">Discord 转发样式：</span>
               <select onchange="updateField('feishuStyle', this.value)" 
-                class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none bg-white">
+                class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
                 <option value="style1" ${acc.feishuStyle === 'style2' ? '' : 'selected'}>样式1：内嵌</option>
                 <option value="style2" ${acc.feishuStyle === 'style2' ? 'selected' : ''}>样式2：文本+时间</option>
               </select>
@@ -617,8 +617,8 @@
               </div>
               <div id="feishuHelp" class="hidden text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
                 <p>1）在飞书开发者后台创建企业自建应用，开通 <code class="px-1 bg-slate-100 rounded">im:resource:upload</code> 和 <code class="px-1 bg-slate-100 rounded">im:message:send_as_bot</code> 权限，并发布版本。</p>
-                <p>2）将该应用的机器人拉入目标群，在桌面端开启调试模式后，右键群聊-&gt;复制 ID-&gt;复制 Chat ID（以 <code class="px-1 bg-slate-100 rounded">oc_</code> 开头）。</p>
-                <p>3）在下方“飞书 Chat ID（oc_开头）”中为对应来源频道填写 Chat ID。</p>
+                <p>2）创建自定义机器人，获取 Webhook 地址。</p>
+                <p>3）在下方填写 Webhook 地址。</p>
                 <p>4）在此处填写飞书应用的 AppID 与 Secret（或在项目 <code class="px-1 bg-slate-100 rounded">.env</code> 中配置 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_ID</code> / <code class="px-1 bg-slate-100 rounded">FEISHU_APP_SECRET</code>）。</p>
               </div>
               ${acc.enableFeishuForward ? `
@@ -643,7 +643,7 @@
 
         <!-- 关键词过滤 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+          <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">关键词触发（至少命中一个才转发）</h2>
           </div>
           <div class="p-6">
@@ -661,7 +661,7 @@
 
         <!-- 排除关键词 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+          <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">屏蔽关键词（命中则不转发）</h2>
           </div>
           <div class="p-6">
@@ -674,12 +674,26 @@
               <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') addKeyword('excludeKeywords', this.value); this.value='';" 
                 class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
             </div>
+            <div class="border-t pt-4">
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-slate-700 mb-3">OCR 屏蔽关键词（检测到这些词的图片不会转发）</label>
+                <div class="flex flex-wrap gap-2 mb-3">
+                  ${(acc.ocrBlockedKeywords || []).map(k => `
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-sm border border-amber-100">
+                      ${k} <button onclick="removeOCRKeyword('ocrBlockedKeywords', '${k}')" class="hover:text-amber-900">✕</button>
+                    </span>
+                  `).join('')}
+                  <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') addOCRKeyword('ocrBlockedKeywords', this.value); this.value='';"
+                    class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         <!-- 替换规则 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+          <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">关键词替换</h2>
           </div>
           <div class="p-6 space-y-2" id="replacementsList">
@@ -697,56 +711,100 @@
 
     function renderMappings(acc) {
       const mappings = acc.mappings || [];
+      const { discordPage, pageSize } = pagination;
+      const totalPages = Math.ceil(mappings.length / pageSize) || 1;
+      const startIdx = (discordPage - 1) * pageSize;
+      const endIdx = startIdx + pageSize;
+      const currentPageMappings = mappings.slice(startIdx, endIdx);
+
       if (mappings.length === 0) {
-        return '<div class="text-center py-8 text-slate-400 text-sm">暂无 Discord 规则，点击“添加规则”创建</div>';
+        return '<div class="text-center py-8 text-slate-400 text-sm">暂无 Discord 规则，点击"添加规则"创建</div>';
       }
-      return mappings.map((m, idx) => `
+
+      const mappingsHtml = currentPageMappings.map((m, idx) => `
         <div class="flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
           <div class="flex gap-3 items-center flex-wrap">
-            <input type="text" value="${m.sourceChannelId || ''}" onchange="updateMapping(${idx}, 'sourceChannelId', this.value)" 
+            <input type="text" value="${m.sourceChannelId || ''}" onchange="updateMapping(${idx + startIdx}, 'sourceChannelId', this.value)"
               placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             <span class="text-slate-300">→</span>
-            <input type="text" value="${m.targetWebhookUrl || ''}" onchange="updateMapping(${idx}, 'targetWebhookUrl', this.value)" 
+            <input type="text" value="${m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, 'targetWebhookUrl', this.value)"
               placeholder="Discord Webhook URL" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
-            <select onchange="updateMappingRelay(${idx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
+            <select onchange="updateMappingRelay(${idx + startIdx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="">Webhook 默认</option>
               ${(acc.botRelays || []).map(r => `<option value="${r.id}" ${acc.channelRelayMap?.[m.sourceChannelId || ''] === r.id ? 'selected' : ''}>🤖 ${r.name || '中转机器人'}</option>`).join('')}
             </select>
-            <input type="text" value="${m.note || ''}" onchange="updateMapping(${idx}, 'note', this.value)" 
+            <input type="text" value="${m.note || ''}" onchange="updateMapping(${idx + startIdx}, 'note', this.value)"
               placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
-            <select onchange="updateMapping(${idx}, 'translateDirection', this.value)" 
-              ${!acc.enableTranslation ? 'disabled' : ''} 
+            <select onchange="updateMapping(${idx + startIdx}, 'translateDirection', this.value)"
+              ${!acc.enableTranslation ? 'disabled' : ''}
               class="px-2 py-1 rounded border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none ${!acc.enableTranslation ? 'opacity-50 cursor-not-allowed' : ''}">
               <option value="off" ${(!acc.enableTranslation || m.translateDirection === 'off' || (!m.translateDirection && !acc.enableTranslation)) ? 'selected' : ''}>关闭翻译</option>
               <option value="auto" ${(acc.enableTranslation && (m.translateDirection === 'auto' || (!m.translateDirection && acc.enableTranslation))) ? 'selected' : ''}>自动检测</option>
               <option value="zh-en" ${m.translateDirection === 'zh-en' ? 'selected' : ''}>中 → 英</option>
               <option value="en-zh" ${m.translateDirection === 'en-zh' ? 'selected' : ''}>英 → 中</option>
             </select>
-            <button onclick="removeMapping(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
+            <button onclick="removeMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
           </div>
         </div>
       `).join('');
+
+      const paginationHtml = totalPages > 1 ? `
+        <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-200">
+          <span class="text-xs text-slate-500">共 ${mappings.length} 条规则</span>
+          <div class="flex gap-2">
+            <button onclick="goToDiscordPage(1)" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${discordPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}">首页</button>
+            <button onclick="goToDiscordPage(${discordPage - 1})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${discordPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}">上一页</button>
+            <span class="px-3 py-1 text-xs text-slate-700 bg-slate-100 rounded">${discordPage} / ${totalPages}</span>
+            <button onclick="goToDiscordPage(${discordPage + 1})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${discordPage >= totalPages ? 'opacity-50 cursor-not-allowed' : ''}">下一页</button>
+            <button onclick="goToDiscordPage(${totalPages})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${discordPage >= totalPages ? 'opacity-50 cursor-not-allowed' : ''}">尾页</button>
+          </div>
+        </div>
+      ` : '';
+
+      return mappingsHtml + paginationHtml;
     }
 
     function renderFeishuMappings(acc) {
       const entries = getFeishuMappings(acc);
+      const { feishuPage, pageSize } = pagination;
+      const totalPages = Math.ceil(entries.length / pageSize) || 1;
+      const startIdx = (feishuPage - 1) * pageSize;
+      const endIdx = startIdx + pageSize;
+      const currentPageEntries = entries.slice(startIdx, endIdx);
+
       if (entries.length === 0) {
-        return '<div class="text-center py-8 text-slate-400 text-sm">暂无飞书规则，点击“添加规则”创建</div>';
+        return '<div class="text-center py-8 text-slate-400 text-sm">暂无飞书规则，点击"添加规则"创建</div>';
       }
-      return entries.map((m, idx) => `
+
+      const entriesHtml = currentPageEntries.map((m, idx) => `
         <div class="flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
           <div class="flex gap-3 items-center">
-            <input type="text" value="${m.sourceChannelId || ''}" onchange="updateFeishuSource(${idx}, this.value)" 
+            <input type="text" value="${m.sourceChannelId || ''}" onchange="updateFeishuSource(${idx + startIdx}, this.value)"
               placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             <span class="text-slate-300">→</span>
-            <input type="text" value="${m.feishuWebhook || ''}" onchange="updateFeishuWebhookEntry(${idx}, this.value)" 
-              placeholder="飞书 Chat ID（oc_开头）" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
-            <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx}, this.value)" 
+            <input type="text" value="${m.feishuWebhook || ''}" onchange="updateFeishuWebhookEntry(${idx + startIdx}, this.value)"
+              placeholder="飞书 Webhook 地址" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+            <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx + startIdx}, this.value)"
               placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
-            <button onclick="removeFeishuMapping(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
+            <button onclick="removeFeishuMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
           </div>
         </div>
       `).join('');
+
+      const paginationHtml = totalPages > 1 ? `
+        <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-200">
+          <span class="text-xs text-slate-500">共 ${entries.length} 条规则</span>
+          <div class="flex gap-2">
+            <button onclick="goToFeishuPage(1)" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${feishuPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}">首页</button>
+            <button onclick="goToFeishuPage(${feishuPage - 1})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${feishuPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}">上一页</button>
+            <span class="px-3 py-1 text-xs text-slate-700 bg-slate-100 rounded">${feishuPage} / ${totalPages}</span>
+            <button onclick="goToFeishuPage(${feishuPage + 1})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${feishuPage >= totalPages ? 'opacity-50 cursor-not-allowed' : ''}">下一页</button>
+            <button onclick="goToFeishuPage(${totalPages})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${feishuPage >= totalPages ? 'opacity-50 cursor-not-allowed' : ''}">尾页</button>
+          </div>
+        </div>
+      ` : '';
+
+      return entriesHtml + paginationHtml;
     }
 
     function getFeishuMappings(acc) {
@@ -833,6 +891,25 @@
 
     function renderBotRelaySection(acc) {
       const relays = acc.botRelays || [];
+      const { botRelayPage, pageSize } = pagination;
+      const totalPages = Math.ceil(relays.length / pageSize) || 1;
+      const startIdx = (botRelayPage - 1) * pageSize;
+      const endIdx = startIdx + pageSize;
+      const currentPageRelays = relays.slice(startIdx, endIdx);
+
+      const paginationHtml = totalPages > 1 ? `
+        <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-200">
+          <span class="text-xs text-slate-500">共 ${relays.length} 个中转机器人</span>
+          <div class="flex gap-2">
+            <button onclick="goToBotRelayPage(1)" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${botRelayPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}">首页</button>
+            <button onclick="goToBotRelayPage(${botRelayPage - 1})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${botRelayPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}">上一页</button>
+            <span class="px-3 py-1 text-xs text-slate-700 bg-slate-100 rounded">${botRelayPage} / ${totalPages}</span>
+            <button onclick="goToBotRelayPage(${botRelayPage + 1})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${botRelayPage >= totalPages ? 'opacity-50 cursor-not-allowed' : ''}">下一页</button>
+            <button onclick="goToBotRelayPage(${totalPages})" class="px-3 py-1 rounded border border-slate-200 text-xs hover:bg-slate-100 ${botRelayPage >= totalPages ? 'opacity-50 cursor-not-allowed' : ''}">尾页</button>
+          </div>
+        </div>
+      ` : '';
+
       return `
         <div class="mb-4 rounded-lg border border-slate-200 bg-slate-50/60 p-3 space-y-3">
           <div class="flex items-center justify-between">
@@ -843,17 +920,17 @@
               <button onclick="addBotRelay()" class="text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md hover:bg-indigo-100">+ 添加中转机器人</button>
             </div>
           </div>
-          ${relays.length === 0 ? `<div class="text-sm text-slate-400">暂无中转机器人，请点击“添加”创建。</div>` : relays.map((r, idx) => `
-            <div class="grid gap-3 md:grid-cols-[1fr,1fr,auto] items-center bg-white/80 border border-slate-200 rounded-lg p-3">
+          ${relays.length === 0 ? `<div class="text-sm text-slate-400">暂无中转机器人，请点击"添加"创建。</div>` : currentPageRelays.map((r, idx) => `
+            <div class="grid gap-3 md:grid-cols-[1fr,1fr,auto] items-center border border-slate-200 rounded-lg p-3">
               <div>
                 <label class="block text-xs font-medium text-slate-600 mb-1">名称</label>
-                <input type="text" value="${r.name || ''}" onchange="updateBotRelay(${idx}, 'name', this.value)"
+                <input type="text" value="${r.name || ''}" onchange="updateBotRelay(${idx + startIdx}, 'name', this.value)"
                   class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" placeholder="例如：Relay-1">
               </div>
               <div>
                 <label class="block text-xs font-medium text-slate-600 mb-1">机器人 Token</label>
-                <input type="password" value="${r.token || ''}" onchange="updateBotRelay(${idx}, 'token', this.value)"
-                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none" placeholder="机器人 Token">
+                <input type="password" value="${r.token || ''}" onchange="updateBotRelay(${idx + startIdx}, 'token', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 font-mono focus:border-indigo-500 focus:outline-none" placeholder="机器人 Token">
               </div>
               <div class="flex flex-col items-end justify-center gap-2 pt-5 md:pt-0">
                 <div class="text-xs">
@@ -863,11 +940,12 @@
                 <div class="flex items-center gap-2">
                   <button onclick="requestRelayLogin('${r.id}')" ${r.loginState === 'pending' || r.loginState === 'online' ? 'disabled' : ''} class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${r.loginState === 'pending' || r.loginState === 'online' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'} text-slate-600">登录</button>
                   <button onclick="requestRelayStop('${r.id}')" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">停止</button>
-                  <button onclick="removeBotRelay(${idx})" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">删除</button>
+                  <button onclick="removeBotRelay(${idx + startIdx})" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">删除</button>
                 </div>
               </div>
             </div>
           `).join('')}
+          ${paginationHtml}
         </div>
       `;
     }
@@ -931,11 +1009,13 @@
         feishuAppSecret: '',
         ignoreSelf: false,
         ignoreBot: false,
-        ignoreImages: false,
-        ignoreAudio: false,
-        ignoreVideo: false,
-        ignoreDocuments: false
-      };
+         ignoreImages: false,
+         ignoreAudio: false,
+         ignoreVideo: false,
+         ignoreDocuments: false,
+         ocrServerUrl: 'http://localhost:9003',
+         ocrBlockedKeywords: []
+       };
       state.accounts.push(newAcc);
       state.activeId = newAcc.id;
       saveConfig();
@@ -955,7 +1035,16 @@
       const acc = getActiveAccount();
       if (!acc.mappings) acc.mappings = [];
       acc.mappings.push({ id: genId(), sourceChannelId: '', targetWebhookUrl: '', note: '' });
+      pagination.discordPage = 1;
       saveConfig();
+      render();
+    }
+
+    function goToDiscordPage(page) {
+      const acc = getActiveAccount();
+      const totalPages = Math.ceil((acc.mappings?.length || 0) / pagination.pageSize) || 1;
+      if (page < 1 || page > totalPages) return;
+      pagination.discordPage = page;
       render();
     }
 
@@ -1044,10 +1133,20 @@
       saveConfig();
     }
 
+    function goToFeishuPage(page) {
+      const acc = getActiveAccount();
+      const entries = getFeishuMappings(acc);
+      const totalPages = Math.ceil(entries.length / pagination.pageSize) || 1;
+      if (page < 1 || page > totalPages) return;
+      pagination.feishuPage = page;
+      render();
+    }
+
     function addFeishuMapping() {
       const acc = getActiveAccount();
       if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
       acc.channelFeishuWebhooks[''] = '';
+      pagination.feishuPage = 1;
       saveConfig();
       render();
     }
@@ -1134,6 +1233,24 @@
       render();
     }
 
+    function addOCRKeyword(field, value) {
+      if (!value.trim()) return;
+      const acc = getActiveAccount();
+      if (!acc[field]) acc[field] = [];
+      if (!acc[field].includes(value.trim())) {
+        acc[field].push(value.trim());
+        saveConfig();
+        render();
+      }
+    }
+
+    function removeOCRKeyword(field, keyword) {
+      const acc = getActiveAccount();
+      acc[field] = acc[field].filter(k => k !== keyword);
+      saveConfig();
+      render();
+    }
+
     function addReplacement() {
       const acc = getActiveAccount();
       if (!acc.replacements) acc.replacements = [];
@@ -1157,10 +1274,20 @@
       render();
     }
 
+    function goToBotRelayPage(page) {
+      const acc = getActiveAccount();
+      const relays = acc.botRelays || [];
+      const totalPages = Math.ceil(relays.length / pagination.pageSize) || 1;
+      if (page < 1 || page > totalPages) return;
+      pagination.botRelayPage = page;
+      render();
+    }
+
     function addBotRelay() {
       const acc = getActiveAccount();
       if (!acc.botRelays) acc.botRelays = [];
       acc.botRelays.push({ id: genId(), name: `中转机器人${acc.botRelays.length + 1}`, token: '', loginState: 'idle', loginMessage: '' });
+      pagination.botRelayPage = 1;
       saveConfig();
       render();
     }

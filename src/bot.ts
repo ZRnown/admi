@@ -12,6 +12,7 @@ import { Config } from "./config.js";
 import { formatSize } from "./format.js";
 import { SenderBot } from "./senderBot.js";
 import { FeishuSender } from "./feishuSender.js";
+import { OCRClient } from "./ocrClient.js";
 import { FileLogger } from "./logger.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -70,6 +71,8 @@ export class Bot {
   private isMappingDirty = false;
   // 记录process监听器，便于清理
   private processExitHandlers: Array<() => void> = [];
+  // OCR客户端
+  private ocrClient?: OCRClient;
   
   // 预编译正则
   private readonly RE_TWITTER = /^<?https?:\/\/(?:x\.com|twitter\.com)\/\S+>?$/i;
@@ -87,6 +90,20 @@ export class Bot {
     this.client = client;
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
+
+    // 初始化OCR客户端 - 自动根据屏蔽词启用/禁用
+    const hasOCRKeywords = (config.ocrBlockedKeywords?.length || 0) > 0;
+    if (hasOCRKeywords && config.ocrServerUrl) {
+      this.ocrClient = new OCRClient(config.ocrServerUrl, undefined); // 不使用代理，直接连接
+      console.log(`[Bot] ✅ OCR已自动启用（检测到${config.ocrBlockedKeywords?.length || 0}个屏蔽词），服务器URL: ${config.ocrServerUrl}`);
+    } else {
+      this.ocrClient = undefined;
+      if (!hasOCRKeywords) {
+        console.log(`[Bot] ⏸️  OCR已自动禁用（未配置屏蔽词）`);
+      } else {
+        console.log(`[Bot] ⏸️  OCR已自动禁用（未配置OCR服务器URL）`);
+      }
+    }
 
     // 移除所有旧的事件监听器，避免重复注册
     (this.client as any).removeAllListeners("ready");
@@ -169,7 +186,28 @@ export class Bot {
     this.senderBot = defaultSender;
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
-    this.logger.info("runtime config updated: channelWebhooks / blockedKeywords 已刷新");
+
+    // 更新OCR配置 - 自动根据屏蔽词启用/禁用
+    const hasOCRKeywords = (config.ocrBlockedKeywords?.length || 0) > 0;
+    const previousHasOCR = this.ocrClient !== undefined;
+
+    if (hasOCRKeywords && config.ocrServerUrl) {
+      if (!previousHasOCR) {
+        this.ocrClient = new OCRClient(config.ocrServerUrl, undefined); // 不使用代理，直接连接
+        console.log(`[Bot] ✅ OCR已自动启用（新增${config.ocrBlockedKeywords?.length || 0}个屏蔽词）`);
+      }
+    } else {
+      if (previousHasOCR) {
+        this.ocrClient = undefined;
+        if (!hasOCRKeywords) {
+          console.log(`[Bot] ⏸️  OCR已自动禁用（屏蔽词已清空）`);
+        } else {
+          console.log(`[Bot] ⏸️  OCR已自动禁用（未配置OCR服务器URL）`);
+        }
+      }
+    }
+
+    this.logger.info("runtime config updated: channelWebhooks / blockedKeywords / OCR 已刷新");
   }
 
   private getSenderForChannel(channelId: string): SenderBot | undefined {
@@ -363,6 +401,74 @@ export class Bot {
       }
     } catch (e: any) {
       this.logger.error(`${logPrefix} [ERROR] Ignore filter check failed: ${String(e?.message || e)}`);
+    }
+
+    // OCR 图片检测过滤
+    try {
+      if (this.ocrClient && message.attachments && message.attachments.size > 0) {
+        console.log(`[OCR] 消息包含 ${message.attachments.size} 个附件，开始检测图片...`);
+        this.logger.info(`${logPrefix} [OCR] 开始检测图片中的文字...`);
+
+        let totalImages = 0;
+        let checkedImages = 0;
+
+        for (const attachment of message.attachments.values()) {
+          const contentType = attachment.contentType || "";
+          const url = attachment.url;
+
+          // 只处理图片
+          const isImage = contentType.startsWith("image/") ||
+            /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url);
+
+          if (isImage) {
+            totalImages++;
+            console.log(`[OCR] 检测到图片 ${attachment.name || attachment.url} (类型: ${contentType || 'unknown'})`);
+
+            try {
+              console.log(`[OCR] 开始OCR识别...`);
+              const ocrResult = await this.ocrClient.recognizeImage(url);
+              const { shouldBlock, matchedKeywords } = this.ocrClient.checkOCRKeywords(
+                ocrResult,
+                this.config.ocrBlockedKeywords || []
+              );
+
+              checkedImages++;
+
+              if (shouldBlock) {
+                const errorMsg = `${logPrefix} [OCR] 检测到敏感文字 "${matchedKeywords.join('", "')}"，跳过转发`;
+                console.log(`[OCR] ${errorMsg}`);
+                this.logger.info(errorMsg);
+                return;
+              } else {
+                console.log(`[OCR] 图片检测通过，未检测到敏感词`);
+              }
+            } catch (ocrError: any) {
+              const errorMsg = `${logPrefix} [OCR] 识别失败: ${ocrError.message}，继续处理其他附件`;
+              console.error(`[OCR] ${errorMsg}`);
+              console.error(`[OCR] 错误详情:`, ocrError);
+              console.error(`[OCR] 错误堆栈: ${ocrError.stack}`);
+              this.logger.error(errorMsg);
+            }
+          } else {
+            console.log(`[OCR] 跳过非图片附件: ${attachment.name || attachment.url}`);
+          }
+        }
+
+        const finalMsg = `${logPrefix} [OCR] 图片检测完成，总图片数=${totalImages}，已检测=${checkedImages}，允许转发`;
+        console.log(`[OCR] ${finalMsg}`);
+        this.logger.info(finalMsg);
+      } else {
+        if (!this.ocrClient) {
+          console.log(`[OCR] OCR客户端未初始化，跳过检测`);
+        } else if (!message.attachments || message.attachments.size === 0) {
+          console.log(`[OCR] 消息无附件，跳过检测`);
+        }
+      }
+    } catch (e: any) {
+      const errorMsg = `${logPrefix} [ERROR] OCR filter check failed: ${String(e?.message || e)}`;
+      console.error(`[OCR] ${errorMsg}`);
+      console.error(`[OCR] 错误堆栈: ${e?.stack || 'N/A'}`);
+      this.logger.error(errorMsg);
     }
     
     // 特别记录webhook消息的embeds信息（webhook消息通常只有embeds没有content）
@@ -600,7 +706,7 @@ export class Bot {
       if (!hasText && message.embeds && message.embeds.length > 0) {
         useEmbed = true;
       }
-
+      
       if (isReplyMessage && replyUserNameForStyle2) {
         // 回复消息：生成一个蓝色嵌入块，包含粗体"💬 回复 用户名"、被回复内容和底部小时间
         const now = new Date(message.createdTimestamp || Date.now());
@@ -608,7 +714,7 @@ export class Bot {
         const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(
           now.getHours(),
         )}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-
+        
         style2ReplyEmbed = {
           color: 0x0000FF, // 蓝色
           description: `**💬 回复 ${replyUserNameForStyle2}**\n${replyContentForStyle2 || ""}`,

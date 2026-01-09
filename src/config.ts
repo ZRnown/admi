@@ -81,6 +81,10 @@ export interface LegacyConfig {
   ignoreDocuments?: boolean;
   // Discord -> Discord 转发样式：style1 = 当前内嵌样式；style2 = 纯文本样式（带时间等）
   feishuStyle?: "style1" | "style2";
+  // OCR 图片检测服务器URL
+  ocrServerUrl?: string;
+  // OCR 屏蔽关键词（检测到这些词的图片不会转发）
+  ocrBlockedKeywords?: string[];
   // 每个来源频道是否启用翻译（true = 开启翻译；未设置则回退到全局 enableTranslation）
   channelTranslate?: Record<string, boolean>;
   // 每个来源频道的翻译方向配置 (off = 关闭翻译, auto = 自动检测, zh-en = 中译英, en-zh = 英译中)
@@ -102,11 +106,15 @@ export interface AccountConfig extends LegacyConfig {
    */
   loginRequested?: boolean;
   /**
-   * 点击“登录”按钮时递增，用于触发对应账号的重启/重登
+   * 点击"登录"按钮时递增，用于触发对应账号的重启/重登
    */
   loginNonce?: number;
   loginState?: string;
   loginMessage?: string;
+  // OCR配置
+  enableOCR?: boolean;
+  ocrServerUrl?: string;
+  ocrBlockedKeywords?: string[];
 }
 
 export interface MultiConfig {
@@ -156,6 +164,8 @@ function createDefaultAccount(): AccountConfig {
     channelFeishuWebhooks: {},
     feishuAppId: undefined,
     feishuAppSecret: undefined,
+  ocrServerUrl: "http://localhost:9003",
+  ocrBlockedKeywords: [],
     botRelays: [],
     channelRelayMap: {},
     feishuStyle: "style1",
@@ -296,6 +306,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     ignoreAudio: input?.ignoreAudio === true,
     ignoreVideo: input?.ignoreVideo === true,
     ignoreDocuments: input?.ignoreDocuments === true,
+    ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
+    ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
     feishuStyle,
     channelTranslate,
     channelTranslateDirection,
@@ -422,6 +434,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreAudio: account.ignoreAudio,
     ignoreVideo: account.ignoreVideo,
     ignoreDocuments: account.ignoreDocuments,
+    ocrServerUrl: account.ocrServerUrl,
+    ocrBlockedKeywords: account.ocrBlockedKeywords,
     feishuStyle: account.feishuStyle,
     channelTranslate: (account as any).channelTranslate || {},
     channelTranslateDirection: (account as any).channelTranslateDirection || {},

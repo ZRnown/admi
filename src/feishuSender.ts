@@ -12,8 +12,8 @@ export interface FeishuSendPayload {
 }
 
 export class FeishuSender {
-  // 这里存储 chat_id (oc_xxx...)，前端 / 配置里填写的就是 Chat ID
-  chatId: string;
+  // 这里存储 chat_id (oc_xxx...) 或 webhook URL，前端 / 配置里填写的可以是 Chat ID 或 Webhook URL
+  target: string;
   httpAgent?: any;
   private appId?: string;
   private appSecret?: string;
@@ -23,12 +23,12 @@ export class FeishuSender {
   private static tokenExpire: number = 0;
 
   constructor(
-    chatId: string,
+    target: string,
     httpAgent?: any,
     appId?: string,
     appSecret?: string,
   ) {
-    this.chatId = chatId;
+    this.target = target;
     this.httpAgent = httpAgent;
     this.appId = appId || process.env.FEISHU_APP_ID || "";
     this.appSecret = appSecret || process.env.FEISHU_APP_SECRET || "";
@@ -142,6 +142,17 @@ export class FeishuSender {
 
   // 3. 发送消息主逻辑
   async send(data: FeishuSendPayload) {
+    // 检查是 webhook 还是 API 方式
+    const isWebhook = this.target.startsWith('http');
+
+    if (isWebhook) {
+      return this.sendViaWebhook(data);
+    } else {
+      return this.sendViaAPI(data);
+    }
+  }
+
+  private async sendViaAPI(data: FeishuSendPayload) {
     const token = await this.getToken();
 
     // 如果有图片，先上传所有图片获取 image_key
@@ -202,7 +213,7 @@ export class FeishuSender {
 
     const url = new URL("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id");
     const payload = JSON.stringify({
-      receive_id: this.chatId,
+      receive_id: this.target,
       msg_type: "post",
       content: JSON.stringify({
         zh_cn: {
@@ -213,6 +224,49 @@ export class FeishuSender {
     });
 
     await this.request(url, payload, "POST", token);
+  }
+
+  private async sendViaWebhook(data: FeishuSendPayload) {
+    // Webhook 方式发送，更简单
+    const elements: any[] = [];
+
+    const headerText = data.username ? `👤 ${data.username}:\n` : "";
+    const bodyText = data.content || "";
+
+    if (headerText || bodyText) {
+      elements.push({ tag: "text", text: headerText + bodyText + "\n" });
+    }
+
+    // 添加 embeds 描述
+    if (data.embeds) {
+      for (const e of data.embeds) {
+        if (e?.description) {
+          elements.push({ tag: "text", text: `\n> ${e.description}` });
+        }
+      }
+    }
+
+    // Webhook 方式不支持图片上传，只能发送文本
+    if (data.attachments && data.attachments.length > 0) {
+      elements.push({ tag: "text", text: `\n[包含 ${data.attachments.length} 个附件]` });
+    }
+
+    if (elements.length === 0) return;
+
+    const url = new URL(this.target);
+    const payload = JSON.stringify({
+      msg_type: "post",
+      content: {
+        post: {
+          zh_cn: {
+            title: "Discord 转发消息",
+            content: [elements],
+          },
+        },
+      },
+    });
+
+    await this.request(url, payload, "POST");
   }
 
   // 4. 列出当前机器人所在的群组，帮助查看 Chat ID

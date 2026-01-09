@@ -56,6 +56,9 @@ interface FrontendAccount {
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
   ignoreDocuments?: boolean;
+  // OCR 图片检测相关
+  ocrServerUrl?: string;
+  ocrBlockedKeywords?: string[];
   // Discord -> Discord 转发样式：style1 = 内嵌（默认），style2 = 纯文本 + 时间
   feishuStyle?: "style1" | "style2";
 }
@@ -125,6 +128,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     ignoreAudio: account.ignoreAudio === true,
     ignoreVideo: account.ignoreVideo === true,
     ignoreDocuments: account.ignoreDocuments === true,
+    ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
+    ocrBlockedKeywords: account.ocrBlockedKeywords || [],
     feishuStyle: account.feishuStyle || "style1",
   };
 }
@@ -182,7 +187,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         }
         if (mapping.translateDirection) {
           // 明确设置翻译方向，包括"off"
-          channelTranslateDirection[key] = mapping.translateDirection as any;
+            channelTranslateDirection[key] = mapping.translateDirection as any;
           if (mapping.translateDirection !== "off") {
             // 开启翻译时，设置启用状态
             channelTranslate[key] = true;
@@ -281,6 +286,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     ignoreAudio: dto.ignoreAudio === true,
     ignoreVideo: dto.ignoreVideo === true,
     ignoreDocuments: dto.ignoreDocuments === true,
+    ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
+    ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
     feishuStyle: dto.feishuStyle === "style2" ? "style2" : (base.feishuStyle || "style1"),
   };
 }
