@@ -7,11 +7,7 @@ set -e
 
 echo "🔧 开始修复 OCR 服务器..."
 
-# 检查是否为 root 用户
-if [[ $EUID -eq 0 ]]; then
-   echo "❌ 请不要使用 root 用户运行此脚本"
-   exit 1
-fi
+
 
 # 更新包列表
 echo "📦 更新包列表..."
@@ -20,7 +16,7 @@ sudo apt update
 # 方案1: 安装轻量级 OCR (推荐)
 echo "🚀 安装轻量级 OCR 依赖..."
 sudo apt install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
-pip3 install --user pillow pytesseract numpy
+pip3 install --user pillow pytesseract numpy --break-system-packages
 
 # 验证安装
 echo "✅ 验证 Tesseract 安装..."
