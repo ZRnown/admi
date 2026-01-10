@@ -24,7 +24,15 @@ python3 -c "import pytesseract; print('Tesseract版本:', pytesseract.get_tesser
 
 # 方案2: 安装图形库 (可选，如果想使用 RapidOCR)
 echo "🎨 安装图形库依赖 (用于 RapidOCR)..."
-sudo apt install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1
+# 尝试多种可能的包名，适应不同Ubuntu版本
+sudo apt install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 2>/dev/null || \
+sudo apt install -y libgl1-mesa-dev libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 2>/dev/null || \
+sudo apt install -y mesa-utils libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 2>/dev/null || {
+    echo "⚠️  图形库安装失败，但可以尝试使用 xvfb 创建虚拟显示"
+    sudo apt install -y xvfb libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 -y
+    echo "export DISPLAY=:99" >> ~/.bashrc
+    echo "Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &" >> ~/.bashrc
+}
 
 # 安装 RapidOCR (可选)
 echo "📚 安装 RapidOCR (可选)..."

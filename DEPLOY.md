@@ -125,7 +125,21 @@ NODE_ENV=production
 
 ## 🔍 OCR 功能配置 (可选)
 
-### 方案1: 轻量级 OCR (推荐)
+### 🚀 快速修复方案 (强烈推荐)
+```bash
+# 一键修复脚本 (推荐)
+./quick_fix_ocr.sh
+
+# 或者手动执行:
+sudo apt install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng -y
+pip3 install pillow pytesseract numpy
+pm2 start simple_ocr_server.js --name "ocr-server"
+pm2 save
+```
+
+### 📚 完整安装方案
+
+#### 方案1: 轻量级 OCR (推荐)
 ```bash
 # 安装依赖
 sudo apt install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng -y
@@ -141,7 +155,15 @@ pm2 start simple_ocr_server.js --name "ocr-server"
 ### 方案2: RapidOCR (需要图形库)
 ```bash
 # 安装系统依赖 (解决 libGL.so.1 错误)
-sudo apt install libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 -y
+sudo apt install libgl1-mesa-dev libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 -y
+
+# 如果上面的包不可用，尝试:
+sudo apt install mesa-utils libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 -y
+
+# 或者使用虚拟显示:
+sudo apt install xvfb -y
+export DISPLAY=:99
+Xvfb :99 -screen 0 1024x768x24 &
 
 # 安装 Python 依赖
 pip3 install rapidocr-onnxruntime
