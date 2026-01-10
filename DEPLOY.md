@@ -125,16 +125,13 @@ NODE_ENV=production
 
 ## 🔍 OCR 功能配置 (可选)
 
-### 🚀 快速修复方案 (强烈推荐)
+### 🚀 快速修复方案
 ```bash
-# 一键修复脚本 (推荐)
+# 轻量级 OCR (简单但准确率一般)
 ./quick_fix_ocr.sh
 
-# 或者手动执行:
-sudo apt install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng -y
-pip3 install pillow pytesseract numpy
-pm2 start simple_ocr_server.js --name "ocr-server"
-pm2 save
+# RapidOCR 无头环境 (准确率高，推荐)
+./fix_rapidocr_headless.sh
 ```
 
 ### 📚 完整安装方案
@@ -152,8 +149,12 @@ python3 -c "import pytesseract; print('Tesseract版本:', pytesseract.get_tesser
 pm2 start simple_ocr_server.js --name "ocr-server"
 ```
 
-### 方案2: RapidOCR (需要图形库)
+### 方案2: RapidOCR 高准确率 (推荐)
 ```bash
+# 一键修复无头环境 (推荐)
+./fix_rapidocr_headless.sh
+
+# 手动配置 (高级用户):
 # 安装系统依赖 (解决 libGL.so.1 错误)
 sudo apt install libgl1-mesa-dev libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 -y
 
@@ -189,8 +190,21 @@ pm2 start paddle_ocr_server.js --name "ocr-server"
 ```
 
 **服务端口说明：**
-- **轻量级 OCR**: `http://localhost:9004` (推荐)
-- **RapidOCR**: `http://localhost:9003` (需要图形库)
+- **轻量级 OCR**: `http://localhost:9004` (简单，准确率一般)
+- **RapidOCR**: `http://localhost:9003` (高准确率，推荐)
+
+**方案对比：**
+
+| 特性 | 轻量级 OCR (Tesseract) | RapidOCR (PP-OCRv4) |
+|------|------------------------|----------------------|
+| **准确率** | 🟡 良好 | ✅ 优秀 |
+| **中文支持** | ✅ 良好 | ✅ 优秀 |
+| **复杂布局** | ❌ 一般 | ✅ 优秀 |
+| **安装复杂度** | ✅ 简单 | 🟡 中等 |
+| **依赖大小** | ✅ 小 (~50MB) | ❌ 大 (~200MB+) |
+| **CPU使用** | ✅ 低 | ❌ 较高 |
+| **无头环境** | ✅ 完美兼容 | ✅ 已修复 |
+| **推荐场景** | 简单文本识别 | 复杂图像OCR |
 
 ## 🚀 启动服务
 

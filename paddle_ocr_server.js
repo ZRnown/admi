@@ -30,13 +30,19 @@ import os
 
 # 设置环境变量以支持 headless 模式
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-os.environ['DISPLAY'] = ''
+os.environ['DISPLAY'] = ':99'
+os.environ['XDG_RUNTIME_DIR'] = '/tmp'
+os.environ['MPLBACKEND'] = 'Agg'
+os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '0'
+
+# 禁用 GPU 相关功能
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 try:
     from rapidocr_onnxruntime import RapidOCR
 
-    # 初始化 OCR 引擎 (CPU 模式)
-    # det_use_gpu=False, cls_use_gpu=False, rec_use_gpu=False 确保在 CPU 模式下运行
+    # 初始化 OCR 引擎 (强制CPU模式)
     # RapidOCR 会自动下载并加载 PP-OCRv4 模型 (高准确率)
     engine = RapidOCR()
 
