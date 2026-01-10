@@ -26,14 +26,16 @@ function recognizeWithPythonOCR(imageBuffer, callback) {
 import sys
 import json
 import traceback
+import os
 
-# 添加用户Python包路径
-sys.path.insert(0, '/Users/wanghaixin/Library/Python/3.9/lib/python/site-packages')
+# 设置环境变量以支持 headless 模式
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+os.environ['DISPLAY'] = ''
 
 try:
     from rapidocr_onnxruntime import RapidOCR
 
-    # 初始化 OCR 引擎
+    # 初始化 OCR 引擎 (CPU 模式)
     # det_use_gpu=False, cls_use_gpu=False, rec_use_gpu=False 确保在 CPU 模式下运行
     # RapidOCR 会自动下载并加载 PP-OCRv4 模型 (高准确率)
     engine = RapidOCR()

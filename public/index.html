@@ -1357,7 +1357,8 @@
     function addBotRelay() {
       const acc = getActiveAccount();
       if (!acc.botRelays) acc.botRelays = [];
-      acc.botRelays.push({ id: genId(), name: `中转机器人${acc.botRelays.length + 1}`, token: '', loginState: 'idle', loginMessage: '' });
+      // 添加到数组开头，这样会显示在第一页第一行
+      acc.botRelays.unshift({ id: genId(), name: `中转机器人${acc.botRelays.length + 1}`, token: '', loginState: 'idle', loginMessage: '' });
       pagination.botRelayPage = 1;
       saveConfig();
       render();
@@ -1390,6 +1391,13 @@
       const totalPages = Math.ceil(acc.botRelays.length / pageSize) || 1;
       if (botRelayPage > totalPages) {
         pagination.botRelayPage = totalPages;
+      }
+      // 如果当前页变空，且不是第一页，则跳转到第一页
+      const currentPageStart = (pagination.botRelayPage - 1) * pageSize;
+      const currentPageEnd = currentPageStart + pageSize;
+      const currentPageItems = acc.botRelays.slice(currentPageStart, currentPageEnd);
+      if (currentPageItems.length === 0 && pagination.botRelayPage > 1) {
+        pagination.botRelayPage = 1;
       }
 
       saveConfig();
