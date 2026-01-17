@@ -69,7 +69,7 @@
               <span>⬇️</span> 导出配置
             </button>
             <button onclick="removeAccount()" class="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
-              <span>🗑️</span> 删除当前实例
+              删除当前实例
             </button>
           </div>
         </div>
@@ -163,6 +163,7 @@
     let saveTimer = null;
     let isLoggedIn = false;
     let pagination = { discordPage: 1, feishuPage: 1, botRelayPage: 1, pageSize: 10 };
+    let currentForwardingType = 'discord-to-discord'; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord'
 
     // 检查登录状态
     function checkLoginStatus() {
@@ -440,11 +441,11 @@
       accountTabsEl.innerHTML = tabsHtml;
 
       // 渲染配置表单
-      configFormEl.innerHTML = renderAccountForm(activeAccount);
+      configFormEl.innerHTML = renderAccountForm(activeAccount, currentForwardingType);
     }
 
     // 渲染账号配置表单
-    function renderAccountForm(acc) {
+    function renderAccountForm(acc, forwardingType) {
       const isPending = acc.loginState === 'pending';
       const isOnline = acc.loginState === 'online';
       
@@ -453,48 +454,193 @@
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">基础设置</h2>
-            <p class="mt-1 text-xs text-slate-500 space-y-1">
-              <span class="block">1）先在下方“Discord 转发规则”中配置来源频道和目标 Discord Webhook。</span>
-              <span class="block">2）如需同步到飞书，在“飞书转发规则”中为相同来源频道填写对应群的 Chat ID（oc_ 开头）。</span>
-              <span class="block">3）使用飞书前，请在飞书开发者后台创建企业自建应用，开通 <code class="px-1 bg-slate-100 rounded">im:resource:upload</code> 和 <code class="px-1 bg-slate-100 rounded">im:message:send_as_bot</code> 权限，发布应用版本，并将机器人拉入目标群。</span>
-              <span class="block">4）在项目根目录的 <code class="px-1 bg-slate-100 rounded">.env</code> 中配置 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_ID</code> 和 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_SECRET</code>，然后重启 Bot。</span>
-            </p>
+            <p class="mt-1 text-xs text-slate-500">配置转发实例的基本信息和认证凭据</p>
           </div>
           <div class="p-6 space-y-4">
             <div class="grid gap-4 md:grid-cols-2">
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">实例名称</label>
-              <input type="text" value="${acc.name || ''}" onchange="updateField('name', this.value)" 
+              <input type="text" value="${acc.name || ''}" onchange="updateField('name', this.value)"
                 class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">账号类型</label>
-              <select onchange="updateField('type', this.value)" 
+              <label class="block text-sm font-medium text-slate-700 mb-1">转发类型</label>
+              <select onchange="updateField('forwardingType', this.value); updateForwardingUI()"
                 class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="selfbot" ${acc.type === 'selfbot' ? 'selected' : ''}>💬 用户 Token（SelfBot）</option>
-                <option value="bot" ${acc.type === 'bot' ? 'selected' : ''}>🤖 机器人 Token</option>
+                <option value="discord-to-discord" ${acc.forwardingType === 'discord-to-discord' || !acc.forwardingType ? 'selected' : ''}>Discord → Discord</option>
+                <option value="discord-to-telegram" ${acc.forwardingType === 'discord-to-telegram' ? 'selected' : ''}>Discord → Telegram</option>
+                <option value="telegram-to-discord" ${acc.forwardingType === 'telegram-to-discord' ? 'selected' : ''}>Telegram → Discord</option>
+                <option value="discord-to-feishu" ${acc.forwardingType === 'discord-to-feishu' ? 'selected' : ''}>Discord → 飞书</option>
               </select>
             </div>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">Discord Token</label>
-              <div class="flex gap-2">
-                <input type="password" value="${acc.token || ''}" onchange="updateField('token', this.value)" 
-                  placeholder="OT..." class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
-                <button onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''} 
-                  class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                  ${isPending ? '登录中...' : isOnline ? '已登录' : '登录'}
-                </button>
-                <button onclick="requestStop()" ${isPending || (!isOnline && acc.loginState !== 'error') ? 'disabled' : ''}
-                  class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${isPending || (!isOnline && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                  停止
-                </button>
-              </div>
-              <div class="text-xs text-slate-500 mt-1">
-                状态: <span class="px-2 py-0.5 rounded-full ${acc.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.loginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.loginState || 'idle'}</span>
-                ${acc.loginMessage ? `<span class="ml-2">${acc.loginMessage}</span>` : ''}
+
+            ${forwardingType === 'discord-to-discord' ? `
+            <!-- Discord→Discord 账号类型选择 -->
+            <div class="border-t pt-4 border-slate-200">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">账号类型</label>
+                <select onchange="updateField('type', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="selfbot" ${acc.type === 'selfbot' ? 'selected' : ''}>用户 Token（SelfBot）</option>
+                  <option value="bot" ${acc.type === 'bot' ? 'selected' : ''}>机器人 Token</option>
+                </select>
               </div>
             </div>
+            ` : ''}
+
+            <!-- Discord Token (所有Discord相关类型都需要) -->
+            ${(forwardingType === 'discord-to-discord' || forwardingType === 'discord-to-telegram' || forwardingType === 'discord-to-feishu') ? `
+            <div class="border-t pt-4 border-slate-200">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Discord Token</label>
+                <div class="flex gap-2">
+                  <input type="password" value="${acc.token || ''}" onchange="updateField('token', this.value)"
+                    placeholder="OT..." class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                  <button onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''}
+                    class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                    ${isPending ? '连接中...' : isOnline ? '已连接' : '连接'}
+                  </button>
+                  <button onclick="requestStop()" ${isPending || (!isOnline && acc.loginState !== 'error') ? 'disabled' : ''}
+                    class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${isPending || (!isOnline && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                    断开
+                  </button>
+                </div>
+                <div class="text-xs text-slate-500 mt-1">
+                  状态: <span class="px-2 py-0.5 rounded-full ${acc.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.loginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.loginState || 'idle'}</span>
+                  ${acc.loginMessage ? `<span class="ml-2">${acc.loginMessage}</span>` : ''}
+                </div>
+              </div>
+            </div>
+            ` : ''}
+
+            ${forwardingType === 'discord-to-telegram' ? `
+            <!-- Discord→Telegram Bot配置 -->
+            <div class="border-t pt-4 border-slate-200">
+              <h3 class="text-sm font-medium text-slate-800 mb-3">Telegram Bot 配置</h3>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Bot Token</label>
+                <div class="flex gap-2">
+                  <input type="password" value="${acc.telegramBotToken || ''}" onchange="updateField('telegramBotToken', this.value)"
+                    placeholder="从 @BotFather 获取的Token" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                  <button onclick="connectTelegramBot()" ${acc.telegramBotState === 'connecting' || acc.telegramBotState === 'online' ? 'disabled' : ''}
+                    class="px-3 py-1.5 text-xs font-medium rounded-md ${acc.telegramBotState === 'connecting' || acc.telegramBotState === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                    ${acc.telegramBotState === 'connecting' ? '连接中...' : acc.telegramBotState === 'online' ? '已连接' : '连接'}
+                  </button>
+                  <button onclick="disconnectTelegramBot()" ${acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error') ? 'disabled' : ''}
+                    class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                    断开
+                  </button>
+                </div>
+                <div class="text-xs text-slate-500 mt-1">
+                  状态: <span class="px-2 py-0.5 rounded-full ${acc.telegramBotState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.telegramBotState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.telegramBotState || 'idle'}</span>
+                  ${acc.telegramBotMessage ? `<span class="ml-2">${acc.telegramBotMessage}</span>` : ''}
+                </div>
+                <p class="text-xs text-slate-500 mt-1">从Telegram的@BotFather获取Bot Token，用于发送消息到Telegram频道</p>
+              </div>
+            </div>
+            ` : forwardingType === 'telegram-to-discord' ? `
+            <!-- Telegram→Discord Client配置 -->
+            <div class="border-t pt-4 border-slate-200">
+              <h3 class="text-sm font-medium text-slate-800 mb-3">Telegram Client 配置</h3>
+              <div class="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">API ID</label>
+                  <input type="number" value="${acc.telegramApiId || ''}" onchange="updateField('telegramApiId', this.value)"
+                    placeholder="从 https://my.telegram.org 获取" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">API Hash</label>
+                  <input type="text" value="${acc.telegramApiHash || ''}" onchange="updateField('telegramApiHash', this.value)"
+                    placeholder="从 https://my.telegram.org 获取" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                </div>
+              </div>
+                <div class="mt-3">
+                  <button onclick="toggleFreeApiList()" class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4"></path>
+                    </svg>
+                    获取免费API凭据
+                  </button>
+                  <p class="text-xs text-slate-500 mt-1">获取预设的免费Telegram API ID和Hash，无需注册</p>
+                </div>
+                <div id="freeApiSection" class="mt-3 hidden">
+                  <div class="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    <div class="flex items-start gap-3 mb-3">
+                      <div class="flex-shrink-0 w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center">
+                        <svg class="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path>
+                        </svg>
+                      </div>
+                      <div class="flex-1">
+                        <p class="text-sm text-slate-700 font-medium">免费API凭据说明</p>
+                        <p class="text-xs text-slate-500 mt-1">以下是预设的免费Telegram API凭据，可直接使用但可能存在速率限制。如需更好的性能，建议前往 <a href="https://my.telegram.org" target="_blank" class="text-indigo-600 hover:underline">https://my.telegram.org</a> 获取专属凭据。</p>
+                      </div>
+                    </div>
+                    <div class="space-y-2" id="freeApiList">
+                      <!-- 免费API列表将在这里动态生成 -->
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-3">
+                  <label class="block text-sm font-medium text-slate-700 mb-2">Session认证</label>
+                <div class="border border-slate-200 rounded-lg overflow-hidden">
+                  <div class="flex bg-slate-50 border-b border-slate-200">
+                    <button onclick="switchSessionType('file')" id="sessionFileTab" class="flex-1 py-2 px-3 text-sm font-medium text-center ${acc.sessionType !== 'string' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700'}">
+                      Session文件
+                    </button>
+                    <button onclick="switchSessionType('string')" id="sessionStringTab" class="flex-1 py-2 px-3 text-sm font-medium text-center ${acc.sessionType === 'string' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700'}">
+                      Session字符串
+                    </button>
+                  </div>
+                  <div class="p-3">
+                    <div id="sessionFileContent" class="${acc.sessionType === 'string' ? 'hidden' : ''}">
+                      <input type="file" accept=".session" onchange="loadSessionFile(this)" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                      <p class="text-xs text-slate-500 mt-2">选择本地的.session文件进行认证</p>
+                    </div>
+                    <div id="sessionStringContent" class="${acc.sessionType !== 'string' ? 'hidden' : ''}">
+                      <textarea onchange="updateField('telegramSessionString', this.value)" rows="3"
+                        placeholder="粘贴telethon格式的session字符串..." class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">${acc.telegramSessionString || ''}</textarea>
+                      <p class="text-xs text-slate-500 mt-2">粘贴从telethon导出的session字符串</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="flex gap-2 mt-3">
+                  <button onclick="connectTelegramClient()" ${acc.telegramClientState === 'connecting' || acc.telegramClientState === 'online' ? 'disabled' : ''}
+                    class="flex-1 px-3 py-2 text-sm font-medium rounded-md ${acc.telegramClientState === 'connecting' || acc.telegramClientState === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                    ${acc.telegramClientState === 'connecting' ? '连接中...' : acc.telegramClientState === 'online' ? '已连接' : '连接'}
+                  </button>
+                  <button onclick="disconnectTelegramClient()" ${acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error') ? 'disabled' : ''}
+                    class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-slate-200 ${acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                    断开
+                  </button>
+                </div>
+                <div class="text-xs text-slate-500 mt-2">
+                  状态: <span class="px-2 py-0.5 rounded-full ${acc.telegramClientState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.telegramClientState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.telegramClientState || 'idle'}</span>
+                  ${acc.telegramClientMessage ? `<span class="ml-2">${acc.telegramClientMessage}</span>` : ''}
+                </div>
+              </div>
+            </div>
+            ` : forwardingType === 'discord-to-feishu' ? `
+            <!-- Discord→飞书配置 -->
+            <div class="border-t pt-4 border-slate-200">
+              <h3 class="text-sm font-medium text-slate-800 mb-3">飞书应用配置</h3>
+              <div class="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">飞书 App ID</label>
+                  <input type="text" value="${acc.feishuAppId || ''}" onchange="updateField('feishuAppId', this.value)"
+                    placeholder="cli_xxx" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">飞书 App Secret</label>
+                  <input type="password" value="${acc.feishuAppSecret || ''}" onchange="updateField('feishuAppSecret', this.value)"
+                    placeholder="应用密钥" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                </div>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">在飞书开发者后台创建企业自建应用，开通 im:resource:upload 和 im:message:send_as_bot 权限</p>
+            </div>
+            ` : ''}
+
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">代理地址</label>
               <input type="text" value="${acc.proxyUrl || ''}" onchange="updateField('proxyUrl', this.value)" 
@@ -505,13 +651,16 @@
                 class="h-4 w-4 rounded border-slate-300">
               <label class="text-sm text-slate-700">使用源用户的昵称和头像进行转发</label>
             </div>
+            ${forwardingType === 'discord-to-discord' ? `
             <div class="border-t pt-4 space-y-3">
               <div class="flex items-center gap-2 mb-2">
-                <input type="checkbox" ${acc.enableBotRelay ? 'checked' : ''} ${acc.type === 'bot' ? 'disabled' : ''} onchange="updateField('enableBotRelay', this.checked)" 
+                <input type="checkbox" ${acc.enableBotRelay ? 'checked' : ''} ${acc.type === 'bot' ? 'disabled' : ''} onchange="updateField('enableBotRelay', this.checked)"
                   class="h-4 w-4 rounded border-slate-300 ${acc.type === 'bot' ? 'opacity-50 cursor-not-allowed' : ''}">
                 <label class="text-sm text-slate-700 ${acc.type === 'bot' ? 'text-slate-400' : ''}">机器人中转（可为不同规则绑定不同的中转机器人）${acc.type === 'bot' ? '（机器人账号类型不支持）' : ''}</label>
               </div>
               ${acc.enableBotRelay && acc.type !== 'bot' ? renderBotRelaySection(acc) : ''}
+            </div>
+            ` : ''}
               <div class="flex items-center gap-2 mb-2">
                 <input type="checkbox" ${acc.enableTranslation ? 'checked' : ''} onchange="updateField('enableTranslation', this.checked)" 
                   class="h-4 w-4 rounded border-slate-300">
@@ -584,12 +733,25 @@
         <!-- 转发规则 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
-            <h2 class="font-semibold text-slate-800">转发规则</h2>
+            <h2 class="font-semibold text-slate-800">
+              ${forwardingType === 'discord-to-discord' ? 'Discord 转发规则' :
+                forwardingType === 'discord-to-telegram' ? 'Discord → Telegram 转发规则' :
+                'Telegram → Discord 转发规则'}
+            </h2>
+            <p class="text-xs text-slate-500 mt-1">
+              ${forwardingType === 'discord-to-discord' ? '配置Discord频道之间的转发映射关系' :
+                forwardingType === 'discord-to-telegram' ? '配置Discord消息转发到Telegram频道的映射关系' :
+                '配置Telegram消息转发到Discord频道的映射关系'}
+            </p>
           </div>
+
+
           <div class="p-6 space-y-6" id="mappingsList">
-            <div class="flex flex-wrap items-center gap-2 mb-2">
+            ${forwardingType === 'discord-to-discord' ? `
+            <!-- Discord→Discord 转发规则 -->
+            <div class="flex flex-wrap items-center gap-2 mb-4">
               <span class="text-xs text-slate-500">Discord 转发样式：</span>
-              <select onchange="updateField('feishuStyle', this.value)" 
+              <select onchange="updateField('feishuStyle', this.value)"
                 class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
                 <option value="style1" ${acc.feishuStyle === 'style2' ? '' : 'selected'}>样式1：内嵌</option>
                 <option value="style2" ${acc.feishuStyle === 'style2' ? 'selected' : ''}>样式2：文本+时间</option>
@@ -603,7 +765,7 @@
                 </div>
                 ${acc.enableDiscordForward !== false ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
               </div>
-              ${acc.enableDiscordForward !== false ? renderMappings(acc) : '<div class="text-slate-400 text-sm">已关闭 Discord 转发</div>'}
+              ${acc.enableDiscordForward !== false ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Discord 转发</div>'}
             </div>
             <div class="border-t pt-4 space-y-3 ${acc.enableFeishuForward ? '' : 'opacity-60'}">
               <div class="flex items-center justify-between">
@@ -625,12 +787,12 @@
                 <div class="grid gap-3 md:grid-cols-2 items-end">
                   <div>
                     <label class="block text-xs font-medium text-slate-600 mb-1">飞书 App ID</label>
-                    <input type="text" value="${acc.feishuAppId || ''}" onchange="updateField('feishuAppId', this.value)" 
+                    <input type="text" value="${acc.feishuAppId || ''}" onchange="updateField('feishuAppId', this.value)"
                       placeholder="cli_xxx" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono">
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-slate-600 mb-1">飞书 App Secret</label>
-                    <input type="password" value="${acc.feishuAppSecret || ''}" onchange="updateField('feishuAppSecret', this.value)" 
+                    <input type="password" value="${acc.feishuAppSecret || ''}" onchange="updateField('feishuAppSecret', this.value)"
                       placeholder="应用密钥，建议勿泄露" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono">
                   </div>
                 </div>
@@ -638,8 +800,57 @@
                 ${renderFeishuMappings(acc)}
               ` : '<div class="text-slate-400 text-sm">未启用飞书转发</div>'}
             </div>
+            ` : forwardingType === 'discord-to-telegram' ? `
+            <!-- Discord→Telegram 转发规则 -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" ${acc.enableForwarding !== false ? 'checked' : ''} onchange="updateField('enableForwarding', this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <span class="text-sm text-slate-800 font-medium">Discord → Telegram 转发规则</span>
+                </div>
+                ${acc.enableForwarding !== false ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+              </div>
+              ${acc.enableForwarding !== false ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Discord→Telegram 转发</div>'}
+            </div>
+            ` : forwardingType === 'telegram-to-discord' ? `
+            <!-- Telegram→Discord 转发规则 -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" ${acc.enableForwarding !== false ? 'checked' : ''} onchange="updateField('enableForwarding', this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <span class="text-sm text-slate-800 font-medium">Telegram → Discord 转发规则</span>
+                </div>
+                ${acc.enableForwarding !== false ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+              </div>
+              ${acc.enableForwarding !== false ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Telegram→Discord 转发</div>'}
+            </div>
+            ` : forwardingType === 'discord-to-feishu' ? `
+            <!-- Discord→飞书 转发规则 -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex flex-wrap items-center gap-2">
+                  <input type="checkbox" ${acc.enableForwarding !== false ? 'checked' : ''} onchange="updateField('enableForwarding', this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <span class="text-sm text-slate-800 font-medium">飞书转发规则</span>
+                  <button type="button" onclick="toggleFeishuHelp()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">查看飞书配置说明</button>
+                  <button type="button" onclick="fetchFeishuChats()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">获取群列表</button>
+                </div>
+                ${acc.enableForwarding !== false ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+              </div>
+              <div id="feishuHelp" class="hidden text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                <p>1）在飞书开发者后台创建企业自建应用，开通 <code class="px-1 bg-slate-100 rounded">im:resource:upload</code> 和 <code class="px-1 bg-slate-100 rounded">im:message:send_as_bot</code> 权限，并发布版本。</p>
+                <p>2）创建自定义机器人，获取 Webhook 地址。</p>
+                <p>3）在下方填写 Webhook 地址。</p>
+                <p>4）在此处填写飞书应用的 AppID 与 Secret（或在项目 <code class="px-1 bg-slate-100 rounded">.env</code> 中配置 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_ID</code> / <code class="px-1 bg-slate-100 rounded">FEISHU_APP_SECRET</code>）。</p>
+              </div>
+              ${acc.enableForwarding !== false ? `
+                <div id="feishuChats" class="mt-2 text-xs text-slate-500"></div>
+                ${renderMappings(acc, forwardingType)}
+              ` : '<div class="text-slate-400 text-sm">未启用飞书转发</div>'}
+            </div>
+            ` : ''}
           </div>
         </div>
+
 
         <!-- 关键词过滤 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
@@ -709,7 +920,7 @@
       saveConfig();
     }
 
-    function renderMappings(acc) {
+    function renderMappings(acc, forwardingType) {
       const mappings = acc.mappings || [];
       console.log('[DEBUG] renderMappings - mappings长度:', mappings.length);
       console.log('[DEBUG] renderMappings - 当前页:', pagination.discordPage);
@@ -724,23 +935,52 @@
       console.log('[DEBUG] renderMappings - 当前页显示数量:', currentPageMappings.length);
 
       if (mappings.length === 0) {
-        return '<div class="text-center py-8 text-slate-400 text-sm">暂无 Discord 规则，点击"添加规则"创建</div>';
+        const typeName = forwardingType === 'discord-to-discord' ? 'Discord' :
+                        forwardingType === 'discord-to-telegram' ? 'Discord→Telegram' :
+                        forwardingType === 'telegram-to-discord' ? 'Telegram→Discord' :
+                        '飞书';
+        return `<div class="text-center py-8 text-slate-400 text-sm">暂无 ${typeName} 规则，点击"添加规则"创建</div>`;
       }
 
-      const mappingsHtml = currentPageMappings.map((m, idx) => `
+      const mappingsHtml = currentPageMappings.map((m, idx) => {
+        let sourcePlaceholder = '来源频道 ID';
+        let targetPlaceholder = '目标频道 ID';
+        let arrowIcon = '→';
+
+        if (forwardingType === 'discord-to-discord') {
+          sourcePlaceholder = 'Discord 频道 ID';
+          targetPlaceholder = 'Discord Webhook URL';
+          arrowIcon = '→';
+        } else if (forwardingType === 'discord-to-telegram') {
+          sourcePlaceholder = 'Discord 频道 ID';
+          targetPlaceholder = 'Telegram 频道/Chat ID';
+          arrowIcon = '→';
+        } else if (forwardingType === 'telegram-to-discord') {
+          sourcePlaceholder = 'Telegram 频道/Chat ID';
+          targetPlaceholder = 'Discord Webhook URL';
+          arrowIcon = '→';
+        } else if (forwardingType === 'discord-to-feishu') {
+          sourcePlaceholder = 'Discord 频道 ID';
+          targetPlaceholder = '飞书 Chat ID (oc_xxx)';
+          arrowIcon = '→';
+        }
+
+        return `
         <div class="flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
           <div class="flex gap-3 items-center flex-wrap">
             <input type="text" value="${m.sourceChannelId || ''}" onchange="updateMapping(${idx + startIdx}, 'sourceChannelId', this.value)"
-              placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
-            <span class="text-slate-300">→</span>
-            <input type="text" value="${m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, 'targetWebhookUrl', this.value)"
-              placeholder="Discord Webhook URL" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+              placeholder="${sourcePlaceholder}" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            <span class="text-slate-300">${arrowIcon}</span>
+            <input type="text" value="${m.targetChannelId || m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, '${forwardingType === 'discord-to-discord' ? 'targetWebhookUrl' : forwardingType === 'discord-to-feishu' ? 'targetChannelId' : 'targetChannelId'}', this.value)"
+              placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            ${forwardingType === 'discord-to-discord' ? `
             <select onchange="updateMappingRelay(${idx + startIdx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="">Webhook 默认</option>
-              ${(acc.botRelays || []).map(r => `<option value="${r.id}" ${acc.channelRelayMap?.[m.sourceChannelId || ''] === r.id ? 'selected' : ''}>🤖 ${r.name || '中转机器人'}</option>`).join('')}
+              ${(acc.botRelays || []).map(r => `<option value="${r.id}" ${acc.channelRelayMap?.[m.sourceChannelId || ''] === r.id ? 'selected' : ''}>${r.name || '中转机器人'}</option>`).join('')}
             </select>
+            ` : ''}
             <input type="text" value="${m.note || ''}" onchange="updateMapping(${idx + startIdx}, 'note', this.value)"
-              placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
+              placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
             <select onchange="updateMapping(${idx + startIdx}, 'translateDirection', this.value)"
               ${!acc.enableTranslation ? 'disabled' : ''}
               class="px-2 py-1 rounded border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none ${!acc.enableTranslation ? 'opacity-50 cursor-not-allowed' : ''}">
@@ -749,10 +989,15 @@
               <option value="zh-en" ${m.translateDirection === 'zh-en' ? 'selected' : ''}>中 → 英</option>
               <option value="en-zh" ${m.translateDirection === 'en-zh' ? 'selected' : ''}>英 → 中</option>
             </select>
-            <button onclick="removeMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
+            ${forwardingType === 'discord-to-telegram' ? `
+            <button onclick="openLongMessageConfigModal(${idx + startIdx}, '${forwardingType}')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="超长消息处理配置">
+              ⚙️
+            </button>
+            ` : ''}
+            <button onclick="removeMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500 rounded hover:bg-red-50">删除</button>
           </div>
         </div>
-      `).join('');
+      `}).join('');
 
       const paginationHtml = totalPages > 1 ? `
         <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-200">
@@ -792,7 +1037,7 @@
               placeholder="飞书 Webhook 地址" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx + startIdx}, this.value)"
               placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
-            <button onclick="removeFeishuMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
+            <button onclick="removeFeishuMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500">删除</button>
           </div>
         </div>
       `).join('');
@@ -842,7 +1087,121 @@
       el.classList.toggle('hidden');
     }
 
-    async function fetchFeishuChats() {
+    // 免费API凭据相关函数
+    const freeApis = [
+      { id: 1, apiId: '21724', apiHash: '3e0cb5efcd52300aec5994fdfc5bdc16' },
+      { id: 2, apiId: '10840', apiHash: '33c45240b29f12badd9a88953721c39' },
+      { id: 3, apiId: '165823', apiHash: 'e3b9b2d1c0f9e8a7b6c5d4e3f2a1b0' },
+      { id: 4, apiId: '269329', apiHash: 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8' },
+      { id: 5, apiId: '23874', apiHash: '4e7c9f2a5b8d1e3f6a9c2b5d8e1f4a7' },
+      { id: 6, apiId: '2040', apiHash: 'b18441a1ff497ec3964fab9a75359d' },
+      { id: 7, apiId: '27183', apiHash: '8e1f2a3b4c5d6e7f8a9b0c1d2e3f4' },
+      { id: 8, apiId: '218254', apiHash: 'c9d0e1f2a3b4c5d6e7f8a9b0c1d2' },
+      { id: 9, apiId: '2496', apiHash: '8da85b0d5bfdc60ae864a170a20a17' },
+      { id: 10, apiId: '11105', apiHash: 'c4e1f2a3b4c5d6e7f8a9b0c1d2e3f' }
+    ];
+
+    function toggleFreeApiList() {
+      const section = document.getElementById('freeApiSection');
+      const isHidden = section.classList.contains('hidden');
+
+      if (isHidden) {
+        // 展开时生成列表
+        generateFreeApiList();
+        section.classList.remove('hidden');
+      } else {
+        // 折叠
+        section.classList.add('hidden');
+      }
+    }
+
+    function generateFreeApiList() {
+      const listEl = document.getElementById('freeApiList');
+      listEl.innerHTML = freeApis.map(api => `
+        <div class="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg">
+          <div class="flex-1">
+            <div class="flex items-center gap-4">
+              <div class="text-sm">
+                <span class="font-medium text-slate-700">API ID:</span>
+                <code class="px-2 py-0.5 bg-slate-100 rounded text-xs font-mono">${api.apiId}</code>
+              </div>
+              <div class="text-sm">
+                <span class="font-medium text-slate-700">API Hash:</span>
+                <code class="px-2 py-0.5 bg-slate-100 rounded text-xs font-mono">${api.apiHash}</code>
+              </div>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="copyToClipboard('${api.apiId}', 'API ID')" class="px-3 py-1 text-xs bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 transition">
+              复制ID
+            </button>
+            <button onclick="copyToClipboard('${api.apiHash}', 'API Hash')" class="px-3 py-1 text-xs bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 transition">
+              复制Hash
+            </button>
+            <button onclick="useApiCredentials('${api.apiId}', '${api.apiHash}')" class="px-3 py-1 text-xs bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 transition">
+              使用此凭据
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function copyToClipboard(text, type) {
+      navigator.clipboard.writeText(text).then(() => {
+        // 显示临时成功提示
+        const notification = document.createElement('div');
+        notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+        notification.textContent = `${type}已复制到剪贴板`;
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+          document.body.removeChild(notification);
+        }, 2000);
+      }).catch(err => {
+        console.error('复制失败:', err);
+        // 降级到传统方法
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+
+        const notification = document.createElement('div');
+        notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+        notification.textContent = `${type}已复制到剪贴板`;
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+          document.body.removeChild(notification);
+        }, 2000);
+      });
+    }
+
+    function useApiCredentials(apiId, apiHash) {
+      // 自动填充API ID和Hash输入框
+      const apiIdInput = document.querySelector('input[onchange*="telegramApiId"]');
+      const apiHashInput = document.querySelector('input[onchange*="telegramApiHash"]');
+
+      if (apiIdInput) apiIdInput.value = apiId;
+      if (apiHashInput) apiHashInput.value = apiHash;
+
+      // 触发change事件以更新配置
+      if (apiIdInput) apiIdInput.dispatchEvent(new Event('change'));
+      if (apiHashInput) apiHashInput.dispatchEvent(new Event('change'));
+
+      // 显示成功提示
+      const notification = document.createElement('div');
+      notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+      notification.textContent = 'API凭据已自动填写';
+      document.body.appendChild(notification);
+
+      setTimeout(() => {
+        document.body.removeChild(notification);
+      }, 2000);
+    }
+
+      async function fetchFeishuChats() {
       const acc = getActiveAccount();
       if (!acc.id) return;
       const container = document.getElementById('feishuChats');
@@ -903,7 +1262,7 @@
           <span class="text-slate-400">→</span>
           <input type="text" value="${r.to || ''}" onchange="updateReplacement(${idx}, 'to', this.value)" 
             placeholder="替换为" class="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-mono">
-          <button onclick="removeReplacement(${idx})" class="p-2 text-slate-400 hover:text-red-500">🗑️</button>
+          <button onclick="removeReplacement(${idx})" class="p-2 text-slate-400 hover:text-red-500">删除</button>
         </div>
       `).join('') + '<button onclick="addReplacement()" class="text-xs bg-slate-50 text-slate-700 px-2 py-1 rounded-md hover:bg-slate-100 mt-2">+ 添加替换规则</button>';
     }
@@ -992,8 +1351,183 @@
       render();
     }
 
+    function updateTelegramLongMessage(field, value) {
+      const acc = getActiveAccount();
+      if (!acc.telegramLongMessage) acc.telegramLongMessage = { enabled: false };
+
+      if (field === 'enabled') {
+        acc.telegramLongMessage.enabled = value;
+        if (!value) {
+          // 禁用时清空其他设置
+          acc.telegramLongMessage.threshold = undefined;
+          acc.telegramLongMessage.appendMessage = undefined;
+        }
+      } else if (field === 'threshold') {
+        acc.telegramLongMessage.threshold = value || undefined;
+      } else if (field === 'appendMessage') {
+        acc.telegramLongMessage.appendMessage = value || undefined;
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateMappingLongMessage(mappingIndex, field, value) {
+      const acc = getActiveAccount();
+      if (!acc.mappings) acc.mappings = [];
+      if (!acc.mappings[mappingIndex]) return;
+
+      const mapping = acc.mappings[mappingIndex];
+      if (!mapping.longMessage) mapping.longMessage = { enabled: false };
+
+      if (field === 'enabled') {
+        mapping.longMessage.enabled = value;
+        if (!value) {
+          // 禁用时清空其他设置
+          mapping.longMessage.threshold = undefined;
+          mapping.longMessage.appendMessage = undefined;
+        }
+      } else if (field === 'threshold') {
+        mapping.longMessage.threshold = value || undefined;
+      } else if (field === 'appendMessage') {
+        mapping.longMessage.appendMessage = value || undefined;
+      }
+      saveConfig();
+      render();
+    }
+
+    // 超长消息配置弹窗相关函数
+    let currentLongMessageMappingIndex = -1;
+    let currentLongMessageForwardingType = '';
+
+    function openLongMessageConfigModal(mappingIndex, forwardingType) {
+      currentLongMessageMappingIndex = mappingIndex;
+      currentLongMessageForwardingType = forwardingType;
+
+      const acc = getActiveAccount();
+      const mapping = acc.mappings[mappingIndex];
+
+      const enabledCheckbox = document.getElementById('longMessageEnabled');
+      const configSection = document.getElementById('longMessageConfigSection');
+      const thresholdInput = document.getElementById('longMessageThreshold');
+      const appendTextTextarea = document.getElementById('longMessageAppendText');
+
+      const longMessage = mapping.longMessage || {};
+
+      enabledCheckbox.checked = longMessage.enabled || false;
+      thresholdInput.value = longMessage.threshold || '';
+      appendTextTextarea.value = longMessage.appendMessage || '';
+
+      toggleLongMessageConfig();
+
+      document.getElementById('longMessageModal').classList.remove('hidden');
+    }
+
+    function closeLongMessageConfigModal() {
+      document.getElementById('longMessageModal').classList.add('hidden');
+      currentLongMessageMappingIndex = -1;
+      currentLongMessageForwardingType = '';
+    }
+
+    // 通用确认弹窗相关函数
+    let confirmActionCallback = null;
+
+    function showConfirmModal(title, message, actionCallback, actionBtnText = '确认', actionBtnClass = 'bg-red-600 hover:bg-red-700') {
+      document.getElementById('confirmModalTitle').textContent = title;
+      document.getElementById('confirmModalMessage').textContent = message;
+      document.getElementById('confirmModalActionBtn').textContent = actionBtnText;
+      document.getElementById('confirmModalActionBtn').className = `px-4 py-2 text-sm font-medium text-white ${actionBtnClass} rounded-lg`;
+
+      confirmActionCallback = actionCallback;
+      document.getElementById('confirmModal').classList.remove('hidden');
+    }
+
+    function closeConfirmModal() {
+      document.getElementById('confirmModal').classList.add('hidden');
+      confirmActionCallback = null;
+    }
+
+    function executeConfirmAction() {
+      if (confirmActionCallback) {
+        confirmActionCallback();
+      }
+      closeConfirmModal();
+    }
+
+    function toggleLongMessageConfig() {
+      const enabled = document.getElementById('longMessageEnabled').checked;
+      const configSection = document.getElementById('longMessageConfigSection');
+
+      if (enabled) {
+        configSection.classList.remove('opacity-50', 'pointer-events-none');
+      } else {
+        configSection.classList.add('opacity-50', 'pointer-events-none');
+      }
+    }
+
+    function saveLongMessageConfig() {
+      if (currentLongMessageMappingIndex === -1) return;
+
+      const enabled = document.getElementById('longMessageEnabled').checked;
+      const threshold = parseInt(document.getElementById('longMessageThreshold').value) || 0;
+      const appendText = document.getElementById('longMessageAppendText').value;
+
+      updateMappingLongMessage(currentLongMessageMappingIndex, 'enabled', enabled);
+      if (enabled) {
+        updateMappingLongMessage(currentLongMessageMappingIndex, 'threshold', threshold);
+        updateMappingLongMessage(currentLongMessageMappingIndex, 'appendMessage', appendText);
+      }
+
+      closeLongMessageConfigModal();
+    }
+
+    function updateForwardingUI() {
+      const acc = getActiveAccount();
+      const forwardingType = acc.forwardingType || 'discord-to-discord';
+      currentForwardingType = forwardingType; // 更新全局变量
+      // 当转发类型改变时，可能需要重置一些相关字段
+      if (forwardingType === 'discord-to-telegram') {
+        // 确保Discord Token存在
+        if (!acc.token) acc.token = '';
+        // 初始化Telegram Bot状态
+        if (!acc.telegramBotState) acc.telegramBotState = 'idle';
+      } else if (forwardingType === 'telegram-to-discord') {
+        // 确保Telegram配置存在
+        if (!acc.telegramApiId) acc.telegramApiId = '';
+        if (!acc.telegramApiHash) acc.telegramApiHash = '';
+        // 初始化Telegram Client状态
+        if (!acc.telegramClientState) acc.telegramClientState = 'idle';
+      } else if (forwardingType === 'discord-to-feishu') {
+        // 确保Discord Token和飞书配置存在
+        if (!acc.token) acc.token = '';
+        if (!acc.feishuAppId) acc.feishuAppId = '';
+        if (!acc.feishuAppSecret) acc.feishuAppSecret = '';
+      }
+      saveConfig();
+      render();
+    }
+
     function switchAccount(id) {
       state.activeId = id;
+      render();
+    }
+
+    // 转发类型切换
+    function switchForwardingType(type) {
+      currentForwardingType = type;
+
+      // 更新标签页样式
+      document.getElementById('discordToDiscordTab').className = type === 'discord-to-discord'
+        ? 'rounded-full px-4 py-2 text-sm font-medium transition bg-indigo-600 text-white shadow'
+        : 'rounded-full px-4 py-2 text-sm font-medium transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-100';
+
+      document.getElementById('discordToTelegramTab').className = type === 'discord-to-telegram'
+        ? 'rounded-full px-4 py-2 text-sm font-medium transition bg-indigo-600 text-white shadow'
+        : 'rounded-full px-4 py-2 text-sm font-medium transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-100';
+
+      document.getElementById('telegramToDiscordTab').className = type === 'telegram-to-discord'
+        ? 'rounded-full px-4 py-2 text-sm font-medium transition bg-indigo-600 text-white shadow'
+        : 'rounded-full px-4 py-2 text-sm font-medium transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-100';
+
       render();
     }
 
@@ -1042,12 +1576,16 @@
     }
 
     function removeAccount() {
-      if (state.accounts.length <= 1) return;
-      if (!confirm('确定要删除当前转发实例吗？')) return;
-      state.accounts = state.accounts.filter(a => a.id !== state.activeId);
-      state.activeId = state.accounts[0]?.id || '';
-      saveConfig();
-      render();
+      if (state.accounts.length <= 1) {
+        showConfirmModal('无法删除', '至少需要保留一个转发实例。', () => {}, '确定', 'bg-blue-600 hover:bg-blue-700');
+        return;
+      }
+      showConfirmModal('删除转发实例', '确定要删除当前转发实例吗？此操作无法撤销。', () => {
+        state.accounts = state.accounts.filter(a => a.id !== state.activeId);
+        state.activeId = state.accounts[0]?.id || '';
+        saveConfig();
+        render();
+      }, '删除', 'bg-red-600 hover:bg-red-700');
     }
 
     function addMapping() {
@@ -1315,6 +1853,42 @@
       }
     }
 
+    function loadSessionFile(input) {
+      const file = input.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const sessionString = e.target.result;
+        updateField('telegramSessionString', sessionString);
+      };
+      reader.readAsText(file);
+    }
+
+    function switchSessionType(type) {
+      const acc = getActiveAccount();
+      acc.sessionType = type;
+      updateField('sessionType', type);
+
+      // 更新tab样式
+      const fileTab = document.getElementById('sessionFileTab');
+      const stringTab = document.getElementById('sessionStringTab');
+      const fileContent = document.getElementById('sessionFileContent');
+      const stringContent = document.getElementById('sessionStringContent');
+
+      if (type === 'file') {
+        fileTab.className = 'flex-1 py-2 px-3 text-sm font-medium text-center bg-white text-indigo-600 border-b-2 border-indigo-600';
+        stringTab.className = 'flex-1 py-2 px-3 text-sm font-medium text-center text-slate-500 hover:text-slate-700';
+        fileContent.classList.remove('hidden');
+        stringContent.classList.add('hidden');
+      } else {
+        stringTab.className = 'flex-1 py-2 px-3 text-sm font-medium text-center bg-white text-indigo-600 border-b-2 border-indigo-600';
+        fileTab.className = 'flex-1 py-2 px-3 text-sm font-medium text-center text-slate-500 hover:text-slate-700';
+        stringContent.classList.remove('hidden');
+        fileContent.classList.add('hidden');
+      }
+    }
+
     function removeOCRKeyword(field, keyword) {
       const acc = getActiveAccount();
       acc[field] = acc[field].filter(k => k !== keyword);
@@ -1551,6 +2125,120 @@
       render();
     }
 
+    // Telegram Bot 连接函数
+    async function connectTelegramBot() {
+      const acc = getActiveAccount();
+      if (acc.telegramBotState === 'online' || acc.telegramBotState === 'connecting') return;
+
+      acc.telegramBotState = 'connecting';
+      acc.telegramBotMessage = '正在连接Telegram Bot...';
+      render();
+
+      try {
+        const res = await fetch('/api/telegram/bot/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          acc.telegramBotState = data.state || 'online';
+          acc.telegramBotMessage = data.message || '连接成功';
+        } else {
+          acc.telegramBotState = 'error';
+          acc.telegramBotMessage = data.message || '连接失败';
+        }
+      } catch (e) {
+        acc.telegramBotState = 'error';
+        acc.telegramBotMessage = '连接请求失败';
+      }
+      render();
+    }
+
+    // Telegram Bot 断开函数
+    async function disconnectTelegramBot() {
+      const acc = getActiveAccount();
+      if (acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error')) return;
+
+      acc.telegramBotState = 'idle';
+      acc.telegramBotMessage = '正在断开...';
+      render();
+
+      try {
+        const res = await fetch('/api/telegram/bot/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          acc.telegramBotState = data.state || 'idle';
+          acc.telegramBotMessage = data.message || '已断开';
+        }
+      } catch (e) {
+        acc.telegramBotState = acc.telegramBotState || 'idle';
+        acc.telegramBotMessage = '断开请求失败';
+      }
+      render();
+    }
+
+    // Telegram Client 连接函数
+    async function connectTelegramClient() {
+      const acc = getActiveAccount();
+      if (acc.telegramClientState === 'online' || acc.telegramClientState === 'connecting') return;
+
+      acc.telegramClientState = 'connecting';
+      acc.telegramClientMessage = '正在连接Telegram Client...';
+      render();
+
+      try {
+        const res = await fetch('/api/telegram/client/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          acc.telegramClientState = data.state || 'online';
+          acc.telegramClientMessage = data.message || '连接成功';
+        } else {
+          acc.telegramClientState = 'error';
+          acc.telegramClientMessage = data.message || '连接失败';
+        }
+      } catch (e) {
+        acc.telegramClientState = 'error';
+        acc.telegramClientMessage = '连接请求失败';
+      }
+      render();
+    }
+
+    // Telegram Client 断开函数
+    async function disconnectTelegramClient() {
+      const acc = getActiveAccount();
+      if (acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error')) return;
+
+      acc.telegramClientState = 'idle';
+      acc.telegramClientMessage = '正在断开...';
+      render();
+
+      try {
+        const res = await fetch('/api/telegram/client/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: acc.id })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          acc.telegramClientState = data.state || 'idle';
+          acc.telegramClientMessage = data.message || '已断开';
+        }
+      } catch (e) {
+        acc.telegramClientState = acc.telegramClientState || 'idle';
+        acc.telegramClientMessage = '断开请求失败';
+      }
+      render();
+    }
+
     function showHelp() {
       document.getElementById('helpPanel').classList.remove('hidden');
     }
@@ -1612,6 +2300,83 @@
     // 启动
     init();
   </script>
+
+  <!-- Telegram超长消息处理配置弹窗 -->
+  <div id="longMessageModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50">
+    <div class="flex items-center justify-center min-h-screen p-4">
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+        <div class="flex items-center justify-between p-6 border-b border-slate-200">
+          <h3 class="text-lg font-semibold text-slate-800">超长消息处理配置</h3>
+          <button onclick="closeLongMessageConfigModal()" class="text-slate-400 hover:text-slate-600">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="p-6 space-y-4">
+          <div class="flex items-center gap-3">
+            <input type="checkbox" id="longMessageEnabled" onchange="toggleLongMessageConfig()"
+              class="h-4 w-4 rounded border-slate-300">
+            <label for="longMessageEnabled" class="text-sm font-medium text-slate-700">启用超长消息处理</label>
+          </div>
+
+          <div id="longMessageConfigSection" class="space-y-4 opacity-50 pointer-events-none">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-2">字数阈值</label>
+              <div class="flex items-center gap-2">
+                <input type="number" id="longMessageThreshold" placeholder="0" min="0"
+                  class="w-24 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                <span class="text-sm text-slate-500">字符</span>
+              </div>
+              <p class="text-xs text-slate-500 mt-1">超过此字数时在消息后附加内容（0表示使用全局设置）</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-2">附加内容</label>
+              <textarea id="longMessageAppendText" rows="3"
+                placeholder="例如：&#10;&#10;💬 此消息内容较长，请注意查阅" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none text-sm resize-none"></textarea>
+              <p class="text-xs text-slate-500 mt-1">超过阈值时附加的提示信息（支持换行）</p>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-3 p-6 border-t border-slate-200">
+          <button onclick="closeLongMessageConfigModal()" class="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200">
+            取消
+          </button>
+          <button onclick="saveLongMessageConfig()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通用确认弹窗 -->
+  <div id="confirmModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50">
+    <div class="flex items-center justify-center min-h-screen p-4">
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+        <div class="flex items-center justify-between p-6 border-b border-slate-200">
+          <h3 id="confirmModalTitle" class="text-lg font-semibold text-slate-800">确认操作</h3>
+          <button onclick="closeConfirmModal()" class="text-slate-400 hover:text-slate-600">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="p-6">
+          <p id="confirmModalMessage" class="text-slate-700">确定要执行此操作吗？</p>
+        </div>
+        <div class="flex items-center justify-end gap-3 p-6 border-t border-slate-200">
+          <button onclick="closeConfirmModal()" class="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200">
+            取消
+          </button>
+          <button id="confirmModalActionBtn" onclick="executeConfirmAction()" class="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700">
+            确认
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
 

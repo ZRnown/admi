@@ -4,6 +4,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { type AccountConfig, getMultiConfig, saveMultiConfig, type MultiConfig } from "@/src/config";
 import { readStatus, triggerFile } from "../_lib/common";
+import { FrontendTelegramConfig } from "@/specs/telegram-integration/contracts/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,12 +18,19 @@ interface FrontendMapping {
   translate?: boolean;
   // 翻译方向: off = 关闭翻译, auto = 自动检测, zh-en = 中译英, en-zh = 英译中
   translateDirection?: "off" | "auto" | "zh-en" | "en-zh";
+  // Telegram 超长消息处理（仅对目标为Telegram的规则有效）
+  longMessage?: {
+    enabled: boolean;
+    threshold?: number;
+    appendMessage?: string;
+  };
 }
 
 interface FrontendAccount {
   id: string;
   name: string;
   type: "bot" | "selfbot";
+  forwardingType?: "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "discord-to-feishu";
   token: string;
   proxyUrl: string;
   loginRequested: boolean;
@@ -61,6 +69,18 @@ interface FrontendAccount {
   ocrBlockedKeywords?: string[];
   // Discord -> Discord 转发样式：style1 = 内嵌（默认），style2 = 纯文本 + 时间
   feishuStyle?: "style1" | "style2";
+  // Telegram认证配置（用于Discord→Telegram）
+  telegramBotToken?: string;
+  // Telegram Client配置（用于Telegram→Discord）
+  telegramApiId?: number;
+  telegramApiHash?: string;
+  telegramSessionPath?: string;
+  telegramSessionString?: string;
+  sessionType?: "file" | "string";
+  // Telegram 超长消息处理配置
+  enableTelegramOverflow?: boolean; // 是否启用Telegram超长消息处理
+  telegramOverflowThreshold?: number; // 全局字数阈值
+  telegramOverflowMessage?: string; // 全局超长时附加的消息
 }
 
 interface FrontendPayload {
@@ -84,6 +104,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
       translateDirection: !account.enableTranslation 
         ? "off"
         : (channelTranslateDirection[channelId] as any) || "auto",
+      // Telegram 超长消息处理
+      longMessage: (account as any).channelLongMessage?.[channelId] || { enabled: false },
     });
   }
   const replacements = Object.entries(account.replacementsDictionary || {}).map(([from, to]) => ({
@@ -95,6 +117,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     id: account.id,
     name: account.name,
     type: account.type,
+    forwardingType: (account as any).forwardingType || "discord-to-discord",
     token: account.token,
     proxyUrl: account.proxyUrl || "",
     loginRequested: account.loginRequested === true,
@@ -131,6 +154,17 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
     ocrBlockedKeywords: account.ocrBlockedKeywords || [],
     feishuStyle: account.feishuStyle || "style1",
+    // Telegram认证配置
+    telegramBotToken: (account as any).telegramBotToken || "",
+    telegramApiId: (account as any).telegramApiId || undefined,
+    telegramApiHash: (account as any).telegramApiHash || "",
+    telegramSessionPath: (account as any).telegramSessionPath || "",
+    telegramSessionString: (account as any).telegramSessionString || "",
+    sessionType: (account as any).sessionType || "file",
+    // Telegram 超长消息处理配置
+    enableTelegramOverflow: (account as any).enableTelegramOverflow === true,
+    telegramOverflowThreshold: (account as any).telegramOverflowThreshold || 0,
+    telegramOverflowMessage: (account as any).telegramOverflowMessage || "",
   };
 }
 
@@ -141,6 +175,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       id: randomUUID(),
       name: dto.name || "未命名转发实例",
       type: dto.type === "bot" ? "bot" : "selfbot",
+      forwardingType: dto.forwardingType || "discord-to-discord",
       token: dto.token || "",
       proxyUrl: dto.proxyUrl || "",
       channelWebhooks: {},
@@ -177,6 +212,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
   const channelNotes: Record<string, string> = {};
   const channelTranslate: Record<string, boolean> = {};
   const channelTranslateDirection: Record<string, "off" | "auto" | "zh-en" | "en-zh"> = {};
+  const channelLongMessage: Record<string, { enabled: boolean; threshold?: number; appendMessage?: string }> = {};
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
       if (mapping?.sourceChannelId && mapping?.targetWebhookUrl) {
@@ -195,6 +231,14 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
             // 关闭翻译时，确保启用状态为false
             channelTranslate[key] = false;
           }
+        }
+        // Telegram 超长消息处理
+        if (mapping.longMessage) {
+          channelLongMessage[key] = {
+            enabled: mapping.longMessage.enabled || false,
+            threshold: typeof mapping.longMessage.threshold === "number" ? mapping.longMessage.threshold : undefined,
+            appendMessage: typeof mapping.longMessage.appendMessage === "string" ? mapping.longMessage.appendMessage.trim() : undefined,
+          };
         }
       }
     }
@@ -242,6 +286,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     channelNotes,
     channelTranslate,
     channelTranslateDirection,
+    channelLongMessage,
     blockedKeywords: Array.isArray(dto.blockedKeywords) ? dto.blockedKeywords : [],
     excludeKeywords: Array.isArray(dto.excludeKeywords) ? dto.excludeKeywords : [],
     replacementsDictionary,
@@ -289,6 +334,17 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
     feishuStyle: dto.feishuStyle === "style2" ? "style2" : (base.feishuStyle || "style1"),
+    // Telegram认证配置保存
+    telegramBotToken: typeof dto.telegramBotToken === "string" && dto.telegramBotToken.trim() ? dto.telegramBotToken.trim() : undefined,
+    telegramApiId: typeof dto.telegramApiId === "number" ? dto.telegramApiId : undefined,
+    telegramApiHash: typeof dto.telegramApiHash === "string" && dto.telegramApiHash.trim() ? dto.telegramApiHash.trim() : undefined,
+    telegramSessionPath: typeof dto.telegramSessionPath === "string" && dto.telegramSessionPath.trim() ? dto.telegramSessionPath.trim() : undefined,
+    telegramSessionString: typeof dto.telegramSessionString === "string" && dto.telegramSessionString.trim() ? dto.telegramSessionString.trim() : undefined,
+    sessionType: dto.sessionType === "string" ? "string" : "file",
+    // Telegram 超长消息处理配置
+    enableTelegramOverflow: dto.enableTelegramOverflow === true,
+    telegramOverflowThreshold: typeof dto.telegramOverflowThreshold === "number" && dto.telegramOverflowThreshold > 0 ? dto.telegramOverflowThreshold : 0,
+    telegramOverflowMessage: typeof dto.telegramOverflowMessage === "string" && dto.telegramOverflowMessage.trim() ? dto.telegramOverflowMessage.trim() : "",
   };
 }
 

@@ -6,6 +6,66 @@ import { getEnv } from "./env";
 export type ChannelId = number | string;
 export type ChatId = ChannelId;
 
+// Telegram相关类型定义
+export interface TelegramAccountConfig {
+  id: string;
+  name: string;
+  type: 'client' | 'bot';  // client = 用户客户端, bot = 机器人
+  token: string;           // Bot Token 或 API Hash (client)
+  sessionPath?: string;    // Session文件路径 (仅client)
+  sessionString?: string;  // Session字符串 (仅client, 加密存储)
+  apiId?: number;          // API ID (仅client)
+  apiHash?: string;        // API Hash (仅client)
+  proxyUrl?: string;
+  loginRequested?: boolean;
+  loginNonce?: number;
+  loginState?: string;
+  loginMessage?: string;
+  enabled?: boolean;
+}
+
+export interface TelegramMapping {
+  id: string;
+  sourceChannelId: string;     // 源频道ID
+  targetChannelId: string;     // 目标频道ID
+  type: 'telegram-to-discord' | 'discord-to-telegram';
+  note?: string;
+  translate?: boolean;
+  translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
+}
+
+export interface FrontendTelegramAccount {
+  id: string;
+  name: string;
+  type: 'client' | 'bot';
+  token: string;
+  sessionPath?: string;
+  sessionString?: string;
+  apiId?: number;
+  apiHash?: string;
+  loginRequested?: boolean;
+  loginNonce?: number;
+  loginState?: string;
+  loginMessage?: string;
+  enabled?: boolean;
+}
+
+export interface FrontendTelegramMapping {
+  id: string;
+  sourceChannelId: string;
+  targetChannelId: string;
+  type: 'telegram-to-discord' | 'discord-to-telegram';
+  note?: string;
+  translate?: boolean;
+  translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
+}
+
+export interface FrontendTelegramConfig {
+  accounts: FrontendTelegramAccount[];
+  mappings: FrontendTelegramMapping[];
+  enableTelegramForward?: boolean;
+}
+
 export interface ChannelConfig {
   muted: ChannelId[];
   allowed: ChannelId[];
@@ -115,6 +175,13 @@ export interface AccountConfig extends LegacyConfig {
   enableOCR?: boolean;
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
+  // Telegram认证配置（用于Discord→Telegram）
+  telegramBotToken?: string;
+  // Telegram Client配置（用于Telegram→Discord）
+  telegramApiId?: number;
+  telegramApiHash?: string;
+  telegramSessionPath?: string;
+  telegramSessionString?: string;
 }
 
 export interface MultiConfig {
@@ -123,6 +190,8 @@ export interface MultiConfig {
   // 管理面板登录用户名/密码（可选）
   loginUser?: string;
   loginPassword?: string;
+  // 配置版本，用于迁移
+  version?: string;
 }
 
 function createDefaultAccount(): AccountConfig {
@@ -174,16 +243,20 @@ function createDefaultAccount(): AccountConfig {
   };
 }
 
+// 当前配置版本
+export const CONFIG_VERSION = "1.1.0"; // 添加Telegram支持
+
 // 导出 ensureConfigFile 供程序启动时调用，而不是在每次读取时调用
 // 这样可以避免在原子保存间隙时误判文件不存在而覆盖配置
 export async function ensureConfigFile() {
   if (!existsSync("./config.json")) {
     const defaultAccount = createDefaultAccount();
-    const multi: MultiConfig = { 
-      accounts: [defaultAccount], 
+    const multi: MultiConfig = {
+      accounts: [defaultAccount],
       activeId: defaultAccount.id,
       loginUser: "admin",
-      loginPassword: "admin123"
+      loginPassword: "admin123",
+      version: CONFIG_VERSION
     };
     await writeFile("./config.json", JSON.stringify(multi, null, 2) + "\n");
     console.log("Created default config.json");
@@ -254,6 +327,41 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   const channelTranslateDirection: Record<string, "off" | "auto" | "zh-en" | "en-zh"> =
     input?.channelTranslateDirection && typeof input.channelTranslateDirection === "object" ? input.channelTranslateDirection : {};
 
+  // 处理Telegram配置
+  const telegramConfig: FrontendTelegramConfig | undefined = input?.telegramConfig && typeof input.telegramConfig === "object" ? {
+    accounts: Array.isArray(input.telegramConfig.accounts) ? input.telegramConfig.accounts.map((acc: any) => ({
+      id: typeof acc.id === "string" ? acc.id : randomUUID(),
+      name: typeof acc.name === "string" ? acc.name : "Telegram Account",
+      type: acc.type === "bot" ? "bot" : "client",
+      token: typeof acc.token === "string" ? acc.token : "",
+      sessionPath: typeof acc.sessionPath === "string" ? acc.sessionPath : undefined,
+      sessionString: typeof acc.sessionString === "string" ? acc.sessionString : undefined,
+      apiId: typeof acc.apiId === "number" ? acc.apiId : undefined,
+      apiHash: typeof acc.apiHash === "string" ? acc.apiHash : undefined,
+      loginRequested: acc.loginRequested === true,
+      loginNonce: typeof acc.loginNonce === "number" ? acc.loginNonce : undefined,
+      loginState: typeof acc.loginState === "string" ? acc.loginState : "idle",
+      loginMessage: typeof acc.loginMessage === "string" ? acc.loginMessage : "",
+      enabled: acc.enabled !== false
+    })) : [],
+    mappings: Array.isArray(input.telegramConfig.mappings) ? input.telegramConfig.mappings.map((mapping: any) => ({
+      id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
+      sourceChannelId: typeof mapping.sourceChannelId === "string" ? mapping.sourceChannelId : "",
+      targetChannelId: typeof mapping.targetChannelId === "string" ? mapping.targetChannelId : "",
+      type: mapping.type === "discord-to-telegram" ? "discord-to-telegram" : "telegram-to-discord",
+      note: typeof mapping.note === "string" ? mapping.note : undefined,
+      translate: mapping.translate === true,
+      translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(mapping.translateDirection) ? mapping.translateDirection : "auto",
+      // Telegram特有的超长消息处理（规则级别）
+      longMessage: mapping.longMessage && typeof mapping.longMessage === "object" ? {
+        enabled: mapping.longMessage.enabled === true,
+        threshold: typeof mapping.longMessage.threshold === "number" ? mapping.longMessage.threshold : undefined,
+        appendMessage: typeof mapping.longMessage.appendMessage === "string" ? mapping.longMessage.appendMessage : undefined
+      } : undefined
+    })) : [],
+    enableTelegramForward: input.telegramConfig.enableTelegramForward === true
+  } : undefined;
+
   return {
     id,
     name,
@@ -306,11 +414,20 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     ignoreAudio: input?.ignoreAudio === true,
     ignoreVideo: input?.ignoreVideo === true,
     ignoreDocuments: input?.ignoreDocuments === true,
-    ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
-    ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
+  ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
+  ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
+  // Telegram转发增强配置（全局默认设置）
+  telegramLongMessage: input?.telegramLongMessage && typeof input.telegramLongMessage === "object" ? {
+    enabled: input.telegramLongMessage.enabled === true,
+    threshold: typeof input.telegramLongMessage.threshold === "number" ? input.telegramLongMessage.threshold : undefined,
+    appendMessage: typeof input.telegramLongMessage.appendMessage === "string" ? input.telegramLongMessage.appendMessage : undefined
+  } : undefined,
+  telegramOverflowThreshold: typeof input?.telegramOverflowThreshold === "number" ? input.telegramOverflowThreshold : undefined,
+  telegramOverflowMessage: typeof input?.telegramOverflowMessage === "string" ? input.telegramOverflowMessage : undefined,
     feishuStyle,
     channelTranslate,
     channelTranslateDirection,
+    telegramConfig,
   };
 }
 
@@ -338,7 +455,19 @@ export async function getMultiConfig(): Promise<MultiConfig> {
     // 如果没有设置登录账密，使用默认值
     const loginUser = (raw as any)?.loginUser || "admin";
     const loginPassword = (raw as any)?.loginPassword || "admin123";
-    return { accounts, activeId: active, loginUser, loginPassword };
+    const version = typeof raw.version === "string" ? raw.version : "1.0.0";
+
+    // 迁移配置到最新版本
+    const migratedAccounts = migrateAccountsToLatest(accounts, version);
+    const config = { accounts: migratedAccounts, activeId: active, loginUser, loginPassword, version: CONFIG_VERSION };
+
+    // 如果版本有更新，保存配置
+    if (version !== CONFIG_VERSION) {
+      await saveMultiConfig(config);
+      console.log(`Migrated config from version ${version} to ${CONFIG_VERSION}`);
+    }
+
+    return config;
   }
   return migrateLegacyToMulti(raw);
 }
@@ -436,14 +565,62 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreDocuments: account.ignoreDocuments,
     ocrServerUrl: account.ocrServerUrl,
     ocrBlockedKeywords: account.ocrBlockedKeywords,
+    telegramOverflowThreshold: (account as any).telegramOverflowThreshold,
+    telegramOverflowMessage: (account as any).telegramOverflowMessage,
     feishuStyle: account.feishuStyle,
     channelTranslate: (account as any).channelTranslate || {},
     channelTranslateDirection: (account as any).channelTranslateDirection || {},
+    telegramOverflowThreshold: (account as any).telegramOverflowThreshold,
+    telegramOverflowMessage: (account as any).telegramOverflowMessage,
+    telegramConfig: (account as any).telegramConfig,
   };
 }
 
 export async function getConfig(): Promise<LegacyConfig> {
   const multi = await getMultiConfig();
   return accountToLegacyConfig(multi.accounts[0]);
+}
+
+/**
+ * 将账号配置迁移到最新版本
+ */
+function migrateAccountsToLatest(accounts: AccountConfig[], fromVersion: string): AccountConfig[] {
+  let migratedAccounts = [...accounts];
+
+  // 从1.0.0迁移到1.1.0：添加Telegram支持
+  if (compareVersions(fromVersion, "1.1.0") < 0) {
+    migratedAccounts = migratedAccounts.map(account => ({
+      ...account,
+      // 确保telegramConfig字段存在，即使为空
+      telegramConfig: account.telegramConfig || {
+        accounts: [],
+        mappings: [],
+        enableTelegramForward: false
+      }
+    }));
+  }
+
+  // 可以在这里添加更多版本迁移逻辑
+
+  return migratedAccounts;
+}
+
+/**
+ * 比较版本号
+ * 返回: -1 (v1 < v2), 0 (v1 == v2), 1 (v1 > v2)
+ */
+function compareVersions(v1: string, v2: string): number {
+  const parts1 = v1.split('.').map(Number);
+  const parts2 = v2.split('.').map(Number);
+
+  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+    const part1 = parts1[i] || 0;
+    const part2 = parts2[i] || 0;
+
+    if (part1 < part2) return -1;
+    if (part1 > part2) return 1;
+  }
+
+  return 0;
 }
 

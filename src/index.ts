@@ -18,6 +18,7 @@ import { SenderBot } from "./senderBot.js";
 import { FeishuSender } from "./feishuSender.js";
 import { ProxyAgent } from "proxy-agent";
 import { FileLogger } from "./logger.js";
+import { telegramBridgeManager } from "./processManager.js";
 
 interface RunningAccount {
   account: AccountConfig;
@@ -837,6 +838,13 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
   }
 
+  // 同步配置到Telegram Bridge
+  try {
+    await syncConfigToTelegramBridge(newConfig);
+  } catch (error: any) {
+    await logger.error(`同步配置到Telegram Bridge失败: ${error.message}`);
+  }
+
   currentConfig = newConfig;
 }
 
@@ -858,6 +866,19 @@ async function main() {
       // 确保未请求登录的账号状态正确
       await writeStatus(account.id, "idle", "未请求登录");
     }
+  }
+
+  // 启动Telegram Bridge进程
+  try {
+    console.log("[Main] Starting Telegram Bridge...");
+    const bridgeResult = await telegramBridgeManager.start();
+    if (bridgeResult.success) {
+      console.log(`[Main] Telegram Bridge started successfully (PID: ${bridgeResult.pid})`);
+    } else {
+      console.error(`[Main] Failed to start Telegram Bridge: ${bridgeResult.message}`);
+    }
+  } catch (error: any) {
+    console.error(`[Main] Error starting Telegram Bridge: ${error.message}`);
   }
 
   const cfgPath = path.resolve(process.cwd(), "config.json");
@@ -982,5 +1003,77 @@ process.on("uncaughtException", async (err: any) => {
   const logger = new FileLogger();
   await logger.error(String(err?.stack || err));
 });
+
+// 优雅关闭处理
+process.on("SIGINT", async () => {
+  console.log("[Main] Received SIGINT, shutting down...");
+  await telegramBridgeManager.cleanup();
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  console.log("[Main] Received SIGTERM, shutting down...");
+  await telegramBridgeManager.cleanup();
+  process.exit(0);
+});
+
+/**
+ * 同步配置到Telegram Bridge进程
+ */
+async function syncConfigToTelegramBridge(config: MultiConfig) {
+  // 检查Telegram Bridge是否在运行
+  if (!telegramBridgeManager.isRunning()) {
+    console.log("[ConfigSync] Telegram Bridge not running, skipping config sync");
+    return;
+  }
+
+  // 提取Telegram相关配置
+  const telegramAccounts = [];
+  const telegramMappings = [];
+
+  for (const account of config.accounts) {
+    if (account.telegramConfig) {
+      // 添加Telegram账号
+      if (account.telegramConfig.accounts) {
+        for (const tgAccount of account.telegramConfig.accounts) {
+          telegramAccounts.push({
+            id: tgAccount.id,
+            name: tgAccount.name,
+            type: tgAccount.type,
+            token: tgAccount.token,
+            sessionPath: tgAccount.sessionPath,
+            sessionString: tgAccount.sessionString,
+            apiId: tgAccount.apiId,
+            apiHash: tgAccount.apiHash,
+            enabled: tgAccount.enabled !== false
+          });
+        }
+      }
+
+      // 添加Telegram映射
+      if (account.telegramConfig.mappings) {
+        telegramMappings.push(...account.telegramConfig.mappings);
+      }
+    }
+  }
+
+  // 发送配置更新消息到Telegram Bridge
+  const configUpdateMessage = {
+    type: "request",
+    id: `config_sync_${Date.now()}`,
+    method: "updateConfig",
+    params: {
+      accounts: telegramAccounts,
+      mappings: telegramMappings
+    }
+  };
+
+  const messageSent = telegramBridgeManager.sendMessage(JSON.stringify(configUpdateMessage));
+  if (messageSent) {
+    console.log(`[ConfigSync] Configuration synced to Telegram Bridge (${telegramAccounts.length} accounts, ${telegramMappings.length} mappings)`);
+  } else {
+    console.error("[ConfigSync] Failed to send config update to Telegram Bridge");
+  }
+}
 
 main();
