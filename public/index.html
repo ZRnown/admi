@@ -376,20 +376,23 @@
       }
     }
 
+    // 立即保存配置（不使用防抖）
+    async function saveConfigImmediate() {
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state)
+        });
+      } catch (e) {
+        console.error('保存失败', e);
+      }
+    }
+
     // 保存配置（防抖）
     async function saveConfig() {
       if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(async () => {
-        try {
-          await fetch('/api/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(state)
-          });
-        } catch (e) {
-          console.error('保存失败', e);
-        }
-      }, 800);
+      saveTimer = setTimeout(saveConfigImmediate, 800);
     }
 
     // 渲染界面
@@ -1611,6 +1614,16 @@
 
     // 启动
     init();
+
+    // 页面卸载时立即保存配置
+    window.addEventListener('beforeunload', (e) => {
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        // 使用 sendBeacon 确保数据能在页面卸载时发送
+        const blob = new Blob([JSON.stringify(state)], { type: 'application/json' });
+        navigator.sendBeacon('/api/config', blob);
+      }
+    });
   </script>
 </body>
 </html>
