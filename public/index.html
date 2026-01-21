@@ -165,17 +165,17 @@
           <h3 class="font-medium text-slate-800 mb-3">用户过滤</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">只转发指定用户（白名单）</label>
-              <div id="ruleAllowedUsersIdsTags" class="flex flex-wrap gap-2 mb-2 min-h-[32px] p-2 border border-slate-200 rounded-lg bg-slate-50"></div>
+              <label class="block text-sm font-medium text-slate-700 mb-2">只转发指定用户（白名单）</label>
+              <div class="flex flex-wrap gap-2 mb-2" id="ruleAllowedUsersIdsTags"></div>
               <input type="text" id="ruleAllowedUsersIdsInput" placeholder="输入用户ID后回车..."
-                onkeydown="if(event.key==='Enter') handleRuleKeywordEnter(this, 'allowedUsersIds')"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'allowedUsersIds')}"
                 class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">不转发指定用户（黑名单）</label>
-              <div id="ruleMutedUsersIdsTags" class="flex flex-wrap gap-2 mb-2 min-h-[32px] p-2 border border-slate-200 rounded-lg bg-slate-50"></div>
+              <label class="block text-sm font-medium text-slate-700 mb-2">不转发指定用户（黑名单）</label>
+              <div class="flex flex-wrap gap-2 mb-2" id="ruleMutedUsersIdsTags"></div>
               <input type="text" id="ruleMutedUsersIdsInput" placeholder="输入用户ID后回车..."
-                onkeydown="if(event.key==='Enter') handleRuleKeywordEnter(this, 'mutedUsersIds')"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'mutedUsersIds')}"
                 class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
             </div>
           </div>
@@ -184,41 +184,38 @@
         <!-- 关键词触发 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-2">关键词触发</h3>
-          <p class="text-xs text-slate-500 mb-2">至少命中一个关键词才会转发（留空则不过滤）</p>
-          <div id="ruleBlockedKeywordsTags" class="flex flex-wrap gap-2 mb-2 min-h-[32px] p-2 border border-slate-200 rounded-lg bg-slate-50"></div>
+          <p class="text-xs text-slate-500 mb-3">至少命中一个关键词才会转发（留空则不过滤）</p>
+          <div class="flex flex-wrap gap-2 mb-2" id="ruleBlockedKeywordsTags"></div>
           <input type="text" id="ruleBlockedKeywordsInput" placeholder="输入关键词后回车..."
-            onkeydown="if(event.key==='Enter') handleRuleKeywordEnter(this, 'blockedKeywords')"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'blockedKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
 
         <!-- 屏蔽关键词 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-2">屏蔽关键词</h3>
-          <p class="text-xs text-slate-500 mb-2">命中任意一个关键词则不转发</p>
-          <div id="ruleExcludeKeywordsTags" class="flex flex-wrap gap-2 mb-2 min-h-[32px] p-2 border border-slate-200 rounded-lg bg-slate-50"></div>
+          <p class="text-xs text-slate-500 mb-3">命中任意一个关键词则不转发</p>
+          <div class="flex flex-wrap gap-2 mb-2" id="ruleExcludeKeywordsTags"></div>
           <input type="text" id="ruleExcludeKeywordsInput" placeholder="输入关键词后回车..."
-            onkeydown="if(event.key==='Enter') handleRuleKeywordEnter(this, 'excludeKeywords')"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'excludeKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
 
         <!-- OCR 屏蔽关键词 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-2">OCR 屏蔽关键词</h3>
-          <p class="text-xs text-slate-500 mb-2">检测到这些词的图片不会转发</p>
-          <div id="ruleOcrBlockedKeywordsTags" class="flex flex-wrap gap-2 mb-2 min-h-[32px] p-2 border border-slate-200 rounded-lg bg-slate-50"></div>
+          <p class="text-xs text-slate-500 mb-3">检测到这些词的图片不会转发</p>
+          <div class="flex flex-wrap gap-2 mb-2" id="ruleOcrBlockedKeywordsTags"></div>
           <input type="text" id="ruleOcrBlockedKeywordsInput" placeholder="输入关键词后回车..."
-            onkeydown="if(event.key==='Enter') handleRuleKeywordEnter(this, 'ocrBlockedKeywords')"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'ocrBlockedKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
 
         <!-- 关键词替换 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-2">关键词替换</h3>
-          <p class="text-xs text-slate-500 mb-2">格式：原词=替换词，输入后回车添加</p>
-          <div id="ruleReplacementsTags" class="flex flex-wrap gap-2 mb-2 min-h-[32px] p-2 border border-slate-200 rounded-lg bg-slate-50"></div>
-          <input type="text" id="ruleReplacementsInput" placeholder="原词=替换词 后回车..."
-            onkeydown="if(event.key==='Enter') handleRuleKeywordEnter(this, 'replacements')"
-            class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
+          <div class="space-y-2" id="ruleReplacementsList"></div>
+          <button onclick="addRuleReplacement()" class="text-xs bg-slate-50 text-slate-700 px-2 py-1 rounded-md hover:bg-slate-100 mt-2">+ 添加替换规则</button>
         </div>
 
         <!-- 超长消息处理（仅 DC→TG 显示） -->
@@ -1705,7 +1702,7 @@
       blockedKeywords: [],
       excludeKeywords: [],
       ocrBlockedKeywords: [],
-      replacements: [] // 存储为 [{key, value}] 格式
+      replacements: [] // 存储为 [{from, to}] 格式，与全局一致
     };
 
     // 渲染规则配置标签
@@ -1720,26 +1717,52 @@
         mutedUsersIds: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-100', hover: 'hover:text-red-800' },
         blockedKeywords: { bg: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-100', hover: 'hover:text-indigo-800' },
         excludeKeywords: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-100', hover: 'hover:text-amber-900' },
-        ocrBlockedKeywords: { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-100', hover: 'hover:text-orange-800' },
-        replacements: { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-purple-100', hover: 'hover:text-purple-800' }
+        ocrBlockedKeywords: { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-100', hover: 'hover:text-orange-800' }
       };
       const colors = colorMap[field] || colorMap.blockedKeywords;
 
-      if (field === 'replacements') {
-        container.innerHTML = data.map((item, idx) => `
-          <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full ${colors.bg} ${colors.text} text-sm border ${colors.border}">
-            ${item.key}→${item.value}
-            <button onclick="removeRuleKeyword('${field}', ${idx})" class="${colors.hover}">✕</button>
-          </span>
-        `).join('');
-      } else {
-        container.innerHTML = data.map((item, idx) => `
-          <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full ${colors.bg} ${colors.text} text-sm border ${colors.border}">
-            ${item}
-            <button onclick="removeRuleKeyword('${field}', ${idx})" class="${colors.hover}">✕</button>
-          </span>
-        `).join('');
+      container.innerHTML = data.map((item, idx) => `
+        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full ${colors.bg} ${colors.text} text-sm border ${colors.border}">
+          ${item} <button onclick="removeRuleKeyword('${field}', ${idx})" class="${colors.hover}">✕</button>
+        </span>
+      `).join('');
+    }
+
+    // 渲染规则替换列表（与全局一致）
+    function renderRuleReplacements() {
+      const container = document.getElementById('ruleReplacementsList');
+      if (!container) return;
+
+      const data = ruleConfigData.replacements || [];
+      container.innerHTML = data.map((r, idx) => `
+        <div class="flex gap-2 items-center">
+          <input type="text" value="${r.from || ''}" oninput="updateRuleReplacement(${idx}, 'from', this.value)"
+            placeholder="原词" class="w-40 px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-mono">
+          <span class="text-slate-400">→</span>
+          <input type="text" value="${r.to || ''}" oninput="updateRuleReplacement(${idx}, 'to', this.value)"
+            placeholder="替换为" class="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-mono">
+          <button onclick="removeRuleReplacement(${idx})" class="p-2 text-slate-400 hover:text-red-500">删除</button>
+        </div>
+      `).join('');
+    }
+
+    // 添加规则替换
+    function addRuleReplacement() {
+      ruleConfigData.replacements.push({ from: '', to: '' });
+      renderRuleReplacements();
+    }
+
+    // 更新规则替换
+    function updateRuleReplacement(idx, field, value) {
+      if (ruleConfigData.replacements[idx]) {
+        ruleConfigData.replacements[idx][field] = value;
       }
+    }
+
+    // 删除规则替换
+    function removeRuleReplacement(idx) {
+      ruleConfigData.replacements.splice(idx, 1);
+      renderRuleReplacements();
     }
 
     // 处理规则配置回车输入
@@ -1747,20 +1770,8 @@
       const value = input.value.trim();
       if (!value) return;
 
-      if (field === 'replacements') {
-        const idx = value.indexOf('=');
-        if (idx <= 0) {
-          alert('格式错误，请使用：原词=替换词');
-          return;
-        }
-        const key = value.substring(0, idx).trim();
-        const val = value.substring(idx + 1).trim();
-        if (!key) return;
-        ruleConfigData.replacements.push({ key, value: val });
-      } else {
-        if (!ruleConfigData[field].includes(value)) {
-          ruleConfigData[field].push(value);
-        }
+      if (!ruleConfigData[field].includes(value)) {
+        ruleConfigData[field].push(value);
       }
 
       input.value = '';
@@ -1769,11 +1780,7 @@
 
     // 删除规则配置标签
     function removeRuleKeyword(field, idx) {
-      if (field === 'replacements') {
-        ruleConfigData.replacements.splice(idx, 1);
-      } else {
-        ruleConfigData[field].splice(idx, 1);
-      }
+      ruleConfigData[field].splice(idx, 1);
       renderRuleTags(field);
     }
 
@@ -1808,7 +1815,7 @@
         blockedKeywords: [...(mapping.blockedKeywords || [])],
         excludeKeywords: [...(mapping.excludeKeywords || [])],
         ocrBlockedKeywords: [...(mapping.ocrBlockedKeywords || [])],
-        replacements: Object.entries(mapping.replacementsDictionary || {}).map(([k, v]) => ({ key: k, value: v }))
+        replacements: Object.entries(mapping.replacementsDictionary || {}).map(([k, v]) => ({ from: k, to: v }))
       };
 
       // 渲染所有标签
@@ -1817,7 +1824,7 @@
       renderRuleTags('blockedKeywords');
       renderRuleTags('excludeKeywords');
       renderRuleTags('ocrBlockedKeywords');
-      renderRuleTags('replacements');
+      renderRuleReplacements();
 
       // 超长消息处理（仅 DC→TG 显示）
       const longMsgSection = document.getElementById('ruleLongMessageSection');
@@ -1882,7 +1889,7 @@
       // 转换关键词替换为字典格式
       const replacements = {};
       ruleConfigData.replacements.forEach(item => {
-        if (item.key) replacements[item.key] = item.value;
+        if (item.from) replacements[item.from] = item.to || '';
       });
       mapping.replacementsDictionary = replacements;
 
