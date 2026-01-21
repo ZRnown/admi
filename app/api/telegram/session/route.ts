@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
       hasSessionString: tgAccount.sessionString ? true : false,
       sessionPath: tgAccount.sessionPath,
       lastModified: new Date().toISOString(),
-      size: tgAccount.sessionString ? len(tgAccount.sessionString) : 0,
+      size: tgAccount.sessionString ? tgAccount.sessionString.length : 0,
     };
 
     return NextResponse.json({
