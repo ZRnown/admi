@@ -1380,13 +1380,31 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
       const hasExplicitClient = (account.telegramConfig.accounts || []).some(
         (tgAccount) => tgAccount.type === "client" || tgAccount.id === account.id,
       );
-      const hasLegacyClientConfig = Boolean(
-        account.telegramApiId ||
-        account.telegramApiHash ||
-        account.telegramSessionPath ||
-        account.telegramSessionString,
+      const hasExplicitBot = (account.telegramConfig.accounts || []).some(
+        (tgAccount) => tgAccount.type === "bot",
       );
+      const hasLegacyClientConfig = Boolean(
+        (account.telegramSessionPath || account.telegramSessionString) &&
+        account.telegramApiId &&
+        account.telegramApiHash,
+      );
+      const hasLegacyBotConfig = Boolean(account.telegramBotToken);
 
+      // 如果有 legacy bot token 且没有显式的 bot 账号，创建一个 bot 账号
+      if (!hasExplicitBot && hasLegacyBotConfig) {
+        pushTelegramAccount({
+          id: `${account.id}_bot`,
+          name: `${account.name || "Telegram"} Bot`,
+          type: "bot",
+          token: account.telegramBotToken,
+          apiId: account.telegramApiId,
+          apiHash: account.telegramApiHash,
+          proxyUrl: account.proxyUrl,
+          enabled: account.telegramConfig?.enableTelegramForward !== false,
+        });
+      }
+
+      // 如果有 legacy client 配置（session）且没有显式的 client 账号，创建一个 client 账号
       if (!hasExplicitClient && hasLegacyClientConfig) {
         pushTelegramAccount({
           id: account.id,

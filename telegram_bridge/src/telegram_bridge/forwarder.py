@@ -276,15 +276,32 @@ class TelegramSender:
             reply_to_message_id = message_data.get("reply_to_message_id")
             attachments = message_data.get("attachments", [])
 
+            logger.info(f"TelegramSender.send_message: account_id={account_id}, type={account_type}, chat_id={chat_id}")
+
             if account_type == "client" and self.client_manager:
+                if account_id not in self.client_manager.clients:
+                    logger.error(f"Client {account_id} not connected. Available clients: {list(self.client_manager.clients.keys())}")
+                    return {
+                        "success": False,
+                        "error": "NOT_CONNECTED",
+                        "message": f"Client {account_id} not connected"
+                    }
                 return await self.client_manager.send_message(
                     account_id, chat_id, text, attachments, parse_mode
                 )
             elif account_type == "bot" and self.bot_manager:
+                if account_id not in self.bot_manager.bots:
+                    logger.error(f"Bot {account_id} not connected. Available bots: {list(self.bot_manager.bots.keys())}")
+                    return {
+                        "success": False,
+                        "error": "NOT_CONNECTED",
+                        "message": f"Bot {account_id} not connected"
+                    }
                 return await self.bot_manager.send_message(
                     account_id, chat_id, text, attachments, parse_mode
                 )
             else:
+                logger.error(f"Invalid account type or manager not set: type={account_type}, client_manager={self.client_manager is not None}, bot_manager={self.bot_manager is not None}")
                 return {
                     "success": False,
                     "error": "INVALID_ACCOUNT_TYPE",
@@ -420,6 +437,8 @@ class TelegramForwarder:
                     # 查找对应的Telegram账号
                     telegram_account = None
 
+                    logger.debug(f"Looking for Telegram account, available: {[getattr(acc, 'id', 'unknown') for acc in self.account_configs]}")
+
                     # 策略：如果只有一个账号，直接使用它
                     if len(self.account_configs) == 1:
                         telegram_account = self.account_configs[0]
@@ -438,6 +457,7 @@ class TelegramForwarder:
                                     break
 
                     if not telegram_account:
+                        logger.warning(f"No Telegram account found for mapping {mapping.id}, account_configs count: {len(self.account_configs)}")
                         results["details"].append({
                             "mapping_id": mapping.id,
                             "status": "failed",
@@ -446,6 +466,8 @@ class TelegramForwarder:
                         results["failed_forwards"] += 1
                         continue
 
+                    logger.info(f"Using Telegram account {telegram_account.id} (type: {telegram_account.type}) for forwarding")
+
                     # 转换消息
                     telegram_account_dict = {"id": telegram_account.id, "type": telegram_account.type}
                     telegram_message_data = await self._convert_discord_to_telegram(
@@ -453,6 +475,7 @@ class TelegramForwarder:
                     )
 
                     if not telegram_message_data:
+                        logger.warning(f"Message conversion failed for mapping {mapping.id}")
                         results["details"].append({
                             "mapping_id": mapping.id,
                             "status": "failed",
@@ -460,6 +483,8 @@ class TelegramForwarder:
                         })
                         results["failed_forwards"] += 1
                         continue
+
+                    logger.debug(f"Converted message data: chat_id={telegram_message_data.get('chat_id')}, text_len={len(telegram_message_data.get('text', ''))}")
 
                     # 发送到Telegram
                     send_result = await self.telegram_sender.send_message(

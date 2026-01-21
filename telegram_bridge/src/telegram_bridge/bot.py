@@ -202,7 +202,7 @@ class TelegramBotManager:
                 self._start_update_task(account_id, client)
                 self._start_keepalive_task(account_id, client)
 
-                logger.info(f"Telegram bot connected for account {account_id}")
+                logger.info(f"Telegram bot connected for account {account_id}: @{me.username}")
                 return {
                     "success": True,
                     "userInfo": user_info
