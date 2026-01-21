@@ -576,6 +576,8 @@ export class SenderBot {
     enableTranslationOverride?: boolean;
     // 可选：覆盖翻译方向
     translationDirection?: "auto" | "zh-en" | "en-zh" | "off";
+    // 可选：规则级别的替换字典
+    ruleReplacementsDictionary?: Record<string, string>;
   }>) {
     if (messagesToSend.length == 0) return;
 
@@ -590,8 +592,15 @@ export class SenderBot {
     const processedMessages = await Promise.all(
       messagesToSend.map(async (item) => {
       let text = item.content || "";
+      // 全局替换字典
       for (const [a, b] of Object.entries(this.replacementsDictionary)) {
         text = text.replaceAll(a, b);
+      }
+      // 规则级别替换字典（优先级低于全局，但会追加替换）
+      if (item.ruleReplacementsDictionary) {
+        for (const [a, b] of Object.entries(item.ruleReplacementsDictionary)) {
+          text = text.replaceAll(a, b);
+        }
       }
 
         // 如果启用了翻译，尝试翻译文本；已含分隔线视为已翻译，跳过

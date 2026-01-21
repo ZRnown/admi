@@ -68,6 +68,10 @@
             <button onclick="exportConfig()" class="inline-flex items-center gap-1 rounded-md border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50">
               <span>⬇️</span> 导出配置
             </button>
+            <button onclick="importConfig()" class="inline-flex items-center gap-1 rounded-md border border-green-200 px-3 py-1.5 text-xs font-medium text-green-600 hover:bg-green-50">
+              <span>⬆️</span> 导入配置
+            </button>
+            <input type="file" id="importConfigFile" accept=".json" style="display:none" onchange="handleImportConfig(event)">
             <button onclick="removeAccount()" class="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
               删除当前实例
             </button>
@@ -142,38 +146,100 @@
     </div>
   </div>
 
-  <!-- 用户过滤配置弹窗 -->
-  <div id="userFilterModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeUserFilterModal()">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-lg mx-4" onclick="event.stopPropagation()">
+  <!-- 规则配置弹窗 -->
+  <div id="ruleConfigModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeRuleConfigModal()">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
       <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-bold text-slate-900">用户过滤配置</h2>
-        <button onclick="closeUserFilterModal()" class="text-slate-400 hover:text-slate-600">
+        <h2 class="text-xl font-bold text-slate-900">规则配置</h2>
+        <button onclick="closeRuleConfigModal()" class="text-slate-400 hover:text-slate-600">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
           </svg>
         </button>
       </div>
-      <p class="text-sm text-slate-500 mb-4">配置此规则的用户过滤（优先级低于全局设置）</p>
-      <div class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">只转发指定用户（白名单）</label>
-          <p class="text-xs text-slate-500 mb-2">输入用户 ID，多个用户请用换行分隔</p>
-          <textarea id="ruleAllowedUsersIds" rows="3" placeholder="每行一个用户 ID..."
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+      <p class="text-sm text-slate-500 mb-4">配置此规则的过滤选项（优先级低于全局设置）</p>
+
+      <div class="space-y-6">
+        <!-- 用户过滤 -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-3">用户过滤</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">只转发指定用户（白名单）</label>
+              <textarea id="ruleAllowedUsersIds" rows="2" placeholder="每行一个用户 ID..."
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">不转发指定用户（黑名单）</label>
+              <textarea id="ruleMutedUsersIds" rows="2" placeholder="每行一个用户 ID..."
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+            </div>
+          </div>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">不转发指定用户（黑名单）</label>
-          <p class="text-xs text-slate-500 mb-2">输入用户 ID，多个用户请用换行分隔</p>
-          <textarea id="ruleMutedUsersIds" rows="3" placeholder="每行一个用户 ID..."
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+
+        <!-- 关键词触发 -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-2">关键词触发</h3>
+          <p class="text-xs text-slate-500 mb-2">至少命中一个关键词才会转发（留空则不过滤）</p>
+          <textarea id="ruleBlockedKeywords" rows="2" placeholder="每行一个关键词..."
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"></textarea>
         </div>
-        <div id="userFilterError" class="hidden text-sm text-red-500"></div>
-        <div class="flex gap-2">
-          <button onclick="closeUserFilterModal()"
+
+        <!-- 屏蔽关键词 -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-2">屏蔽关键词</h3>
+          <p class="text-xs text-slate-500 mb-2">命中任意一个关键词则不转发</p>
+          <textarea id="ruleExcludeKeywords" rows="2" placeholder="每行一个关键词..."
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"></textarea>
+        </div>
+
+        <!-- OCR 屏蔽关键词 -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-2">OCR 屏蔽关键词</h3>
+          <p class="text-xs text-slate-500 mb-2">检测到这些词的图片不会转发</p>
+          <textarea id="ruleOcrBlockedKeywords" rows="2" placeholder="每行一个关键词..."
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"></textarea>
+        </div>
+
+        <!-- 关键词替换 -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-2">关键词替换</h3>
+          <p class="text-xs text-slate-500 mb-2">格式：原词=替换词，每行一条</p>
+          <textarea id="ruleReplacements" rows="2" placeholder="原词=替换词&#10;例如：敏感词=***"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"></textarea>
+        </div>
+
+        <!-- 超长消息处理（仅 DC→TG 显示） -->
+        <div id="ruleLongMessageSection" class="hidden border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-2">超长消息处理</h3>
+          <div class="space-y-3">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleLongMessageEnabled" class="h-4 w-4 rounded border-slate-300">
+              启用超长消息处理
+            </label>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">字符阈值</label>
+                <input type="number" id="ruleLongMessageThreshold" value="4000" min="100"
+                  class="w-full rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">追加消息</label>
+                <input type="text" id="ruleLongMessageAppend" placeholder="（消息过长已截断）"
+                  class="w-full rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="ruleConfigError" class="hidden text-sm text-red-500"></div>
+
+        <div class="flex gap-2 pt-2">
+          <button onclick="closeRuleConfigModal()"
             class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
             取消
           </button>
-          <button onclick="saveUserFilterConfig()"
+          <button onclick="saveRuleConfig()"
             class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
             保存
           </button>
@@ -956,6 +1022,43 @@
         </div>
 
 
+        <!-- 全局用户过滤 -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">用户过滤（全局）</h2>
+          </div>
+          <div class="p-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">用户白名单（只转发这些用户的消息）</label>
+                <div class="flex flex-wrap gap-2 mb-3">
+                  ${(acc.allowedUsersIds || []).map(id => `
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-green-50 text-green-600 text-sm border border-green-100">
+                      ${id} <button onclick="removeKeyword('allowedUsersIds', '${id}')" class="hover:text-green-800">✕</button>
+                    </span>
+                  `).join('')}
+                  <input type="text" placeholder="输入用户ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'allowedUsersIds')"
+                    class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+                </div>
+                <p class="text-xs text-slate-500">留空表示不限制</p>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">用户黑名单（不转发这些用户的消息）</label>
+                <div class="flex flex-wrap gap-2 mb-3">
+                  ${(acc.mutedUsersIds || []).map(id => `
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-sm border border-red-100">
+                      ${id} <button onclick="removeKeyword('mutedUsersIds', '${id}')" class="hover:text-red-800">✕</button>
+                    </span>
+                  `).join('')}
+                  <input type="text" placeholder="输入用户ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'mutedUsersIds')"
+                    class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+                </div>
+                <p class="text-xs text-slate-500">黑名单优先级高于白名单</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 关键词过滤 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
@@ -1103,16 +1206,9 @@
               <option value="zh-en" ${m.translateDirection === 'zh-en' ? 'selected' : ''}>中 → 英</option>
               <option value="en-zh" ${m.translateDirection === 'en-zh' ? 'selected' : ''}>英 → 中</option>
             </select>
-            ${forwardingType === 'discord-to-discord' ? `
-            <button onclick="openUserFilterModal(${idx + startIdx})" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="用户过滤配置">
-              👤
-            </button>
-            ` : ''}
-            ${forwardingType === 'discord-to-telegram' ? `
-            <button onclick="openLongMessageConfigModal(${idx + startIdx}, '${forwardingType}')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="超长消息处理配置">
+            <button onclick="openRuleConfigModal(${idx + startIdx}, '${forwardingType}')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="规则配置">
               ⚙️
             </button>
-            ` : ''}
             <button onclick="removeMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500 rounded hover:bg-red-50">删除</button>
           </div>
         </div>
@@ -1166,6 +1262,9 @@
             `}
             <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx + startIdx}, this.value)"
               placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
+            <button onclick="openRuleConfigModal(${idx + startIdx}, 'discord-to-feishu')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="规则配置">
+              ⚙️
+            </button>
             <button onclick="removeFeishuMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500">删除</button>
           </div>
         </div>
@@ -1584,66 +1683,134 @@
       render();
     }
 
-    // 用户过滤配置弹窗相关函数
-    let currentUserFilterMappingIndex = -1;
+    // 规则配置弹窗相关函数
+    let currentRuleConfigIndex = -1;
+    let currentRuleConfigType = ''; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'discord-to-feishu'
 
-    function openUserFilterModal(mappingIndex) {
-      currentUserFilterMappingIndex = mappingIndex;
+    function openRuleConfigModal(mappingIndex, forwardingType) {
+      currentRuleConfigIndex = mappingIndex;
+      currentRuleConfigType = forwardingType;
 
       const acc = getActiveAccount();
-      const mappings = acc.mappings || [];
-      const mapping = mappings[mappingIndex];
+      let mapping;
+
+      // 根据转发类型获取对应的规则
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+        const mappings = (acc.telegramConfig?.mappings || []).filter(m => m.type === forwardingType);
+        mapping = mappings[mappingIndex];
+      } else if (forwardingType === 'discord-to-feishu') {
+        const entries = getFeishuMappings(acc);
+        mapping = entries[mappingIndex];
+      } else {
+        const mappings = acc.mappings || [];
+        mapping = mappings[mappingIndex];
+      }
 
       if (!mapping) {
-        console.error('找不到规则', mappingIndex);
+        console.error('找不到规则', mappingIndex, forwardingType);
         return;
       }
 
       // 填充当前配置
-      const allowedUsersIds = mapping.allowedUsersIds || [];
-      const mutedUsersIds = mapping.mutedUsersIds || [];
+      document.getElementById('ruleAllowedUsersIds').value = (mapping.allowedUsersIds || []).join('\n');
+      document.getElementById('ruleMutedUsersIds').value = (mapping.mutedUsersIds || []).join('\n');
+      document.getElementById('ruleBlockedKeywords').value = (mapping.blockedKeywords || []).join('\n');
+      document.getElementById('ruleExcludeKeywords').value = (mapping.excludeKeywords || []).join('\n');
+      document.getElementById('ruleOcrBlockedKeywords').value = (mapping.ocrBlockedKeywords || []).join('\n');
 
-      document.getElementById('ruleAllowedUsersIds').value = allowedUsersIds.join('\n');
-      document.getElementById('ruleMutedUsersIds').value = mutedUsersIds.join('\n');
-      document.getElementById('userFilterError').classList.add('hidden');
+      // 关键词替换
+      const replacements = mapping.replacementsDictionary || {};
+      const replacementsText = Object.entries(replacements).map(([k, v]) => `${k}=${v}`).join('\n');
+      document.getElementById('ruleReplacements').value = replacementsText;
 
-      document.getElementById('userFilterModal').classList.remove('hidden');
+      // 超长消息处理（仅 DC→TG 显示）
+      const longMsgSection = document.getElementById('ruleLongMessageSection');
+      if (forwardingType === 'discord-to-telegram') {
+        longMsgSection.classList.remove('hidden');
+        const longMsg = mapping.longMessage || {};
+        document.getElementById('ruleLongMessageEnabled').checked = longMsg.enabled || false;
+        document.getElementById('ruleLongMessageThreshold').value = longMsg.threshold || 4000;
+        document.getElementById('ruleLongMessageAppend').value = longMsg.appendMessage || '';
+      } else {
+        longMsgSection.classList.add('hidden');
+      }
+
+      document.getElementById('ruleConfigError').classList.add('hidden');
+      document.getElementById('ruleConfigModal').classList.remove('hidden');
     }
 
-    function closeUserFilterModal() {
-      document.getElementById('userFilterModal').classList.add('hidden');
-      currentUserFilterMappingIndex = -1;
+    function closeRuleConfigModal() {
+      document.getElementById('ruleConfigModal').classList.add('hidden');
+      currentRuleConfigIndex = -1;
+      currentRuleConfigType = '';
     }
 
-    function saveUserFilterConfig() {
-      if (currentUserFilterMappingIndex < 0) return;
+    function saveRuleConfig() {
+      if (currentRuleConfigIndex < 0) return;
 
       const acc = getActiveAccount();
-      if (!acc.mappings) acc.mappings = [];
+      let mapping;
 
-      const mapping = acc.mappings[currentUserFilterMappingIndex];
+      // 根据转发类型获取对应的规则
+      if (currentRuleConfigType === 'discord-to-telegram' || currentRuleConfigType === 'telegram-to-discord') {
+        ensureTelegramConfig(acc);
+        const mappings = (acc.telegramConfig.mappings || []).filter(m => m.type === currentRuleConfigType);
+        mapping = mappings[currentRuleConfigIndex];
+      } else if (currentRuleConfigType === 'discord-to-feishu') {
+        // 飞书规则需要特殊处理
+        const entries = getFeishuMappings(acc);
+        const entry = entries[currentRuleConfigIndex];
+        if (entry) {
+          // 飞书规则存储在 channelFeishuWebhooks 中，需要扩展存储
+          if (!acc.feishuRuleConfigs) acc.feishuRuleConfigs = {};
+          mapping = acc.feishuRuleConfigs[entry.sourceChannelId] || {};
+          acc.feishuRuleConfigs[entry.sourceChannelId] = mapping;
+        }
+      } else {
+        if (!acc.mappings) acc.mappings = [];
+        mapping = acc.mappings[currentRuleConfigIndex];
+      }
+
       if (!mapping) {
-        console.error('找不到规则', currentUserFilterMappingIndex);
+        console.error('找不到规则', currentRuleConfigIndex);
         return;
       }
 
-      // 解析用户 ID 列表
-      const allowedText = document.getElementById('ruleAllowedUsersIds').value.trim();
-      const mutedText = document.getElementById('ruleMutedUsersIds').value.trim();
+      // 解析并保存配置
+      const parseLines = (text) => text ? text.split(/[\n,]/).map(s => s.trim()).filter(Boolean) : [];
 
-      const allowedUsersIds = allowedText
-        ? allowedText.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
-        : [];
-      const mutedUsersIds = mutedText
-        ? mutedText.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
-        : [];
+      mapping.allowedUsersIds = parseLines(document.getElementById('ruleAllowedUsersIds').value);
+      mapping.mutedUsersIds = parseLines(document.getElementById('ruleMutedUsersIds').value);
+      mapping.blockedKeywords = parseLines(document.getElementById('ruleBlockedKeywords').value);
+      mapping.excludeKeywords = parseLines(document.getElementById('ruleExcludeKeywords').value);
+      mapping.ocrBlockedKeywords = parseLines(document.getElementById('ruleOcrBlockedKeywords').value);
 
-      // 更新规则
-      mapping.allowedUsersIds = allowedUsersIds;
-      mapping.mutedUsersIds = mutedUsersIds;
+      // 解析关键词替换
+      const replacementsText = document.getElementById('ruleReplacements').value.trim();
+      const replacements = {};
+      if (replacementsText) {
+        replacementsText.split('\n').forEach(line => {
+          const idx = line.indexOf('=');
+          if (idx > 0) {
+            const key = line.substring(0, idx).trim();
+            const value = line.substring(idx + 1).trim();
+            if (key) replacements[key] = value;
+          }
+        });
+      }
+      mapping.replacementsDictionary = replacements;
+
+      // 超长消息处理（仅 DC→TG）
+      if (currentRuleConfigType === 'discord-to-telegram') {
+        mapping.longMessage = {
+          enabled: document.getElementById('ruleLongMessageEnabled').checked,
+          threshold: parseInt(document.getElementById('ruleLongMessageThreshold').value) || 4000,
+          appendMessage: document.getElementById('ruleLongMessageAppend').value.trim()
+        };
+      }
 
       saveConfig();
-      closeUserFilterModal();
+      closeRuleConfigModal();
       render();
     }
 
@@ -1747,23 +1914,44 @@
     function updateForwardingUI() {
       const acc = getActiveAccount();
       const forwardingType = acc.forwardingType || 'discord-to-discord';
+      const previousType = currentForwardingType;
       currentForwardingType = forwardingType; // 更新全局变量
-      // 当转发类型改变时，可能需要重置一些相关字段
+
+      // 当转发类型改变时，断开其他类型的连接
+      if (previousType && previousType !== forwardingType) {
+        // 如果之前是 discord-to-telegram，断开 Telegram Bot
+        if (previousType === 'discord-to-telegram' && acc.telegramBotState === 'online') {
+          disconnectTelegramBot();
+        }
+        // 如果之前是 telegram-to-discord，断开 Telegram Client
+        if (previousType === 'telegram-to-discord' && acc.telegramClientState === 'online') {
+          disconnectTelegramClient();
+        }
+        // 如果之前是需要 Discord 的类型，现在切换到 telegram-to-discord，断开 Discord
+        if ((previousType === 'discord-to-discord' || previousType === 'discord-to-telegram' || previousType === 'discord-to-feishu')
+            && forwardingType === 'telegram-to-discord' && acc.loginState === 'online') {
+          requestStop();
+        }
+        // 重置不相关的状态
+        if (forwardingType !== 'discord-to-telegram') {
+          acc.telegramBotState = 'idle';
+        }
+        if (forwardingType !== 'telegram-to-discord') {
+          acc.telegramClientState = 'idle';
+        }
+      }
+
+      // 当转发类型改变时，初始化相关字段
       if (forwardingType === 'discord-to-telegram') {
-        // 确保Discord Token存在
         if (!acc.token) acc.token = '';
-        // 初始化Telegram Bot状态
         if (!acc.telegramBotState) acc.telegramBotState = 'idle';
         ensureTelegramConfig(acc);
       } else if (forwardingType === 'telegram-to-discord') {
-        // 确保Telegram配置存在
         if (!acc.telegramApiId) acc.telegramApiId = '';
         if (!acc.telegramApiHash) acc.telegramApiHash = '';
-        // 初始化Telegram Client状态
         if (!acc.telegramClientState) acc.telegramClientState = 'idle';
         ensureTelegramConfig(acc);
       } else if (forwardingType === 'discord-to-feishu') {
-        // 确保Discord Token和飞书配置存在
         if (!acc.token) acc.token = '';
         if (!acc.feishuAppId) acc.feishuAppId = '';
         if (!acc.feishuAppSecret) acc.feishuAppSecret = '';
@@ -2826,6 +3014,50 @@
         URL.revokeObjectURL(url);
       } catch (e) {
         alert('导出失败: ' + e.message);
+      }
+    }
+
+    function importConfig() {
+      document.getElementById('importConfigFile').click();
+    }
+
+    async function handleImportConfig(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const importedConfig = JSON.parse(text);
+
+        // 验证配置格式
+        if (!importedConfig.accounts || !Array.isArray(importedConfig.accounts)) {
+          alert('配置文件格式错误：缺少 accounts 数组');
+          return;
+        }
+
+        if (!confirm('确定要导入配置吗？这将覆盖当前所有配置。')) {
+          return;
+        }
+
+        // 发送到后端
+        const res = await fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(importedConfig)
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || '导入失败');
+        }
+
+        alert('配置导入成功！页面将刷新。');
+        location.reload();
+      } catch (e) {
+        alert('导入失败: ' + e.message);
+      } finally {
+        // 清空文件输入，允许再次选择同一文件
+        event.target.value = '';
       }
     }
 

@@ -238,18 +238,37 @@ export class Bot {
   }
 
   /**
-   * 获取指定频道的规则级别用户过滤配置
-   * 返回该频道规则的 allowedUsersIds 和 mutedUsersIds
+   * 获取指定频道的规则级别完整配置
+   * 返回该频道规则的所有过滤配置
    */
-  private getRuleUserFilter(channelId: string): { allowedUsersIds: string[]; mutedUsersIds: string[] } {
+  private getRuleLevelConfig(channelId: string): {
+    allowedUsersIds: string[];
+    mutedUsersIds: string[];
+    blockedKeywords: string[];
+    excludeKeywords: string[];
+    ocrBlockedKeywords: string[];
+    replacementsDictionary: Record<string, string>;
+  } {
     const mappings = (this.config as any).mappings || [];
     const rule = mappings.find((m: any) => m.sourceChannelId === channelId);
     if (!rule) {
-      return { allowedUsersIds: [], mutedUsersIds: [] };
+      return {
+        allowedUsersIds: [],
+        mutedUsersIds: [],
+        blockedKeywords: [],
+        excludeKeywords: [],
+        ocrBlockedKeywords: [],
+        replacementsDictionary: {},
+      };
     }
-    const allowed = (rule.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
-    const muted = (rule.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
-    return { allowedUsersIds: allowed, mutedUsersIds: muted };
+    return {
+      allowedUsersIds: (rule.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean),
+      mutedUsersIds: (rule.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean),
+      blockedKeywords: (rule.blockedKeywords || []).filter(Boolean),
+      excludeKeywords: (rule.excludeKeywords || []).filter(Boolean),
+      ocrBlockedKeywords: (rule.ocrBlockedKeywords || []).filter(Boolean),
+      replacementsDictionary: rule.replacementsDictionary || {},
+    };
   }
 
   private async ensureDataDir() {
@@ -445,60 +464,68 @@ export class Bot {
       this.logger.error(`${logPrefix} [ERROR] Ignore filter check failed: ${String(e?.message || e)}`);
     }
 
-    // OCR 图片检测过滤
+    // OCR 图片检测过滤（全局 + 规则级别）
     try {
       if (this.ocrClient && message.attachments && message.attachments.size > 0) {
-        console.log(`[OCR] 消息包含 ${message.attachments.size} 个附件，开始检测图片...`);
-        this.logger.info(`${logPrefix} [OCR] 开始检测图片中的文字...`);
+        // 获取规则级别的 OCR 屏蔽关键词
+        const earlyRuleConfig = this.getRuleLevelConfig(message.channelId);
+        const globalOcrKws = (this.config.ocrBlockedKeywords || []).filter(Boolean);
+        const ruleOcrKws = earlyRuleConfig.ocrBlockedKeywords;
+        const allOcrKws = [...new Set([...globalOcrKws, ...ruleOcrKws])];
 
-        let totalImages = 0;
-        let checkedImages = 0;
+        if (allOcrKws.length > 0) {
+          console.log(`[OCR] 消息包含 ${message.attachments.size} 个附件，开始检测图片...`);
+          this.logger.info(`${logPrefix} [OCR] 开始检测图片中的文字...`);
 
-        for (const attachment of message.attachments.values()) {
-          const contentType = attachment.contentType || "";
-          const url = attachment.url;
+          let totalImages = 0;
+          let checkedImages = 0;
 
-          // 只处理图片
-          const isImage = contentType.startsWith("image/") ||
-            /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url);
+          for (const attachment of message.attachments.values()) {
+            const contentType = attachment.contentType || "";
+            const url = attachment.url;
 
-          if (isImage) {
-            totalImages++;
-            console.log(`[OCR] 检测到图片 ${attachment.name || attachment.url} (类型: ${contentType || 'unknown'})`);
+            // 只处理图片
+            const isImage = contentType.startsWith("image/") ||
+              /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url);
 
-            try {
-              console.log(`[OCR] 开始OCR识别...`);
-              const ocrResult = await this.ocrClient.recognizeImage(url);
-              const { shouldBlock, matchedKeywords } = this.ocrClient.checkOCRKeywords(
-                ocrResult,
-                this.config.ocrBlockedKeywords || []
-              );
+            if (isImage) {
+              totalImages++;
+              console.log(`[OCR] 检测到图片 ${attachment.name || attachment.url} (类型: ${contentType || 'unknown'})`);
 
-              checkedImages++;
+              try {
+                console.log(`[OCR] 开始OCR识别...`);
+                const ocrResult = await this.ocrClient.recognizeImage(url);
+                const { shouldBlock, matchedKeywords } = this.ocrClient.checkOCRKeywords(
+                  ocrResult,
+                  allOcrKws
+                );
 
-              if (shouldBlock) {
-                const errorMsg = `${logPrefix} [OCR] 检测到敏感文字 "${matchedKeywords.join('", "')}"，跳过转发`;
-                console.log(`[OCR] ${errorMsg}`);
-                this.logger.info(errorMsg);
-                return;
-              } else {
-                console.log(`[OCR] 图片检测通过，未检测到敏感词`);
+                checkedImages++;
+
+                if (shouldBlock) {
+                  const errorMsg = `${logPrefix} [OCR] 检测到敏感文字 "${matchedKeywords.join('", "')}"，跳过转发`;
+                  console.log(`[OCR] ${errorMsg}`);
+                  this.logger.info(errorMsg);
+                  return;
+                } else {
+                  console.log(`[OCR] 图片检测通过，未检测到敏感词`);
+                }
+              } catch (ocrError: any) {
+                const errorMsg = `${logPrefix} [OCR] 识别失败: ${ocrError.message}，继续处理其他附件`;
+                console.error(`[OCR] ${errorMsg}`);
+                console.error(`[OCR] 错误详情:`, ocrError);
+                console.error(`[OCR] 错误堆栈: ${ocrError.stack}`);
+                this.logger.error(errorMsg);
               }
-            } catch (ocrError: any) {
-              const errorMsg = `${logPrefix} [OCR] 识别失败: ${ocrError.message}，继续处理其他附件`;
-              console.error(`[OCR] ${errorMsg}`);
-              console.error(`[OCR] 错误详情:`, ocrError);
-              console.error(`[OCR] 错误堆栈: ${ocrError.stack}`);
-              this.logger.error(errorMsg);
+            } else {
+              console.log(`[OCR] 跳过非图片附件: ${attachment.name || attachment.url}`);
             }
-          } else {
-            console.log(`[OCR] 跳过非图片附件: ${attachment.name || attachment.url}`);
           }
-        }
 
-        const finalMsg = `${logPrefix} [OCR] 图片检测完成，总图片数=${totalImages}，已检测=${checkedImages}，允许转发`;
-        console.log(`[OCR] ${finalMsg}`);
-        this.logger.info(finalMsg);
+          const finalMsg = `${logPrefix} [OCR] 图片检测完成，总图片数=${totalImages}，已检测=${checkedImages}，允许转发`;
+          console.log(`[OCR] ${finalMsg}`);
+          this.logger.info(finalMsg);
+        }
       } else {
         if (!this.ocrClient) {
           console.log(`[OCR] OCR客户端未初始化，跳过检测`);
@@ -512,7 +539,7 @@ export class Bot {
       console.error(`[OCR] 错误堆栈: ${e?.stack || 'N/A'}`);
       this.logger.error(errorMsg);
     }
-    
+
     // 特别记录webhook消息的embeds信息（webhook消息通常只有embeds没有content）
     if (isWebhook && message.embeds && message.embeds.length > 0) {
       this.logger.info(`${logPrefix} [WEBHOOK-EMBEDS] Webhook消息包含 ${message.embeds.length} 个embeds，将传递给发送器`);
@@ -566,6 +593,9 @@ export class Bot {
       this.logger.info(`${logPrefix} [ROUTE] Found Feishu mapping for channel ${message.channelId}, will forward to Feishu`);
     }
 
+    // 获取规则级别配置
+    const ruleConfig = this.getRuleLevelConfig(message.channelId);
+
     // 用户过滤：全局白名单/黑名单 + 规则级别白名单/黑名单
     // 优先级：全局设置 > 规则级别设置
     // 注意：webhook 消息的 author 可能为 null，需要特殊处理
@@ -579,35 +609,34 @@ export class Bot {
         const globalMuted = (this.config.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
 
         // 规则级别设置
-        const ruleFilter = this.getRuleUserFilter(message.channelId);
-        const ruleAllowed = ruleFilter.allowedUsersIds;
-        const ruleMuted = ruleFilter.mutedUsersIds;
+        const ruleAllowed = ruleConfig.allowedUsersIds;
+        const ruleMuted = ruleConfig.mutedUsersIds;
 
         // 全局黑名单优先级最高：如果在全局黑名单中，直接跳过
         if (globalMuted.length > 0 && globalMuted.includes(authorId)) {
-          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} in global mutedUsersIds (muted=${globalMuted.join(",")})`);
+          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} in global mutedUsersIds`);
           return;
         }
 
         // 全局白名单次之：如果全局白名单非空，必须在其中
         if (globalAllowed.length > 0 && !globalAllowed.includes(authorId)) {
-          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} not in global allowedUsersIds (allowed=${globalAllowed.join(",")})`);
+          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} not in global allowedUsersIds`);
           return;
         }
 
         // 规则级别黑名单：如果在规则黑名单中，跳过
         if (ruleMuted.length > 0 && ruleMuted.includes(authorId)) {
-          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} in rule mutedUsersIds (muted=${ruleMuted.join(",")})`);
+          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} in rule mutedUsersIds`);
           return;
         }
 
         // 规则级别白名单：如果规则白名单非空，必须在其中
         if (ruleAllowed.length > 0 && !ruleAllowed.includes(authorId)) {
-          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} not in rule allowedUsersIds (allowed=${ruleAllowed.join(",")})`);
+          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} not in rule allowedUsersIds`);
           return;
         }
 
-        this.logger.info(`${logPrefix} [FILTER] User ID filter passed (globalAllowed=${globalAllowed.length} globalMuted=${globalMuted.length} ruleAllowed=${ruleAllowed.length} ruleMuted=${ruleMuted.length})`);
+        this.logger.info(`${logPrefix} [FILTER] User ID filter passed`);
       } else if (isWebhook) {
         this.logger.info(`${logPrefix} [FILTER] Webhook message, skipping user ID filter`);
       }
@@ -615,58 +644,66 @@ export class Bot {
       this.logger.error(`${logPrefix} [ERROR] User filter check failed: ${String(e?.message || e)}`);
     }
 
-    // keyword filter: if list non-empty, only forward messages containing at least one keyword
+    // keyword filter: 全局 + 规则级别关键词触发
+    // 优先级：全局设置 > 规则级别设置
     try {
-      const kws = (this.config.blockedKeywords || []).filter(Boolean);
-      if (kws.length > 0) {
-        const lower = (s: string) => s.toLowerCase();
-        const pieces: string[] = [];
-        pieces.push(message.content || "");
-        pieces.push(...collectEmbedText(message.embeds || []));
-        const hay = lower(pieces.join("\n"));
-        const matchedKeywords: string[] = [];
-        for (const k of kws) {
-          if (hay.includes(lower(k))) {
-            matchedKeywords.push(k);
-          }
-        }
-        if (matchedKeywords.length === 0) {
-          this.logger.info(`${logPrefix} [SKIP] No required keyword matched (keywords=${kws.join(",")}, content="${(message.content || "").substring(0, 100)}", embeds=${message.embeds?.length || 0})`);
+      const globalKws = (this.config.blockedKeywords || []).filter(Boolean);
+      const ruleKws = ruleConfig.blockedKeywords;
+      const lower = (s: string) => s.toLowerCase();
+      const pieces: string[] = [];
+      pieces.push(message.content || "");
+      pieces.push(...collectEmbedText(message.embeds || []));
+      const hay = lower(pieces.join("\n"));
+
+      // 全局关键词触发优先
+      if (globalKws.length > 0) {
+        const matched = globalKws.filter((k) => hay.includes(lower(k)));
+        if (matched.length === 0) {
+          this.logger.info(`${logPrefix} [SKIP] No global keyword matched`);
           return;
         }
-        this.logger.info(`${logPrefix} [FILTER] Keyword filter passed (matched=${matchedKeywords.join(",")}, required=${kws.join(",")})`);
-      } else {
-        this.logger.info(`${logPrefix} [FILTER] No keyword filter configured, passing`);
+        this.logger.info(`${logPrefix} [FILTER] Global keyword matched: ${matched.join(",")}`);
+      } else if (ruleKws.length > 0) {
+        // 规则级别关键词触发
+        const matched = ruleKws.filter((k) => hay.includes(lower(k)));
+        if (matched.length === 0) {
+          this.logger.info(`${logPrefix} [SKIP] No rule keyword matched`);
+          return;
+        }
+        this.logger.info(`${logPrefix} [FILTER] Rule keyword matched: ${matched.join(",")}`);
       }
     } catch (e: any) {
-      this.logger.error(`${logPrefix} [ERROR] Keyword filter check failed: ${String(e?.message || e)}`);
+      this.logger.error(`${logPrefix} [ERROR] Keyword filter failed: ${String(e?.message || e)}`);
     }
 
-    // exclude keywords: skip message entirely if it contains any of them
+    // exclude keywords: 全局 + 规则级别屏蔽关键词
     try {
-      const excludes = (this.config.excludeKeywords || []).filter(Boolean);
-      if (excludes.length > 0) {
-        const lower = (s: string) => s.toLowerCase();
-        const pieces: string[] = [];
-        pieces.push(message.content || "");
-        pieces.push(...collectEmbedText(message.embeds || []));
-        const hay = lower(pieces.join("\n"));
-        const matchedExcludes: string[] = [];
-        for (const k of excludes) {
-          if (hay.includes(lower(k))) {
-            matchedExcludes.push(k);
-          }
-        }
-        if (matchedExcludes.length > 0) {
-          this.logger.info(`${logPrefix} [SKIP] Exclude keyword matched (matched=${matchedExcludes.join(",")}, excludes=${excludes.join(",")})`);
+      const globalExcludes = (this.config.excludeKeywords || []).filter(Boolean);
+      const ruleExcludes = ruleConfig.excludeKeywords;
+      const lower = (s: string) => s.toLowerCase();
+      const pieces: string[] = [];
+      pieces.push(message.content || "");
+      pieces.push(...collectEmbedText(message.embeds || []));
+      const hay = lower(pieces.join("\n"));
+
+      // 全局屏蔽关键词优先
+      if (globalExcludes.length > 0) {
+        const matched = globalExcludes.filter((k) => hay.includes(lower(k)));
+        if (matched.length > 0) {
+          this.logger.info(`${logPrefix} [SKIP] Global exclude keyword matched: ${matched.join(",")}`);
           return;
         }
-        this.logger.info(`${logPrefix} [FILTER] Exclude keyword filter passed (excludes=${excludes.join(",")})`);
-      } else {
-        this.logger.info(`${logPrefix} [FILTER] No exclude keyword filter configured, passing`);
+      }
+      // 规则级别屏蔽关键词
+      if (ruleExcludes.length > 0) {
+        const matched = ruleExcludes.filter((k) => hay.includes(lower(k)));
+        if (matched.length > 0) {
+          this.logger.info(`${logPrefix} [SKIP] Rule exclude keyword matched: ${matched.join(",")}`);
+          return;
+        }
       }
     } catch (e: any) {
-      this.logger.error(`${logPrefix} [ERROR] Exclude keyword filter check failed: ${String(e?.message || e)}`);
+      this.logger.error(`${logPrefix} [ERROR] Exclude keyword filter failed: ${String(e?.message || e)}`);
     }
     let replyToTarget: { channelId: string; messageId: string } | undefined;
     // 给样式2使用的回复元信息（仅用于格式化文本）
@@ -858,6 +895,7 @@ export class Bot {
       extraEmbeds,
       enableTranslationOverride: enableTranslationForThis,
       translationDirection: translationDirectionForThis as any,
+      ruleReplacementsDictionary: ruleConfig.replacementsDictionary,
     }];
 
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送

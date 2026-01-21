@@ -76,16 +76,28 @@ export interface ChannelConfig {
   allowed: ChannelId[];
 }
 
-// Discord→Discord 规则映射（支持规则级别的用户过滤）
-export interface DiscordMappingRule {
+// 规则级别的完整配置（适用于所有转发类型）
+export interface RuleLevelConfig {
+  // 用户过滤
+  allowedUsersIds?: ChannelId[];
+  mutedUsersIds?: ChannelId[];
+  // 关键词触发（至少命中一个才转发）
+  blockedKeywords?: string[];
+  // 屏蔽关键词（命中则不转发）
+  excludeKeywords?: string[];
+  // OCR 屏蔽关键词
+  ocrBlockedKeywords?: string[];
+  // 关键词替换 { 原词: 替换词 }
+  replacementsDictionary?: Record<string, string>;
+}
+
+// Discord→Discord 规则映射（支持规则级别的完整配置）
+export interface DiscordMappingRule extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;
   targetWebhookUrl: string;
   note?: string;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
-  // 规则级别的用户过滤（优先级低于全局设置）
-  allowedUsersIds?: ChannelId[];
-  mutedUsersIds?: ChannelId[];
 }
 
 export type FeishuTargetMode = "webhook" | "thread";
