@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
@@ -21,10 +21,11 @@ function getContentType(filePath: string): string {
 }
 
 export async function GET(
-  _request: Request,
-  { params }: { params: { filename: string } },
+  _request: NextRequest,
+  context: { params: Promise<{ filename: string }> },
 ) {
-  const filePath = resolveAvatarPath(params.filename);
+  const { filename } = await context.params;
+  const filePath = resolveAvatarPath(filename);
   if (!filePath) {
     return new NextResponse("Not Found", { status: 404 });
   }
