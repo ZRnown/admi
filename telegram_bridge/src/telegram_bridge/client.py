@@ -258,6 +258,8 @@ class TelegramClientManager:
                 # 如果已经连接，先断开
                 if account_id in self.clients:
                     await self._disconnect_client(account_id)
+                    # 等待数据库锁释放
+                    await asyncio.sleep(0.5)
 
                 # 注册状态回调
                 self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
@@ -289,8 +291,24 @@ class TelegramClientManager:
                         proxy=account.proxy_url
                     )
 
-                # 连接客户端（避免交互式登录阻塞）
-                await client.connect()
+                # 连接客户端（避免交互式登录阻塞），添加重试机制处理database locked
+                max_retries = 3
+                retry_delay = 1.0
+                last_error = None
+                for attempt in range(max_retries):
+                    try:
+                        await client.connect()
+                        break
+                    except Exception as e:
+                        last_error = e
+                        error_msg = str(e).lower()
+                        if "database is locked" in error_msg or "locked" in error_msg:
+                            logger.warning(f"Database locked on attempt {attempt + 1}/{max_retries}, retrying...")
+                            await asyncio.sleep(retry_delay * (attempt + 1))
+                            if attempt == max_retries - 1:
+                                raise
+                        else:
+                            raise
 
                 if not await client.is_user_authorized():
                     await client.disconnect()
