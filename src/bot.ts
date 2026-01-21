@@ -237,6 +237,21 @@ export class Bot {
     return this.feishuSendersBySource?.get(channelId);
   }
 
+  /**
+   * 获取指定频道的规则级别用户过滤配置
+   * 返回该频道规则的 allowedUsersIds 和 mutedUsersIds
+   */
+  private getRuleUserFilter(channelId: string): { allowedUsersIds: string[]; mutedUsersIds: string[] } {
+    const mappings = (this.config as any).mappings || [];
+    const rule = mappings.find((m: any) => m.sourceChannelId === channelId);
+    if (!rule) {
+      return { allowedUsersIds: [], mutedUsersIds: [] };
+    }
+    const allowed = (rule.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
+    const muted = (rule.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
+    return { allowedUsersIds: allowed, mutedUsersIds: muted };
+  }
+
   private async ensureDataDir() {
     const dir = path.dirname(this.mapFile);
     try {
@@ -551,24 +566,48 @@ export class Bot {
       this.logger.info(`${logPrefix} [ROUTE] Found Feishu mapping for channel ${message.channelId}, will forward to Feishu`);
     }
 
-    // 用户过滤：白名单（allowedUsersIds）与黑名单（mutedUsersIds）
+    // 用户过滤：全局白名单/黑名单 + 规则级别白名单/黑名单
+    // 优先级：全局设置 > 规则级别设置
     // 注意：webhook 消息的 author 可能为 null，需要特殊处理
     try {
       const authorId = message.author?.id;
-      
+
       // 如果是 webhook 消息，跳过用户ID过滤（因为 webhook 没有用户ID）
       if (!isWebhook && authorId) {
-        const allowed = (this.config.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
-        const muted = (this.config.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
-        if (allowed.length > 0 && !allowed.includes(authorId)) {
-          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} not in allowedUsersIds (allowed=${allowed.join(",")})`);
+        // 全局设置
+        const globalAllowed = (this.config.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
+        const globalMuted = (this.config.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
+
+        // 规则级别设置
+        const ruleFilter = this.getRuleUserFilter(message.channelId);
+        const ruleAllowed = ruleFilter.allowedUsersIds;
+        const ruleMuted = ruleFilter.mutedUsersIds;
+
+        // 全局黑名单优先级最高：如果在全局黑名单中，直接跳过
+        if (globalMuted.length > 0 && globalMuted.includes(authorId)) {
+          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} in global mutedUsersIds (muted=${globalMuted.join(",")})`);
           return;
         }
-        if (muted.length > 0 && muted.includes(authorId)) {
-          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} in mutedUsersIds (muted=${muted.join(",")})`);
+
+        // 全局白名单次之：如果全局白名单非空，必须在其中
+        if (globalAllowed.length > 0 && !globalAllowed.includes(authorId)) {
+          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} not in global allowedUsersIds (allowed=${globalAllowed.join(",")})`);
           return;
         }
-        this.logger.info(`${logPrefix} [FILTER] User ID filter passed (allowed=${allowed.length} muted=${muted.length})`);
+
+        // 规则级别黑名单：如果在规则黑名单中，跳过
+        if (ruleMuted.length > 0 && ruleMuted.includes(authorId)) {
+          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} in rule mutedUsersIds (muted=${ruleMuted.join(",")})`);
+          return;
+        }
+
+        // 规则级别白名单：如果规则白名单非空，必须在其中
+        if (ruleAllowed.length > 0 && !ruleAllowed.includes(authorId)) {
+          this.logger.info(`${logPrefix} [SKIP] Author ${authorId} not in rule allowedUsersIds (allowed=${ruleAllowed.join(",")})`);
+          return;
+        }
+
+        this.logger.info(`${logPrefix} [FILTER] User ID filter passed (globalAllowed=${globalAllowed.length} globalMuted=${globalMuted.length} ruleAllowed=${ruleAllowed.length} ruleMuted=${ruleMuted.length})`);
       } else if (isWebhook) {
         this.logger.info(`${logPrefix} [FILTER] Webhook message, skipping user ID filter`);
       }

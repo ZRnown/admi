@@ -142,6 +142,46 @@
     </div>
   </div>
 
+  <!-- 用户过滤配置弹窗 -->
+  <div id="userFilterModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeUserFilterModal()">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-lg mx-4" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-slate-900">用户过滤配置</h2>
+        <button onclick="closeUserFilterModal()" class="text-slate-400 hover:text-slate-600">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <p class="text-sm text-slate-500 mb-4">配置此规则的用户过滤（优先级低于全局设置）</p>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">只转发指定用户（白名单）</label>
+          <p class="text-xs text-slate-500 mb-2">输入用户 ID，多个用户请用换行分隔</p>
+          <textarea id="ruleAllowedUsersIds" rows="3" placeholder="每行一个用户 ID..."
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">不转发指定用户（黑名单）</label>
+          <p class="text-xs text-slate-500 mb-2">输入用户 ID，多个用户请用换行分隔</p>
+          <textarea id="ruleMutedUsersIds" rows="3" placeholder="每行一个用户 ID..."
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+        </div>
+        <div id="userFilterError" class="hidden text-sm text-red-500"></div>
+        <div class="flex gap-2">
+          <button onclick="closeUserFilterModal()"
+            class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            取消
+          </button>
+          <button onclick="saveUserFilterConfig()"
+            class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // 兼容的 ID 生成函数
     function genId() {
@@ -1063,6 +1103,11 @@
               <option value="zh-en" ${m.translateDirection === 'zh-en' ? 'selected' : ''}>中 → 英</option>
               <option value="en-zh" ${m.translateDirection === 'en-zh' ? 'selected' : ''}>英 → 中</option>
             </select>
+            ${forwardingType === 'discord-to-discord' ? `
+            <button onclick="openUserFilterModal(${idx + startIdx})" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="用户过滤配置">
+              👤
+            </button>
+            ` : ''}
             ${forwardingType === 'discord-to-telegram' ? `
             <button onclick="openLongMessageConfigModal(${idx + startIdx}, '${forwardingType}')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="超长消息处理配置">
               ⚙️
@@ -1536,6 +1581,69 @@
         mapping.longMessage.appendMessage = value || undefined;
       }
       saveConfig();
+      render();
+    }
+
+    // 用户过滤配置弹窗相关函数
+    let currentUserFilterMappingIndex = -1;
+
+    function openUserFilterModal(mappingIndex) {
+      currentUserFilterMappingIndex = mappingIndex;
+
+      const acc = getActiveAccount();
+      const mappings = acc.mappings || [];
+      const mapping = mappings[mappingIndex];
+
+      if (!mapping) {
+        console.error('找不到规则', mappingIndex);
+        return;
+      }
+
+      // 填充当前配置
+      const allowedUsersIds = mapping.allowedUsersIds || [];
+      const mutedUsersIds = mapping.mutedUsersIds || [];
+
+      document.getElementById('ruleAllowedUsersIds').value = allowedUsersIds.join('\n');
+      document.getElementById('ruleMutedUsersIds').value = mutedUsersIds.join('\n');
+      document.getElementById('userFilterError').classList.add('hidden');
+
+      document.getElementById('userFilterModal').classList.remove('hidden');
+    }
+
+    function closeUserFilterModal() {
+      document.getElementById('userFilterModal').classList.add('hidden');
+      currentUserFilterMappingIndex = -1;
+    }
+
+    function saveUserFilterConfig() {
+      if (currentUserFilterMappingIndex < 0) return;
+
+      const acc = getActiveAccount();
+      if (!acc.mappings) acc.mappings = [];
+
+      const mapping = acc.mappings[currentUserFilterMappingIndex];
+      if (!mapping) {
+        console.error('找不到规则', currentUserFilterMappingIndex);
+        return;
+      }
+
+      // 解析用户 ID 列表
+      const allowedText = document.getElementById('ruleAllowedUsersIds').value.trim();
+      const mutedText = document.getElementById('ruleMutedUsersIds').value.trim();
+
+      const allowedUsersIds = allowedText
+        ? allowedText.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
+        : [];
+      const mutedUsersIds = mutedText
+        ? mutedText.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
+        : [];
+
+      // 更新规则
+      mapping.allowedUsersIds = allowedUsersIds;
+      mapping.mutedUsersIds = mutedUsersIds;
+
+      saveConfig();
+      closeUserFilterModal();
       render();
     }
 

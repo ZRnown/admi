@@ -1028,6 +1028,9 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     const oldAccount =
       currentConfig?.accounts.find((a) => a.id === account.id) || existing.account;
 
+    // 检测转发类型变化（discord-to-discord, discord-to-telegram, telegram-to-discord, discord-to-feishu）
+    const forwardingTypeChanged = account.forwardingType !== oldAccount.forwardingType;
+
     const mappingsChanged =
       JSON.stringify(account.channelWebhooks || {}) !== JSON.stringify(oldAccount.channelWebhooks || {}) ||
       JSON.stringify(account.replacementsDictionary || {}) !==
@@ -1067,9 +1070,9 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         await stopAccount(account.id, logger, true); // 手动停止
         continue;
       }
-      
+
       // 如果有配置变化，进行热更新（不重启）
-      if (mappingsChanged || translationChanged || keywordsChanged || userFilterChanged || relayChanged) {
+      if (mappingsChanged || translationChanged || keywordsChanged || userFilterChanged || relayChanged || forwardingTypeChanged) {
         let senderBotsBySource = existing.senderBotsBySource;
         let defaultSenderBot = existing.defaultSenderBot;
         let feishuSendersBySource = (existing as any).feishuSendersBySource;
@@ -1086,18 +1089,23 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
             continue; // 跳过这个账号，不更新配置
           }
         }
-        
+
         const legacyConfig = accountToLegacyConfig(account);
         existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
         existing.account = account;
         existing.senderBotsBySource = senderBotsBySource;
         existing.defaultSenderBot = defaultSenderBot;
         (existing as any).feishuSendersBySource = feishuSendersBySource;
-        
+
+        // 如果转发类型变化，记录日志
+        if (forwardingTypeChanged) {
+          await logger.info(`账号 "${account.name}" 转发类型已从 "${oldAccount.forwardingType || 'discord-to-discord'}" 切换为 "${account.forwardingType || 'discord-to-discord'}"`);
+        }
+
         await logger.info(`账号 "${account.name}" 配置已热更新（无需重启）`);
         continue;
       }
-      
+
       // 其他情况（包括只是 loginNonce 变化），跳过处理
       continue;
     }
@@ -1109,7 +1117,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     // 没有任何变化则跳过
-    if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !userFilterChanged && !relayChanged && !restartRequested && !loginRequestedBecameTrue) {
+    if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !userFilterChanged && !relayChanged && !restartRequested && !loginRequestedBecameTrue && !forwardingTypeChanged) {
       continue;
     }
 

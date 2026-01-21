@@ -76,6 +76,18 @@ export interface ChannelConfig {
   allowed: ChannelId[];
 }
 
+// Discord→Discord 规则映射（支持规则级别的用户过滤）
+export interface DiscordMappingRule {
+  id: string;
+  sourceChannelId: string;
+  targetWebhookUrl: string;
+  note?: string;
+  translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
+  // 规则级别的用户过滤（优先级低于全局设置）
+  allowedUsersIds?: ChannelId[];
+  mutedUsersIds?: ChannelId[];
+}
+
 export type FeishuTargetMode = "webhook" | "thread";
 
 export interface FeishuTargetConfig {
@@ -186,6 +198,8 @@ export interface LegacyConfig {
   };
   // 转发类型
   forwardingType?: 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'discord-to-feishu';
+  // Discord→Discord 规则列表（带规则级别用户过滤）
+  mappings?: DiscordMappingRule[];
 }
 
 export interface AccountConfig extends LegacyConfig {
