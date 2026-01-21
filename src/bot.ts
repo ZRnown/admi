@@ -26,6 +26,24 @@ export type Client<Ready extends boolean = boolean> =
   | SelfBotClient<Ready>
   | BotClient<Ready>;
 
+function collectEmbedText(embeds: any[]): string[] {
+  const pieces: string[] = [];
+  for (const embed of embeds || []) {
+    const raw = (embed && typeof embed === "object" && "data" in embed && embed.data) ? embed.data : embed;
+    if (!raw || typeof raw !== "object") continue;
+    if ((raw as any).title) pieces.push(String((raw as any).title));
+    if ((raw as any).description) pieces.push(String((raw as any).description));
+    if ((raw as any).footer?.text) pieces.push(String((raw as any).footer.text));
+    if ((raw as any).author?.name) pieces.push(String((raw as any).author.name));
+    const fields = Array.isArray((raw as any).fields) ? (raw as any).fields : [];
+    for (const field of fields) {
+      if (field?.name) pieces.push(String(field.name));
+      if (field?.value) pieces.push(String(field.value));
+    }
+  }
+  return pieces;
+}
+
 // 简单的定长去重缓存，无定时器，高性能
 class DedupeCache {
   private items = new Set<string>();
@@ -565,21 +583,7 @@ export class Bot {
         const lower = (s: string) => s.toLowerCase();
         const pieces: string[] = [];
         pieces.push(message.content || "");
-        // 检查所有embed字段：description, title, footer.text, author.name, fields
-        try { 
-          for (const e of (message.embeds || [])) { 
-            if (e.description) pieces.push(String(e.description));
-            if (e.title) pieces.push(String(e.title));
-            if (e.footer?.text) pieces.push(String(e.footer.text));
-            if (e.author?.name) pieces.push(String(e.author.name));
-            if (e.fields) {
-              for (const field of e.fields) {
-                if (field.name) pieces.push(String(field.name));
-                if (field.value) pieces.push(String(field.value));
-              }
-            }
-          } 
-        } catch {}
+        pieces.push(...collectEmbedText(message.embeds || []));
         const hay = lower(pieces.join("\n"));
         const matchedKeywords: string[] = [];
         for (const k of kws) {
@@ -606,21 +610,7 @@ export class Bot {
         const lower = (s: string) => s.toLowerCase();
         const pieces: string[] = [];
         pieces.push(message.content || "");
-        // 检查所有embed字段：description, title, footer.text, author.name, fields
-        try { 
-          for (const e of (message.embeds || [])) { 
-            if (e.description) pieces.push(String(e.description));
-            if (e.title) pieces.push(String(e.title));
-            if (e.footer?.text) pieces.push(String(e.footer.text));
-            if (e.author?.name) pieces.push(String(e.author.name));
-            if (e.fields) {
-              for (const field of e.fields) {
-                if (field.name) pieces.push(String(field.name));
-                if (field.value) pieces.push(String(field.value));
-              }
-            }
-          } 
-        } catch {}
+        pieces.push(...collectEmbedText(message.embeds || []));
         const hay = lower(pieces.join("\n"));
         const matchedExcludes: string[] = [];
         for (const k of excludes) {

@@ -166,6 +166,8 @@ export interface LegacyConfig {
   channelTranslate?: Record<string, boolean>;
   // 每个来源频道的翻译方向配置 (off = 关闭翻译, auto = 自动检测, zh-en = 中译英, en-zh = 英译中)
   channelTranslateDirection?: Record<string, "off" | "auto" | "zh-en" | "en-zh">;
+  // 每个来源频道的超长消息配置
+  channelLongMessage?: Record<string, { enabled: boolean; threshold?: number; appendMessage?: string }>;
   // Telegram 溢出消息配置
   telegramOverflowThreshold?: number;
   telegramOverflowMessage?: string;
