@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from "child_process";
+import { spawn, spawnSync, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import path from "path";
 import fs from "fs/promises";
@@ -46,8 +46,23 @@ export class TelegramBridgeManager extends EventEmitter {
         return { success: false, message: "Telegram Bridge主程序不存在" };
       }
 
+      const pythonCandidates = [
+        process.env.PYTHON,
+        process.env.PYTHON_BIN,
+        process.env.PYTHON_EXECUTABLE,
+        'python3',
+        'python',
+      ].filter(Boolean) as string[];
+      const pythonBin = pythonCandidates.find((bin) => {
+        const result = spawnSync(bin, ['-V'], { stdio: 'ignore' });
+        return !result.error;
+      });
+      if (!pythonBin) {
+        return { success: false, message: "未找到可用的Python可执行文件，请安装python3或设置PYTHON环境变量" };
+      }
+
       // 启动进程 - 使用模块导入方式避免相对导入错误
-      this.process = spawn('python', ['-B', '-m', 'telegram_bridge.main'], {
+      this.process = spawn(pythonBin, ['-B', '-m', 'telegram_bridge.main'], {
         cwd: srcPath,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPATH: path.join(bridgePath, 'src') }
