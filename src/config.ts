@@ -169,6 +169,7 @@ export interface LegacyConfig {
   // 每个来源频道的超长消息配置
   channelLongMessage?: Record<string, { enabled: boolean; threshold?: number; appendMessage?: string }>;
   // Telegram 溢出消息配置
+  enableTelegramOverflow?: boolean;
   telegramOverflowThreshold?: number;
   telegramOverflowMessage?: string;
   // Telegram 配置（账号和映射）
@@ -628,6 +629,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       showDate: false,
       enableTranslation: false,
       deepseekApiKey: undefined,
+      enableTelegramOverflow: false,
     translationProvider: "deepseek",
     translationApiKey: undefined,
     translationSecret: undefined,
@@ -687,6 +689,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreDocuments: account.ignoreDocuments,
     ocrServerUrl: account.ocrServerUrl,
     ocrBlockedKeywords: account.ocrBlockedKeywords,
+    enableTelegramOverflow: (account as any).enableTelegramOverflow,
     telegramOverflowThreshold: (account as any).telegramOverflowThreshold,
     telegramOverflowMessage: (account as any).telegramOverflowMessage,
     feishuStyle: account.feishuStyle,
