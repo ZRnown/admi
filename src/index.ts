@@ -1420,9 +1420,14 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
         });
       }
 
-      // 添加Telegram映射
+      // 添加Telegram映射，并附带 Discord 账号的 showSourceIdentity 设置
       if (account.telegramConfig.mappings) {
-        telegramMappings.push(...account.telegramConfig.mappings);
+        for (const mapping of account.telegramConfig.mappings) {
+          telegramMappings.push({
+            ...mapping,
+            showSourceIdentity: account.showSourceIdentity === true,
+          });
+        }
       }
     }
   }

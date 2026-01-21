@@ -534,10 +534,13 @@ class TelegramForwarder:
         try:
             from .message_converter import DiscordToTelegramConverter, ConversionConfig
 
+            # 从 mapping 获取 show_source_identity 设置
+            show_source_identity = getattr(mapping, 'show_source_identity', True)
+
             # 创建转换器配置
             config = ConversionConfig(
                 enable_translation=False,  # TODO: 从账号配置中获取
-                show_source_identity=True
+                show_source_identity=show_source_identity
             )
             converter = DiscordToTelegramConverter(config)
 

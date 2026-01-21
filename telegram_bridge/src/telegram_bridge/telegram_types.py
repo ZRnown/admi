@@ -59,6 +59,8 @@ class TelegramMapping(BaseModel):
     note: Optional[str] = None
     translate: bool = False
     translate_direction: str = Field(default="auto", alias="translateDirection")
+    # Discord 账号的 showSourceIdentity 设置
+    show_source_identity: bool = Field(default=True, alias="showSourceIdentity")
     # Telegram特有的超长消息处理
     longMessage: Optional[Dict[str, Any]] = None
 
