@@ -15,7 +15,7 @@
 - `pnpm dev`: Next.js dev server (same as `pnpm frontend`).
 - `pnpm build` / `pnpm start`: production build and serve the web UI.
 - `pnpm build:bot` / `pnpm start:bot`: compile the bot to `dist-bot/` and run it directly.
-- `pnpm start:paddle-ocr-server` (or `pnpm start:simple-ocr-server`): run OCR independently.
+- `pnpm start:paddle-ocr-server`: run OCR independently.
 
 ## Coding Style & Naming Conventions
 - TypeScript follows Prettier defaults: 2-space indentation, semicolons, double quotes (`.prettierrc`).

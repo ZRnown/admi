@@ -11,7 +11,6 @@
     "build:bot": "tsc -p tsconfig.bot.json",
     "start:bot": "node dist-bot/index.js",
     "test:ocr": "node test_ocr.js",
-    "start:simple-ocr-server": "node simple_ocr_server.js",
     "start:paddle-ocr-server": "node paddle_ocr_server.js"
   },
   "dependencies": {
