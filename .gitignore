@@ -122,3 +122,5 @@ config.json
 
 dist-server
 dist-bot
+config.json.*
+collected_code.txt
