@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "fs/promises";
+import { readFile, writeFile, rename } from "fs/promises";
 import { existsSync } from "fs";
 import { randomUUID } from "crypto";
 import { getEnv } from "./env";
@@ -32,6 +32,11 @@ export interface TelegramMapping {
   note?: string;
   translate?: boolean;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
+  longMessage?: {
+    enabled: boolean;
+    threshold?: number;
+    appendMessage?: string;
+  };
 }
 
 export interface FrontendTelegramAccount {
@@ -71,6 +76,16 @@ export interface ChannelConfig {
   allowed: ChannelId[];
 }
 
+export type FeishuTargetMode = "webhook" | "thread";
+
+export interface FeishuTargetConfig {
+  mode: FeishuTargetMode;
+  webhookUrl?: string;
+  threadId?: string;
+}
+
+export type FeishuTargetMap = Record<string, FeishuTargetConfig | string>;
+
 /**
  * 旧版（单账号）配置结构。仅用于向后兼容读取旧的 config.json。
  */
@@ -78,7 +93,7 @@ export interface LegacyConfig {
   // 映射：源频道ID -> 目标Webhook URL（一对一）
   channelWebhooks?: Record<string, string>;
   // 映射：源频道ID -> 飞书 Webhook URL
-  channelFeishuWebhooks?: Record<string, string>;
+  channelFeishuWebhooks?: FeishuTargetMap;
   // 是否启用飞书转发
   enableFeishuForward?: boolean;
   // 是否启用 Discord 转发
@@ -100,6 +115,8 @@ export interface LegacyConfig {
   excludeKeywords?: string[];
   // 是否在目标中伪装为源用户头像和昵称
   showSourceIdentity?: boolean;
+  // 对外可访问的基础地址（用于 Telegram 头像等资源）
+  publicBaseUrl?: string;
   showDate?: boolean;
   showChat?: boolean;
   stackMessages?: boolean;
@@ -149,6 +166,23 @@ export interface LegacyConfig {
   channelTranslate?: Record<string, boolean>;
   // 每个来源频道的翻译方向配置 (off = 关闭翻译, auto = 自动检测, zh-en = 中译英, en-zh = 英译中)
   channelTranslateDirection?: Record<string, "off" | "auto" | "zh-en" | "en-zh">;
+  // Telegram 溢出消息配置
+  telegramOverflowThreshold?: number;
+  telegramOverflowMessage?: string;
+  // Telegram 配置（账号和映射）
+  telegramConfig?: {
+    accounts: TelegramAccountConfig[];
+    mappings: TelegramMapping[];
+    enableTelegramForward?: boolean;
+  };
+  // Telegram 长消息处理配置（全局默认）
+  telegramLongMessage?: {
+    enabled: boolean;
+    threshold?: number;
+    appendMessage?: string;
+  };
+  // 转发类型
+  forwardingType?: 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'discord-to-feishu';
 }
 
 export interface AccountConfig extends LegacyConfig {
@@ -160,6 +194,7 @@ export interface AccountConfig extends LegacyConfig {
   type: "bot" | "selfbot";
   token: string;
   proxyUrl?: string;
+  channelFeishuWebhooks?: Record<string, FeishuTargetConfig>;
   restartNonce?: number;
   /**
    * 前端显式点击登录后置为 true；仅 loginRequested=true 的账号会实际登录
@@ -182,6 +217,19 @@ export interface AccountConfig extends LegacyConfig {
   telegramApiHash?: string;
   telegramSessionPath?: string;
   telegramSessionString?: string;
+  sessionType?: "file" | "string";
+  // Telegram 配置（账号和映射）
+  telegramConfig?: {
+    accounts: TelegramAccountConfig[];
+    mappings: TelegramMapping[];
+    enableTelegramForward?: boolean;
+  };
+  // Telegram 长消息处理配置（全局默认）
+  telegramLongMessage?: {
+    enabled: boolean;
+    threshold?: number;
+    appendMessage?: string;
+  };
 }
 
 export interface MultiConfig {
@@ -190,6 +238,7 @@ export interface MultiConfig {
   // 管理面板登录用户名/密码（可选）
   loginUser?: string;
   loginPassword?: string;
+  telegramAvatarBaseUrl?: string;
   // 配置版本，用于迁移
   version?: string;
 }
@@ -279,6 +328,24 @@ async function readRawConfig(): Promise<any> {
   }
 }
 
+function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    return { mode: "webhook", webhookUrl: trimmed };
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const mode: FeishuTargetMode = raw.mode === "thread" ? "thread" : "webhook";
+  if (mode === "thread") {
+    const threadId = typeof raw.threadId === "string" ? raw.threadId.trim() : "";
+    if (!threadId) return null;
+    return { mode: "thread", threadId };
+  }
+  const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
+  if (!webhookUrl) return null;
+  return { mode: "webhook", webhookUrl };
+}
+
 function normalizeAccount(input: any, fallbackName = "未命名账号"): AccountConfig {
   const id = typeof input?.id === "string" && input.id.length > 0 ? input.id : randomUUID();
   const name = typeof input?.name === "string" && input.name.trim() ? input.name.trim() : fallbackName;
@@ -289,10 +356,15 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     input?.replacementsDictionary && typeof input.replacementsDictionary === "object"
       ? input.replacementsDictionary
       : {};
-  const channelFeishuWebhooks: Record<string, string> =
-    input?.channelFeishuWebhooks && typeof input.channelFeishuWebhooks === "object"
-      ? input.channelFeishuWebhooks
-      : {};
+  const channelFeishuWebhooks: Record<string, FeishuTargetConfig> = {};
+  if (input?.channelFeishuWebhooks && typeof input.channelFeishuWebhooks === "object") {
+    for (const [sourceId, rawTarget] of Object.entries(input.channelFeishuWebhooks)) {
+      const normalized = normalizeFeishuTarget(rawTarget);
+      if (normalized) {
+        channelFeishuWebhooks[sourceId] = normalized;
+      }
+    }
+  }
 
   // 兼容旧版单个 botRelayToken，升级为 botRelays
   let botRelays: AccountConfig["botRelays"] = Array.isArray(input?.botRelays)
@@ -326,6 +398,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     input?.channelTranslate && typeof input.channelTranslate === "object" ? input.channelTranslate : {};
   const channelTranslateDirection: Record<string, "off" | "auto" | "zh-en" | "en-zh"> =
     input?.channelTranslateDirection && typeof input.channelTranslateDirection === "object" ? input.channelTranslateDirection : {};
+  const sessionType: "file" | "string" = input?.sessionType === "string" ? "string" : "file";
 
   // 处理Telegram配置
   const telegramConfig: FrontendTelegramConfig | undefined = input?.telegramConfig && typeof input.telegramConfig === "object" ? {
@@ -344,21 +417,30 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       loginMessage: typeof acc.loginMessage === "string" ? acc.loginMessage : "",
       enabled: acc.enabled !== false
     })) : [],
-    mappings: Array.isArray(input.telegramConfig.mappings) ? input.telegramConfig.mappings.map((mapping: any) => ({
-      id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
-      sourceChannelId: typeof mapping.sourceChannelId === "string" ? mapping.sourceChannelId : "",
-      targetChannelId: typeof mapping.targetChannelId === "string" ? mapping.targetChannelId : "",
-      type: mapping.type === "discord-to-telegram" ? "discord-to-telegram" : "telegram-to-discord",
-      note: typeof mapping.note === "string" ? mapping.note : undefined,
-      translate: mapping.translate === true,
-      translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(mapping.translateDirection) ? mapping.translateDirection : "auto",
-      // Telegram特有的超长消息处理（规则级别）
-      longMessage: mapping.longMessage && typeof mapping.longMessage === "object" ? {
-        enabled: mapping.longMessage.enabled === true,
-        threshold: typeof mapping.longMessage.threshold === "number" ? mapping.longMessage.threshold : undefined,
-        appendMessage: typeof mapping.longMessage.appendMessage === "string" ? mapping.longMessage.appendMessage : undefined
-      } : undefined
-    })) : [],
+    mappings: Array.isArray(input.telegramConfig.mappings)
+      ? input.telegramConfig.mappings.map((mapping: any) => {
+          const rawTarget = typeof mapping.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
+          const targetIsWebhook = /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(rawTarget);
+          const rawType = mapping.type === "discord-to-telegram" ? "discord-to-telegram" : "telegram-to-discord";
+          const normalizedType = targetIsWebhook ? "telegram-to-discord" : rawType;
+
+          return {
+            id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
+            sourceChannelId: typeof mapping.sourceChannelId === "string" ? mapping.sourceChannelId : "",
+            targetChannelId: rawTarget,
+            type: normalizedType,
+            note: typeof mapping.note === "string" ? mapping.note : undefined,
+            translate: mapping.translate === true,
+            translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(mapping.translateDirection) ? mapping.translateDirection : "auto",
+            // Telegram特有的超长消息处理（规则级别）
+            longMessage: mapping.longMessage && typeof mapping.longMessage === "object" ? {
+              enabled: mapping.longMessage.enabled === true,
+              threshold: typeof mapping.longMessage.threshold === "number" ? mapping.longMessage.threshold : undefined,
+              appendMessage: typeof mapping.longMessage.appendMessage === "string" ? mapping.longMessage.appendMessage : undefined
+            } : undefined
+          };
+        })
+      : [],
     enableTelegramForward: input.telegramConfig.enableTelegramForward === true
   } : undefined;
 
@@ -382,6 +464,10 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     blockedKeywords: Array.isArray(input?.blockedKeywords) ? input.blockedKeywords : [],
     excludeKeywords: Array.isArray(input?.excludeKeywords) ? input.excludeKeywords : [],
     showSourceIdentity: input?.showSourceIdentity === true,
+    publicBaseUrl:
+      typeof input?.publicBaseUrl === "string" && input.publicBaseUrl.trim()
+        ? input.publicBaseUrl.trim()
+        : undefined,
     showDate: input?.showDate,
     showChat: input?.showChat ?? true,
     stackMessages: input?.stackMessages,
@@ -416,6 +502,16 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     ignoreDocuments: input?.ignoreDocuments === true,
   ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
   ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
+
+  // --- 修复：添加 Telegram 相关顶层字段 ---
+  telegramBotToken: typeof input?.telegramBotToken === "string" ? input.telegramBotToken.trim() : undefined,
+  telegramApiId: typeof input?.telegramApiId === "number" ? input.telegramApiId : (typeof input?.telegramApiId === "string" && !isNaN(Number(input.telegramApiId)) ? Number(input.telegramApiId) : undefined),
+  telegramApiHash: typeof input?.telegramApiHash === "string" ? input.telegramApiHash.trim() : undefined,
+  telegramSessionPath: typeof input?.telegramSessionPath === "string" ? input.telegramSessionPath.trim() : undefined,
+    telegramSessionString: typeof input?.telegramSessionString === "string" ? input.telegramSessionString.trim() : undefined,
+    sessionType,
+  // --- 修复结束 ---
+
   // Telegram转发增强配置（全局默认设置）
   telegramLongMessage: input?.telegramLongMessage && typeof input.telegramLongMessage === "object" ? {
     enabled: input.telegramLongMessage.enabled === true,
@@ -428,6 +524,9 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     channelTranslate,
     channelTranslateDirection,
     telegramConfig,
+    forwardingType: ['discord-to-discord', 'discord-to-telegram', 'telegram-to-discord', 'discord-to-feishu'].includes(input?.forwardingType)
+      ? input.forwardingType
+      : 'discord-to-discord',
   };
 }
 
@@ -437,11 +536,16 @@ function migrateLegacyToMulti(raw: any): MultiConfig {
   // 如果没有设置登录账密，使用默认值
   const loginUser = (raw as any)?.loginUser || "admin";
   const loginPassword = (raw as any)?.loginPassword || "admin123";
+  const telegramAvatarBaseUrl =
+    typeof raw?.telegramAvatarBaseUrl === "string" && raw.telegramAvatarBaseUrl.trim()
+      ? raw.telegramAvatarBaseUrl.trim()
+      : undefined;
   return {
     accounts: [account],
     activeId: account.id,
     loginUser,
     loginPassword,
+    telegramAvatarBaseUrl,
   };
 }
 
@@ -456,10 +560,21 @@ export async function getMultiConfig(): Promise<MultiConfig> {
     const loginUser = (raw as any)?.loginUser || "admin";
     const loginPassword = (raw as any)?.loginPassword || "admin123";
     const version = typeof raw.version === "string" ? raw.version : "1.0.0";
+    const telegramAvatarBaseUrl =
+      typeof raw?.telegramAvatarBaseUrl === "string" && raw.telegramAvatarBaseUrl.trim()
+        ? raw.telegramAvatarBaseUrl.trim()
+        : undefined;
 
     // 迁移配置到最新版本
     const migratedAccounts = migrateAccountsToLatest(accounts, version);
-    const config = { accounts: migratedAccounts, activeId: active, loginUser, loginPassword, version: CONFIG_VERSION };
+    const config = {
+      accounts: migratedAccounts,
+      activeId: active,
+      loginUser,
+      loginPassword,
+      telegramAvatarBaseUrl,
+      version: CONFIG_VERSION,
+    };
 
     // 如果版本有更新，保存配置
     if (version !== CONFIG_VERSION) {
@@ -473,7 +588,10 @@ export async function getMultiConfig(): Promise<MultiConfig> {
 }
 
 export async function saveMultiConfig(config: MultiConfig) {
-  await writeFile("./config.json", JSON.stringify(config, null, 2) + "\n");
+  const payload = JSON.stringify(config, null, 2) + "\n";
+  const tmpPath = `./config.json.tmp-${randomUUID()}`;
+  await writeFile(tmpPath, payload);
+  await rename(tmpPath, "./config.json");
 }
 
 export type Config = LegacyConfig;
@@ -491,6 +609,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       blockedKeywords: [],
       excludeKeywords: [],
       showSourceIdentity: false,
+      publicBaseUrl: undefined,
       replacementsDictionary: {},
       historyScan: { enabled: true },
       mutedGuildsIds: [],
@@ -535,6 +654,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     blockedKeywords: account.blockedKeywords,
     excludeKeywords: account.excludeKeywords,
     showSourceIdentity: account.showSourceIdentity,
+    publicBaseUrl: account.publicBaseUrl,
     showDate: account.showDate,
     showChat: account.showChat,
     stackMessages: account.stackMessages,
@@ -570,8 +690,6 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     feishuStyle: account.feishuStyle,
     channelTranslate: (account as any).channelTranslate || {},
     channelTranslateDirection: (account as any).channelTranslateDirection || {},
-    telegramOverflowThreshold: (account as any).telegramOverflowThreshold,
-    telegramOverflowMessage: (account as any).telegramOverflowMessage,
     telegramConfig: (account as any).telegramConfig,
   };
 }
@@ -623,4 +741,3 @@ function compareVersions(v1: string, v2: string): number {
 
   return 0;
 }
-

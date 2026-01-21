@@ -7,7 +7,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from telegram_bridge.types import TelegramAccount, AccountType, ConnectionStatus
+from telegram_bridge.telegram_types import TelegramAccount, AccountType, ConnectionStatus
 from telegram_bridge.session import SessionManager
 import asyncio
 

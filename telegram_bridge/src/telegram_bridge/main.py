@@ -31,6 +31,59 @@ class TelegramBridgeService:
         # 设置Telegram发送器
         self.forwarder.set_telegram_sender(self.client_manager, self.bot_manager)
 
+        # 注册Telegram消息处理器（将Telegram消息转发到Discord）
+        self._setup_telegram_message_handlers()
+
+    def _setup_telegram_message_handlers(self):
+        """设置Telegram消息处理器"""
+        async def on_telegram_message(account_id: str, message_data: dict):
+            """处理接收到的Telegram消息"""
+            try:
+                logger.info(f"Received Telegram message from account {account_id}: {message_data.get('id')}")
+                logger.debug(f"Telegram message payload: {message_data}")
+
+                # 通过forwarder处理消息（它会根据mappings转发到Discord）
+                from .telegram_types import TelegramMessage
+                telegram_message = TelegramMessage(**message_data)
+
+                # 如果未设置Discord发送器，则通知主进程进行转发
+                if not getattr(self.forwarder, "discord_forwarder", None):
+                    user_info = message_data.get("from_user") or {}
+                    display_name = message_data.get("from_display_name") or user_info.get("displayName")
+                    if not display_name:
+                        display_name = (f"{user_info.get('firstName') or ''} {user_info.get('lastName') or ''}").strip()
+                    if not display_name:
+                        display_name = user_info.get("username")
+
+                    payload = {
+                        "accountId": account_id,
+                        "chat_title": message_data.get("chat_title"),
+                        "chat_username": message_data.get("chat_username"),
+                        "chat_id": message_data.get("chat_id"),
+                        "text": message_data.get("text"),
+                        "date": message_data.get("date"),
+                        "from_username": user_info.get("username"),
+                        "from_display_name": display_name,
+                        "from_avatar_file": message_data.get("from_avatar_file") or user_info.get("avatarFile"),
+                        "reply_to": message_data.get("reply_to_message"),
+                        "media": message_data.get("media")
+                    }
+                    await self.ipc_server.send_notification("telegram_message", payload)
+                    logger.debug(f"IPC telegram_message payload sent: {payload}")
+                    return
+
+                # 调用forwarder的Telegram消息处理方法
+                await self.forwarder.handle_telegram_message(telegram_message, account_id)
+
+            except Exception as e:
+                logger.error(f"Failed to handle Telegram message: {e}")
+
+        # 为bot和client manager注册消息处理器
+        # 注意：这里需要为每个账号动态注册，暂时先设置通用处理器
+        # 实际注册在连接时通过bot_manager.message_handlers和client_manager.message_handlers
+        self.on_telegram_message_callback = on_telegram_message
+
+
     async def start(self):
         """启动服务"""
         logger.info("Starting Telegram Bridge Service...")
@@ -86,17 +139,41 @@ class TelegramBridgeService:
 
     def _register_handlers(self):
         """注册IPC消息处理器"""
+        async def wrap_connect_client(params):
+            return await self.client_manager.connect(params)
+
+        async def wrap_connect_bot(params):
+            return await self.bot_manager.connect(params)
+
+        async def wrap_disconnect_client(params):
+            return await self.client_manager.disconnect(params.get("accountId"))
+
+        async def wrap_get_client_status(params):
+            return self.client_manager.get_status(params.get("accountId"))
+
+        async def wrap_get_client_channels(params):
+            return await self.client_manager.get_channels(params.get("accountId"))
+
+        async def wrap_disconnect_bot(params):
+            return await self.bot_manager.disconnect(params.get("accountId"))
+
+        async def wrap_get_bot_status(params):
+            return self.bot_manager.get_status(params.get("accountId"))
+
+        async def wrap_get_bot_channels(params):
+            return await self.bot_manager.get_channels(params.get("accountId"))
+
         # 客户端管理
-        self.ipc_server.register_handler("connectClient", self.client_manager.connect)
-        self.ipc_server.register_handler("disconnectClient", self.client_manager.disconnect)
-        self.ipc_server.register_handler("getClientStatus", self.client_manager.get_status)
-        self.ipc_server.register_handler("getClientChannels", self.client_manager.get_channels)
+        self.ipc_server.register_handler("connectClient", wrap_connect_client)
+        self.ipc_server.register_handler("disconnectClient", wrap_disconnect_client)
+        self.ipc_server.register_handler("getClientStatus", wrap_get_client_status)
+        self.ipc_server.register_handler("getClientChannels", wrap_get_client_channels)
 
         # 机器人管理
-        self.ipc_server.register_handler("connectBot", self.bot_manager.connect)
-        self.ipc_server.register_handler("disconnectBot", self.bot_manager.disconnect)
-        self.ipc_server.register_handler("getBotStatus", self.bot_manager.get_status)
-        self.ipc_server.register_handler("getBotChannels", self.bot_manager.get_channels)
+        self.ipc_server.register_handler("connectBot", wrap_connect_bot)
+        self.ipc_server.register_handler("disconnectBot", wrap_disconnect_bot)
+        self.ipc_server.register_handler("getBotStatus", wrap_get_bot_status)
+        self.ipc_server.register_handler("getBotChannels", wrap_get_bot_channels)
 
         # 消息发送
         self.ipc_server.register_handler("sendMessage", self._handle_send_message)
@@ -123,16 +200,75 @@ class TelegramBridgeService:
 
     async def _handle_update_config(self, params):
         """处理配置更新"""
-        accounts = params.get("accounts", [])
-        mappings = params.get("mappings", [])
+        from .telegram_types import TelegramAccount, TelegramMapping
+
+        accounts_data = params.get("accounts", [])
+        mappings_data = params.get("mappings", [])
+
+        # 将字典转换为对象
+        accounts = [TelegramAccount(**acc) if isinstance(acc, dict) else acc for acc in accounts_data]
+        mappings = [TelegramMapping(**m) if isinstance(m, dict) else m for m in mappings_data]
 
         # 更新客户端配置
         await self.client_manager.update_config(accounts)
         await self.bot_manager.update_config(accounts)
 
         # 更新映射配置
-        mappings = params.get("mappings", [])
         self.forwarder.update_config(accounts, mappings)
+
+        # 为每个Telegram账号注册消息处理器，并更新监听的频道列表
+        self.bot_manager.message_handlers = {}
+        self.client_manager.message_handlers = {}
+
+        # 构建每个账号需要监听的频道列表（用于心跳保活）
+        account_watched_chats: dict = {}  # account_id -> set of chat_ids/usernames
+        for mapping in mappings:
+            if mapping.type != "telegram-to-discord":
+                continue
+            raw_id = mapping.source_channel_id
+            chat_id = None
+            if isinstance(raw_id, str):
+                raw_id = raw_id.strip()
+            if raw_id:
+                try:
+                    chat_id = int(raw_id)
+                except (ValueError, TypeError):
+                    if isinstance(raw_id, str):
+                        chat_id = raw_id.lstrip("@").strip()
+            if not chat_id:
+                continue
+
+            for account in accounts:
+                if not account.enabled:
+                    continue
+                account_id = getattr(account, "id", None) or (account.get("id") if isinstance(account, dict) else None)
+                if not account_id:
+                    continue
+                if account_id not in account_watched_chats:
+                    account_watched_chats[account_id] = set()
+                account_watched_chats[account_id].add(chat_id)
+                logger.info(f"Targeting chat for keepalive: {chat_id} (Account: {account_id})")
+
+        for account in accounts:
+            if not account.enabled:
+                continue
+            account_id = getattr(account, "id", None) or (account.get("id") if isinstance(account, dict) else None)
+            if not account_id:
+                logger.warning("Skipping telegram account without id")
+                continue
+
+            async def handler(msg_data, acc_id=account_id):
+                await self.on_telegram_message_callback(acc_id, msg_data)
+
+            if getattr(account, "type", None) == "bot":
+                self.bot_manager.message_handlers[account_id] = handler
+            else:
+                self.client_manager.message_handlers[account_id] = handler
+                # 更新 client_manager 的监听频道列表（用于心跳保活）
+                watched_chats = list(account_watched_chats.get(account_id, []))
+                self.client_manager.update_watched_chats(account_id, watched_chats)
+
+            logger.info(f"Registered message handler for Telegram account {account_id}")
 
         return {"success": True}
 
@@ -146,7 +282,7 @@ class TelegramBridgeService:
                 return {"success": False, "error": "Missing accountId or message"}
 
             # 转换消息格式
-            from .types import TelegramMessage
+            from .telegram_types import TelegramMessage
             message = TelegramMessage(**message_data)
 
             # 处理转发

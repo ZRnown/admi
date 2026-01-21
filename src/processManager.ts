@@ -37,6 +37,7 @@ export class TelegramBridgeManager extends EventEmitter {
 
       // 检查telegram_bridge目录是否存在
       const bridgePath = path.join(process.cwd(), 'telegram_bridge');
+      const srcPath = path.join(bridgePath, 'src');
       const mainScript = path.join(bridgePath, 'src', 'telegram_bridge', 'main.py');
 
       try {
@@ -45,11 +46,11 @@ export class TelegramBridgeManager extends EventEmitter {
         return { success: false, message: "Telegram Bridge主程序不存在" };
       }
 
-      // 启动进程
-      this.process = spawn('python', [mainScript], {
-        cwd: bridgePath,
+      // 启动进程 - 使用模块导入方式避免相对导入错误
+      this.process = spawn('python', ['-B', '-m', 'telegram_bridge.main'], {
+        cwd: srcPath,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, PYTHONPATH: path.join(bridgePath, 'src') }
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPATH: path.join(bridgePath, 'src') }
       });
 
       if (!this.process.pid) {
@@ -197,6 +198,7 @@ export class TelegramBridgeManager extends EventEmitter {
       if (this.processInfo) {
         this.processInfo.status = 'stopped';
       }
+      this.process = null;
 
       this.emit('exited', code, signal);
 
@@ -263,6 +265,13 @@ export class TelegramBridgeManager extends EventEmitter {
     this.isShuttingDown = true;
     await this.stop();
     this.removeAllListeners();
+  }
+
+  /**
+   * 获取进程实例（用于 IPC 通信）
+   */
+  getProcess(): ChildProcess | null {
+    return this.process;
   }
 }
 

@@ -14,6 +14,7 @@ import { SenderBot } from "./senderBot.js";
 import { FeishuSender } from "./feishuSender.js";
 import { OCRClient } from "./ocrClient.js";
 import { FileLogger } from "./logger.js";
+import { getTelegramBridgeClient } from "./index.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -321,7 +322,15 @@ export class Bot {
     // 快速检查：路由映射是否存在，不存在则快速返回
     const senderForThis = this.getSenderForChannel(message.channelId);
     const feishuSenderForThis = this.getFeishuSenderForChannel(message.channelId);
-    if (!senderForThis && !feishuSenderForThis) {
+
+    // 检查是否有 Telegram 映射
+    const telegramMappingsCheck = (this.config as any).telegramConfig?.mappings || [];
+    const hasTelegramMapping = telegramMappingsCheck.some(
+      (m: any) => m.type === 'discord-to-telegram' && m.sourceChannelId === message.channelId
+    );
+
+    // 只有在没有任何转发目标时才返回
+    if (!senderForThis && !feishuSenderForThis && !hasTelegramMapping) {
       return; // 快速返回，不做多余计算
     }
     
@@ -896,6 +905,73 @@ export class Bot {
         this.logger.info(`${logPrefix} [FEISHU] 转发到飞书成功 (附件数=${uploads.length}, 图片数=${uploads.filter(u => u.isImage).length})`);
       } catch (err: any) {
         this.logger.error(`${logPrefix} [FEISHU] 转发失败: ${String(err?.message || err)}`);
+      }
+    }
+
+    // Telegram 转发
+    const telegramMappings = (this.config as any).telegramConfig?.mappings || [];
+    const discordToTelegramMappings = telegramMappings.filter(
+      (m: any) => m.type === 'discord-to-telegram' && m.sourceChannelId === message.channelId
+    );
+
+    if (discordToTelegramMappings.length > 0) {
+      const isSystemMessage = (message as any).system === true;
+      const rawType = (message as any).type;
+      const isNonDefaultType = rawType !== undefined && rawType !== null && rawType !== "DEFAULT" && rawType !== 0;
+      const hasForwardContent =
+        (message.content && message.content.trim().length > 0) ||
+        (message.attachments && message.attachments.size > 0) ||
+        (message.embeds && message.embeds.length > 0);
+
+      if (isSystemMessage || isNonDefaultType || !hasForwardContent) {
+        this.logger.info(`${logPrefix} [TELEGRAM] Skip system/empty message (type=${String(rawType)})`);
+        return;
+      }
+      const bridgeClient = getTelegramBridgeClient();
+      if (bridgeClient) {
+        for (const mapping of discordToTelegramMappings) {
+          try {
+            // 准备消息内容 - 对于Telegram使用原始内容,让Python端处理翻译
+            let contentForTelegram = message.content || '';
+
+            // 准备消息数据
+            const messageData = {
+              channelId: message.channelId,
+              message: {
+                id: message.id,
+                content: contentForTelegram,
+                author: {
+                  username: username,
+                  avatarURL: undefined,
+                  displayName: message.member?.displayName || message.author?.username || message.author?.tag,
+                },
+                attachments: uploads.map((u) => ({
+                  url: u.url,
+                  contentType: u.isImage ? 'image' : 'file',
+                  name: u.filename,
+                })),
+                embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
+              },
+              // 传递翻译配置给Python端
+              translate: mapping.translate || false,
+              translateDirection: mapping.translateDirection || 'auto',
+            };
+
+            // 发送到 Telegram Bridge
+            await bridgeClient.handleDiscordMessage(messageData);
+
+            this.logger.info(
+              `${logPrefix} [TELEGRAM] 转发到 Telegram 成功 (target=${mapping.targetChannelId}, ` +
+              `attachments=${uploads.length})`
+            );
+          } catch (err: any) {
+            this.logger.error(
+              `${logPrefix} [TELEGRAM] 转发失败 (target=${mapping.targetChannelId}): ${String(err?.message || err)}`
+            );
+          }
+        }
+      } else {
+        this.logger.warn(`${logPrefix} [TELEGRAM] Telegram Bridge 客户端未初始化，跳过转发`);
       }
     }
   }

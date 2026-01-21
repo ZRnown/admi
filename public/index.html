@@ -79,7 +79,7 @@
           <ul class="mt-2 list-disc space-y-1 pl-5">
             <li>一个转发实例对应一个 Discord Token，可选择机器人 Token 或自用号 Token。</li>
             <li>每个转发实例都可以单独配置转发规则、关键词、排除/替换规则。</li>
-            <li>转发时如需伪装为源用户，请勾选「使用源用户昵称和头像」。</li>
+            <li>转发时如需伪装为源用户，请勾选「使用源用户昵称和头像」（Discord→Telegram 仅使用昵称）。</li>
             <li>排除关键词会直接删除命中的词，而不会阻止整条消息转发。</li>
             <li>可以添加多个转发实例并行运行，后端会为每个实例独立登录并转发。</li>
             <li class="mt-3 font-semibold text-slate-700">关于 Token：</li>
@@ -164,6 +164,42 @@
     let isLoggedIn = false;
     let pagination = { discordPage: 1, feishuPage: 1, botRelayPage: 1, pageSize: 10 };
     let currentForwardingType = 'discord-to-discord'; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord'
+    let pendingStatusRender = false;
+    let lastFormInteractionAt = 0;
+    let isSaving = false;
+
+    function isFormTarget(el) {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
+    }
+
+    function isFormElementActive() {
+      const el = document.activeElement;
+      if (el && isFormTarget(el)) return true;
+      const form = document.getElementById('configForm');
+      if (form && form.matches(':focus-within')) return true;
+      return Date.now() - lastFormInteractionAt < 10000;
+    }
+
+    function markFormInteraction(target) {
+      if (isFormTarget(target)) {
+        lastFormInteractionAt = Date.now();
+      }
+    }
+
+    document.addEventListener('focusin', (event) => markFormInteraction(event.target));
+    document.addEventListener('keydown', (event) => markFormInteraction(event.target));
+    document.addEventListener('pointerdown', (event) => markFormInteraction(event.target));
+
+    document.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (!isFormElementActive() && pendingStatusRender) {
+          pendingStatusRender = false;
+          render();
+        }
+      }, 0);
+    });
 
     // 检查登录状态
     function checkLoginStatus() {
@@ -196,6 +232,15 @@
         if (state.accounts.length === 0) {
           addAccount();
         }
+        // 初始化 currentForwardingType
+        const activeAccount = state.accounts.find(a => a.id === state.activeId) || state.accounts[0];
+        if (activeAccount) {
+          currentForwardingType = activeAccount.forwardingType || 'discord-to-discord';
+        }
+        // 自动检查 Telegram Bot 连接状态
+        await autoCheckTelegramBotStatus();
+        // 自动检查 Telegram Client 连接状态
+        await autoCheckTelegramClientStatus();
       } catch (e) {
         console.error('初始化失败', e);
         // 即使加载失败，也显示界面
@@ -316,7 +361,8 @@
         const saveData = {
           accounts: state.accounts,
           activeId: state.activeId,
-          loginUser: state.loginUser
+          loginUser: state.loginUser,
+          telegramAvatarBaseUrl: state.telegramAvatarBaseUrl
         };
         // 只有在新密码不为空时才更新密码
         if (newPassword) {
@@ -362,11 +408,18 @@
         const data = await res.json();
         console.log('加载配置成功:', data);
         if (Array.isArray(data?.accounts)) {
+          // 调试：检查加载的 telegramConfig
+          data.accounts.forEach((acc, idx) => {
+            if (acc.telegramConfig) {
+              console.log(`[DEBUG] 账号 ${idx} 加载的 telegramConfig:`, JSON.stringify(acc.telegramConfig, null, 2));
+            }
+          });
           state = {
             accounts: data.accounts,
             activeId: data.activeId || data.accounts[0]?.id || "",
             loginUser: data.loginUser || "",
             loginPassword: data.loginPassword || "",
+            telegramAvatarBaseUrl: data.telegramAvatarBaseUrl || "",
           };
         } else {
           console.warn('配置数据格式不正确:', data);
@@ -377,11 +430,41 @@
       }
     }
 
+    // 立即保存配置（无防抖，用于关键字段更新）
+    async function saveConfigImmediate() {
+      isSaving = true;
+      try {
+        const activeAcc = state.accounts.find(a => a.id === state.activeId);
+        if (activeAcc?.telegramConfig) {
+          console.log('[DEBUG] 立即保存 telegramConfig:', JSON.stringify(activeAcc.telegramConfig, null, 2));
+        }
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state)
+        });
+        if (!res.ok) {
+          throw new Error(`保存失败: HTTP ${res.status}`);
+        }
+        console.log('[DEBUG] 立即保存完成');
+      } catch (e) {
+        console.error('立即保存失败', e);
+        alert('保存失败: ' + (e.message || e));
+        throw e;
+      } finally {
+        isSaving = false;
+      }
+    }
+
     // 保存配置（防抖）
     async function saveConfig() {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
         try {
+          const activeAcc = state.accounts.find(a => a.id === state.activeId);
+          if (activeAcc?.telegramConfig) {
+            console.log('[DEBUG] 保存 telegramConfig:', JSON.stringify(activeAcc.telegramConfig, null, 2));
+          }
           await fetch('/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -416,6 +499,10 @@
       }
 
       const activeAccount = state.accounts.find(a => a.id === state.activeId) || state.accounts[0];
+      const resolvedForwardingType = activeAccount.forwardingType || currentForwardingType || 'discord-to-discord';
+      if (currentForwardingType !== resolvedForwardingType) {
+        currentForwardingType = resolvedForwardingType;
+      }
       
       // 渲染账号标签
       // 渲染账号标签
@@ -597,6 +684,7 @@
                     <div id="sessionFileContent" class="${acc.sessionType === 'string' ? 'hidden' : ''}">
                       <input type="file" accept=".session" onchange="loadSessionFile(this)" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                       <p class="text-xs text-slate-500 mt-2">选择本地的.session文件进行认证</p>
+                      ${acc.telegramSessionPath ? `<p class="text-xs text-emerald-600 mt-2">已上传: ${String(acc.telegramSessionPath).split(/[/\\\\]/).pop()}</p>` : ''}
                     </div>
                     <div id="sessionStringContent" class="${acc.sessionType !== 'string' ? 'hidden' : ''}">
                       <textarea onchange="updateField('telegramSessionString', this.value)" rows="3"
@@ -638,6 +726,7 @@
                 </div>
               </div>
               <p class="text-xs text-slate-500 mt-2">在飞书开发者后台创建企业自建应用，开通 im:resource:upload 和 im:message:send_as_bot 权限</p>
+              <p class="text-xs text-amber-600 mt-1">未填写 AppID/Secret 时只能走 Webhook 文本转发，图片/视频无法转发。</p>
             </div>
             ` : ''}
 
@@ -649,7 +738,9 @@
             <div class="flex items-center gap-2">
               <input type="checkbox" ${acc.showSourceIdentity ? 'checked' : ''} onchange="updateField('showSourceIdentity', this.checked)" 
                 class="h-4 w-4 rounded border-slate-300">
-              <label class="text-sm text-slate-700">使用源用户的昵称和头像进行转发</label>
+              <label class="text-sm text-slate-700">
+                ${forwardingType === 'discord-to-telegram' ? '使用源用户的昵称进行转发' : '使用源用户的昵称和头像进行转发'}
+              </label>
             </div>
             ${forwardingType === 'discord-to-discord' ? `
             <div class="border-t pt-4 space-y-3">
@@ -736,12 +827,14 @@
             <h2 class="font-semibold text-slate-800">
               ${forwardingType === 'discord-to-discord' ? 'Discord 转发规则' :
                 forwardingType === 'discord-to-telegram' ? 'Discord → Telegram 转发规则' :
-                'Telegram → Discord 转发规则'}
+                forwardingType === 'telegram-to-discord' ? 'Telegram → Discord 转发规则' :
+                'Discord → 飞书 转发规则'}
             </h2>
             <p class="text-xs text-slate-500 mt-1">
               ${forwardingType === 'discord-to-discord' ? '配置Discord频道之间的转发映射关系' :
                 forwardingType === 'discord-to-telegram' ? '配置Discord消息转发到Telegram频道的映射关系' :
-                '配置Telegram消息转发到Discord频道的映射关系'}
+                forwardingType === 'telegram-to-discord' ? '配置Telegram消息转发到Discord频道的映射关系' :
+                '配置Discord消息转发到飞书的映射关系'}
             </p>
           </div>
 
@@ -767,84 +860,55 @@
               </div>
               ${acc.enableDiscordForward !== false ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Discord 转发</div>'}
             </div>
-            <div class="border-t pt-4 space-y-3 ${acc.enableFeishuForward ? '' : 'opacity-60'}">
-              <div class="flex items-center justify-between">
-                <div class="flex flex-wrap items-center gap-2">
-                  <input type="checkbox" ${acc.enableFeishuForward ? 'checked' : ''} onchange="updateField('enableFeishuForward', this.checked)" class="h-4 w-4 rounded border-slate-300">
-                  <span class="text-sm text-slate-800 font-medium">飞书转发规则</span>
-                  <button type="button" onclick="toggleFeishuHelp()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">查看飞书配置说明</button>
-                  <button type="button" onclick="fetchFeishuChats()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">获取群列表</button>
-                </div>
-                ${acc.enableFeishuForward ? `<button onclick="addFeishuMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
-              </div>
-              <div id="feishuHelp" class="hidden text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
-                <p>1）在飞书开发者后台创建企业自建应用，开通 <code class="px-1 bg-slate-100 rounded">im:resource:upload</code> 和 <code class="px-1 bg-slate-100 rounded">im:message:send_as_bot</code> 权限，并发布版本。</p>
-                <p>2）创建自定义机器人，获取 Webhook 地址。</p>
-                <p>3）在下方填写 Webhook 地址。</p>
-                <p>4）在此处填写飞书应用的 AppID 与 Secret（或在项目 <code class="px-1 bg-slate-100 rounded">.env</code> 中配置 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_ID</code> / <code class="px-1 bg-slate-100 rounded">FEISHU_APP_SECRET</code>）。</p>
-              </div>
-              ${acc.enableFeishuForward ? `
-                <div class="grid gap-3 md:grid-cols-2 items-end">
-                  <div>
-                    <label class="block text-xs font-medium text-slate-600 mb-1">飞书 App ID</label>
-                    <input type="text" value="${acc.feishuAppId || ''}" onchange="updateField('feishuAppId', this.value)"
-                      placeholder="cli_xxx" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono">
-                  </div>
-                  <div>
-                    <label class="block text-xs font-medium text-slate-600 mb-1">飞书 App Secret</label>
-                    <input type="password" value="${acc.feishuAppSecret || ''}" onchange="updateField('feishuAppSecret', this.value)"
-                      placeholder="应用密钥，建议勿泄露" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono">
-                  </div>
-                </div>
-                <div id="feishuChats" class="mt-2 text-xs text-slate-500"></div>
-                ${renderFeishuMappings(acc)}
-              ` : '<div class="text-slate-400 text-sm">未启用飞书转发</div>'}
-            </div>
             ` : forwardingType === 'discord-to-telegram' ? `
             <!-- Discord→Telegram 转发规则 -->
             <div class="space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <input type="checkbox" ${acc.enableForwarding !== false ? 'checked' : ''} onchange="updateField('enableForwarding', this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <input type="checkbox" ${isTelegramForwardEnabled(acc) ? 'checked' : ''} onchange="updateTelegramForwarding(this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">Discord → Telegram 转发规则</span>
                 </div>
-                ${acc.enableForwarding !== false ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+                ${isTelegramForwardEnabled(acc) ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
               </div>
-              ${acc.enableForwarding !== false ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Discord→Telegram 转发</div>'}
+              ${isTelegramForwardEnabled(acc) ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Discord→Telegram 转发</div>'}
             </div>
             ` : forwardingType === 'telegram-to-discord' ? `
             <!-- Telegram→Discord 转发规则 -->
+            <div class="flex flex-wrap items-center gap-2 mb-4">
+              <span class="text-xs text-slate-500">转发样式：</span>
+              <select onchange="updateField('feishuStyle', this.value)"
+                class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
+                <option value="style1" ${acc.feishuStyle === 'style2' ? '' : 'selected'}>样式1：内嵌</option>
+                <option value="style2" ${acc.feishuStyle === 'style2' ? 'selected' : ''}>样式2：文本+时间</option>
+              </select>
+            </div>
             <div class="space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <input type="checkbox" ${acc.enableForwarding !== false ? 'checked' : ''} onchange="updateField('enableForwarding', this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <input type="checkbox" ${isTelegramForwardEnabled(acc) ? 'checked' : ''} onchange="updateTelegramForwarding(this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">Telegram → Discord 转发规则</span>
                 </div>
-                ${acc.enableForwarding !== false ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+                ${isTelegramForwardEnabled(acc) ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
               </div>
-              ${acc.enableForwarding !== false ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Telegram→Discord 转发</div>'}
+              ${isTelegramForwardEnabled(acc) ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Telegram→Discord 转发</div>'}
             </div>
             ` : forwardingType === 'discord-to-feishu' ? `
             <!-- Discord→飞书 转发规则 -->
             <div class="space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex flex-wrap items-center gap-2">
-                  <input type="checkbox" ${acc.enableForwarding !== false ? 'checked' : ''} onchange="updateField('enableForwarding', this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <input type="checkbox" ${acc.enableFeishuForward ? 'checked' : ''} onchange="updateField('enableFeishuForward', this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">飞书转发规则</span>
-                  <button type="button" onclick="toggleFeishuHelp()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">查看飞书配置说明</button>
-                  <button type="button" onclick="fetchFeishuChats()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">获取群列表</button>
                 </div>
-                ${acc.enableForwarding !== false ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+                ${acc.enableFeishuForward ? `<button onclick="addFeishuMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
               </div>
-              <div id="feishuHelp" class="hidden text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
-                <p>1）在飞书开发者后台创建企业自建应用，开通 <code class="px-1 bg-slate-100 rounded">im:resource:upload</code> 和 <code class="px-1 bg-slate-100 rounded">im:message:send_as_bot</code> 权限，并发布版本。</p>
-                <p>2）创建自定义机器人，获取 Webhook 地址。</p>
-                <p>3）在下方填写 Webhook 地址。</p>
-                <p>4）在此处填写飞书应用的 AppID 与 Secret（或在项目 <code class="px-1 bg-slate-100 rounded">.env</code> 中配置 <code class="px-1 bg-slate-100 rounded">FEISHU_APP_ID</code> / <code class="px-1 bg-slate-100 rounded">FEISHU_APP_SECRET</code>）。</p>
-              </div>
-              ${acc.enableForwarding !== false ? `
+              ${acc.enableFeishuForward ? `
                 <div id="feishuChats" class="mt-2 text-xs text-slate-500"></div>
-                ${renderMappings(acc, forwardingType)}
+                <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                  <p>Webhook：填写飞书自定义机器人 Webhook 地址。</p>
+                  <p>话题 Thread：填写 thread_id（话题根消息 message_id）。获取方式：订阅 <code class="px-1 bg-slate-100 rounded">im.message.receive_v1</code> 事件保存 message_id，或用历史消息接口找到 root_id 为空的 message_id。可为不同 Discord 频道配置不同 thread_id。</p>
+                </div>
+                ${renderFeishuMappings(acc)}
               ` : '<div class="text-slate-400 text-sm">未启用飞书转发</div>'}
             </div>
             ` : ''}
@@ -864,7 +928,7 @@
                   ${k} <button onclick="removeKeyword('blockedKeywords', '${k}')" class="hover:text-red-800">✕</button>
                 </span>
               `).join('')}
-              <input type="text" placeholder="输入关键词后回车..." onkeydown="if(event.key==='Enter') addKeyword('blockedKeywords', this.value); this.value='';" 
+              <input type="text" placeholder="输入关键词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'blockedKeywords')"
                 class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
             </div>
           </div>
@@ -882,7 +946,7 @@
                   ${k} <button onclick="removeKeyword('excludeKeywords', '${k}')" class="hover:text-amber-900">✕</button>
                 </span>
               `).join('')}
-              <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') addKeyword('excludeKeywords', this.value); this.value='';" 
+              <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'excludeKeywords')"
                 class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
             </div>
             <div class="border-t pt-4">
@@ -894,7 +958,7 @@
                       ${k} <button onclick="removeOCRKeyword('ocrBlockedKeywords', '${k}')" class="hover:text-amber-900">✕</button>
                     </span>
                   `).join('')}
-                  <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') addOCRKeyword('ocrBlockedKeywords', this.value); this.value='';"
+                  <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrBlockedKeywords', true)"
                     class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
                 </div>
               </div>
@@ -921,7 +985,10 @@
     }
 
     function renderMappings(acc, forwardingType) {
-      const mappings = acc.mappings || [];
+      // 根据转发类型决定读取哪个数组
+      const mappings = (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord')
+        ? (acc.telegramConfig?.mappings || [])
+        : (acc.mappings || []);
       console.log('[DEBUG] renderMappings - mappings长度:', mappings.length);
       console.log('[DEBUG] renderMappings - 当前页:', pagination.discordPage);
       console.log('[DEBUG] renderMappings - 第一个mapping ID:', mappings[0]?.id);
@@ -938,7 +1005,7 @@
         const typeName = forwardingType === 'discord-to-discord' ? 'Discord' :
                         forwardingType === 'discord-to-telegram' ? 'Discord→Telegram' :
                         forwardingType === 'telegram-to-discord' ? 'Telegram→Discord' :
-                        '飞书';
+                        'Discord→飞书';
         return `<div class="text-center py-8 text-slate-400 text-sm">暂无 ${typeName} 规则，点击"添加规则"创建</div>`;
       }
 
@@ -961,7 +1028,7 @@
           arrowIcon = '→';
         } else if (forwardingType === 'discord-to-feishu') {
           sourcePlaceholder = 'Discord 频道 ID';
-          targetPlaceholder = '飞书 Chat ID (oc_xxx)';
+          targetPlaceholder = '飞书 Webhook 地址';
           arrowIcon = '→';
         }
 
@@ -1029,12 +1096,22 @@
 
       const entriesHtml = currentPageEntries.map((m, idx) => `
         <div class="flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
-          <div class="flex gap-3 items-center">
-            <input type="text" value="${m.sourceChannelId || ''}" onchange="updateFeishuSource(${idx + startIdx}, this.value)"
-              placeholder="来源频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+          <div class="flex gap-3 items-center flex-wrap">
+            <input type="text" value="${(m.sourceChannelId || '').startsWith('new_') ? '' : (m.sourceChannelId || '')}" onchange="updateFeishuSource(${idx + startIdx}, this.value)"
+              placeholder="Discord 频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             <span class="text-slate-300">→</span>
-            <input type="text" value="${m.feishuWebhook || ''}" onchange="updateFeishuWebhookEntry(${idx + startIdx}, this.value)"
-              placeholder="飞书 Webhook 地址" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+            <select onchange="updateFeishuMode(${idx + startIdx}, this.value)"
+              class="px-2 py-2 rounded-lg border border-slate-200 text-sm">
+              <option value="webhook" ${m.mode === 'thread' ? '' : 'selected'}>Webhook</option>
+              <option value="thread" ${m.mode === 'thread' ? 'selected' : ''}>话题 Thread</option>
+            </select>
+            ${m.mode === 'thread' ? `
+              <input type="text" value="${m.threadId || ''}" onchange="updateFeishuThreadId(${idx + startIdx}, this.value)"
+                placeholder="话题 Thread ID (root_id)" class="flex-1 min-w-[220px] px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+            ` : `
+              <input type="text" value="${m.webhookUrl || ''}" onchange="updateFeishuWebhookEntry(${idx + startIdx}, this.value)"
+                placeholder="飞书 Webhook 地址" class="flex-1 min-w-[260px] px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
+            `}
             <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx + startIdx}, this.value)"
               placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
             <button onclick="removeFeishuMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500">删除</button>
@@ -1058,6 +1135,21 @@
       return entriesHtml + paginationHtml;
     }
 
+    function normalizeFeishuTargetValue(raw) {
+      if (typeof raw === 'string') {
+        return { mode: 'webhook', webhookUrl: raw, threadId: '' };
+      }
+      if (!raw || typeof raw !== 'object') {
+        return { mode: 'webhook', webhookUrl: '', threadId: '' };
+      }
+      const mode = raw.mode === 'thread' ? 'thread' : 'webhook';
+      return {
+        mode,
+        webhookUrl: raw.webhookUrl || '',
+        threadId: raw.threadId || '',
+      };
+    }
+
     function getFeishuMappings(acc) {
       const hooks = acc.channelFeishuWebhooks || {};
       const notes = acc.channelNotes || {};
@@ -1074,11 +1166,16 @@
         return 0; // 保持其他相对顺序
       });
 
-      return entries.map(([source, hook]) => ({
-        sourceChannelId: source,
-        feishuWebhook: hook,
-        note: notes[source] || ''
-      }));
+      return entries.map(([source, raw]) => {
+        const target = normalizeFeishuTargetValue(raw);
+        return {
+          sourceChannelId: source,
+          mode: target.mode,
+          webhookUrl: target.webhookUrl,
+          threadId: target.threadId,
+          note: notes[source] || ''
+        };
+      });
     }
 
     function toggleFeishuHelp() {
@@ -1240,7 +1337,7 @@
                   .join('')}
               </div>
               <div class="mt-1 text-[11px] text-slate-400">
-                提示：将上方 Chat ID（<code class="px-1 bg-slate-100 rounded">oc_...</code>）粘贴到对应规则的“飞书 Chat ID”中。
+                提示：若使用 AppID/Secret + Chat ID，请将上方 Chat ID（<code class="px-1 bg-slate-100 rounded">oc_...</code>）填入对应规则的“飞书 Webhook 地址”；使用 Webhook 时可忽略本列表。
                 <a href="https://open.feishu.cn/" target="_blank" rel="noreferrer" class="ml-1 text-indigo-500 hover:underline">打开飞书开放平台</a>
               </div>
             `;
@@ -1257,10 +1354,10 @@
     function renderReplacements(replacements) {
       return replacements.map((r, idx) => `
         <div class="flex gap-2 items-center">
-          <input type="text" value="${r.from || ''}" onchange="updateReplacement(${idx}, 'from', this.value)" 
+          <input type="text" value="${r.from || ''}" oninput="updateReplacement(${idx}, 'from', this.value)" 
             placeholder="原词" class="w-40 px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-mono">
           <span class="text-slate-400">→</span>
-          <input type="text" value="${r.to || ''}" onchange="updateReplacement(${idx}, 'to', this.value)" 
+          <input type="text" value="${r.to || ''}" oninput="updateReplacement(${idx}, 'to', this.value)" 
             placeholder="替换为" class="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-mono">
           <button onclick="removeReplacement(${idx})" class="p-2 text-slate-400 hover:text-red-500">删除</button>
         </div>
@@ -1333,6 +1430,34 @@
       return state.accounts.find(a => a.id === state.activeId) || state.accounts[0];
     }
 
+    function ensureTelegramConfig(acc) {
+      if (!acc.telegramConfig) {
+        acc.telegramConfig = { accounts: [], mappings: [], enableTelegramForward: true };
+      }
+      if (!acc.telegramConfig.accounts) acc.telegramConfig.accounts = [];
+      if (!acc.telegramConfig.mappings) acc.telegramConfig.mappings = [];
+      if (acc.telegramConfig.enableTelegramForward === undefined) {
+        acc.telegramConfig.enableTelegramForward = acc.enableForwarding !== false;
+      }
+    }
+
+    function isTelegramForwardEnabled(acc) {
+      if (!acc.telegramConfig) return acc.enableForwarding !== false;
+      if (acc.telegramConfig.enableTelegramForward === undefined) {
+        return acc.enableForwarding !== false;
+      }
+      return acc.telegramConfig.enableTelegramForward !== false;
+    }
+
+    function updateTelegramForwarding(enabled) {
+      const acc = getActiveAccount();
+      ensureTelegramConfig(acc);
+      acc.telegramConfig.enableTelegramForward = enabled;
+      acc.enableForwarding = enabled;
+      saveConfig();
+      render();
+    }
+
     function updateField(field, value) {
       const acc = getActiveAccount();
       acc[field] = value;
@@ -1363,7 +1488,8 @@
           acc.telegramLongMessage.appendMessage = undefined;
         }
       } else if (field === 'threshold') {
-        acc.telegramLongMessage.threshold = value || undefined;
+        const numeric = typeof value === 'number' ? value : parseInt(value, 10);
+        acc.telegramLongMessage.threshold = Number.isFinite(numeric) ? numeric : undefined;
       } else if (field === 'appendMessage') {
         acc.telegramLongMessage.appendMessage = value || undefined;
       }
@@ -1373,10 +1499,20 @@
 
     function updateMappingLongMessage(mappingIndex, field, value) {
       const acc = getActiveAccount();
-      if (!acc.mappings) acc.mappings = [];
-      if (!acc.mappings[mappingIndex]) return;
 
-      const mapping = acc.mappings[mappingIndex];
+      // 根据转发类型获取正确的映射配置
+      let mapping;
+      if (currentLongMessageForwardingType === 'discord-to-telegram' || currentLongMessageForwardingType === 'telegram-to-discord') {
+        if (!acc.telegramConfig) acc.telegramConfig = {};
+        if (!acc.telegramConfig.mappings) acc.telegramConfig.mappings = [];
+        if (!acc.telegramConfig.mappings[mappingIndex]) return;
+        mapping = acc.telegramConfig.mappings[mappingIndex];
+      } else {
+        if (!acc.mappings) acc.mappings = [];
+        if (!acc.mappings[mappingIndex]) return;
+        mapping = acc.mappings[mappingIndex];
+      }
+
       if (!mapping.longMessage) mapping.longMessage = { enabled: false };
 
       if (field === 'enabled') {
@@ -1387,7 +1523,8 @@
           mapping.longMessage.appendMessage = undefined;
         }
       } else if (field === 'threshold') {
-        mapping.longMessage.threshold = value || undefined;
+        const numeric = typeof value === 'number' ? value : parseInt(value, 10);
+        mapping.longMessage.threshold = Number.isFinite(numeric) ? numeric : undefined;
       } else if (field === 'appendMessage') {
         mapping.longMessage.appendMessage = value || undefined;
       }
@@ -1404,7 +1541,19 @@
       currentLongMessageForwardingType = forwardingType;
 
       const acc = getActiveAccount();
-      const mapping = acc.mappings[mappingIndex];
+
+      // 根据转发类型从正确的位置获取映射
+      let mapping;
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+        mapping = acc.telegramConfig?.mappings?.[mappingIndex];
+      } else {
+        mapping = acc.mappings[mappingIndex];
+      }
+
+      if (!mapping) {
+        console.error('Mapping not found:', mappingIndex, forwardingType);
+        return;
+      }
 
       const enabledCheckbox = document.getElementById('longMessageEnabled');
       const configSection = document.getElementById('longMessageConfigSection');
@@ -1490,17 +1639,20 @@
         if (!acc.token) acc.token = '';
         // 初始化Telegram Bot状态
         if (!acc.telegramBotState) acc.telegramBotState = 'idle';
+        ensureTelegramConfig(acc);
       } else if (forwardingType === 'telegram-to-discord') {
         // 确保Telegram配置存在
         if (!acc.telegramApiId) acc.telegramApiId = '';
         if (!acc.telegramApiHash) acc.telegramApiHash = '';
         // 初始化Telegram Client状态
         if (!acc.telegramClientState) acc.telegramClientState = 'idle';
+        ensureTelegramConfig(acc);
       } else if (forwardingType === 'discord-to-feishu') {
         // 确保Discord Token和飞书配置存在
         if (!acc.token) acc.token = '';
         if (!acc.feishuAppId) acc.feishuAppId = '';
         if (!acc.feishuAppSecret) acc.feishuAppSecret = '';
+        acc.enableFeishuForward = acc.enableFeishuForward !== true ? true : acc.enableFeishuForward;
       }
       saveConfig();
       render();
@@ -1508,6 +1660,11 @@
 
     function switchAccount(id) {
       state.activeId = id;
+      // 更新当前转发类型为新账号的类型
+      const activeAccount = state.accounts.find(a => a.id === id);
+      if (activeAccount) {
+        currentForwardingType = activeAccount.forwardingType || 'discord-to-discord';
+      }
       render();
     }
 
@@ -1541,6 +1698,7 @@
         loginRequested: false,
         loginState: 'idle',
         showSourceIdentity: false,
+        forwardingType: 'discord-to-discord', // 添加默认转发类型
         mappings: [],
         blockedKeywords: [],
         excludeKeywords: [],
@@ -1560,6 +1718,7 @@
         enableFeishuForward: false,
         feishuAppId: '',
         feishuAppSecret: '',
+        publicBaseUrl: '',
         ignoreSelf: false,
         ignoreBot: false,
          ignoreImages: false,
@@ -1571,6 +1730,7 @@
        };
       state.accounts.push(newAcc);
       state.activeId = newAcc.id;
+      currentForwardingType = 'discord-to-discord'; // 更新当前转发类型
       saveConfig();
       render();
     }
@@ -1590,15 +1750,37 @@
 
     function addMapping() {
       const acc = getActiveAccount();
-      if (!acc.mappings) acc.mappings = [];
+      const forwardingType = acc.forwardingType || currentForwardingType;
 
-      const newMapping = { id: genId(), sourceChannelId: '', targetWebhookUrl: '', note: '' };
-      console.log('[DEBUG] 添加新规则到开头:', newMapping.id);
+      // 根据转发类型决定添加到哪里
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+        // Discord→Telegram / Telegram→Discord 转发规则
+        ensureTelegramConfig(acc);
 
-      // 添加到数组开头，这样会显示在第一页第一行
-      acc.mappings.unshift(newMapping);
-      console.log('[DEBUG] 当前mappings长度:', acc.mappings.length);
-      console.log('[DEBUG] 第一个mapping ID:', acc.mappings[0]?.id);
+        const newMapping = {
+          id: genId(),
+          sourceChannelId: '',
+          targetChannelId: '',
+          type: forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram',
+          note: '',
+          translate: false,
+          translateDirection: 'auto'
+        };
+        console.log('[DEBUG] 添加新 Telegram 规则:', newMapping.id);
+
+        acc.telegramConfig.mappings.unshift(newMapping);
+        console.log('[DEBUG] 当前 telegramConfig.mappings 长度:', acc.telegramConfig.mappings.length);
+      } else {
+        // Discord→Discord 转发规则
+        if (!acc.mappings) acc.mappings = [];
+
+        const newMapping = { id: genId(), sourceChannelId: '', targetWebhookUrl: '', note: '' };
+        console.log('[DEBUG] 添加新规则到开头:', newMapping.id);
+
+        acc.mappings.unshift(newMapping);
+        console.log('[DEBUG] 当前mappings长度:', acc.mappings.length);
+        console.log('[DEBUG] 第一个mapping ID:', acc.mappings[0]?.id);
+      }
 
       pagination.discordPage = 1;
       saveConfig();
@@ -1607,7 +1789,11 @@
 
     function goToDiscordPage(page) {
       const acc = getActiveAccount();
-      const totalPages = Math.ceil((acc.mappings?.length || 0) / pagination.pageSize) || 1;
+      const forwardingType = acc.forwardingType || currentForwardingType;
+      const mappings = (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord')
+        ? (acc.telegramConfig?.mappings || [])
+        : (acc.mappings || []);
+      const totalPages = Math.ceil(mappings.length / pagination.pageSize) || 1;
       if (page < 1 || page > totalPages) return;
       pagination.discordPage = page;
       render();
@@ -1615,55 +1801,77 @@
 
     function updateMapping(idx, field, value) {
       const acc = getActiveAccount();
-      if (acc.mappings[idx]) {
-        const prevSource = acc.mappings[idx].sourceChannelId;
-        acc.mappings[idx][field] = value;
-        if (field === 'sourceChannelId') {
-          if (!acc.channelRelayMap) acc.channelRelayMap = {};
-          if (prevSource && acc.channelRelayMap[prevSource]) {
-            const relayId = acc.channelRelayMap[prevSource];
-            delete acc.channelRelayMap[prevSource];
-            if (value) {
-              acc.channelRelayMap[String(value)] = relayId;
-            }
+      const forwardingType = acc.forwardingType || currentForwardingType;
+
+      // 根据转发类型决定更新哪个数组
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+        // 更新 Telegram 规则
+        ensureTelegramConfig(acc);
+
+        if (acc.telegramConfig.mappings[idx]) {
+          acc.telegramConfig.mappings[idx][field] = value;
+          if (!acc.telegramConfig.mappings[idx].type) {
+            acc.telegramConfig.mappings[idx].type = forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram';
           }
-          if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-          if (prevSource && acc.channelFeishuWebhooks[prevSource]) {
-            const feishu = acc.channelFeishuWebhooks[prevSource];
-            delete acc.channelFeishuWebhooks[prevSource];
-            if (value) {
-              acc.channelFeishuWebhooks[String(value)] = feishu;
-            }
-          }
-          if (!acc.channelTranslate) acc.channelTranslate = {};
-          if (prevSource && Object.prototype.hasOwnProperty.call(acc.channelTranslate, prevSource)) {
-            const tr = acc.channelTranslate[prevSource];
-            delete acc.channelTranslate[prevSource];
-            if (value) {
-              acc.channelTranslate[String(value)] = tr;
-            }
-          }
-          if (!acc.channelTranslateDirection) acc.channelTranslateDirection = {};
-          if (prevSource && Object.prototype.hasOwnProperty.call(acc.channelTranslateDirection, prevSource)) {
-            const dir = acc.channelTranslateDirection[prevSource];
-            delete acc.channelTranslateDirection[prevSource];
-            if (value) {
-              acc.channelTranslateDirection[String(value)] = dir;
-            }
-          }
+          console.log('[DEBUG] 更新 Telegram 规则:', idx, field, value);
         }
-        if (field === 'translateDirection') {
-          if (!acc.channelTranslateDirection) acc.channelTranslateDirection = {};
-          const sourceId = acc.mappings[idx].sourceChannelId;
-          if (value === 'off') {
-            // 关闭翻译时，删除该频道的翻译配置
-            if (acc.channelTranslateDirection[sourceId]) {
-              delete acc.channelTranslateDirection[sourceId];
+        // 立即保存关键字段
+        if (['sourceChannelId', 'targetChannelId', 'note'].includes(field)) {
+          saveConfigImmediate();
+        } else {
+          saveConfig();
+        }
+      } else {
+        // 更新 Discord→Discord 规则
+        if (acc.mappings[idx]) {
+          const prevSource = acc.mappings[idx].sourceChannelId;
+          acc.mappings[idx][field] = value;
+          if (field === 'sourceChannelId') {
+            if (!acc.channelRelayMap) acc.channelRelayMap = {};
+            if (prevSource && acc.channelRelayMap[prevSource]) {
+              const relayId = acc.channelRelayMap[prevSource];
+              delete acc.channelRelayMap[prevSource];
+              if (value) {
+                acc.channelRelayMap[String(value)] = relayId;
+              }
             }
-            if (acc.channelTranslate && acc.channelTranslate[sourceId]) {
-              delete acc.channelTranslate[sourceId];
+            if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
+            if (prevSource && acc.channelFeishuWebhooks[prevSource]) {
+              const feishu = acc.channelFeishuWebhooks[prevSource];
+              delete acc.channelFeishuWebhooks[prevSource];
+              if (value) {
+                acc.channelFeishuWebhooks[String(value)] = feishu;
+              }
             }
-          } else {
+            if (!acc.channelTranslate) acc.channelTranslate = {};
+            if (prevSource && Object.prototype.hasOwnProperty.call(acc.channelTranslate, prevSource)) {
+              const tr = acc.channelTranslate[prevSource];
+              delete acc.channelTranslate[prevSource];
+              if (value) {
+                acc.channelTranslate[String(value)] = tr;
+              }
+            }
+            if (!acc.channelTranslateDirection) acc.channelTranslateDirection = {};
+            if (prevSource && Object.prototype.hasOwnProperty.call(acc.channelTranslateDirection, prevSource)) {
+              const dir = acc.channelTranslateDirection[prevSource];
+              delete acc.channelTranslateDirection[prevSource];
+              if (value) {
+                acc.channelTranslateDirection[String(value)] = dir;
+              }
+            }
+          }
+          if (field === 'translateDirection') {
+            if (!acc.channelTranslateDirection) acc.channelTranslateDirection = {};
+            const sourceId = acc.mappings[idx].sourceChannelId;
+            if (value === 'off') {
+              // 关闭翻译时，删除该频道的翻译配置
+              if (acc.channelTranslateDirection[sourceId]) {
+                delete acc.channelTranslateDirection[sourceId];
+              }
+              if (acc.channelTranslate && acc.channelTranslate[sourceId]) {
+                delete acc.channelTranslate[sourceId];
+              }
+            } else {
             // 开启翻译时，设置翻译方向
             acc.channelTranslateDirection[sourceId] = value;
             if (!acc.channelTranslate) acc.channelTranslate = {};
@@ -1673,33 +1881,60 @@
         saveConfig();
       }
     }
+  }
 
     function removeMapping(idx) {
       const acc = getActiveAccount();
-      if (!acc.mappings || idx >= acc.mappings.length) return;
+      const forwardingType = acc.forwardingType || currentForwardingType;
 
-      const sourceId = acc.mappings[idx]?.sourceChannelId;
-      acc.mappings.splice(idx, 1);
-      if (sourceId && acc.channelRelayMap && acc.channelRelayMap[sourceId]) {
-        delete acc.channelRelayMap[sourceId];
-      }
+      // 根据转发类型决定删除哪个数组中的规则
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+        // 删除 Telegram 规则
+        if (!acc.telegramConfig || !acc.telegramConfig.mappings || idx >= acc.telegramConfig.mappings.length) return;
 
-      // 删除后调整分页
-      const { discordPage, pageSize } = pagination;
-      const totalPages = Math.ceil(acc.mappings.length / pageSize) || 1;
+        acc.telegramConfig.mappings.splice(idx, 1);
+        console.log('[DEBUG] 删除 Telegram 规则:', idx);
 
-      if (discordPage > totalPages) {
-        // 如果当前页超出范围，跳转到最后一页
-        pagination.discordPage = totalPages;
-      }
+        // 删除后调整分页
+        const { discordPage, pageSize } = pagination;
+        const totalPages = Math.ceil(acc.telegramConfig.mappings.length / pageSize) || 1;
 
-      // 如果当前页没有内容了，跳转到第一页
-      const currentPageStart = (pagination.discordPage - 1) * pageSize;
-      const currentPageEnd = currentPageStart + pageSize;
-      const currentPageItems = acc.mappings.slice(currentPageStart, currentPageEnd);
+        if (discordPage > totalPages) {
+          pagination.discordPage = totalPages;
+        }
 
-      if (currentPageItems.length === 0 && pagination.discordPage > 1) {
-        pagination.discordPage = 1;
+        const currentPageStart = (pagination.discordPage - 1) * pageSize;
+        const currentPageEnd = currentPageStart + pageSize;
+        const currentPageItems = acc.telegramConfig.mappings.slice(currentPageStart, currentPageEnd);
+
+        if (currentPageItems.length === 0 && pagination.discordPage > 1) {
+          pagination.discordPage = 1;
+        }
+      } else {
+        // 删除 Discord→Discord 规则
+        if (!acc.mappings || idx >= acc.mappings.length) return;
+
+        const sourceId = acc.mappings[idx]?.sourceChannelId;
+        acc.mappings.splice(idx, 1);
+        if (sourceId && acc.channelRelayMap && acc.channelRelayMap[sourceId]) {
+          delete acc.channelRelayMap[sourceId];
+        }
+
+        // 删除后调整分页
+        const { discordPage, pageSize } = pagination;
+        const totalPages = Math.ceil(acc.mappings.length / pageSize) || 1;
+
+        if (discordPage > totalPages) {
+          pagination.discordPage = totalPages;
+        }
+
+        const currentPageStart = (pagination.discordPage - 1) * pageSize;
+        const currentPageEnd = currentPageStart + pageSize;
+        const currentPageItems = acc.mappings.slice(currentPageStart, currentPageEnd);
+
+        if (currentPageItems.length === 0 && pagination.discordPage > 1) {
+          pagination.discordPage = 1;
+        }
       }
 
       saveConfig();
@@ -1733,7 +1968,7 @@
       if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
       // 使用时间戳作为key，确保新规则排在前面
       const newKey = 'new_' + Date.now();
-      acc.channelFeishuWebhooks[newKey] = '';
+      acc.channelFeishuWebhooks[newKey] = { mode: 'webhook', webhookUrl: '' };
       pagination.feishuPage = 1;
       saveConfig();
       render();
@@ -1742,10 +1977,11 @@
     function updateFeishuSource(idx, value) {
       const acc = getActiveAccount();
       if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-      const entries = Object.entries(acc.channelFeishuWebhooks);
+      const entries = getFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      const [oldSource, webhook] = hit;
+      const oldSource = hit.sourceChannelId;
+      const webhook = acc.channelFeishuWebhooks[oldSource];
       const notes = acc.channelNotes || {};
       delete acc.channelFeishuWebhooks[oldSource];
       acc.channelFeishuWebhooks[value || ''] = webhook;
@@ -1761,12 +1997,56 @@
     function updateFeishuWebhookEntry(idx, value) {
       const acc = getActiveAccount();
       if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-      const entries = Object.entries(acc.channelFeishuWebhooks);
+      const entries = getFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      const [source] = hit;
-      if (value && value.trim()) {
-        acc.channelFeishuWebhooks[source] = value.trim();
+      const source = hit.sourceChannelId;
+      const trimmed = value ? value.trim() : '';
+      if (trimmed) {
+        acc.channelFeishuWebhooks[source] = { mode: 'webhook', webhookUrl: trimmed };
+      } else {
+        delete acc.channelFeishuWebhooks[source];
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateFeishuMode(idx, value) {
+      const acc = getActiveAccount();
+      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
+      const entries = getFeishuMappings(acc);
+      const hit = entries[idx];
+      if (!hit) return;
+      const source = hit.sourceChannelId;
+      const current = normalizeFeishuTargetValue(acc.channelFeishuWebhooks[source]);
+      if (value === 'thread') {
+        acc.channelFeishuWebhooks[source] = {
+          mode: 'thread',
+          threadId: current.threadId || '',
+        };
+      } else {
+        acc.channelFeishuWebhooks[source] = {
+          mode: 'webhook',
+          webhookUrl: current.webhookUrl || '',
+        };
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateFeishuThreadId(idx, value) {
+      const acc = getActiveAccount();
+      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
+      const entries = getFeishuMappings(acc);
+      const hit = entries[idx];
+      if (!hit) return;
+      const source = hit.sourceChannelId;
+      const trimmed = value ? value.trim() : '';
+      if (trimmed) {
+        acc.channelFeishuWebhooks[source] = {
+          mode: 'thread',
+          threadId: trimmed,
+        };
       } else {
         delete acc.channelFeishuWebhooks[source];
       }
@@ -1776,10 +2056,10 @@
 
     function updateFeishuNote(idx, value) {
       const acc = getActiveAccount();
-      const entries = Object.entries(acc.channelFeishuWebhooks || {});
+      const entries = getFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      const [source] = hit;
+      const source = hit.sourceChannelId;
       if (!acc.channelNotes) acc.channelNotes = {};
       if (value && value.trim()) {
         acc.channelNotes[source] = value.trim();
@@ -1791,11 +2071,11 @@
 
     function removeFeishuMapping(idx) {
       const acc = getActiveAccount();
-      const entries = Object.entries(acc.channelFeishuWebhooks || {});
+      const entries = getFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
 
-      const [source] = hit;
+      const source = hit.sourceChannelId;
       delete acc.channelFeishuWebhooks[source];
       if (acc.channelNotes && acc.channelNotes[source] !== undefined) {
         delete acc.channelNotes[source];
@@ -1824,45 +2104,112 @@
       render();
     }
 
-    function addKeyword(field, value) {
-      if (!value.trim()) return;
+    async function handleKeywordEnter(inputEl, field, isOCR = false) {
+      const value = inputEl.value;
+      if (!value || !value.trim()) return;
+
+      inputEl.value = '';
+
+      if (isOCR) {
+        await addOCRKeyword(field, value);
+      } else {
+        await addKeyword(field, value);
+      }
+    }
+
+    async function addKeyword(field, value) {
+      if (!value || !value.trim()) return;
       const acc = getActiveAccount();
       if (!acc[field]) acc[field] = [];
       if (!acc[field].includes(value.trim())) {
         acc[field].push(value.trim());
-        saveConfig();
-        render();
+        console.log('[DEBUG] 添加关键词:', value, '当前列表:', acc[field]);
+        try {
+          await saveConfigImmediate();
+          render();
+        } catch (e) {
+          console.error('[ERROR] 添加关键词失败', e);
+          // 回滚
+          acc[field] = acc[field].filter(k => k !== value.trim());
+          render();
+        }
+      } else {
+        alert('该关键词已存在');
       }
     }
 
-    function removeKeyword(field, keyword) {
+    async function removeKeyword(field, keyword) {
       const acc = getActiveAccount();
+      const oldValue = [...(acc[field] || [])];
       acc[field] = acc[field].filter(k => k !== keyword);
-      saveConfig();
-      render();
+      console.log('[DEBUG] 删除关键词:', keyword, '剩余列表:', acc[field]);
+      try {
+        await saveConfigImmediate();
+        render();
+      } catch (e) {
+        console.error('[ERROR] 删除关键词失败', e);
+        // 回滚
+        acc[field] = oldValue;
+        render();
+      }
     }
 
-    function addOCRKeyword(field, value) {
+    async function addOCRKeyword(field, value) {
       if (!value.trim()) return;
       const acc = getActiveAccount();
       if (!acc[field]) acc[field] = [];
       if (!acc[field].includes(value.trim())) {
         acc[field].push(value.trim());
-        saveConfig();
-        render();
+        console.log('[DEBUG] 添加OCR关键词:', value, '当前列表:', acc[field]);
+        try {
+          await saveConfigImmediate();
+          render();
+        } catch (e) {
+          console.error('[ERROR] 添加OCR关键词失败', e);
+          // 回滚
+          acc[field] = acc[field].filter(k => k !== value.trim());
+          render();
+        }
+      } else {
+        alert('该关键词已存在');
       }
     }
 
-    function loadSessionFile(input) {
+    async function loadSessionFile(input) {
       const file = input.files[0];
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        const sessionString = e.target.result;
-        updateField('telegramSessionString', sessionString);
-      };
-      reader.readAsText(file);
+      // 增加简单的检查，防止误上传二进制文件
+      if (file.size > 1024 * 1024) { // 1MB
+        alert("文件过大，Session 文件通常很小。请确认上传的是正确的 Session 文件。");
+        return;
+      }
+
+      const acc = getActiveAccount();
+
+      try {
+        const form = new FormData();
+        form.append('accountId', acc.id);
+        form.append('file', file, file.name);
+
+        const res = await fetch('/api/telegram/client/session-file', {
+          method: 'POST',
+          body: form
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || data?.message || `上传失败(${res.status})`);
+        }
+
+        acc.telegramSessionPath = data.sessionPath || '';
+        acc.telegramSessionString = '';
+        acc.sessionType = 'file';
+        saveConfig();
+        render();
+        alert("Session 文件已上传并保存。");
+      } catch (e) {
+        alert("Session 文件上传失败: " + (e?.message || e));
+      }
     }
 
     function switchSessionType(type) {
@@ -1889,11 +2236,20 @@
       }
     }
 
-    function removeOCRKeyword(field, keyword) {
+    async function removeOCRKeyword(field, keyword) {
       const acc = getActiveAccount();
+      const oldValue = [...(acc[field] || [])];
       acc[field] = acc[field].filter(k => k !== keyword);
-      saveConfig();
-      render();
+      console.log('[DEBUG] 删除OCR关键词:', keyword, '剩余列表:', acc[field]);
+      try {
+        await saveConfigImmediate();
+        render();
+      } catch (e) {
+        console.error('[ERROR] 删除OCR关键词失败', e);
+        // 回滚
+        acc[field] = oldValue;
+        render();
+      }
     }
 
     function addReplacement() {
@@ -2125,10 +2481,88 @@
       render();
     }
 
+    // 自动检查 Telegram Bot 连接状态（页面加载时调用）
+    async function autoCheckTelegramBotStatus() {
+      for (const acc of state.accounts) {
+        // 检查是否有 Token 和转发规则
+        if (acc.telegramBotToken && acc.telegramBotToken.trim() !== '') {
+          const telegramMappings = acc.telegramConfig?.mappings || [];
+          const hasDiscordToTelegramMapping = telegramMappings.some(m => m.type === 'discord-to-telegram');
+
+          // 只有配置了转发规则才自动检查状态
+          if (!hasDiscordToTelegramMapping) {
+            acc.telegramBotState = 'idle';
+            continue;
+          }
+
+          try {
+            const res = await fetch('/api/telegram/bot/connect', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ accountId: acc.id })
+            });
+            const data = await res.json();
+            acc.telegramBotState = data.state || (res.ok ? 'online' : 'error');
+            if (data.message) {
+              acc.telegramBotMessage = data.message;
+            }
+          } catch (e) {
+            acc.telegramBotState = 'error';
+            acc.telegramBotMessage = '连接检查失败';
+          }
+        }
+      }
+    }
+
+    // 自动检查 Telegram Client 连接状态（页面加载时调用）
+    async function autoCheckTelegramClientStatus() {
+      for (const acc of state.accounts) {
+        const telegramMappings = acc.telegramConfig?.mappings || [];
+        const hasTelegramToDiscordMapping = telegramMappings.some(m => m.type === 'telegram-to-discord');
+        if (!hasTelegramToDiscordMapping) {
+          acc.telegramClientState = 'idle';
+          continue;
+        }
+
+        const hasApiId = acc.telegramApiId !== undefined && String(acc.telegramApiId).trim() !== '';
+        const hasApiHash = acc.telegramApiHash && String(acc.telegramApiHash).trim();
+        const hasSession = (acc.telegramSessionString && acc.telegramSessionString.trim())
+          || (acc.telegramSessionPath && acc.telegramSessionPath.trim());
+        if (!hasApiId || !hasApiHash || !hasSession) {
+          continue;
+        }
+
+        try {
+          const res = await fetch('/api/telegram/client/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId: acc.id })
+          });
+          const data = await res.json();
+          acc.telegramClientState = data.state || (res.ok ? 'online' : 'error');
+          acc.telegramClientMessage = data.message || acc.telegramClientMessage || '';
+        } catch (e) {
+          acc.telegramClientState = acc.telegramClientState || 'idle';
+          acc.telegramClientMessage = '状态获取失败';
+        }
+      }
+    }
+
     // Telegram Bot 连接函数
     async function connectTelegramBot() {
       const acc = getActiveAccount();
       if (acc.telegramBotState === 'online' || acc.telegramBotState === 'connecting') return;
+
+      // 验证是否配置了转发规则
+      const telegramMappings = acc.telegramConfig?.mappings || [];
+      const hasDiscordToTelegramMapping = telegramMappings.some(m => m.type === 'discord-to-telegram');
+
+      if (!hasDiscordToTelegramMapping) {
+        acc.telegramBotState = 'error';
+        acc.telegramBotMessage = '未配置 Discord → Telegram 转发规则，无法启动';
+        render();
+        return;
+      }
 
       acc.telegramBotState = 'connecting';
       acc.telegramBotMessage = '正在连接Telegram Bot...';
@@ -2186,6 +2620,23 @@
     async function connectTelegramClient() {
       const acc = getActiveAccount();
       if (acc.telegramClientState === 'online' || acc.telegramClientState === 'connecting') return;
+
+      const hasApiId = acc.telegramApiId !== undefined && String(acc.telegramApiId).trim() !== '';
+      const hasApiHash = acc.telegramApiHash && String(acc.telegramApiHash).trim();
+      const hasSession = (acc.telegramSessionString && acc.telegramSessionString.trim())
+        || (acc.telegramSessionPath && acc.telegramSessionPath.trim());
+      if (!hasApiId || !hasApiHash) {
+        acc.telegramClientState = 'error';
+        acc.telegramClientMessage = '缺少 Telegram API ID 或 API Hash';
+        render();
+        return;
+      }
+      if (!hasSession) {
+        acc.telegramClientState = 'error';
+        acc.telegramClientMessage = '缺少 Telegram Session（文件或字符串）';
+        render();
+        return;
+      }
 
       acc.telegramClientState = 'connecting';
       acc.telegramClientMessage = '正在连接Telegram Client...';
@@ -2288,7 +2739,11 @@
                   }
                 }
               });
-              render();
+              if (isFormElementActive()) {
+                pendingStatusRender = true;
+              } else {
+                render();
+              }
             }
           }
         } catch (e) {
@@ -2328,7 +2783,7 @@
                   class="w-24 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
                 <span class="text-sm text-slate-500">字符</span>
               </div>
-              <p class="text-xs text-slate-500 mt-1">超过此字数时在消息后附加内容（0表示使用全局设置）</p>
+              <p class="text-xs text-slate-500 mt-1">超过此字数时在消息后附加内容（0表示直接追加）</p>
             </div>
 
             <div>
@@ -2379,4 +2834,3 @@
   </div>
 </body>
 </html>
-

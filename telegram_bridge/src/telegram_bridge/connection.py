@@ -8,7 +8,7 @@ import time
 from typing import Dict, Optional, Callable, Any
 from dataclasses import dataclass
 from loguru import logger
-from .types import ConnectionStatus, ConnectionState
+from .telegram_types import ConnectionStatus, ConnectionState
 
 
 @dataclass

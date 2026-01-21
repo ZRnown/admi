@@ -60,6 +60,25 @@ export class OCRClient {
   }
 
   /**
+   * 识别本地文件中的文字
+   * @param filePath 本地文件路径
+   */
+  async recognizeLocalFile(filePath: string): Promise<OCRResult | null> {
+    try {
+      console.log(`[OCR] 开始识别本地文件: ${filePath}`);
+      const imageBuffer = await fs.readFile(filePath);
+      const maxSize = 10 * 1024 * 1024;
+      if (imageBuffer.length > maxSize) {
+        throw new Error(`图片过大 (${(imageBuffer.length / 1024 / 1024).toFixed(1)}MB)，跳过OCR识别`);
+      }
+      return await this.callOCRAPI(imageBuffer);
+    } catch (error: any) {
+      console.error(`[OCR] 本地文件识别失败: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
    * 下载Discord图片
    */
   private async downloadImage(imageUrl: string): Promise<Buffer> {

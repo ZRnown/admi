@@ -4,11 +4,14 @@ Telegram机器人管理器
 """
 
 import asyncio
+import os
+import time
+from pathlib import Path
 from typing import Dict, List, Optional, Any
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 from telethon.tl.types import User, Chat, Channel
 from loguru import logger
-from .types import TelegramAccount, ConnectionStatus, ConnectionState, TelegramChannel, TelegramMessage
+from .telegram_types import TelegramAccount, ConnectionStatus, ConnectionState, TelegramChannel, TelegramMessage
 from .connection import ConnectionManager, ReconnectConfig
 from .media_handler import MediaHandler
 
@@ -21,73 +24,203 @@ class TelegramBotManager:
         self.message_handlers: Dict[str, callable] = {}
         self.connection_manager = ConnectionManager(reconnect_config or ReconnectConfig())
         self.media_handler = MediaHandler()
+        self._connect_locks: Dict[str, asyncio.Lock] = {}
+        self._update_tasks: Dict[str, asyncio.Task] = {}
+        self._keepalive_tasks: Dict[str, asyncio.Task] = {}
+        self._entity_cache: Dict[str, Dict[int, float]] = {}
+        base_dir = Path(__file__).resolve().parents[3]
+        avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
+        self.avatar_dir = Path(avatar_root)
+        self.avatar_dir.mkdir(parents=True, exist_ok=True)
+        self.avatar_cache: Dict[int, float] = {}
+        self.avatar_ttl_seconds = 6 * 60 * 60
+        self._entity_cache_seconds = 60 * 60
         self._setup_connection_callbacks()
 
     def _setup_connection_callbacks(self):
         """设置连接状态回调"""
         pass  # 动态注册在connect时处理
 
-    async def connect(self, account: TelegramAccount) -> Dict[str, Any]:
-        """连接Telegram机器人"""
+    def _get_connect_lock(self, account_id: str) -> asyncio.Lock:
+        lock = self._connect_locks.get(account_id)
+        if not lock:
+            lock = asyncio.Lock()
+            self._connect_locks[account_id] = lock
+        return lock
+
+    def _start_update_task(self, account_id: str, client: TelegramClient):
+        if account_id in self._update_tasks:
+            return
+        self._update_tasks[account_id] = asyncio.create_task(self._run_update_loop(account_id, client))
+
+    async def _stop_update_task(self, account_id: str):
+        task = self._update_tasks.pop(account_id, None)
+        if not task:
+            return
+        task.cancel()
         try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _run_update_loop(self, account_id: str, client: TelegramClient):
+        try:
+            await client.run_until_disconnected()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Bot update loop crashed for account {account_id}: {e}")
+
+    def _start_keepalive_task(self, account_id: str, client: TelegramClient):
+        if account_id in self._keepalive_tasks:
+            return
+        self._keepalive_tasks[account_id] = asyncio.create_task(
+            self._keepalive_loop(account_id, client)
+        )
+
+    async def _stop_keepalive_task(self, account_id: str):
+        task = self._keepalive_tasks.pop(account_id, None)
+        if not task:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _keepalive_loop(self, account_id: str, client: TelegramClient):
+        while True:
+            try:
+                await asyncio.sleep(60)
+                if not client.is_connected():
+                    continue
+                await client.get_dialogs(limit=1)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"Keepalive error for bot {account_id}: {e}")
+
+    def _should_refresh_sender(self, account_id: str, sender: Any, sender_id: Optional[int]) -> bool:
+        if not sender_id:
+            return False
+        cache = self._entity_cache.setdefault(account_id, {})
+        last_refresh = cache.get(sender_id, 0)
+        if time.time() - last_refresh < self._entity_cache_seconds:
+            return False
+        if sender is None:
+            return True
+        if getattr(sender, "min", False):
+            return True
+        if getattr(sender, "photo", None) is None:
+            return True
+        return False
+
+    def _mark_sender_refreshed(self, account_id: str, sender_id: int):
+        cache = self._entity_cache.setdefault(account_id, {})
+        cache[sender_id] = time.time()
+
+    async def connect(self, account: TelegramAccount | Dict[str, Any]) -> Dict[str, Any]:
+        """连接Telegram机器人"""
+        raw_account_id = None
+        try:
+            if isinstance(account, dict):
+                raw_account_id = account.get("id")
+                account = TelegramAccount(**account)
             account_id = account.id
+            lock = self._get_connect_lock(account_id)
+            if lock.locked():
+                return {
+                    "success": False,
+                    "error": "CONNECT_IN_PROGRESS",
+                    "message": "连接中，请稍后重试"
+                }
 
-            # 如果已经连接，先断开
-            if account_id in self.bots:
-                await self.disconnect(account_id)
+            async with lock:
+                # 如果已经连接，先断开
+                if account_id in self.bots:
+                    await self.disconnect(account_id)
 
-            # 注册状态回调
-            self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
+                # 注册状态回调
+                self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
 
-            # 更新连接状态
-            self.connection_manager.update_state(account_id, ConnectionStatus.CONNECTING)
+                # 更新连接状态
+                self.connection_manager.update_state(account_id, ConnectionStatus.CONNECTING)
 
-            # 创建机器人客户端
-            client = TelegramClient(
-                f"bot_{account_id}",
-                api_id=None,  # 机器人不需要API ID
-                api_hash=None,  # 机器人不需要API Hash
-                proxy=account.proxy_url
-            )
+                # 默认的 API ID/Hash 列表（如果账号配置中没有提供）
+                DEFAULT_API_CREDENTIALS = [
+                    (20004517, "c607e8e343682f77bb83acc858cb46ee"),
+                    (23980807, "0a763a3169fb12cdfdf902916c561d39"),
+                    (22018615, "85858ff6922c54b00bc42cca1f0cf2db"),
+                    (23732943, "ec4adb83497e3a1a5b9e8bddb9de493b"),
+                    (20031336, "756771015239bf2dc80888ee90a74e2b"),
+                    (25636369, "aa1044819f3c28950a6540356b23cb80"),
+                    (20534748, "caf129bd562d37684d353b58a16ac38b"),
+                    (24401651, "8066a37766bfa75b458b9b967b3850cb"),
+                    (23689950, "893ce345e36cb2dcd6183aad3cc18a18"),
+                    (21092580, "e70594067edf9bda863c8a29fb9952cc"),
+                ]
 
-            # 使用Bot Token启动
-            await client.start(bot_token=account.token)
+                # 使用账号配置中的 API ID/Hash，如果没有则使用默认列表中的第一个
+                use_api_id = account.api_id if account.api_id else DEFAULT_API_CREDENTIALS[0][0]
+                use_api_hash = account.api_hash if account.api_hash else DEFAULT_API_CREDENTIALS[0][1]
 
-            # 获取机器人信息
-            me = await client.get_me()
-            user_info = {
-                "id": me.id,
-                "firstName": me.first_name,
-                "lastName": me.last_name,
-                "username": me.username
-            }
+                # 创建机器人客户端
+                client = TelegramClient(
+                    f"bot_{account_id}",
+                    api_id=use_api_id,
+                    api_hash=use_api_hash,
+                    proxy=account.proxy_url
+                )
 
-            # 保存机器人
-            self.bots[account_id] = client
+                # 使用Bot Token启动
+                await client.start(bot_token=account.token)
 
-            # 更新连接状态
-            self.connection_manager.update_state(
-                account_id,
-                ConnectionStatus.CONNECTED,
-                user_info=user_info
-            )
+                # 获取机器人信息
+                me = await client.get_me()
+                user_info = {
+                    "id": me.id,
+                    "firstName": me.first_name,
+                    "lastName": me.last_name,
+                    "username": me.username
+                }
 
-            # 设置消息处理器
-            client.add_event_handler(self._handle_message, account_id)
+                # 保存机器人
+                self.bots[account_id] = client
 
-            logger.info(f"Telegram bot connected for account {account_id}")
-            return {
-                "success": True,
-                "userInfo": user_info
-            }
+                # 更新连接状态
+                self.connection_manager.update_state(
+                    account_id,
+                    ConnectionStatus.CONNECTED,
+                    user_info=user_info
+                )
+
+                # 设置消息处理器 - 使用闭包捕获account_id
+                async def message_handler(event):
+                    asyncio.create_task(self._handle_message(event, account_id))
+
+                client.add_event_handler(message_handler, events.NewMessage)
+                self._start_update_task(account_id, client)
+                self._start_keepalive_task(account_id, client)
+
+                logger.info(f"Telegram bot connected for account {account_id}")
+                return {
+                    "success": True,
+                    "userInfo": user_info
+                }
 
         except Exception as e:
-            logger.error(f"Failed to connect Telegram bot for account {account.id}: {e}")
-            self.connection_manager.update_state(
-                account.id,
-                ConnectionStatus.ERROR,
-                str(e)
-            )
+            # 修复：安全获取 account_id，兼容对象和字典
+            account_id = raw_account_id
+            if not account_id and account:
+                account_id = account.get("id") if isinstance(account, dict) else getattr(account, "id", None)
+
+            logger.error(f"Failed to connect Telegram bot for account {account_id}: {e}")
+            if account_id:
+                self.connection_manager.update_state(
+                    account_id,
+                    ConnectionStatus.ERROR,
+                    str(e)
+                )
             return {
                 "success": False,
                 "error": "CONNECTION_FAILED",
@@ -99,6 +232,8 @@ class TelegramBotManager:
         try:
             # 停止重连
             await self.connection_manager.stop_reconnect(account_id)
+            await self._stop_update_task(account_id)
+            await self._stop_keepalive_task(account_id)
 
             if account_id in self.bots:
                 bot = self.bots[account_id]
@@ -297,17 +432,69 @@ class TelegramBotManager:
                 if media_info:
                     media.append(media_info)
 
+            # 获取发送者信息（兼容不同 Telethon 版本字段）
+            sender = getattr(message, "sender", None)
+            if sender is None:
+                try:
+                    sender = await message.get_sender()
+                except Exception:
+                    sender = None
+            sender_id = (
+                getattr(message, "sender_id", None)
+                or getattr(sender, "id", None)
+                or getattr(event, "sender_id", None)
+            )
+            if self._should_refresh_sender(account_id, sender, sender_id):
+                try:
+                    sender = await event.client.get_entity(sender_id)
+                except Exception as e:
+                    logger.debug(f"Failed to refresh sender entity: {e}")
+                finally:
+                    if sender_id:
+                        self._mark_sender_refreshed(account_id, sender_id)
+            from_user = self._parse_user(sender) if sender else None
+            avatar_file = await self._get_avatar_file(event.client, sender) if sender else None
+            if from_user and avatar_file:
+                from_user["avatarFile"] = avatar_file
+
+            reply_to_message = None
+            if message.reply_to_msg_id:
+                try:
+                    reply_msg = await message.get_reply_message()
+                    if reply_msg:
+                        reply_sender = getattr(reply_msg, "sender", None)
+                        if reply_sender is None:
+                            try:
+                                reply_sender = await reply_msg.get_sender()
+                            except Exception:
+                                reply_sender = None
+                        reply_user = self._parse_user(reply_sender) if reply_sender else None
+                        reply_avatar_file = await self._get_avatar_file(event.client, reply_sender) if reply_sender else None
+                        if reply_user and reply_avatar_file:
+                            reply_user["avatarFile"] = reply_avatar_file
+                        reply_to_message = {
+                            "id": reply_msg.id,
+                            "text": reply_msg.message or reply_msg.text,
+                            "from_user": reply_user
+                        }
+                except Exception as e:
+                    logger.debug(f"Failed to load reply message: {e}")
+
             # 转换为内部格式
             telegram_message = TelegramMessage(
                 id=message.id,
                 chat_id=message.chat_id,
                 chat_title=getattr(message.chat, 'title', None),
                 chat_username=getattr(message.chat, 'username', None),
-                from_user=self._parse_user(message.from_user) if message.from_user else None,
+                from_user=from_user,
+                from_username=from_user.get("username") if from_user else None,
+                from_display_name=self._build_display_name(from_user),
+                from_avatar_file=from_user.get("avatarFile") if from_user else None,
                 text=message.text,
                 date=int(message.date.timestamp()),
                 media=media,
-                reply_to_message_id=message.reply_to_msg_id
+                reply_to_message_id=message.reply_to_msg_id,
+                reply_to_message=reply_to_message
             )
 
             # 调用消息处理器
@@ -330,6 +517,37 @@ class TelegramBotManager:
             "lastName": getattr(user, 'last_name', None),
             "username": getattr(user, 'username', None)
         }
+
+    def _build_display_name(self, user_info: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not user_info:
+            return None
+        name = f"{user_info.get('firstName') or ''} {user_info.get('lastName') or ''}".strip()
+        return name or user_info.get("username")
+
+    async def _get_avatar_file(self, client: TelegramClient, user: Any) -> Optional[str]:
+        """下载并缓存用户头像，返回文件名"""
+        filename = None
+        try:
+            user_id = getattr(user, "id", None)
+            if not user_id:
+                return None
+            filename = f"{user_id}.jpg"
+            file_path = self.avatar_dir / filename
+            now = time.time()
+            last_fetch = self.avatar_cache.get(user_id, 0)
+            if file_path.exists() and (now - last_fetch) < self.avatar_ttl_seconds:
+                return filename
+
+            result = await client.download_profile_photo(user, file=str(file_path))
+            if result:
+                self.avatar_cache[user_id] = now
+                return filename
+        except Exception as e:
+            logger.debug(f"Failed to download avatar: {e}")
+
+        if filename and (self.avatar_dir / filename).exists():
+            return filename
+        return None
 
     def _parse_media(self, media) -> Optional[Dict[str, Any]]:
         """解析媒体信息"""
@@ -375,17 +593,22 @@ class TelegramBotManager:
 
         return None
 
-    async def update_config(self, accounts: List[TelegramAccount]):
+    async def update_config(self, accounts: List[TelegramAccount | Dict[str, Any]]):
         """更新配置"""
+        from .telegram_types import TelegramAccount as TelegramAccountModel
+        normalized = [
+            TelegramAccountModel(**acc) if isinstance(acc, dict) else acc
+            for acc in accounts
+        ]
         # 断开已删除的账号
-        current_account_ids = {acc.id for acc in accounts if acc.type == "bot"}
+        current_account_ids = {acc.id for acc in normalized if acc.type == "bot"}
         to_disconnect = set(self.bots.keys()) - current_account_ids
 
         for account_id in to_disconnect:
             await self.disconnect(account_id)
 
         # 连接新启用的机器人账号
-        for account in accounts:
+        for account in normalized:
             if account.type == "bot" and account.enabled:
                 if account.id not in self.bots:
                     await self.connect(account)

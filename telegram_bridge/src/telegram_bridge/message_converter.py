@@ -8,7 +8,7 @@ import html
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from loguru import logger
-from .types import TelegramMessage, TelegramMapping
+from .telegram_types import TelegramMessage, TelegramMapping
 
 
 @dataclass
@@ -279,11 +279,14 @@ class DiscordToTelegramConverter(MessageConverter):
 
             if long_message_config:
                 threshold = long_message_config.get('threshold', 0)
-                if threshold > 0 and len(telegram_content) > threshold:
-                    append_message = long_message_config.get('appendMessage', '')
-                    if append_message:
-                        # 将转义的换行符转换回实际换行符
-                        telegram_content += append_message.replace('\\n', '\n')
+                append_message = long_message_config.get('appendMessage', '')
+                if append_message:
+                    # 0 表示直接追加，>0 表示超过阈值才追加
+                    should_append = threshold <= 0 or len(telegram_content) > threshold
+                    if should_append:
+                        # 将转义的换行符转换回实际换行符，并确保另起一行追加
+                        normalized_append = append_message.replace('\\n', '\n')
+                        telegram_content += f"\n{normalized_append}"
 
             # 解析目标频道ID（可能是channel_id或account_id格式）
             try:
@@ -315,19 +318,26 @@ class DiscordToTelegramConverter(MessageConverter):
         try:
             content_parts = []
 
-            # 添加来源标识
+            # 添加来源标识 - 使用HTML格式的粗体(更可靠)
             if self.config.show_source_identity:
                 author = discord_message.get("author", {})
                 display_name = author.get("displayName") or author.get("username", "Unknown")
-                content_parts.append(f"**{display_name}**: ")
+                # HTML转义显示名称
+                display_name = html.escape(display_name)
+                content_parts.append(f"<b>{display_name}</b>: ")
 
             # 获取消息文本
             text = discord_message.get("content", "").strip()
+            original_text = text  # 保存原文用于翻译
 
             # 处理翻译
             if mapping.translate and self.config.enable_translation:
-                # TODO: 实现翻译功能
-                pass
+                # TODO: 实现实际的翻译API调用
+                # 目前使用占位符,需要集成翻译服务(DeepSeek/OpenAI等)
+                translated_text = f"[翻译内容 - 待实现翻译API]"
+
+                # 格式: 原文\n────────\n翻译内容
+                text = f"{original_text}\n────────\n{translated_text}"
 
             # 处理Discord到Telegram格式转换
             text = self._convert_discord_formatting_to_telegram(text)

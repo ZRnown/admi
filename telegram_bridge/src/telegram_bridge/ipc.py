@@ -8,7 +8,7 @@ import json
 import sys
 from typing import Dict, Any, Callable, Optional
 from loguru import logger
-from .types import IPCMessage, IPCRequest, IPCResponse, IPCNotification
+from .telegram_types import IPCMessage, IPCRequest, IPCResponse, IPCNotification
 
 
 class IPCServer:

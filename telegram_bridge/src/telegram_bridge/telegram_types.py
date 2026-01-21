@@ -4,7 +4,7 @@
 
 from typing import Optional, List, Dict, Any, Union
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AccountType(str, Enum):
@@ -34,27 +34,31 @@ class MessageType(str, Enum):
 
 class TelegramAccount(BaseModel):
     """Telegram账号配置"""
+    model_config = {"populate_by_name": True}
+
     id: str
     name: str
     type: AccountType
     token: str  # Bot Token 或 API Hash
-    session_path: Optional[str] = None  # Session文件路径 (仅client)
-    session_string: Optional[str] = None  # Session字符串 (仅client, 加密存储)
-    api_id: Optional[int] = None  # API ID (仅client)
-    api_hash: Optional[str] = None  # API Hash (仅client)
-    proxy_url: Optional[str] = None
+    session_path: Optional[str] = Field(default=None, alias="sessionPath")  # Session文件路径 (仅client)
+    session_string: Optional[str] = Field(default=None, alias="sessionString")  # Session字符串 (仅client, 加密存储)
+    api_id: Optional[int] = Field(default=None, alias="apiId")  # API ID (仅client)
+    api_hash: Optional[str] = Field(default=None, alias="apiHash")  # API Hash (仅client)
+    proxy_url: Optional[str] = Field(default=None, alias="proxyUrl")
     enabled: bool = True
 
 
 class TelegramMapping(BaseModel):
     """Telegram映射配置"""
+    model_config = {"populate_by_name": True}
+
     id: str
-    source_channel_id: str
-    target_channel_id: str
+    source_channel_id: str = Field(alias="sourceChannelId")
+    target_channel_id: str = Field(alias="targetChannelId")
     type: str  # 'telegram-to-discord' | 'discord-to-telegram'
     note: Optional[str] = None
     translate: bool = False
-    translate_direction: str = "auto"  # 'off' | 'auto' | 'zh-en' | 'en-zh'
+    translate_direction: str = Field(default="auto", alias="translateDirection")
     # Telegram特有的超长消息处理
     longMessage: Optional[Dict[str, Any]] = None
 
@@ -75,10 +79,14 @@ class TelegramMessage(BaseModel):
     chat_title: Optional[str] = None
     chat_username: Optional[str] = None
     from_user: Optional[Dict[str, Any]] = None
+    from_username: Optional[str] = None
+    from_display_name: Optional[str] = None
+    from_avatar_file: Optional[str] = None
     text: Optional[str] = None
     date: int
     media: Optional[List[Dict[str, Any]]] = None
     reply_to_message_id: Optional[int] = None
+    reply_to_message: Optional[Dict[str, Any]] = None
 
 
 class ConnectionState(BaseModel):

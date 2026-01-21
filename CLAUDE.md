@@ -8,77 +8,78 @@ Discord Forwarder - A message forwarding tool supporting multi-account managemen
 
 ## Build and Run Commands
 
-```bash
-# Install dependencies
-pnpm install
+### Quick Start
 
-# Bot (core functionality)
+```bash
+pnpm install            # Install dependencies
+pnpm backend            # Start backend (Bot + OCR + Telegram Bridge)
+pnpm frontend           # Start frontend (Web Management UI on port 3000)
+```
+
+### Individual Commands
+
+```bash
+# Bot
 pnpm build:bot          # Compile TypeScript (src/ -> dist-bot/)
 pnpm start:bot          # Run the compiled bot
 
-# Web Management UI (Next.js)
-pnpm dev                # Development server on port 3000
-pnpm build              # Production build
-pnpm start              # Production server
+# Web UI
+pnpm dev                # Development server
+pnpm build && pnpm start # Production build and serve
 
-# OCR utilities
-pnpm test:ocr
-pnpm start:simple-ocr-server
+# OCR
 pnpm start:paddle-ocr-server
+
+# Telegram Bridge tests (Python)
+cd telegram_bridge && python -m pytest tests/
 ```
 
 ## Architecture
 
-### Dual-Process Design
+### Three-Process Design
 
 1. **Bot Process** (`src/index.ts` -> `dist-bot/index.js`)
-   - Standalone Discord client, independent of web server
-   - Supports both Bot tokens and Selfbot (user tokens)
-   - Hot-reloads configuration from `config.json`
+   - Standalone Discord client supporting both Bot tokens and Selfbot (user tokens via discord.js-selfbot-v13)
+   - Multi-account management with per-account state tracking
+   - Hot-reloads `config.json` using SHA-256 hash-based change detection
    - Auto-reconnects with exponential backoff
+   - Writes status to `.data/status.json`
+   - Manages Telegram bridge subprocess via `processManager.ts`
 
 2. **Web Management UI** (Next.js App Router in `app/`)
-   - REST API at `app/api/` for configuration CRUD
-   - Static admin interface served from `public/index.html`
+   - REST API routes in `app/api/`: account/, config/, feishu/, telegram/
+
+3. **Telegram Bridge** (`telegram_bridge/`)
+   - Python subprocess (Telethon-based) spawned by bot process
+   - Auto-restart on failure (max 5 attempts, 5s delay)
+   - Entry: `telegram_bridge/src/telegram_bridge/main.py`
 
 ### Message Flow
 
 ```
 Discord Source Channel
     ↓
-src/bot.ts (processAndSend)
-    ↓ Filters: keywords, users, OCR
-    ↓ Translation (optional)
+src/bot.ts (processAndSend) - Filters: keywords, users, OCR; Translation
     ↓
-src/senderBot.ts OR src/feishuSender.ts
+src/senderBot.ts | src/feishuSender.ts | Telegram Bridge
     ↓
-Discord Webhook / Feishu API / Telegram
+Discord Webhook/Bot API | Feishu API | Telegram API
 ```
 
 ### Key Source Files
 
-- `src/index.ts` - Main entry, account management, config watching
-- `src/bot.ts` - Message processing and filtering logic
-- `src/senderBot.ts` - Webhook/Bot API message sending
-- `src/feishuSender.ts` - Feishu/Lark integration
-- `src/config.ts` - Configuration management
-- `src/ocrClient.ts` - OCR for image content filtering
-- `app/api/config/route.ts` - Configuration REST API
+- `src/index.ts` - Main entry, multi-account lifecycle, config watching
+- `src/bot.ts` - Message processing pipeline, filtering logic
+- `src/senderBot.ts` - Discord webhook/bot API sending
+- `src/feishuSender.ts` - Feishu/Lark API integration
+- `src/processManager.ts` - Telegram bridge subprocess management
+- `app/api/config/route.ts` - Configuration CRUD endpoints
 
 ### TypeScript Configuration
 
-- `tsconfig.json` - Next.js app (ES2019, ESNext modules)
-- `tsconfig.bot.json` - Bot compilation (ES2020, CommonJS)
+- `tsconfig.json` - Next.js app (ESNext modules)
+- `tsconfig.bot.json` - Bot compilation (CommonJS for discord.js-selfbot-v13 compatibility)
 
 ## Configuration
 
-Copy `config.sample.json` to `config.json` before running. The bot watches this file for changes and applies them without restart.
-
-## SDD Methodology (from .cursor/rules/)
-
-This project uses Specification-Driven Development:
-- `specs/[branch]/` is the source of truth
-- Workflow: Spec → Plan → Contracts → Tests → Code
-- Contracts in `specs/[branch]/contracts/` define the FE/BE interface
-- Backend follows Library-First and Test-First principles
-- Frontend consumes contracts, uses Dumb Components + Smart Containers pattern
+Copy `config.sample.json` to `config.json` before running. The bot watches this file and hot-reloads without restart.

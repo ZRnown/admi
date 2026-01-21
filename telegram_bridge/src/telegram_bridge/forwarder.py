@@ -6,7 +6,7 @@ Discord转发器
 import asyncio
 from typing import Dict, List, Optional, Any
 from loguru import logger
-from .types import TelegramMessage, TelegramMapping
+from .telegram_types import TelegramMessage, TelegramMapping
 from .message_converter import TelegramToDiscordConverter, DiscordToTelegramConverter, ConversionConfig
 
 
@@ -27,24 +27,22 @@ class DiscordForwarder:
         """更新配置"""
         try:
             # 为每个账号创建转换器
-            for account in accounts:
-                telegram_config = account.get("telegramConfig", {})
-                if telegram_config and telegram_config.get("accounts"):
-                    for tg_account in telegram_config["accounts"]:
-                        converter_config = ConversionConfig(
-                            enable_translation=account.enableTranslation or False,
-                            translation_provider=account.translationProvider or "deepseek",
-                            translation_api_key=account.translationApiKey or account.deepseekApiKey,
-                            blocked_keywords=account.blockedKeywords or [],
-                            exclude_keywords=account.excludeKeywords or [],
-                            allowed_users=account.allowedUsersIds,
-                            muted_users=account.mutedUsersIds,
-                            show_source_identity=account.showSourceIdentity or False,
-                            replacements=account.replacementsDictionary
-                        )
+            # 注意：accounts 列表包含 TelegramAccount 对象
+            from .message_converter import ConversionConfig, TelegramToDiscordConverter
 
-                        converter = TelegramToDiscordConverter(converter_config)
-                        self.converters[tg_account.id] = converter
+            for account in accounts:
+                # 兼容处理：如果是对象则获取id，如果是字典则get id
+                account_id = getattr(account, "id", None) or (account.get("id") if isinstance(account, dict) else None)
+
+                if account_id:
+                    # 使用默认配置，因为目前没有传递 Discord 侧的过滤规则
+                    converter_config = ConversionConfig(
+                        enable_translation=False,
+                        show_source_identity=True
+                    )
+
+                    converter = TelegramToDiscordConverter(converter_config)
+                    self.converters[account_id] = converter
 
             logger.info(f"Updated Discord forwarder config for {len(self.converters)} Telegram accounts")
 
@@ -321,11 +319,13 @@ class TelegramForwarder:
 
     def update_config(self, accounts: List[Dict[str, Any]], mappings: List[TelegramMapping]):
         """更新配置"""
-        self.account_configs = accounts
+        # 将字典转换为 TelegramAccount 对象
+        from .telegram_types import TelegramAccount
+        self.account_configs = [TelegramAccount(**acc) if isinstance(acc, dict) else acc for acc in accounts]
         self.mappings = mappings
 
         if self.discord_forwarder:
-            self.discord_forwarder.update_config(accounts)
+            self.discord_forwarder.update_config(self.account_configs)
 
     async def handle_telegram_message(
         self,
@@ -352,6 +352,8 @@ class TelegramForwarder:
             # 获取账号配置（用于过滤规则）
             account_config = None
             for account in self.account_configs:
+                if not isinstance(account, dict):
+                    continue
                 telegram_config = account.get("telegramConfig", {})
                 if telegram_config and telegram_config.get("accounts"):
                     if any(tg_acc["id"] == telegram_account_id for tg_acc in telegram_config["accounts"]):
@@ -392,7 +394,7 @@ class TelegramForwarder:
         try:
             if not self.telegram_sender:
                 logger.warning("Telegram sender not initialized")
-                return
+                return {"error": "Telegram sender not initialized"}
 
             # 获取相关的映射配置
             relevant_mappings = [
@@ -403,7 +405,7 @@ class TelegramForwarder:
 
             if not relevant_mappings:
                 logger.debug(f"No relevant mappings found for Discord channel {discord_channel_id}")
-                return
+                return {"total_mappings": 0, "successful_forwards": 0, "failed_forwards": 0, "details": []}
 
             results = {
                 "total_mappings": len(relevant_mappings),
@@ -417,15 +419,23 @@ class TelegramForwarder:
                 try:
                     # 查找对应的Telegram账号
                     telegram_account = None
-                    for account in self.account_configs:
-                        telegram_config = account.get("telegramConfig", {})
-                        if telegram_config and telegram_config.get("accounts"):
-                            for tg_acc in telegram_config["accounts"]:
-                                if tg_acc["id"] == mapping.target_channel_id.split('_')[0]:  # 简化账号匹配
-                                    telegram_account = tg_acc
-                                    break
-                            if telegram_account:
+
+                    # 策略：如果只有一个账号，直接使用它
+                    if len(self.account_configs) == 1:
+                        telegram_account = self.account_configs[0]
+                    elif len(self.account_configs) > 1:
+                        # 如果有多个账号，优先寻找启用的 Bot 账号
+                        for acc in self.account_configs:
+                            if getattr(acc, "enabled", True) and getattr(acc, "type", "") == "bot":
+                                telegram_account = acc
                                 break
+
+                        # 如果没有找到 Bot，尝试找任意启用的账号
+                        if not telegram_account:
+                            for acc in self.account_configs:
+                                if getattr(acc, "enabled", True):
+                                    telegram_account = acc
+                                    break
 
                     if not telegram_account:
                         results["details"].append({
@@ -437,8 +447,9 @@ class TelegramForwarder:
                         continue
 
                     # 转换消息
+                    telegram_account_dict = {"id": telegram_account.id, "type": telegram_account.type}
                     telegram_message_data = await self._convert_discord_to_telegram(
-                        discord_message, mapping, telegram_account
+                        discord_message, mapping, telegram_account_dict
                     )
 
                     if not telegram_message_data:
@@ -452,8 +463,8 @@ class TelegramForwarder:
 
                     # 发送到Telegram
                     send_result = await self.telegram_sender.send_message(
-                        telegram_account["id"],
-                        telegram_account["type"],
+                        telegram_account.id,
+                        telegram_account.type,
                         telegram_message_data
                     )
 
@@ -482,9 +493,11 @@ class TelegramForwarder:
                     })
 
             logger.info(f"Forwarded Discord message to Telegram: {results['successful_forwards']} success, {results['failed_forwards']} failed")
+            return results
 
         except Exception as e:
             logger.error(f"Failed to handle Discord message: {e}")
+            return {"error": str(e)}
 
     async def _convert_discord_to_telegram(
         self,

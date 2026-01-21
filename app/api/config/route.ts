@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
-import { type AccountConfig, getMultiConfig, saveMultiConfig, type MultiConfig } from "@/src/config";
+import {
+  type AccountConfig,
+  getMultiConfig,
+  saveMultiConfig,
+  type MultiConfig,
+  type FeishuTargetConfig,
+} from "@/src/config";
 import { readStatus, triggerFile } from "../_lib/common";
 import { FrontendTelegramConfig } from "@/specs/telegram-integration/contracts/api";
 
@@ -53,11 +59,12 @@ interface FrontendAccount {
   enableBotRelay?: boolean;
   botRelays?: Array<{ id: string; name: string; token: string; loginState?: string; loginMessage?: string }>;
   channelRelayMap?: Record<string, string>;
-  channelFeishuWebhooks?: Record<string, string>;
+  channelFeishuWebhooks?: Record<string, FeishuTargetConfig>;
   enableFeishuForward?: boolean;
   enableDiscordForward?: boolean;
   feishuAppId?: string;
   feishuAppSecret?: string;
+  publicBaseUrl?: string;
   ignoreSelf?: boolean;
   ignoreBot?: boolean;
   ignoreImages?: boolean;
@@ -81,6 +88,8 @@ interface FrontendAccount {
   enableTelegramOverflow?: boolean; // 是否启用Telegram超长消息处理
   telegramOverflowThreshold?: number; // 全局字数阈值
   telegramOverflowMessage?: string; // 全局超长时附加的消息
+  // Telegram 配置（包含 accounts 和 mappings）
+  telegramConfig?: FrontendTelegramConfig;
 }
 
 interface FrontendPayload {
@@ -88,6 +97,36 @@ interface FrontendPayload {
   activeId?: string;
   loginUser?: string;
   loginPassword?: string;
+  telegramAvatarBaseUrl?: string;
+}
+
+function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    return { mode: "webhook", webhookUrl: trimmed };
+  }
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.mode === "thread") {
+    const threadId = typeof raw.threadId === "string" ? raw.threadId.trim() : "";
+    if (!threadId) return null;
+    return { mode: "thread", threadId };
+  }
+  const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
+  if (!webhookUrl) return null;
+  return { mode: "webhook", webhookUrl };
+}
+
+function normalizeFeishuTargets(raw: any): Record<string, FeishuTargetConfig> {
+  const result: Record<string, FeishuTargetConfig> = {};
+  if (!raw || typeof raw !== "object") return result;
+  for (const [sourceId, target] of Object.entries(raw)) {
+    const normalized = normalizeFeishuTarget(target);
+    if (normalized) {
+      result[sourceId] = normalized;
+    }
+  }
+  return result;
 }
 
 function accountToFrontend(account: AccountConfig): FrontendAccount {
@@ -140,11 +179,12 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     enableBotRelay: account.enableBotRelay === true,
     botRelays: account.botRelays || [],
     channelRelayMap: account.channelRelayMap || {},
-    channelFeishuWebhooks: account.channelFeishuWebhooks || {},
+    channelFeishuWebhooks: normalizeFeishuTargets(account.channelFeishuWebhooks),
     enableFeishuForward: account.enableFeishuForward === true,
     enableDiscordForward: account.enableDiscordForward !== false,
     feishuAppId: account.feishuAppId || "",
     feishuAppSecret: account.feishuAppSecret || "",
+    publicBaseUrl: account.publicBaseUrl || "",
     ignoreSelf: account.ignoreSelf === true,
     ignoreBot: account.ignoreBot === true,
     ignoreImages: account.ignoreImages === true,
@@ -165,6 +205,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     enableTelegramOverflow: (account as any).enableTelegramOverflow === true,
     telegramOverflowThreshold: (account as any).telegramOverflowThreshold || 0,
     telegramOverflowMessage: (account as any).telegramOverflowMessage || "",
+    // Telegram 配置（包含 accounts 和 mappings）
+    telegramConfig: (account as any).telegramConfig || undefined,
   };
 }
 
@@ -184,6 +226,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       enableDiscordForward: true,
       feishuAppId: "",
       feishuAppSecret: "",
+      publicBaseUrl: "",
       channelNotes: {},
       blockedKeywords: [],
       excludeKeywords: [],
@@ -252,10 +295,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       }
     }
   }
-  const channelFeishuWebhooks =
-    dto.channelFeishuWebhooks && typeof dto.channelFeishuWebhooks === "object"
-      ? dto.channelFeishuWebhooks
-      : {};
+  const channelFeishuWebhooks = normalizeFeishuTargets(dto.channelFeishuWebhooks);
 
   let loginRequested: boolean;
   if (fallback && fallback.loginRequested === true) {
@@ -269,6 +309,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     id: dto.id || base.id,
     name: dto.name || base.name,
     type: dto.type === "bot" ? "bot" : "selfbot",
+    forwardingType: dto.forwardingType || base.forwardingType || "discord-to-discord",
     token: dto.token || "",
     proxyUrl: dto.proxyUrl || "",
     loginRequested,
@@ -283,6 +324,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       typeof dto.feishuAppSecret === "string" && dto.feishuAppSecret.trim()
         ? dto.feishuAppSecret.trim()
         : base.feishuAppSecret,
+    publicBaseUrl:
+      typeof dto.publicBaseUrl === "string" && dto.publicBaseUrl.trim()
+        ? dto.publicBaseUrl.trim()
+        : base.publicBaseUrl,
     channelNotes,
     channelTranslate,
     channelTranslateDirection,
@@ -336,7 +381,12 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     feishuStyle: dto.feishuStyle === "style2" ? "style2" : (base.feishuStyle || "style1"),
     // Telegram认证配置保存
     telegramBotToken: typeof dto.telegramBotToken === "string" && dto.telegramBotToken.trim() ? dto.telegramBotToken.trim() : undefined,
-    telegramApiId: typeof dto.telegramApiId === "number" ? dto.telegramApiId : undefined,
+    telegramApiId:
+      typeof dto.telegramApiId === "number"
+        ? dto.telegramApiId
+        : typeof dto.telegramApiId === "string" && dto.telegramApiId.trim() && !isNaN(Number(dto.telegramApiId))
+          ? Number(dto.telegramApiId)
+          : undefined,
     telegramApiHash: typeof dto.telegramApiHash === "string" && dto.telegramApiHash.trim() ? dto.telegramApiHash.trim() : undefined,
     telegramSessionPath: typeof dto.telegramSessionPath === "string" && dto.telegramSessionPath.trim() ? dto.telegramSessionPath.trim() : undefined,
     telegramSessionString: typeof dto.telegramSessionString === "string" && dto.telegramSessionString.trim() ? dto.telegramSessionString.trim() : undefined,
@@ -345,6 +395,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     enableTelegramOverflow: dto.enableTelegramOverflow === true,
     telegramOverflowThreshold: typeof dto.telegramOverflowThreshold === "number" && dto.telegramOverflowThreshold > 0 ? dto.telegramOverflowThreshold : 0,
     telegramOverflowMessage: typeof dto.telegramOverflowMessage === "string" && dto.telegramOverflowMessage.trim() ? dto.telegramOverflowMessage.trim() : "",
+    // Telegram 配置（包含 accounts 和 mappings）
+    telegramConfig: dto.telegramConfig && typeof dto.telegramConfig === "object" ? dto.telegramConfig : base.telegramConfig,
   };
 }
 
@@ -360,6 +412,7 @@ export async function GET() {
       activeId: multi.activeId || multi.accounts[0]?.id || "",
       loginUser: multi.loginUser || "",
       loginPassword: multi.loginPassword || "",
+      telegramAvatarBaseUrl: multi.telegramAvatarBaseUrl || "",
     };
     return NextResponse.json(payload);
   } catch (e: any) {
@@ -384,6 +437,10 @@ export async function POST(req: NextRequest) {
         activeId,
         loginUser: typeof body.loginUser === "string" ? body.loginUser : current.loginUser,
         loginPassword: typeof body.loginPassword === "string" ? body.loginPassword : current.loginPassword,
+        telegramAvatarBaseUrl:
+          typeof body.telegramAvatarBaseUrl === "string" && body.telegramAvatarBaseUrl.trim()
+            ? body.telegramAvatarBaseUrl.trim()
+            : current.telegramAvatarBaseUrl,
       };
     } else {
       // 兼容旧版请求
@@ -430,4 +487,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
   }
 }
-

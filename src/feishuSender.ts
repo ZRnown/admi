@@ -12,11 +12,12 @@ export interface FeishuSendPayload {
 }
 
 export class FeishuSender {
-  // 这里存储 chat_id (oc_xxx...) 或 webhook URL，前端 / 配置里填写的可以是 Chat ID 或 Webhook URL
+  // 这里存储 chat_id (oc_xxx...)、thread_id (om_xxx...) 或 webhook URL
   target: string;
   httpAgent?: any;
   private appId?: string;
   private appSecret?: string;
+  private mode?: "webhook" | "thread";
 
   // 缓存 tenant_access_token，避免每次都请求
   private static token: string = "";
@@ -27,11 +28,13 @@ export class FeishuSender {
     httpAgent?: any,
     appId?: string,
     appSecret?: string,
+    options?: { mode?: "webhook" | "thread" },
   ) {
     this.target = target;
     this.httpAgent = httpAgent;
     this.appId = appId || process.env.FEISHU_APP_ID || "";
     this.appSecret = appSecret || process.env.FEISHU_APP_SECRET || "";
+    this.mode = options?.mode;
   }
 
   // 1. 获取飞书 tenant_access_token（内部应用）
@@ -142,52 +145,21 @@ export class FeishuSender {
 
   // 3. 发送消息主逻辑
   async send(data: FeishuSendPayload) {
-    // 检查是 webhook 还是 API 方式
-    const isWebhook = this.target.startsWith('http');
-
-    if (isWebhook) {
-      return this.sendViaWebhook(data);
-    } else {
-      return this.sendViaAPI(data);
+    if (this.mode === "thread") {
+      return this.sendViaThread(data);
     }
+
+    // 默认行为：target 以 http 开头则视为 webhook，否则使用 API
+    const isWebhook = this.target.startsWith("http");
+    if (this.mode === "webhook") {
+      return isWebhook ? this.sendViaWebhook(data) : this.sendViaAPI(data);
+    }
+
+    return isWebhook ? this.sendViaWebhook(data) : this.sendViaAPI(data);
   }
 
-  private async sendViaAPI(data: FeishuSendPayload) {
-    const token = await this.getToken();
-
-    // 如果有图片，先上传所有图片获取 image_key
-    const imageKeys: string[] = [];
-    if (data.attachments && data.attachments.length > 0) {
-      console.log(`[FeishuSender] 开始处理 ${data.attachments.length} 个附件`);
-      for (const att of data.attachments) {
-        // 优先使用 isImage 标志，如果没有则通过 URL/文件名后缀判断
-        const target = att.url || att.filename || "";
-        const isImage = att.isImage === true || (att.isImage !== false && /\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(target));
-        
-        if (isImage) {
-          console.log(`[FeishuSender] 识别为图片，开始上传: ${att.filename || 'unknown'} (${att.url.substring(0, 50)}...)`);
-          try {
-            const key = await this.uploadImage(att.url, token);
-            if (key) {
-              imageKeys.push(key);
-              console.log(`[FeishuSender] 图片上传成功: ${att.filename || att.url} -> image_key: ${key.substring(0, 20)}...`);
-            } else {
-              console.error(`[FeishuSender] 图片上传返回空 key: ${att.filename || att.url}`);
-            }
-          } catch (e: any) {
-            console.error(`[FeishuSender] 图片上传失败 (${att.filename || att.url}): ${String(e?.message || e)}`);
-            // 继续处理其他图片，不中断整个发送流程
-          }
-        } else {
-          console.log(`[FeishuSender] 跳过非图片附件: ${att.filename || 'unknown'}`);
-        }
-      }
-      console.log(`[FeishuSender] 图片处理完成，成功上传 ${imageKeys.length} 张图片`);
-    }
-
-    // 构建富文本内容 Post（单一样式：头像昵称 + 内容 + embeds 描述 + 图片）
+  private buildBaseElements(data: FeishuSendPayload): any[] {
     const elements: any[] = [];
-
     const headerText = data.username ? `👤 ${data.username}:\n` : "";
     const bodyText = data.content || "";
 
@@ -195,7 +167,6 @@ export class FeishuSender {
       elements.push({ tag: "text", text: headerText + bodyText + "\n" });
     }
 
-    // 添加 embeds 描述
     if (data.embeds) {
       for (const e of data.embeds) {
         if (e?.description) {
@@ -204,7 +175,43 @@ export class FeishuSender {
       }
     }
 
-    // 添加图片元素
+    return elements;
+  }
+
+  private async collectImageKeys(data: FeishuSendPayload, token: string): Promise<string[]> {
+    const imageKeys: string[] = [];
+    if (!data.attachments || data.attachments.length === 0) return imageKeys;
+
+    console.log(`[FeishuSender] 开始处理 ${data.attachments.length} 个附件`);
+    for (const att of data.attachments) {
+      const target = att.url || att.filename || "";
+      const isImage = att.isImage === true || (att.isImage !== false && /\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(target));
+
+      if (isImage) {
+        console.log(`[FeishuSender] 识别为图片，开始上传: ${att.filename || "unknown"} (${att.url.substring(0, 50)}...)`);
+        try {
+          const key = await this.uploadImage(att.url, token);
+          if (key) {
+            imageKeys.push(key);
+            console.log(`[FeishuSender] 图片上传成功: ${att.filename || att.url} -> image_key: ${key.substring(0, 20)}...`);
+          } else {
+            console.error(`[FeishuSender] 图片上传返回空 key: ${att.filename || att.url}`);
+          }
+        } catch (e: any) {
+          console.error(`[FeishuSender] 图片上传失败 (${att.filename || att.url}): ${String(e?.message || e)}`);
+        }
+      } else {
+        console.log(`[FeishuSender] 跳过非图片附件: ${att.filename || "unknown"}`);
+      }
+    }
+    console.log(`[FeishuSender] 图片处理完成，成功上传 ${imageKeys.length} 张图片`);
+    return imageKeys;
+  }
+
+  private async sendViaAPI(data: FeishuSendPayload) {
+    const token = await this.getToken();
+    const elements = this.buildBaseElements(data);
+    const imageKeys = await this.collectImageKeys(data, token);
     for (const imgKey of imageKeys) {
       elements.push({ tag: "img", image_key: imgKey });
     }
@@ -226,25 +233,41 @@ export class FeishuSender {
     await this.request(url, payload, "POST", token);
   }
 
+  private async sendViaThread(data: FeishuSendPayload) {
+    const threadId = this.target;
+    if (!threadId) {
+      throw new Error("飞书 Thread ID 为空，无法转发到话题");
+    }
+
+    const token = await this.getToken();
+    const elements = this.buildBaseElements(data);
+    const imageKeys = await this.collectImageKeys(data, token);
+    for (const imgKey of imageKeys) {
+      elements.push({ tag: "img", image_key: imgKey });
+    }
+
+    if (elements.length === 0) return;
+
+    const url = new URL(
+      `https://open.feishu.cn/open-apis/im/v1/messages/${encodeURIComponent(threadId)}/reply`,
+    );
+    const payload = JSON.stringify({
+      msg_type: "post",
+      content: JSON.stringify({
+        zh_cn: {
+          title: "Discord 转发消息",
+          content: [elements],
+        },
+      }),
+      reply_in_thread: true,
+    });
+
+    await this.request(url, payload, "POST", token);
+  }
+
   private async sendViaWebhook(data: FeishuSendPayload) {
     // Webhook 方式发送，更简单
-    const elements: any[] = [];
-
-    const headerText = data.username ? `👤 ${data.username}:\n` : "";
-    const bodyText = data.content || "";
-
-    if (headerText || bodyText) {
-      elements.push({ tag: "text", text: headerText + bodyText + "\n" });
-    }
-
-    // 添加 embeds 描述
-    if (data.embeds) {
-      for (const e of data.embeds) {
-        if (e?.description) {
-          elements.push({ tag: "text", text: `\n> ${e.description}` });
-        }
-      }
-    }
+    const elements: any[] = this.buildBaseElements(data);
 
     // Webhook 方式不支持图片上传，只能发送文本
     if (data.attachments && data.attachments.length > 0) {
@@ -353,4 +376,3 @@ export class FeishuSender {
     });
   }
 }
-

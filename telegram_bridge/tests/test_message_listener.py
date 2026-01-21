@@ -9,7 +9,7 @@ import json
 from unittest.mock import Mock, AsyncMock
 from telegram_bridge.client import TelegramClientManager
 from telegram_bridge.bot import TelegramBotManager
-from telegram_bridge.types import TelegramAccount, AccountType, TelegramMessage
+from telegram_bridge.telegram_types import TelegramAccount, AccountType, TelegramMessage
 
 
 @pytest.mark.asyncio

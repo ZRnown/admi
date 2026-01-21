@@ -6,6 +6,7 @@ import path from "node:path";
 import { createHash } from "crypto";
 
 import { Bot, Client } from "./bot.js";
+import { OCRClient } from "./ocrClient.js";
 import {
   getMultiConfig,
   type MultiConfig,
@@ -19,6 +20,10 @@ import { FeishuSender } from "./feishuSender.js";
 import { ProxyAgent } from "proxy-agent";
 import { FileLogger } from "./logger.js";
 import { telegramBridgeManager } from "./processManager.js";
+import { TelegramBridgeClient } from "./telegramBridgeClient.js";
+
+// 全局 Telegram Bridge 客户端
+let telegramBridgeClient: TelegramBridgeClient | null = null;
 
 interface RunningAccount {
   account: AccountConfig;
@@ -38,11 +43,81 @@ interface RunningAccount {
 const runningAccounts = new Map<string, RunningAccount>();
 let currentConfig: MultiConfig | null = null;
 const statusFile = path.resolve(process.cwd(), ".data", "status.json");
+const ocrClients = new Map<string, { url: string; client: OCRClient }>();
 // 记录已经输出过"未配置 token"错误的账号，避免重复日志
 const loggedNoTokenAccounts = new Set<string>();
 // 记录配置文件的 hash，只在真正变化时才重新读取
 let lastConfigHash: string | null = null;
 let lastConfigMtime: number = 0;
+
+function getPublicBaseUrl(override?: string): string | null {
+  const base =
+    currentConfig?.telegramAvatarBaseUrl ||
+    override ||
+    process.env.PUBLIC_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    process.env.BASE_URL ||
+    "";
+  return base ? base.replace(/\/$/, "") : null;
+}
+
+function buildTelegramCdnAvatarUrl(username?: string): string | undefined {
+  if (!username) return undefined;
+  const cleaned = username.startsWith("@") ? username.slice(1) : username;
+  if (!cleaned) return undefined;
+  return `https://t.me/i/userpic/320/${encodeURIComponent(cleaned)}.jpg`;
+}
+
+function buildTelegramAvatarUrl(
+  avatarFile?: string,
+  avatarUrl?: string,
+  baseOverride?: string,
+  username?: string,
+): string | undefined {
+  if (avatarUrl) return avatarUrl;
+  const cdnUrl = buildTelegramCdnAvatarUrl(username);
+  const base = getPublicBaseUrl(baseOverride);
+  if (base && avatarFile) {
+    return `${base}/api/telegram/avatar/${encodeURIComponent(avatarFile)}`;
+  }
+  return cdnUrl;
+}
+
+function getOcrClient(account: AccountConfig): OCRClient | null {
+  const serverUrl = account.ocrServerUrl;
+  if (!serverUrl) return null;
+  const cached = ocrClients.get(account.id);
+  if (cached && cached.url === serverUrl) {
+    return cached.client;
+  }
+  const client = new OCRClient(serverUrl, undefined);
+  ocrClients.set(account.id, { url: serverUrl, client });
+  return client;
+}
+
+function formatTimestampFromSeconds(seconds?: number): string {
+  const now = seconds ? new Date(seconds * 1000) : new Date();
+  const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+function parseFeishuTarget(raw: any): { mode: "webhook" | "thread"; target: string } | null {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    return { mode: "webhook", target: trimmed };
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const mode = raw.mode === "thread" ? "thread" : "webhook";
+  if (mode === "thread") {
+    const threadId = typeof raw.threadId === "string" ? raw.threadId.trim() : "";
+    if (!threadId) return null;
+    return { mode, target: threadId };
+  }
+  const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
+  if (!webhookUrl) return null;
+  return { mode, target: webhookUrl };
+}
 
 async function writeStatus(accountId: string, state: string, message?: string) {
   try {
@@ -102,21 +177,30 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   }
 
   if (Object.keys(feishuWebhooks).length > 0) {
-    for (const [channelId, chatId] of Object.entries(feishuWebhooks)) {
-      if (!chatId) continue;
+    for (const [channelId, rawTarget] of Object.entries(feishuWebhooks)) {
+      const target = parseFeishuTarget(rawTarget);
+      if (!target) continue;
       const fs = new FeishuSender(
-        chatId.trim(),
+        target.target,
         httpAgent,
         account.feishuAppId,
         account.feishuAppSecret,
+        { mode: target.mode },
       );
       feishuSendersBySource.set(channelId, fs);
     }
   }
 
-  // 如果关闭了 Discord 转发，允许没有 defaultSenderBot
-  if (!defaultSenderBot && account.enableDiscordForward !== false) {
-    throw new Error("At least one webhook must be configured via channelWebhooks.");
+  // 检查是否配置了任何转发规则
+  const hasDiscordWebhooks = Object.keys(webhooks).length > 0;
+  const hasFeishuWebhooks = Object.keys(feishuWebhooks).length > 0;
+  const hasTelegramMappings = (account.telegramConfig?.mappings || []).some(
+    (m: any) => m.type === 'discord-to-telegram'
+  );
+
+  // 如果没有配置任何转发规则（Discord/Feishu/Telegram），且 Discord 转发未关闭，则报错
+  if (!defaultSenderBot && account.enableDiscordForward !== false && !hasTelegramMappings) {
+    throw new Error("At least one forwarding rule must be configured (Discord webhook, Feishu webhook, or Telegram mapping).");
   }
 
   await Promise.all(prepares);
@@ -125,6 +209,227 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   logger.info(`account "${account.name}" senderBots 构建完成，映射频道数=${senderBotsBySource.size}`);
 
   return { senderBotsBySource, defaultSenderBot, feishuSendersBySource };
+}
+
+function setupTelegramBridgeClient() {
+  const bridgeProcess = telegramBridgeManager.getProcess();
+  if (!bridgeProcess) {
+    console.error("[Main] Telegram Bridge process is not available");
+    return;
+  }
+
+  if (telegramBridgeClient) {
+    telegramBridgeClient.destroy();
+  }
+
+  telegramBridgeClient = new TelegramBridgeClient(bridgeProcess);
+  console.log("[Main] Telegram Bridge IPC client initialized");
+
+  telegramBridgeClient.on("telegram_message", async (params) => {
+    const accounts = currentConfig?.accounts || [];
+    for (const account of accounts) {
+      if (account.telegramConfig?.enableTelegramForward === false) continue;
+      if (params.accountId && params.accountId !== account.id) continue;
+      const telegramMappings = account.telegramConfig?.mappings || [];
+      const sourceChatId = params.chat_id?.toString();
+      const sourceChatUsername =
+        typeof params.chat_username === "string" ? params.chat_username : undefined;
+
+      const matchingRules = telegramMappings.filter(
+        (m: any) => {
+          if (m.type !== "telegram-to-discord") return false;
+          const raw = typeof m.sourceChannelId === "string" ? m.sourceChannelId.trim() : "";
+          if (!raw) return false;
+          if (sourceChatId && raw === sourceChatId) return true;
+          if (sourceChatUsername) {
+            const normalized = raw.startsWith("@") ? raw.slice(1) : raw;
+            return normalized === sourceChatUsername;
+          }
+          return false;
+        },
+      );
+
+      if (matchingRules.length === 0) {
+        continue;
+      }
+
+      let content = params.text || "";
+      const mediaItems = Array.isArray(params.media) ? params.media : [];
+
+      try {
+        const requiredKeywords = (account.blockedKeywords || []).filter(Boolean);
+        if (requiredKeywords.length > 0) {
+          const hay = content.toLowerCase();
+          const matched = requiredKeywords.filter((kw) => hay.includes(String(kw).toLowerCase()));
+          if (matched.length === 0) {
+            console.log(`[Main] Telegram message skipped (no required keyword match). chat=${sourceChatId}`);
+            continue;
+          }
+        }
+      } catch (e: any) {
+        console.error(`[Main] Telegram keyword filter error: ${String(e?.message || e)}`);
+      }
+
+      try {
+        const excludeKeywords = (account.excludeKeywords || []).filter(Boolean);
+        if (excludeKeywords.length > 0) {
+          const hay = content.toLowerCase();
+          const matched = excludeKeywords.filter((kw) => hay.includes(String(kw).toLowerCase()));
+          if (matched.length > 0) {
+            console.log(`[Main] Telegram message skipped (exclude keyword matched). chat=${sourceChatId}`);
+            continue;
+          }
+        }
+      } catch (e: any) {
+        console.error(`[Main] Telegram exclude filter error: ${String(e?.message || e)}`);
+      }
+
+      try {
+        const isImage = (m: any) =>
+          m?.type === "photo" || String(m?.mimeType || "").startsWith("image/");
+        const isVideo = (m: any) =>
+          m?.type === "video" || String(m?.mimeType || "").startsWith("video/");
+        const isAudio = (m: any) =>
+          m?.type === "audio" || String(m?.mimeType || "").startsWith("audio/");
+        const isDocument = (m: any) =>
+          m?.type === "document" && !isImage(m) && !isVideo(m) && !isAudio(m);
+
+        const hasImage = Boolean(params.photo) || mediaItems.some(isImage);
+        const hasVideo = Boolean(params.video) || mediaItems.some(isVideo);
+        const hasAudio = mediaItems.some(isAudio);
+        const hasDocument = Boolean(params.document) || mediaItems.some(isDocument);
+
+        if (account.ignoreImages && hasImage) {
+          console.log(`[Main] Telegram message skipped (ignoreImages=true). chat=${sourceChatId}`);
+          continue;
+        }
+        if (account.ignoreVideo && hasVideo) {
+          console.log(`[Main] Telegram message skipped (ignoreVideo=true). chat=${sourceChatId}`);
+          continue;
+        }
+        if (account.ignoreAudio && hasAudio) {
+          console.log(`[Main] Telegram message skipped (ignoreAudio=true). chat=${sourceChatId}`);
+          continue;
+        }
+        if (account.ignoreDocuments && hasDocument) {
+          console.log(`[Main] Telegram message skipped (ignoreDocuments=true). chat=${sourceChatId}`);
+          continue;
+        }
+      } catch (e: any) {
+        console.error(`[Main] Telegram ignore filter error: ${String(e?.message || e)}`);
+      }
+
+      try {
+        const ocrKeywords = (account.ocrBlockedKeywords || []).filter(Boolean);
+        const hasLocalMedia = mediaItems.some((m: any) => m?.localPath);
+        if (ocrKeywords.length > 0 && hasLocalMedia) {
+          const ocrClient = getOcrClient(account);
+          if (!ocrClient) {
+            console.warn(`[Main] OCR server not configured, skipping OCR filter for account ${account.name}`);
+          } else {
+            let shouldBlock = false;
+            for (const item of mediaItems) {
+              if (!item?.localPath) continue;
+              const result = await ocrClient.recognizeLocalFile(item.localPath);
+              const check = ocrClient.checkOCRKeywords(result, ocrKeywords);
+              if (check.shouldBlock) {
+                shouldBlock = true;
+                console.log(`[Main] Telegram message blocked by OCR keywords: ${check.matchedKeywords.join(", ")}`);
+                break;
+              }
+            }
+            if (shouldBlock) {
+              continue;
+            }
+          }
+        }
+      } catch (e: any) {
+        console.error(`[Main] Telegram OCR filter error: ${String(e?.message || e)}`);
+      }
+
+      for (const rule of matchingRules) {
+        try {
+          console.log(`[Main] Forwarding Telegram chat ${sourceChatId} -> Discord webhook ${rule.targetChannelId}`);
+          const tempSender = new SenderBot({
+            webhookUrl: rule.targetChannelId,
+          });
+
+          const forwardStyle = account.feishuStyle === "style2" ? "style2" : "style1";
+          const showSourceIdentity = account.showSourceIdentity === true;
+          const senderDisplayName =
+            params.from_display_name ||
+            params.from_username ||
+            "Telegram User";
+          const avatarUrl = showSourceIdentity
+            ? buildTelegramAvatarUrl(
+                params.from_avatar_file,
+                params.from_avatar_url,
+                account.publicBaseUrl,
+                params.from_username,
+              )
+            : undefined;
+
+          let useEmbed = forwardStyle === "style1";
+          let extraEmbeds: any[] | undefined;
+
+          const replyInfo = params.reply_to || params.reply_to_message;
+          if (replyInfo) {
+            const replyUser = replyInfo.from_user || {};
+            const replyName =
+              replyInfo.from_display_name ||
+              replyInfo.from_username ||
+              `${replyUser.firstName || ""} ${replyUser.lastName || ""}`.trim() ||
+              replyUser.username ||
+              "用户";
+            const replyContent = replyInfo.text || "";
+
+            if (forwardStyle === "style1") {
+              const ctaLine = `↳ @${replyName}: ${replyContent || "回复消息"}`;
+              content = [ctaLine, content].filter(Boolean).join("\n");
+            } else {
+              useEmbed = false;
+              extraEmbeds = [
+                {
+                  color: 0x0000ff,
+                  description: `**💬 回复 ${replyName}**\n${replyContent}`,
+                  footer: { text: `⏰ ${formatTimestampFromSeconds(params.date)}` }
+                }
+              ];
+            }
+          }
+
+          // 处理附件
+          const uploads: Array<{ url: string; filename: string }> = [];
+          if (params.photo) uploads.push({ url: params.photo, filename: 'photo.jpg' });
+          if (params.video) uploads.push({ url: params.video, filename: 'video.mp4' });
+          if (params.document) uploads.push({ url: params.document, filename: 'document' });
+
+          // 发送消息
+          await tempSender.sendData([{
+            content,
+            username: showSourceIdentity ? senderDisplayName : undefined,
+            avatarUrl,
+            uploads: uploads.length > 0 ? uploads : undefined,
+            useEmbed,
+            extraEmbeds,
+          }]);
+
+          console.log(`[Main] Forwarded Telegram message to Discord (rule: ${rule.sourceChannelId} -> ${rule.targetChannelId})`);
+        } catch (error: any) {
+          console.error(`[Main] Failed to forward Telegram message:`, error.message);
+        }
+      }
+    }
+  });
+
+  telegramBridgeClient.on("error", (error) => {
+    console.error("[Main] Telegram Bridge IPC error:", error);
+  });
+
+  telegramBridgeClient.on("exit", (code) => {
+    console.log(`[Main] Telegram Bridge exited with code ${code}`);
+    telegramBridgeClient = null;
+  });
 }
 
 async function startAccount(account: AccountConfig, logger: FileLogger) {
@@ -146,11 +451,14 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     return;
   }
 
-  // 检查是否有配置转发规则（Discord 或飞书至少一个）
+  // 检查是否有配置转发规则（Discord、飞书或 Telegram 至少一个）
   const webhooks = account.enableDiscordForward !== false ? (account.channelWebhooks || {}) : {};
   const feishuWebhooks = account.enableFeishuForward ? (account.channelFeishuWebhooks || {}) : {};
-  if (Object.keys(webhooks).length === 0 && Object.keys(feishuWebhooks).length === 0) {
-    await logger.error(`账号 "${account.name}" 未配置任何转发规则（Discord 或飞书），无法启动`);
+  const telegramMappings = account.telegramConfig?.mappings || [];
+  const hasTelegramForward = telegramMappings.length > 0 && account.telegramConfig?.enableTelegramForward !== false;
+
+  if (Object.keys(webhooks).length === 0 && Object.keys(feishuWebhooks).length === 0 && !hasTelegramForward) {
+    await logger.error(`账号 "${account.name}" 未配置任何转发规则（Discord、飞书或 Telegram），无法启动`);
     await writeStatus(account.id, "error", "未配置转发规则");
     return;
   }
@@ -871,6 +1179,17 @@ async function main() {
   // 启动Telegram Bridge进程
   try {
     console.log("[Main] Starting Telegram Bridge...");
+    telegramBridgeManager.on("started", async () => {
+      setupTelegramBridgeClient();
+      if (currentConfig) {
+        try {
+          await syncConfigToTelegramBridge(currentConfig);
+        } catch (error: any) {
+          console.error(`[Main] Failed to sync config to Telegram Bridge: ${error?.message || error}`);
+        }
+      }
+    });
+
     const bridgeResult = await telegramBridgeManager.start();
     if (bridgeResult.success) {
       console.log(`[Main] Telegram Bridge started successfully (PID: ${bridgeResult.pid})`);
@@ -1028,7 +1347,14 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
   }
 
   // 提取Telegram相关配置
-  const telegramAccounts = [];
+  const telegramAccounts: any[] = [];
+  const telegramAccountIds = new Set<string>();
+  const pushTelegramAccount = (tgAccount: any) => {
+    if (!tgAccount || !tgAccount.id) return;
+    if (telegramAccountIds.has(tgAccount.id)) return;
+    telegramAccounts.push(tgAccount);
+    telegramAccountIds.add(tgAccount.id);
+  };
   const telegramMappings = [];
 
   for (const account of config.accounts) {
@@ -1036,7 +1362,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
       // 添加Telegram账号
       if (account.telegramConfig.accounts) {
         for (const tgAccount of account.telegramConfig.accounts) {
-          telegramAccounts.push({
+          pushTelegramAccount({
             id: tgAccount.id,
             name: tgAccount.name,
             type: tgAccount.type,
@@ -1045,9 +1371,35 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
             sessionString: tgAccount.sessionString,
             apiId: tgAccount.apiId,
             apiHash: tgAccount.apiHash,
+            proxyUrl: tgAccount.proxyUrl,
             enabled: tgAccount.enabled !== false
           });
         }
+      }
+
+      const hasExplicitClient = (account.telegramConfig.accounts || []).some(
+        (tgAccount) => tgAccount.type === "client" || tgAccount.id === account.id,
+      );
+      const hasLegacyClientConfig = Boolean(
+        account.telegramApiId ||
+        account.telegramApiHash ||
+        account.telegramSessionPath ||
+        account.telegramSessionString,
+      );
+
+      if (!hasExplicitClient && hasLegacyClientConfig) {
+        pushTelegramAccount({
+          id: account.id,
+          name: account.name || "Telegram Client",
+          type: "client",
+          token: account.telegramApiHash || "",
+          sessionPath: account.telegramSessionPath,
+          sessionString: account.telegramSessionString,
+          apiId: account.telegramApiId,
+          apiHash: account.telegramApiHash,
+          proxyUrl: account.proxyUrl,
+          enabled: account.telegramConfig?.enableTelegramForward !== false,
+        });
       }
 
       // 添加Telegram映射
@@ -1074,6 +1426,13 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
   } else {
     console.error("[ConfigSync] Failed to send config update to Telegram Bridge");
   }
+}
+
+/**
+ * 获取 Telegram Bridge 客户端
+ */
+export function getTelegramBridgeClient(): TelegramBridgeClient | null {
+  return telegramBridgeClient;
 }
 
 main();
