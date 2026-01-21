@@ -79,7 +79,7 @@ interface FrontendAccount {
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
-  telegramApiId?: number;
+  telegramApiId?: number | string;
   telegramApiHash?: string;
   telegramSessionPath?: string;
   telegramSessionString?: string;
