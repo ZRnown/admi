@@ -985,10 +985,17 @@
     }
 
     function renderMappings(acc, forwardingType) {
-      // 根据转发类型决定读取哪个数组
-      const mappings = (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord')
-        ? (acc.telegramConfig?.mappings || [])
-        : (acc.mappings || []);
+      // 根据转发类型决定读取哪个数组，并过滤出对应类型的 mappings
+      let allMappings;
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+        allMappings = (acc.telegramConfig?.mappings || []);
+        // 过滤出当前转发类型的 mappings
+        allMappings = allMappings.filter(m => m.type === forwardingType);
+      } else {
+        allMappings = (acc.mappings || []);
+      }
+      const mappings = allMappings;
+      console.log('[DEBUG] renderMappings - forwardingType:', forwardingType);
       console.log('[DEBUG] renderMappings - mappings长度:', mappings.length);
       console.log('[DEBUG] renderMappings - 当前页:', pagination.discordPage);
       console.log('[DEBUG] renderMappings - 第一个mapping ID:', mappings[0]?.id);

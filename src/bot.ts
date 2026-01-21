@@ -898,11 +898,13 @@ export class Bot {
       }
     }
 
-    // Telegram 转发
-    const telegramMappings = (this.config as any).telegramConfig?.mappings || [];
-    const discordToTelegramMappings = telegramMappings.filter(
-      (m: any) => m.type === 'discord-to-telegram' && m.sourceChannelId === message.channelId
-    );
+    // Telegram 转发 - 仅当 forwardingType 为 'discord-to-telegram' 时执行
+    const currentForwardingType = (this.config as any).forwardingType || 'discord-to-discord';
+    if (currentForwardingType === 'discord-to-telegram') {
+      const telegramMappings = (this.config as any).telegramConfig?.mappings || [];
+      const discordToTelegramMappings = telegramMappings.filter(
+        (m: any) => m.type === 'discord-to-telegram' && m.sourceChannelId === message.channelId
+      );
 
     if (discordToTelegramMappings.length > 0) {
       const isSystemMessage = (message as any).system === true;
@@ -964,6 +966,7 @@ export class Bot {
         this.logger.warn(`${logPrefix} [TELEGRAM] Telegram Bridge 客户端未初始化，跳过转发`);
       }
     }
+    } // 关闭 forwardingType === 'discord-to-telegram' 检查
   }
 
   // 在目标频道历史消息中尝试解析出某个 sourceId 的映射

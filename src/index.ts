@@ -228,6 +228,10 @@ function setupTelegramBridgeClient() {
   telegramBridgeClient.on("telegram_message", async (params) => {
     const accounts = currentConfig?.accounts || [];
     for (const account of accounts) {
+      // 检查 forwardingType 是否为 telegram-to-discord
+      const currentForwardingType = account.forwardingType || 'discord-to-discord';
+      if (currentForwardingType !== 'telegram-to-discord') continue;
+
       if (account.telegramConfig?.enableTelegramForward === false) continue;
       if (params.accountId && params.accountId !== account.id) continue;
       const telegramMappings = account.telegramConfig?.mappings || [];
