@@ -7,6 +7,18 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 .data
+.DS_Store
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.session
+*.sqlite
+*.sqlite3
+*.db
+*.tmp
+temp_*.png
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
@@ -124,3 +136,4 @@ dist-server
 dist-bot
 config.json.*
 collected_code.txt
+public/test_debug.html

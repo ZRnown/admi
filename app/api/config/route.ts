@@ -8,9 +8,9 @@ import {
   saveMultiConfig,
   type MultiConfig,
   type FeishuTargetConfig,
+  type FrontendTelegramConfig,
 } from "@/src/config";
 import { readStatus, triggerFile } from "../_lib/common";
-import { FrontendTelegramConfig } from "@/specs/telegram-integration/contracts/api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
