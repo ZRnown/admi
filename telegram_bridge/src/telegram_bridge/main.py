@@ -29,7 +29,7 @@ class TelegramBridgeService:
         self.running = False
 
         # 状态文件路径
-        base_dir = Path(__file__).resolve().parents[4]
+        base_dir = Path(__file__).resolve().parents[3]
         self.status_file = base_dir / ".data" / "telegram_status.json"
         self.status_file.parent.mkdir(parents=True, exist_ok=True)
 
