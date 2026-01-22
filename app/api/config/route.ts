@@ -48,25 +48,34 @@ function resolveTelegramAccountStatuses(
     telegramAccounts.find((acc) => acc.type === "client") ||
     null;
 
-  const hasExplicitClient = telegramAccounts.some(
-    (acc) => acc.type === "client" || acc.id === account.id,
-  );
   const hasExplicitBot = telegramAccounts.some((acc) => acc.type === "bot");
-  const hasLegacyClientConfig = Boolean(
-    (account.telegramSessionPath || account.telegramSessionString) &&
-      account.telegramApiId &&
-      account.telegramApiHash,
-  );
   const hasLegacyBotConfig = Boolean(account.telegramBotToken);
 
+  // Bot ID: 优先使用显式 bot 账号 ID，否则使用 account.id_bot
   const botAccountId =
     botAccount?.id || (!hasExplicitBot && hasLegacyBotConfig ? `${account.id}_bot` : undefined);
-  const clientAccountId =
-    clientAccount?.id || (!hasExplicitClient && hasLegacyClientConfig ? account.id : undefined);
+
+  // Client ID: 更宽松的查找逻辑
+  // 1. 优先使用显式 client 账号 ID
+  // 2. 否则直接使用 account.id（不再依赖 hasLegacyClientConfig 判断）
+  const clientAccountId = clientAccount?.id || account.id;
+
+  // 从状态文件中查找状态
+  let botStatus = botAccountId ? telegramStatus[botAccountId] : undefined;
+  let clientStatus = telegramStatus[clientAccountId];
+
+  // 如果 clientAccountId 对应的状态看起来像 Bot（username 以 bot 结尾），则不作为 Client 状态
+  if (clientStatus?.userInfo?.username?.toLowerCase().endsWith("bot")) {
+    // 这可能是 Bot 状态被错误地记录在 account.id 上
+    if (!botStatus) {
+      botStatus = clientStatus;
+    }
+    clientStatus = undefined;
+  }
 
   return {
-    botStatus: botAccountId ? telegramStatus[botAccountId] : undefined,
-    clientStatus: clientAccountId ? telegramStatus[clientAccountId] : undefined,
+    botStatus,
+    clientStatus,
   };
 }
 

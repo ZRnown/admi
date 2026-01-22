@@ -2923,13 +2923,8 @@
           continue;
         }
 
-        const hasApiId = acc.telegramApiId !== undefined && String(acc.telegramApiId).trim() !== '';
-        const hasApiHash = acc.telegramApiHash && String(acc.telegramApiHash).trim();
-        const hasSession = (acc.telegramSessionString && acc.telegramSessionString.trim())
-          || (acc.telegramSessionPath && acc.telegramSessionPath.trim());
-        if (!hasApiId || !hasApiHash || !hasSession) {
-          continue;
-        }
+        // 移除严格的配置检查，总是尝试获取状态
+        // 因为 Telegram Bridge 可能已经自动连接了
 
         try {
           const res = await fetch('/api/telegram/client/status', {
