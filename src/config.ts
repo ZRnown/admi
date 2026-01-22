@@ -212,6 +212,8 @@ export interface LegacyConfig {
   forwardingType?: 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'discord-to-feishu';
   // Discord→Discord 规则列表（带规则级别用户过滤）
   mappings?: DiscordMappingRule[];
+  // 飞书规则级别过滤配置
+  feishuRuleConfigs?: Record<string, RuleLevelConfig>;
 }
 
 export interface AccountConfig extends LegacyConfig {
@@ -740,6 +742,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
   return {
     channelWebhooks: account.channelWebhooks,
     channelFeishuWebhooks: account.channelFeishuWebhooks,
+    mappings: account.mappings,
+    feishuRuleConfigs: account.feishuRuleConfigs,
     enableFeishuForward: account.enableFeishuForward,
     enableDiscordForward: account.enableDiscordForward,
     feishuAppId: account.feishuAppId,
