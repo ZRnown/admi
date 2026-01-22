@@ -587,6 +587,19 @@ class TelegramClientManager:
             if getattr(message, "action", None):
                 return
 
+            # 获取chat信息用于过滤
+            chat_id = message.chat_id
+            chat_username = None
+            try:
+                chat = await event.get_chat()
+                chat_username = getattr(chat, "username", None)
+            except:
+                pass
+
+            # 只处理配置中监听的频道，忽略其他频道的消息
+            if not self._is_watched_chat(account_id, chat_id, chat_username):
+                return
+
             # 跳过自己发送的消息（如果配置了）
             if message.from_id == message.chat_id:  # 群组消息
                 # 检查是否是自己发送的（需要获取用户信息）

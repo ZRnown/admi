@@ -2914,8 +2914,11 @@
     async function autoCheckTelegramClientStatus() {
       for (const acc of state.accounts) {
         const telegramMappings = acc.telegramConfig?.mappings || [];
-        const hasTelegramToDiscordMapping = telegramMappings.some(m => m.type === 'telegram-to-discord');
-        if (!hasTelegramToDiscordMapping) {
+        // 检查是否有任何Telegram相关的mapping（包括telegram-to-discord和discord-to-telegram）
+        const hasTelegramMapping = telegramMappings.some(m =>
+          m.type === 'telegram-to-discord' || m.type === 'discord-to-telegram'
+        );
+        if (!hasTelegramMapping) {
           acc.telegramClientState = 'idle';
           continue;
         }

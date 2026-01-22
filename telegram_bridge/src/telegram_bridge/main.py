@@ -286,6 +286,9 @@ class TelegramBridgeService:
 
             if getattr(account, "type", None) == "bot":
                 self.bot_manager.message_handlers[account_id] = handler
+                # 更新 bot_manager 的监听频道列表
+                watched_chats = list(account_watched_chats.get(account_id, []))
+                self.bot_manager.update_watched_chats(account_id, watched_chats)
             else:
                 self.client_manager.message_handlers[account_id] = handler
                 # 更新 client_manager 的监听频道列表（用于心跳保活）

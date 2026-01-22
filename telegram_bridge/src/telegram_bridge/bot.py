@@ -35,11 +35,39 @@ class TelegramBotManager:
         self.avatar_cache: Dict[int, float] = {}
         self.avatar_ttl_seconds = 6 * 60 * 60
         self._entity_cache_seconds = 60 * 60
+        self._watched_chats: Dict[str, set] = {}
         self._setup_connection_callbacks()
 
     def _setup_connection_callbacks(self):
         """设置连接状态回调"""
         pass  # 动态注册在connect时处理
+
+    def update_watched_chats(self, account_id: str, chat_ids: list):
+        """更新监听的频道列表"""
+        normalized = set()
+        for chat_id in chat_ids:
+            if isinstance(chat_id, int):
+                normalized.add(chat_id)
+            elif isinstance(chat_id, str):
+                cleaned = chat_id.strip().lstrip("@")
+                if cleaned:
+                    try:
+                        normalized.add(int(cleaned))
+                    except ValueError:
+                        normalized.add(cleaned.lower())
+        self._watched_chats[account_id] = normalized
+        logger.info(f"Bot updated watched chats for {account_id}: {normalized}")
+
+    def _is_watched_chat(self, account_id: str, chat_id: int, chat_username: str) -> bool:
+        """检查是否是监听的频道"""
+        watched = self._watched_chats.get(account_id)
+        if not watched:
+            return False
+        if chat_id in watched:
+            return True
+        if chat_username:
+            return chat_username.lstrip("@").lower() in watched
+        return False
 
     def _get_connect_lock(self, account_id: str) -> asyncio.Lock:
         lock = self._connect_locks.get(account_id)
@@ -446,6 +474,14 @@ class TelegramBotManager:
 
             if me and message.from_id == me.id:
                 return  # 跳过机器人自己的消息
+
+            # 获取chat信息用于过滤
+            chat_id = message.chat_id
+            chat_username = getattr(message.chat, 'username', None)
+
+            # 只处理配置中监听的频道，忽略其他频道的消息
+            if not self._is_watched_chat(account_id, chat_id, chat_username):
+                return
 
             # 解析媒体信息
             media = []
