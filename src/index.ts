@@ -1400,7 +1400,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
             apiId: tgAccount.apiId,
             apiHash: tgAccount.apiHash,
             proxyUrl: tgAccount.proxyUrl,
-            enabled: tgAccount.enabled !== false
+            enabled: tgAccount.enabled === true
           });
         }
       }

@@ -313,7 +313,7 @@ class TelegramBridgeService:
 
             if status:
                 state = "online" if status.status.value == "connected" else status.status.value
-                self._write_telegram_status(account_id, state, status.error_message or "")
+                self._write_telegram_status(account_id, state, status.error_message or "", status.user_info)
             elif account.enabled:
                 self._write_telegram_status(account_id, "idle", "等待连接")
 

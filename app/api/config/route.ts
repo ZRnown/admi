@@ -37,7 +37,7 @@ function resolveTelegramAccountStatuses(
   telegramStatus: Record<string, TelegramStatusEntry>,
 ) {
   const telegramAccounts = account.telegramConfig?.accounts || [];
-  const enabledAccounts = telegramAccounts.filter((acc) => acc.enabled !== false);
+  const enabledAccounts = telegramAccounts.filter((acc) => acc.enabled === true);
 
   const botAccount =
     enabledAccounts.find((acc) => acc.type === "bot") ||

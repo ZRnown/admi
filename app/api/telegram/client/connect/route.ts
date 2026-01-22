@@ -15,7 +15,7 @@ function resolveClientAccountId(account: AccountConfig, telegramAccountId?: stri
   const target =
     (telegramAccountId
       ? candidates.find((acc) => acc.id === telegramAccountId)
-      : candidates.find((acc) => acc.type === "client" && acc.enabled !== false)) || null;
+      : candidates.find((acc) => acc.type === "client" && acc.enabled === true)) || null;
 
   return target?.id || account.id;
 }
