@@ -610,6 +610,13 @@ export class Bot {
 
     // 获取规则级别配置
     const ruleConfig = this.getRuleLevelConfig(message.channelId);
+    const applyReplacementDictionary = (input: string, dict: Record<string, string>) => {
+      let next = input;
+      for (const [from, to] of Object.entries(dict || {})) {
+        next = next.replaceAll(from, String(to ?? ""));
+      }
+      return next;
+    };
 
     // 用户过滤：全局白名单/黑名单 + 规则级别白名单/黑名单
     // 优先级：全局设置 > 规则级别设置
@@ -992,8 +999,12 @@ export class Bot {
     }
     if (shouldSendFeishu) {
       try {
+        const feishuContent = applyReplacementDictionary(
+          applyReplacementDictionary(finalContent, this.config.replacementsDictionary || {}),
+          ruleConfig.replacementsDictionary || {},
+        );
         await feishuSenderForThis.send({
-          content: finalContent,
+          content: feishuContent,
           username: username,
           avatarUrl: avatarUrl,
           attachments: uploads.map((u) => ({ url: u.url, filename: u.filename, isImage: u.isImage })),
@@ -1030,6 +1041,10 @@ export class Bot {
           try {
             // 准备消息内容 - 对于Telegram使用原始内容,让Python端处理翻译
             let contentForTelegram = message.content || '';
+            contentForTelegram = applyReplacementDictionary(
+              applyReplacementDictionary(contentForTelegram, this.config.replacementsDictionary || {}),
+              (mapping as any).replacementsDictionary || ruleConfig.replacementsDictionary || {},
+            );
 
             // 准备消息数据
             const messageData = {

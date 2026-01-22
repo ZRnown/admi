@@ -259,12 +259,16 @@ function setupTelegramBridgeClient() {
 
       let content = params.text || "";
       const mediaItems = Array.isArray(params.media) ? params.media : [];
+      const globalRequiredKeywords = (account.blockedKeywords || []).filter(Boolean);
+      const globalExcludeKeywords = (account.excludeKeywords || []).filter(Boolean);
+      const globalReplacements = account.replacementsDictionary || {};
+      const normalizedContent = content.toLowerCase();
 
       try {
-        const requiredKeywords = (account.blockedKeywords || []).filter(Boolean);
-        if (requiredKeywords.length > 0) {
-          const hay = content.toLowerCase();
-          const matched = requiredKeywords.filter((kw) => hay.includes(String(kw).toLowerCase()));
+        if (globalRequiredKeywords.length > 0) {
+          const matched = globalRequiredKeywords.filter((kw) =>
+            normalizedContent.includes(String(kw).toLowerCase()),
+          );
           if (matched.length === 0) {
             console.log(`[Main] Telegram message skipped (no required keyword match). chat=${sourceChatId}`);
             continue;
@@ -275,10 +279,10 @@ function setupTelegramBridgeClient() {
       }
 
       try {
-        const excludeKeywords = (account.excludeKeywords || []).filter(Boolean);
-        if (excludeKeywords.length > 0) {
-          const hay = content.toLowerCase();
-          const matched = excludeKeywords.filter((kw) => hay.includes(String(kw).toLowerCase()));
+        if (globalExcludeKeywords.length > 0) {
+          const matched = globalExcludeKeywords.filter((kw) =>
+            normalizedContent.includes(String(kw).toLowerCase()),
+          );
           if (matched.length > 0) {
             console.log(`[Main] Telegram message skipped (exclude keyword matched). chat=${sourceChatId}`);
             continue;
@@ -353,6 +357,44 @@ function setupTelegramBridgeClient() {
 
       for (const rule of matchingRules) {
         try {
+          const ruleRequiredKeywords = (rule.blockedKeywords || []).filter(Boolean);
+          if (globalRequiredKeywords.length === 0 && ruleRequiredKeywords.length > 0) {
+            const matched = ruleRequiredKeywords.filter((kw) =>
+              normalizedContent.includes(String(kw).toLowerCase()),
+            );
+            if (matched.length === 0) {
+              console.log(
+                `[Main] Telegram message skipped (no rule keyword match). chat=${sourceChatId}`,
+              );
+              continue;
+            }
+          }
+
+          const ruleExcludeKeywords = (rule.excludeKeywords || []).filter(Boolean);
+          if (ruleExcludeKeywords.length > 0) {
+            const matched = ruleExcludeKeywords.filter((kw) =>
+              normalizedContent.includes(String(kw).toLowerCase()),
+            );
+            if (matched.length > 0) {
+              console.log(
+                `[Main] Telegram message skipped (rule exclude keyword matched). chat=${sourceChatId}`,
+              );
+              continue;
+            }
+          }
+
+          let contentForRule = content;
+          if (globalReplacements && Object.keys(globalReplacements).length > 0) {
+            for (const [from, to] of Object.entries(globalReplacements)) {
+              contentForRule = contentForRule.replaceAll(from, String(to ?? ""));
+            }
+          }
+          if (rule.replacementsDictionary && typeof rule.replacementsDictionary === "object") {
+            for (const [from, to] of Object.entries(rule.replacementsDictionary)) {
+              contentForRule = contentForRule.replaceAll(from, String(to ?? ""));
+            }
+          }
+
           console.log(`[Main] Forwarding Telegram chat ${sourceChatId} -> Discord webhook ${rule.targetChannelId}`);
           const tempSender = new SenderBot({
             webhookUrl: rule.targetChannelId,
@@ -389,7 +431,7 @@ function setupTelegramBridgeClient() {
 
             if (forwardStyle === "style1") {
               const ctaLine = `↳ @${replyName}: ${replyContent || "回复消息"}`;
-              content = [ctaLine, content].filter(Boolean).join("\n");
+              contentForRule = [ctaLine, contentForRule].filter(Boolean).join("\n");
             } else {
               useEmbed = false;
               extraEmbeds = [
@@ -410,7 +452,7 @@ function setupTelegramBridgeClient() {
 
           // 发送消息
           await tempSender.sendData([{
-            content,
+            content: contentForRule,
             username: showSourceIdentity ? senderDisplayName : undefined,
             avatarUrl,
             uploads: uploads.length > 0 ? uploads : undefined,
