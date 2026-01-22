@@ -240,6 +240,7 @@ export class Bot {
   /**
    * 获取指定频道的规则级别完整配置
    * 返回该频道规则的所有过滤配置
+   * 同时查找顶层 mappings 和 telegramConfig.mappings
    */
   private getRuleLevelConfig(channelId: string): {
     allowedUsersIds: string[];
@@ -249,8 +250,22 @@ export class Bot {
     ocrBlockedKeywords: string[];
     replacementsDictionary: Record<string, string>;
   } {
+    // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
-    const rule = mappings.find((m: any) => m.sourceChannelId === channelId);
+    let rule = mappings.find((m: any) => m.sourceChannelId === channelId);
+
+    // 如果顶层没找到，查找 telegramConfig.mappings（Discord->Telegram 规则）
+    if (!rule) {
+      const telegramMappings = (this.config as any).telegramConfig?.mappings || [];
+      rule = telegramMappings.find((m: any) => m.sourceChannelId === channelId);
+    }
+
+    // 如果还没找到，查找 feishuRuleConfigs（Discord->Feishu 规则）
+    if (!rule) {
+      const feishuRuleConfigs = (this.config as any).feishuRuleConfigs || {};
+      rule = feishuRuleConfigs[channelId];
+    }
+
     if (!rule) {
       return {
         allowedUsersIds: [],
