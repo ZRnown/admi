@@ -164,8 +164,34 @@ class TelegramBotManager:
                 }
 
             async with lock:
-                # 如果已经连接，先断开
+                # 如果 Bot 已存在且已连接，直接返回成功（修复：避免不必要的断开重连）
                 if account_id in self.bots:
+                    existing_bot = self.bots[account_id]
+                    if existing_bot.is_connected():
+                        try:
+                            me = await existing_bot.get_me()
+                            if me:
+                                user_info = {
+                                    "id": me.id,
+                                    "firstName": me.first_name,
+                                    "lastName": getattr(me, 'last_name', None),
+                                    "username": me.username
+                                }
+                                # 更新状态
+                                self.connection_manager.update_state(
+                                    account_id,
+                                    ConnectionStatus.CONNECTED,
+                                    user_info=user_info
+                                )
+                                logger.info(f"Telegram bot already connected for account {account_id}")
+                                return {
+                                    "success": True,
+                                    "user_info": user_info
+                                }
+                        except Exception as e:
+                            logger.warning(f"Existing bot check failed, will reconnect: {e}")
+
+                    # Bot 存在但未连接，断开后重连
                     await self.disconnect(account_id)
                     # 等待数据库锁释放
                     await asyncio.sleep(0.5)

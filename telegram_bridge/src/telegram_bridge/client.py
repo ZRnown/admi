@@ -255,8 +255,34 @@ class TelegramClientManager:
                         "userInfo": state.user_info
                     }
 
-                # 如果已经连接，先断开
+                # 如果客户端已存在且已连接，直接返回成功（修复：避免不必要的断开重连）
                 if account_id in self.clients:
+                    existing_client = self.clients[account_id]
+                    if existing_client.is_connected():
+                        try:
+                            me = await existing_client.get_me()
+                            if me:
+                                user_info = {
+                                    "id": me.id,
+                                    "firstName": me.first_name,
+                                    "lastName": me.last_name,
+                                    "username": me.username
+                                }
+                                # 更新状态
+                                self.connection_manager.update_state(
+                                    account_id,
+                                    ConnectionStatus.CONNECTED,
+                                    user_info=user_info
+                                )
+                                logger.info(f"Telegram client already connected for account {account_id}")
+                                return {
+                                    "success": True,
+                                    "userInfo": user_info
+                                }
+                        except Exception as e:
+                            logger.warning(f"Existing client check failed, will reconnect: {e}")
+
+                    # 客户端存在但未连接，断开后重连
                     await self._disconnect_client(account_id)
                     # 等待数据库锁释放
                     await asyncio.sleep(0.5)
