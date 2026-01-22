@@ -270,6 +270,8 @@ export interface MultiConfig {
   telegramAvatarBaseUrl?: string;
   // 配置版本，用于迁移
   version?: string;
+  // 启用的转发类型（如果不设置，默认全部启用）
+  enabledForwardingTypes?: Array<"discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "discord-to-feishu">;
 }
 
 function createDefaultAccount(): AccountConfig {

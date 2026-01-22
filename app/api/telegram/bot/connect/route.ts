@@ -1,8 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMultiConfig, saveMultiConfig } from "@/src/config";
+import { promises as fs } from "fs";
+import path from "path";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Telegram 状态文件路径
+const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
+
+async function writeTelegramStatus(accountId: string, state: string, message: string, userInfo?: any) {
+  try {
+    let statusData: Record<string, any> = {};
+    try {
+      const content = await fs.readFile(telegramStatusFile, "utf-8");
+      statusData = JSON.parse(content);
+    } catch {
+      // 文件不存在或解析失败
+    }
+    statusData[accountId] = { state, message, userInfo };
+    await fs.mkdir(path.dirname(telegramStatusFile), { recursive: true });
+    await fs.writeFile(telegramStatusFile, JSON.stringify(statusData, null, 2));
+  } catch {
+    // 忽略错误
+  }
+}
 
 /**
  * 验证 Telegram Bot Token 是否有效
@@ -66,12 +88,20 @@ export async function POST(req: NextRequest) {
     const result = await verifyTelegramBotToken(account.telegramBotToken);
 
     if (result.success) {
+      // 写入状态到文件，使用 accountId + "_bot" 作为 Bot 的状态 ID
+      const botStatusId = `${accountId}_bot`;
+      await writeTelegramStatus(botStatusId, "online", `连接成功: @${result.userInfo?.username || 'Bot'}`, result.userInfo);
+
       return NextResponse.json({
         state: 'online',
         message: `连接成功: @${result.userInfo?.username || result.userInfo?.first_name || 'Bot'}`,
         userInfo: result.userInfo,
       });
     } else {
+      // 写入错误状态
+      const botStatusId = `${accountId}_bot`;
+      await writeTelegramStatus(botStatusId, "error", result.message);
+
       return NextResponse.json({
         state: 'error',
         message: result.message,

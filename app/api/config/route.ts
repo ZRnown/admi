@@ -166,6 +166,7 @@ interface FrontendPayload {
   loginUser?: string;
   loginPassword?: string;
   telegramAvatarBaseUrl?: string;
+  enabledForwardingTypes?: Array<"discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "discord-to-feishu">;
 }
 
 function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
@@ -489,6 +490,7 @@ export async function GET() {
       loginUser: multi.loginUser || "",
       loginPassword: multi.loginPassword || "",
       telegramAvatarBaseUrl: multi.telegramAvatarBaseUrl || "",
+      enabledForwardingTypes: multi.enabledForwardingTypes,
     };
     return NextResponse.json(payload);
   } catch (e: any) {
