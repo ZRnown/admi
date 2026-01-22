@@ -684,14 +684,20 @@ class TelegramBotManager:
             TelegramAccountModel(**acc) if isinstance(acc, dict) else acc
             for acc in accounts
         ]
-        # 断开已删除的账号
-        current_account_ids = {acc.id for acc in normalized if acc.type == "bot"}
-        to_disconnect = set(self.bots.keys()) - current_account_ids
 
-        for account_id in to_disconnect:
-            await self.disconnect(account_id)
+        # 1. 获取当前所有已连接的 ID
+        current_account_ids = set(self.bots.keys())
+        # 创建新配置的映射 map
+        new_account_map = {acc.id: acc for acc in normalized}
 
-        # 连接新启用的机器人账号
+        # 断开逻辑：不仅断开被删除的，也要断开 enabled=False 的
+        for account_id in current_account_ids:
+            # 如果账号不存在于新配置中，或者新配置中 enabled 为 False
+            if account_id not in new_account_map or not new_account_map[account_id].enabled:
+                logger.info(f"Disconnecting bot {account_id} (removed or disabled)")
+                await self.disconnect(account_id)
+
+        # 2. 连接新启用的机器人账号
         for account in normalized:
             if account.type == "bot" and account.enabled:
                 if account.id not in self.bots:

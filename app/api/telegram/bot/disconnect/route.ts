@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getMultiConfig } from "@/src/config";
+import { getMultiConfig, saveMultiConfig } from "@/src/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +18,16 @@ export async function POST(req: NextRequest) {
 
     if (!account) {
       return NextResponse.json({ error: "账号不存在" }, { status: 404 });
+    }
+
+    // 保存 enabled: false 到配置
+    const botStatusId = `${accountId}_bot`;
+    if (account.telegramConfig?.accounts) {
+      const target = account.telegramConfig.accounts.find(a => a.id === botStatusId);
+      if (target) {
+        target.enabled = false;
+        await saveMultiConfig(multi);
+      }
     }
 
     // Telegram Bot Token 是无状态的，断开只是一个状态标记

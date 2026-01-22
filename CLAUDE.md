@@ -30,8 +30,9 @@ pnpm build && pnpm start # Production build and serve
 # OCR
 pnpm start:paddle-ocr-server
 
-# Telegram Bridge tests (Python)
-cd telegram_bridge && python -m pytest tests/
+# Telegram Bridge
+cd telegram_bridge && pip install -e .  # Install Python dependencies
+cd telegram_bridge && python -m pytest tests/  # Run tests
 ```
 
 ## Architecture
@@ -83,3 +84,10 @@ Discord Webhook/Bot API | Feishu API | Telegram API
 ## Configuration
 
 Copy `config.sample.json` to `config.json` before running. The bot watches this file and hot-reloads without restart.
+
+### Config File Handling
+
+- Atomic saves: Config writes use temp file + rename to prevent corruption
+- Multi-account structure: `MultiConfig.accounts[]` contains `AccountConfig` objects
+- Legacy migration: Old single-account configs auto-migrate to multi-account format
+- Version tracking: `CONFIG_VERSION` in `src/config.ts` triggers automatic migrations

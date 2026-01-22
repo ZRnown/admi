@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getMultiConfig, type AccountConfig } from "@/src/config";
+import { getMultiConfig, saveMultiConfig, type AccountConfig } from "@/src/config";
 import { promises as fs } from "fs";
 import path from "path";
 
@@ -70,8 +70,41 @@ export async function POST(req: NextRequest) {
 
     const clientAccountId = resolveClientAccountId(account, telegramAccountId);
 
+    // 保存 enabled 状态到配置
+    if (!account.telegramConfig) {
+      account.telegramConfig = { accounts: [], mappings: [], enableTelegramForward: false };
+    }
+    if (!account.telegramConfig.accounts) {
+      account.telegramConfig.accounts = [];
+    }
+
+    const candidates = account.telegramConfig.accounts;
+    let targetAccount = candidates.find((acc) => acc.id === clientAccountId);
+
+    if (!targetAccount) {
+      // Legacy 模式：创建一个显式条目以保存 enabled 状态
+      if (clientAccountId === account.id) {
+        targetAccount = {
+          id: account.id,
+          name: "Telegram Client",
+          type: "client" as const,
+          token: "",
+          apiId: account.telegramApiId,
+          apiHash: account.telegramApiHash,
+          sessionPath: account.telegramSessionPath,
+          sessionString: account.telegramSessionString,
+          enabled: true
+        };
+        account.telegramConfig.accounts.push(targetAccount);
+      }
+    } else {
+      targetAccount.enabled = true;
+    }
+
+    // 保存配置到磁盘（确保下次重启自动登录）
+    await saveMultiConfig(multi);
+
     // 检查是否有必要的配置
-    const candidates = account.telegramConfig?.accounts || [];
     const clientAccount = candidates.find((acc) => acc.id === clientAccountId) || {
       apiId: account.telegramApiId,
       apiHash: account.telegramApiHash,

@@ -88,8 +88,31 @@ export async function POST(req: NextRequest) {
     const result = await verifyTelegramBotToken(account.telegramBotToken);
 
     if (result.success) {
-      // 写入状态到文件，使用 accountId + "_bot" 作为 Bot 的状态 ID
+      // 保存 enabled: true 到配置
       const botStatusId = `${accountId}_bot`;
+      if (!account.telegramConfig) {
+        account.telegramConfig = { accounts: [], mappings: [], enableTelegramForward: false };
+      }
+      if (!account.telegramConfig.accounts) {
+        account.telegramConfig.accounts = [];
+      }
+
+      let botAccount = account.telegramConfig.accounts.find(a => a.id === botStatusId);
+      if (!botAccount) {
+        botAccount = {
+          id: botStatusId,
+          name: result.userInfo?.username || 'Telegram Bot',
+          type: 'bot' as const,
+          token: account.telegramBotToken || '',
+          enabled: true
+        };
+        account.telegramConfig.accounts.push(botAccount);
+      } else {
+        botAccount.enabled = true;
+      }
+      await saveMultiConfig(multi);
+
+      // 写入状态到文件
       await writeTelegramStatus(botStatusId, "online", `连接成功: @${result.userInfo?.username || 'Bot'}`, result.userInfo);
 
       return NextResponse.json({

@@ -54,6 +54,15 @@ export async function POST(req: NextRequest) {
 
     const clientAccountId = resolveClientAccountId(account, telegramAccountId);
 
+    // 保存 enabled: false 到配置
+    if (account.telegramConfig?.accounts) {
+      const target = account.telegramConfig.accounts.find(a => a.id === clientAccountId);
+      if (target) {
+        target.enabled = false;
+        await saveMultiConfig(multi);
+      }
+    }
+
     // 更新状态文件为已断开
     await writeTelegramStatus(clientAccountId, "idle", "已断开");
 
