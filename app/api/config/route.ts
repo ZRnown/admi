@@ -9,6 +9,7 @@ import {
   type MultiConfig,
   type FeishuTargetConfig,
   type FrontendTelegramConfig,
+  type RuleLevelConfig,
 } from "@/src/config";
 import { readStatus, triggerFile } from "../_lib/common";
 
@@ -165,6 +166,7 @@ interface FrontendAccount {
   telegramOverflowMessage?: string; // 全局超长时附加的消息
   // Telegram 配置（包含 accounts 和 mappings）
   telegramConfig?: FrontendTelegramConfig;
+  feishuRuleConfigs?: Record<string, RuleLevelConfig>;
 }
 
 interface FrontendPayload {
@@ -201,6 +203,39 @@ function normalizeFeishuTargets(raw: any): Record<string, FeishuTargetConfig> {
     if (normalized) {
       result[sourceId] = normalized;
     }
+  }
+  return result;
+}
+
+function normalizeRuleConfig(raw: any): RuleLevelConfig {
+  if (!raw || typeof raw !== "object") {
+    return {
+      allowedUsersIds: [],
+      mutedUsersIds: [],
+      blockedKeywords: [],
+      excludeKeywords: [],
+      ocrBlockedKeywords: [],
+      replacementsDictionary: {},
+    };
+  }
+  return {
+    allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
+    mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
+    blockedKeywords: Array.isArray(raw.blockedKeywords) ? raw.blockedKeywords.filter(Boolean) : [],
+    excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
+    ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
+    replacementsDictionary:
+      raw.replacementsDictionary && typeof raw.replacementsDictionary === "object"
+        ? raw.replacementsDictionary
+        : {},
+  };
+}
+
+function normalizeRuleConfigs(raw: any): Record<string, RuleLevelConfig> {
+  const result: Record<string, RuleLevelConfig> = {};
+  if (!raw || typeof raw !== "object") return result;
+  for (const [sourceId, config] of Object.entries(raw)) {
+    result[sourceId] = normalizeRuleConfig(config);
   }
   return result;
 }
@@ -295,6 +330,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     telegramOverflowMessage: (account as any).telegramOverflowMessage || "",
     // Telegram 配置（包含 accounts 和 mappings）
     telegramConfig: (account as any).telegramConfig || undefined,
+    feishuRuleConfigs: normalizeRuleConfigs((account as any).feishuRuleConfigs),
   };
 }
 
@@ -346,6 +382,11 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
   const channelLongMessage: Record<string, { enabled: boolean; threshold?: number; appendMessage?: string }> = {};
   // 保存完整的 mappings 数组（包含规则级别配置）
   const savedMappings: any[] = [];
+  const feishuRuleConfigs = normalizeRuleConfigs(
+    dto.feishuRuleConfigs && typeof dto.feishuRuleConfigs === "object"
+      ? dto.feishuRuleConfigs
+      : (base as any).feishuRuleConfigs,
+  );
 
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
@@ -425,6 +466,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     channelWebhooks,
     mappings: savedMappings,
     channelFeishuWebhooks,
+    feishuRuleConfigs,
     enableFeishuForward: dto.enableFeishuForward === true,
     enableDiscordForward: dto.enableDiscordForward !== false,
     feishuAppId: typeof dto.feishuAppId === "string" && dto.feishuAppId.trim() ? dto.feishuAppId.trim() : base.feishuAppId,

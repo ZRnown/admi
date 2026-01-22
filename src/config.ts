@@ -224,6 +224,7 @@ export interface AccountConfig extends LegacyConfig {
   token: string;
   proxyUrl?: string;
   channelFeishuWebhooks?: Record<string, FeishuTargetConfig>;
+  feishuRuleConfigs?: Record<string, RuleLevelConfig>;
   restartNonce?: number;
   /**
    * 前端显式点击登录后置为 true；仅 loginRequested=true 的账号会实际登录
@@ -377,6 +378,39 @@ function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
   return { mode: "webhook", webhookUrl };
 }
 
+function normalizeRuleConfig(raw: any): RuleLevelConfig {
+  if (!raw || typeof raw !== "object") {
+    return {
+      allowedUsersIds: [],
+      mutedUsersIds: [],
+      blockedKeywords: [],
+      excludeKeywords: [],
+      ocrBlockedKeywords: [],
+      replacementsDictionary: {},
+    };
+  }
+  return {
+    allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
+    mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
+    blockedKeywords: Array.isArray(raw.blockedKeywords) ? raw.blockedKeywords.filter(Boolean) : [],
+    excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
+    ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
+    replacementsDictionary:
+      raw.replacementsDictionary && typeof raw.replacementsDictionary === "object"
+        ? raw.replacementsDictionary
+        : {},
+  };
+}
+
+function normalizeRuleConfigs(raw: any): Record<string, RuleLevelConfig> {
+  const result: Record<string, RuleLevelConfig> = {};
+  if (!raw || typeof raw !== "object") return result;
+  for (const [sourceId, config] of Object.entries(raw)) {
+    result[sourceId] = normalizeRuleConfig(config);
+  }
+  return result;
+}
+
 function normalizeAccount(input: any, fallbackName = "未命名账号"): AccountConfig {
   const id = typeof input?.id === "string" && input.id.length > 0 ? input.id : randomUUID();
   const name = typeof input?.name === "string" && input.name.trim() ? input.name.trim() : fallbackName;
@@ -396,6 +430,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       }
     }
   }
+  const feishuRuleConfigs = normalizeRuleConfigs(input?.feishuRuleConfigs);
 
   // 兼容旧版单个 botRelayToken，升级为 botRelays
   let botRelays: AccountConfig["botRelays"] = Array.isArray(input?.botRelays)
@@ -513,6 +548,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     channelWebhooks: input?.channelWebhooks || {},
     mappings,
     channelFeishuWebhooks,
+    feishuRuleConfigs,
     enableFeishuForward: input?.enableFeishuForward === true,
     enableDiscordForward: input?.enableDiscordForward !== false,
     feishuAppId: typeof input?.feishuAppId === "string" && input.feishuAppId.trim() ? input.feishuAppId.trim() : undefined,

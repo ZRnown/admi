@@ -1809,7 +1809,11 @@
         mapping = mappings[mappingIndex];
       } else if (forwardingType === 'discord-to-feishu') {
         const entries = getFeishuMappings(acc);
-        mapping = entries[mappingIndex];
+        const entry = entries[mappingIndex];
+        if (entry) {
+          const configs = acc.feishuRuleConfigs || {};
+          mapping = configs[entry.sourceChannelId] || {};
+        }
       } else {
         const mappings = acc.mappings || [];
         mapping = mappings[mappingIndex];
@@ -2398,6 +2402,10 @@
         if (oldSource !== (value || '')) delete notes[oldSource];
         acc.channelNotes = notes;
       }
+      if (acc.feishuRuleConfigs && Object.prototype.hasOwnProperty.call(acc.feishuRuleConfigs, oldSource)) {
+        acc.feishuRuleConfigs[value || ''] = acc.feishuRuleConfigs[oldSource];
+        if (oldSource !== (value || '')) delete acc.feishuRuleConfigs[oldSource];
+      }
       saveConfig();
       render();
     }
@@ -2487,6 +2495,9 @@
       delete acc.channelFeishuWebhooks[source];
       if (acc.channelNotes && acc.channelNotes[source] !== undefined) {
         delete acc.channelNotes[source];
+      }
+      if (acc.feishuRuleConfigs && acc.feishuRuleConfigs[source] !== undefined) {
+        delete acc.feishuRuleConfigs[source];
       }
 
       // 删除后调整分页
