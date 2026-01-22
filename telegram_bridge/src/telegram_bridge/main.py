@@ -321,8 +321,16 @@ class TelegramBridgeService:
         self.bot_manager.message_handlers = {}
         self.client_manager.message_handlers = {}
 
-        # 构建每个账号需要监听的频道列表（用于心跳保活）
+        # 构建每个账号需要监听的频道列表
         account_watched_chats: dict = {}  # account_id -> set of chat_ids/usernames
+
+        # 1. 先为所有账号初始化空集合（关键修复：确保没有规则的账号被清空）
+        for account in accounts:
+            account_id = getattr(account, "id", None)
+            if account_id:
+                account_watched_chats[account_id] = set()
+
+        # 2. 填充有规则的监听列表
         for mapping in mappings:
             if mapping.type != "telegram-to-discord":
                 continue
@@ -335,25 +343,25 @@ class TelegramBridgeService:
                     chat_id = int(raw_id)
                 except (ValueError, TypeError):
                     if isinstance(raw_id, str):
-                        chat_id = raw_id.lstrip("@").strip()
+                        # 统一转小写以便匹配
+                        chat_id = raw_id.lstrip("@").strip().lower()
             if not chat_id:
                 continue
 
             for account in accounts:
                 if not account.enabled:
                     continue
-                account_id = getattr(account, "id", None) or (account.get("id") if isinstance(account, dict) else None)
+                account_id = getattr(account, "id", None)
                 if not account_id:
                     continue
-                if account_id not in account_watched_chats:
-                    account_watched_chats[account_id] = set()
                 account_watched_chats[account_id].add(chat_id)
                 logger.info(f"Targeting chat for keepalive: {chat_id} (Account: {account_id})")
 
+        # 3. 应用监听列表并注册处理器
         for account in accounts:
             if not account.enabled:
                 continue
-            account_id = getattr(account, "id", None) or (account.get("id") if isinstance(account, dict) else None)
+            account_id = getattr(account, "id", None)
             if not account_id:
                 logger.warning("Skipping telegram account without id")
                 continue
@@ -361,18 +369,17 @@ class TelegramBridgeService:
             async def handler(msg_data, acc_id=account_id):
                 await self.on_telegram_message_callback(acc_id, msg_data)
 
+            # 获取该账号应该监听的频道列表（如果没有规则，这里就是空列表）
+            watched_chats = list(account_watched_chats.get(account_id, []))
+
             if getattr(account, "type", None) == "bot":
                 self.bot_manager.message_handlers[account_id] = handler
-                # 更新 bot_manager 的监听频道列表
-                watched_chats = list(account_watched_chats.get(account_id, []))
                 self.bot_manager.update_watched_chats(account_id, watched_chats)
+                logger.info(f"Bot {account_id} watching {len(watched_chats)} chats: {watched_chats}")
             else:
                 self.client_manager.message_handlers[account_id] = handler
-                # 更新 client_manager 的监听频道列表（用于心跳保活）
-                watched_chats = list(account_watched_chats.get(account_id, []))
                 self.client_manager.update_watched_chats(account_id, watched_chats)
-
-            logger.info(f"Registered message handler for Telegram account {account_id}")
+                logger.info(f"Client {account_id} watching {len(watched_chats)} chats: {watched_chats}")
 
         return {"success": True}
 
