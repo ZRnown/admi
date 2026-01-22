@@ -458,7 +458,7 @@ class TelegramBotManager:
             if attachments:
                 for attachment in attachments:
                     result = await self._send_media_attachment(
-                        bot, chat_id, attachment, message if not message else None
+                        bot, chat_id, attachment, message if message else None
                     )
                     if result["success"]:
                         return result  # 只发送第一个附件

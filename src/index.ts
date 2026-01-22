@@ -1420,20 +1420,30 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
 
       // 如果有 legacy bot token 且没有显式的 bot 账号，创建一个 bot 账号
       if (!hasExplicitBot && hasLegacyBotConfig) {
+        // 检查是否有对应的 bot 状态条目（用户可能手动断开过）
+        const botStatusId = `${account.id}_bot`;
+        const existingBotEntry = (account.telegramConfig.accounts || []).find(
+          (tgAccount) => tgAccount.id === botStatusId
+        );
         pushTelegramAccount({
-          id: `${account.id}_bot`,
+          id: botStatusId,
           name: `${account.name || "Telegram"} Bot`,
           type: "bot",
           token: account.telegramBotToken,
           apiId: account.telegramApiId,
           apiHash: account.telegramApiHash,
           proxyUrl: account.proxyUrl,
-          enabled: account.telegramConfig?.enableTelegramForward !== false,
+          // 优先使用已保存的 enabled 状态，否则默认 false
+          enabled: existingBotEntry ? existingBotEntry.enabled === true : false,
         });
       }
 
       // 如果有 legacy client 配置（session）且没有显式的 client 账号，创建一个 client 账号
       if (!hasExplicitClient && hasLegacyClientConfig) {
+        // 检查是否有对应的 client 状态条目（用户可能手动断开过）
+        const existingClientEntry = (account.telegramConfig.accounts || []).find(
+          (tgAccount) => tgAccount.id === account.id
+        );
         pushTelegramAccount({
           id: account.id,
           name: account.name || "Telegram Client",
@@ -1444,7 +1454,8 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           apiId: account.telegramApiId,
           apiHash: account.telegramApiHash,
           proxyUrl: account.proxyUrl,
-          enabled: account.telegramConfig?.enableTelegramForward !== false,
+          // 优先使用已保存的 enabled 状态，否则默认 false
+          enabled: existingClientEntry ? existingClientEntry.enabled === true : false,
         });
       }
 

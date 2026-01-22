@@ -1844,7 +1844,7 @@
         longMsgSection.classList.remove('hidden');
         const longMsg = mapping.longMessage || {};
         document.getElementById('ruleLongMessageEnabled').checked = longMsg.enabled || false;
-        document.getElementById('ruleLongMessageThreshold').value = longMsg.threshold || 4000;
+        document.getElementById('ruleLongMessageThreshold').value = longMsg.threshold ?? 0;
         document.getElementById('ruleLongMessageAppend').value = longMsg.appendMessage || '';
       } else {
         longMsgSection.classList.add('hidden');
@@ -1909,7 +1909,7 @@
       if (currentRuleConfigType === 'discord-to-telegram') {
         mapping.longMessage = {
           enabled: document.getElementById('ruleLongMessageEnabled').checked,
-          threshold: parseInt(document.getElementById('ruleLongMessageThreshold').value) || 4000,
+          threshold: parseInt(document.getElementById('ruleLongMessageThreshold').value) || 0,
           appendMessage: document.getElementById('ruleLongMessageAppend').value.trim()
         };
       }
@@ -2148,10 +2148,10 @@
         showConfirmModal('无法删除', '至少需要保留一个转发实例。', () => {}, '确定', 'bg-blue-600 hover:bg-blue-700');
         return;
       }
-      showConfirmModal('删除转发实例', '确定要删除当前转发实例吗？此操作无法撤销。', () => {
+      showConfirmModal('删除转发实例', '确定要删除当前转发实例吗？此操作无法撤销。', async () => {
         state.accounts = state.accounts.filter(a => a.id !== state.activeId);
         state.activeId = state.accounts[0]?.id || '';
-        saveConfig();
+        await saveConfigImmediate();
         render();
       }, '删除', 'bg-red-600 hover:bg-red-700');
     }
