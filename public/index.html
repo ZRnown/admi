@@ -1053,9 +1053,9 @@
               <div>
                 <label class="block text-sm font-medium text-slate-700 mb-2">用户白名单（只转发这些用户的消息）</label>
                 <div class="flex flex-wrap gap-2 mb-3">
-                  ${(acc.allowedUsersIds || []).map(id => `
+                  ${(acc.allowedUsersIds || []).map((id, idx) => `
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-green-50 text-green-600 text-sm border border-green-100">
-                      ${escapeHtml(String(id))} <button onclick="removeKeyword('allowedUsersIds', ${JSON.stringify(String(id))})" class="hover:text-green-800">✕</button>
+                      ${escapeHtml(String(id))} <button onclick="removeKeyword('allowedUsersIds', ${idx})" class="hover:text-green-800">✕</button>
                     </span>
                   `).join('')}
                   <input type="text" placeholder="输入用户ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'allowedUsersIds')"
@@ -1066,9 +1066,9 @@
               <div>
                 <label class="block text-sm font-medium text-slate-700 mb-2">用户黑名单（不转发这些用户的消息）</label>
                 <div class="flex flex-wrap gap-2 mb-3">
-                  ${(acc.mutedUsersIds || []).map(id => `
+                  ${(acc.mutedUsersIds || []).map((id, idx) => `
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-sm border border-red-100">
-                      ${escapeHtml(String(id))} <button onclick="removeKeyword('mutedUsersIds', ${JSON.stringify(String(id))})" class="hover:text-red-800">✕</button>
+                      ${escapeHtml(String(id))} <button onclick="removeKeyword('mutedUsersIds', ${idx})" class="hover:text-red-800">✕</button>
                     </span>
                   `).join('')}
                   <input type="text" placeholder="输入用户ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'mutedUsersIds')"
@@ -1087,9 +1087,9 @@
           </div>
           <div class="p-6">
             <div class="flex flex-wrap gap-2 mb-3">
-              ${(acc.blockedKeywords || []).map(k => `
+              ${(acc.blockedKeywords || []).map((k, idx) => `
                 <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-sm border border-red-100">
-                  ${escapeHtml(k)} <button onclick="removeKeyword('blockedKeywords', ${JSON.stringify(k)})" class="hover:text-red-800">✕</button>
+                  ${escapeHtml(k)} <button onclick="removeKeyword('blockedKeywords', ${idx})" class="hover:text-red-800">✕</button>
                 </span>
               `).join('')}
               <input type="text" placeholder="输入关键词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'blockedKeywords')"
@@ -1105,9 +1105,9 @@
           </div>
           <div class="p-6">
             <div class="flex flex-wrap gap-2 mb-3">
-              ${(acc.excludeKeywords || []).map(k => `
+              ${(acc.excludeKeywords || []).map((k, idx) => `
                 <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-sm border border-amber-100">
-                  ${escapeHtml(k)} <button onclick="removeKeyword('excludeKeywords', ${JSON.stringify(k)})" class="hover:text-amber-900">✕</button>
+                  ${escapeHtml(k)} <button onclick="removeKeyword('excludeKeywords', ${idx})" class="hover:text-amber-900">✕</button>
                 </span>
               `).join('')}
               <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'excludeKeywords')"
@@ -1117,9 +1117,9 @@
               <div class="mb-4">
                 <label class="block text-sm font-medium text-slate-700 mb-3">OCR 屏蔽关键词（检测到这些词的图片不会转发）</label>
                 <div class="flex flex-wrap gap-2 mb-3">
-                  ${(acc.ocrBlockedKeywords || []).map(k => `
+                  ${(acc.ocrBlockedKeywords || []).map((k, idx) => `
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-sm border border-amber-100">
-                      ${k} <button onclick="removeOCRKeyword('ocrBlockedKeywords', '${k}')" class="hover:text-amber-900">✕</button>
+                      ${escapeHtml(k)} <button onclick="removeOCRKeyword('ocrBlockedKeywords', ${idx})" class="hover:text-amber-900">✕</button>
                     </span>
                   `).join('')}
                   <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrBlockedKeywords', true)"
@@ -2546,11 +2546,13 @@
       }
     }
 
-    async function removeKeyword(field, keyword) {
+    async function removeKeyword(field, idx) {
       const acc = getActiveAccount();
-      const oldValue = [...(acc[field] || [])];
-      acc[field] = acc[field].filter(k => k !== keyword);
-      console.log('[DEBUG] 删除关键词:', keyword, '剩余列表:', acc[field]);
+      if (!acc[field] || idx < 0 || idx >= acc[field].length) return;
+      const oldValue = [...acc[field]];
+      const removed = acc[field][idx];
+      acc[field].splice(idx, 1); // 按索引删除
+      console.log('[DEBUG] 删除关键词:', removed, '索引:', idx, '剩余列表:', acc[field]);
       try {
         await saveConfigImmediate();
         render();
@@ -2644,11 +2646,13 @@
       }
     }
 
-    async function removeOCRKeyword(field, keyword) {
+    async function removeOCRKeyword(field, idx) {
       const acc = getActiveAccount();
-      const oldValue = [...(acc[field] || [])];
-      acc[field] = acc[field].filter(k => k !== keyword);
-      console.log('[DEBUG] 删除OCR关键词:', keyword, '剩余列表:', acc[field]);
+      if (!acc[field] || idx < 0 || idx >= acc[field].length) return;
+      const oldValue = [...acc[field]];
+      const removed = acc[field][idx];
+      acc[field].splice(idx, 1); // 按索引删除
+      console.log('[DEBUG] 删除OCR关键词:', removed, '索引:', idx, '剩余列表:', acc[field]);
       try {
         await saveConfigImmediate();
         render();

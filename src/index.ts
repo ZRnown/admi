@@ -1178,6 +1178,22 @@ async function main() {
   const multi = await getMultiConfig();
   currentConfig = multi;
 
+  // --- 启动时强制重置登录状态，防止自动登录 ---
+  let needSaveConfig = false;
+  for (const account of multi.accounts) {
+    if (account.loginRequested) {
+      account.loginRequested = false;
+      needSaveConfig = true;
+      await logger.info(`账号 "${account.name}" 登录状态已重置，需要手动点击登录`);
+    }
+  }
+  // 如果有账号被重置，保存配置
+  if (needSaveConfig) {
+    const { saveMultiConfig } = await import("./config.js");
+    await saveMultiConfig(multi);
+    await logger.info("已重置所有账号的登录状态");
+  }
+
   // 只启动已请求登录的账号，不自动登录
   for (const account of multi.accounts) {
     if (account.loginRequested && account.token) {
