@@ -94,6 +94,13 @@ interface FrontendMapping {
     threshold?: number;
     appendMessage?: string;
   };
+  // 规则级别的过滤配置
+  allowedUsersIds?: string[];
+  mutedUsersIds?: string[];
+  blockedKeywords?: string[];
+  excludeKeywords?: string[];
+  ocrBlockedKeywords?: string[];
+  replacementsDictionary?: Record<string, string>;
 }
 
 interface FrontendAccount {
@@ -202,18 +209,30 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
   const mappings: FrontendMapping[] = [];
   const channelTranslate: Record<string, boolean> = (account as any).channelTranslate || {};
   const channelTranslateDirection: Record<string, string> = (account as any).channelTranslateDirection || {};
+
+  // 获取后端保存的详细映射规则列表
+  const savedMappings = (account as any).mappings || [];
+
   for (const [channelId, webhookUrl] of Object.entries(account.channelWebhooks || {})) {
+    // 尝试找到对应的保存规则
+    const savedRule = savedMappings.find((m: any) => m.sourceChannelId === channelId);
+
     mappings.push({
-      id: channelId,
+      id: savedRule?.id || channelId,
       sourceChannelId: channelId,
       targetWebhookUrl: webhookUrl,
       note: account.channelNotes?.[channelId],
-      // UI 行为：如果全局翻译关闭，则默认为"off"；否则如果没有单独配置，则为"auto"
-      translateDirection: !account.enableTranslation 
+      translateDirection: !account.enableTranslation
         ? "off"
         : (channelTranslateDirection[channelId] as any) || "auto",
-      // Telegram 超长消息处理
       longMessage: (account as any).channelLongMessage?.[channelId] || { enabled: false },
+      // 恢复规则级别的配置
+      allowedUsersIds: (savedRule?.allowedUsersIds || []).map(String),
+      mutedUsersIds: (savedRule?.mutedUsersIds || []).map(String),
+      blockedKeywords: savedRule?.blockedKeywords || [],
+      excludeKeywords: savedRule?.excludeKeywords || [],
+      ocrBlockedKeywords: savedRule?.ocrBlockedKeywords || [],
+      replacementsDictionary: savedRule?.replacementsDictionary || {},
     });
   }
   const replacements = Object.entries(account.replacementsDictionary || {}).map(([from, to]) => ({
@@ -325,6 +344,9 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
   const channelTranslate: Record<string, boolean> = {};
   const channelTranslateDirection: Record<string, "off" | "auto" | "zh-en" | "en-zh"> = {};
   const channelLongMessage: Record<string, { enabled: boolean; threshold?: number; appendMessage?: string }> = {};
+  // 保存完整的 mappings 数组（包含规则级别配置）
+  const savedMappings: any[] = [];
+
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
       if (mapping?.sourceChannelId && mapping?.targetWebhookUrl) {
@@ -352,6 +374,22 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
             appendMessage: typeof mapping.longMessage.appendMessage === "string" ? mapping.longMessage.appendMessage.trim() : undefined,
           };
         }
+
+        // 保存完整的规则配置
+        savedMappings.push({
+          id: mapping.id || randomUUID(),
+          sourceChannelId: key,
+          targetWebhookUrl: String(mapping.targetWebhookUrl),
+          note: mapping.note,
+          translateDirection: mapping.translateDirection,
+          longMessage: mapping.longMessage,
+          allowedUsersIds: mapping.allowedUsersIds || [],
+          mutedUsersIds: mapping.mutedUsersIds || [],
+          blockedKeywords: mapping.blockedKeywords || [],
+          excludeKeywords: mapping.excludeKeywords || [],
+          ocrBlockedKeywords: mapping.ocrBlockedKeywords || [],
+          replacementsDictionary: mapping.replacementsDictionary || {},
+        });
       }
     }
   }
@@ -385,6 +423,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     loginNonce: dto.loginNonce ?? base.loginNonce,
     showSourceIdentity: dto.showSourceIdentity === true,
     channelWebhooks,
+    mappings: savedMappings,
     channelFeishuWebhooks,
     enableFeishuForward: dto.enableFeishuForward === true,
     enableDiscordForward: dto.enableDiscordForward !== false,
