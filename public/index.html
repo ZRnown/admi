@@ -699,18 +699,18 @@
                 <div class="flex gap-2">
                   <input type="password" value="${acc.token || ''}" onchange="updateField('token', this.value)"
                     placeholder="OT..." class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
-                  <button onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''}
+                  <button id="btn-discord-login" onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''}
                     class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
                     ${isPending ? '连接中...' : isOnline ? '已连接' : '连接'}
                   </button>
-                  <button onclick="requestStop()" ${isPending || (!isOnline && acc.loginState !== 'error') ? 'disabled' : ''}
+                  <button id="btn-discord-stop" onclick="requestStop()" ${isPending || (!isOnline && acc.loginState !== 'error') ? 'disabled' : ''}
                     class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${isPending || (!isOnline && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
                     断开
                   </button>
                 </div>
                 <div class="text-xs text-slate-500 mt-1">
-                  状态: <span class="px-2 py-0.5 rounded-full ${acc.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.loginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.loginState || 'idle'}</span>
-                  ${acc.loginMessage ? `<span class="ml-2">${acc.loginMessage}</span>` : ''}
+                  状态: <span id="status-discord-badge" class="px-2 py-0.5 rounded-full ${acc.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.loginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.loginState || 'idle'}</span>
+                  <span id="status-discord-msg" class="ml-2">${acc.loginMessage || ''}</span>
                 </div>
               </div>
             </div>
@@ -725,18 +725,18 @@
                 <div class="flex gap-2">
                   <input type="password" value="${acc.telegramBotToken || ''}" onchange="updateField('telegramBotToken', this.value)"
                     placeholder="从 @BotFather 获取的Token" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
-                  <button onclick="connectTelegramBot()" ${acc.telegramBotState === 'connecting' || acc.telegramBotState === 'online' ? 'disabled' : ''}
+                  <button id="btn-tg-bot-connect" onclick="connectTelegramBot()" ${acc.telegramBotState === 'connecting' || acc.telegramBotState === 'online' ? 'disabled' : ''}
                     class="px-3 py-1.5 text-xs font-medium rounded-md ${acc.telegramBotState === 'connecting' || acc.telegramBotState === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
                     ${acc.telegramBotState === 'connecting' ? '连接中...' : acc.telegramBotState === 'online' ? '已连接' : '连接'}
                   </button>
-                  <button onclick="disconnectTelegramBot()" ${acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error') ? 'disabled' : ''}
+                  <button id="btn-tg-bot-disconnect" onclick="disconnectTelegramBot()" ${acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error') ? 'disabled' : ''}
                     class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
                     断开
                   </button>
                 </div>
                 <div class="text-xs text-slate-500 mt-1">
-                  状态: <span class="px-2 py-0.5 rounded-full ${acc.telegramBotState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.telegramBotState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.telegramBotState || 'idle'}</span>
-                  ${acc.telegramBotMessage ? `<span class="ml-2">${acc.telegramBotMessage}</span>` : ''}
+                  状态: <span id="status-tg-bot-badge" class="px-2 py-0.5 rounded-full ${acc.telegramBotState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.telegramBotState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.telegramBotState || 'idle'}</span>
+                  <span id="status-tg-bot-msg" class="ml-2">${acc.telegramBotMessage || ''}</span>
                 </div>
                 <p class="text-xs text-slate-500 mt-1">从Telegram的@BotFather获取Bot Token，用于发送消息到Telegram频道</p>
               </div>
@@ -809,18 +809,18 @@
                   </div>
                 </div>
                 <div class="flex gap-2 mt-3">
-                  <button onclick="connectTelegramClient()" ${acc.telegramClientState === 'connecting' || acc.telegramClientState === 'online' ? 'disabled' : ''}
+                  <button id="btn-tg-client-connect" onclick="connectTelegramClient()" ${acc.telegramClientState === 'connecting' || acc.telegramClientState === 'online' ? 'disabled' : ''}
                     class="flex-1 px-3 py-2 text-sm font-medium rounded-md ${acc.telegramClientState === 'connecting' || acc.telegramClientState === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
                     ${acc.telegramClientState === 'connecting' ? '连接中...' : acc.telegramClientState === 'online' ? '已连接' : '连接'}
                   </button>
-                  <button onclick="disconnectTelegramClient()" ${acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error') ? 'disabled' : ''}
+                  <button id="btn-tg-client-disconnect" onclick="disconnectTelegramClient()" ${acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error') ? 'disabled' : ''}
                     class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-slate-200 ${acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
                     断开
                   </button>
                 </div>
                 <div class="text-xs text-slate-500 mt-2">
-                  状态: <span class="px-2 py-0.5 rounded-full ${acc.telegramClientState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.telegramClientState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.telegramClientState || 'idle'}</span>
-                  ${acc.telegramClientMessage ? `<span class="ml-2">${acc.telegramClientMessage}</span>` : ''}
+                  状态: <span id="status-tg-client-badge" class="px-2 py-0.5 rounded-full ${acc.telegramClientState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.telegramClientState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.telegramClientState || 'idle'}</span>
+                  <span id="status-tg-client-msg" class="ml-2">${acc.telegramClientMessage || ''}</span>
                 </div>
               </div>
             </div>
@@ -3157,36 +3157,133 @@
       }
     }
 
+    function updateStatusElement(type, state, message) {
+      const badgeEl = document.getElementById(`status-${type}-badge`);
+      const msgEl = document.getElementById(`status-${type}-msg`);
+      const btnConnect = document.getElementById(type === 'discord' ? 'btn-discord-login' : `btn-${type}-connect`);
+      const btnDisconnect = document.getElementById(type === 'discord' ? 'btn-discord-stop' : `btn-${type}-disconnect`);
+
+      if (badgeEl) {
+        badgeEl.textContent = state || 'idle';
+        badgeEl.className = `px-2 py-0.5 rounded-full ${state === 'online' ? 'bg-emerald-50 text-emerald-700' : state === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}`;
+      }
+      if (msgEl) {
+        msgEl.textContent = message || '';
+      }
+
+      const isOnline = state === 'online';
+      const isPending = state === 'pending' || state === 'connecting';
+      const isError = state === 'error';
+      const isClient = type === 'tg-client';
+      const baseClass = isClient ? 'flex-1 px-3 py-2 text-sm' : 'px-3 py-1.5 text-xs';
+
+      if (btnConnect) {
+        btnConnect.disabled = isPending || isOnline;
+        btnConnect.className = `${baseClass} font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white`;
+        btnConnect.textContent = isPending ? '连接中...' : isOnline ? '已连接' : '连接';
+      }
+
+      if (btnDisconnect) {
+        btnDisconnect.disabled = isPending || (!isOnline && !isError);
+        btnDisconnect.className = `${baseClass} font-medium rounded-md border border-slate-200 ${isPending || (!isOnline && !isError) ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}`;
+      }
+    }
+
+    function shouldApplyRemoteState(localState, remoteState) {
+      if ((localState === 'pending' || localState === 'connecting') && remoteState === 'idle') {
+        return false;
+      }
+      return true;
+    }
+
     // 状态轮询
     function startStatusPolling() {
       setInterval(async () => {
         try {
+          if (!document.getElementById('configForm')) return;
+
           const res = await fetch('/api/config');
           const data = await res.json();
-          if (Array.isArray(data?.accounts)) {
-            const hasChange = data.accounts.some((ra, idx) => {
-              const la = state.accounts[idx];
-              if (!la) return false;
-              return (
-                ra.loginState !== la.loginState || 
-                ra.loginMessage !== la.loginMessage
-              );
-            });
-            if (hasChange) {
-              state.accounts.forEach((acc, idx) => {
-                const remote = data.accounts[idx];
-                if (remote && acc.id === remote.id) {
-                  if (acc.loginState !== 'pending' || remote.loginState !== 'idle') {
-                    acc.loginState = remote.loginState || acc.loginState;
-                    acc.loginMessage = remote.loginMessage || acc.loginMessage;
-                  }
+          if (!Array.isArray(data?.accounts)) return;
+
+          let shouldRender = false;
+
+          data.accounts.forEach(remoteAcc => {
+            const localAcc = state.accounts.find(acc => acc.id === remoteAcc.id);
+            if (!localAcc) return;
+
+            const isActive = localAcc.id === state.activeId;
+
+            const remoteLoginState = remoteAcc.loginState || 'idle';
+            const remoteLoginMessage = remoteAcc.loginMessage || '';
+            if (shouldApplyRemoteState(localAcc.loginState, remoteLoginState)) {
+              const loginChanged = remoteLoginState !== localAcc.loginState || remoteLoginMessage !== localAcc.loginMessage;
+              if (loginChanged) {
+                localAcc.loginState = remoteLoginState;
+                localAcc.loginMessage = remoteLoginMessage;
+                if (isActive) {
+                  updateStatusElement('discord', remoteLoginState, remoteLoginMessage);
                 }
-              });
-              if (isFormElementActive()) {
-                pendingStatusRender = true;
-              } else {
-                render();
               }
+            }
+
+            const remoteBotState = remoteAcc.telegramBotState || 'idle';
+            const remoteBotMessage = remoteAcc.telegramBotMessage || '';
+            if (shouldApplyRemoteState(localAcc.telegramBotState, remoteBotState)) {
+              const botChanged = remoteBotState !== localAcc.telegramBotState || remoteBotMessage !== localAcc.telegramBotMessage;
+              if (botChanged) {
+                localAcc.telegramBotState = remoteBotState;
+                localAcc.telegramBotMessage = remoteBotMessage;
+                if (isActive) {
+                  updateStatusElement('tg-bot', remoteBotState, remoteBotMessage);
+                }
+              }
+            }
+
+            const remoteClientState = remoteAcc.telegramClientState || 'idle';
+            const remoteClientMessage = remoteAcc.telegramClientMessage || '';
+            if (shouldApplyRemoteState(localAcc.telegramClientState, remoteClientState)) {
+              const clientChanged = remoteClientState !== localAcc.telegramClientState || remoteClientMessage !== localAcc.telegramClientMessage;
+              if (clientChanged) {
+                localAcc.telegramClientState = remoteClientState;
+                localAcc.telegramClientMessage = remoteClientMessage;
+                if (isActive) {
+                  updateStatusElement('tg-client', remoteClientState, remoteClientMessage);
+                }
+              }
+            }
+
+            if (Array.isArray(remoteAcc.botRelays) && Array.isArray(localAcc.botRelays)) {
+              if (remoteAcc.botRelays.length !== localAcc.botRelays.length) {
+                localAcc.botRelays = remoteAcc.botRelays;
+                if (isActive) {
+                  shouldRender = true;
+                }
+                return;
+              }
+
+              const relayChanged = remoteAcc.botRelays.some((relay, idx) => {
+                const localRelay = localAcc.botRelays[idx];
+                return (
+                  relay?.loginState !== localRelay?.loginState ||
+                  relay?.loginMessage !== localRelay?.loginMessage
+                );
+              });
+
+              if (relayChanged) {
+                localAcc.botRelays = remoteAcc.botRelays;
+                if (isActive) {
+                  shouldRender = true;
+                }
+              }
+            }
+          });
+
+          if (shouldRender) {
+            if (isFormElementActive()) {
+              pendingStatusRender = true;
+            } else {
+              render();
             }
           }
         } catch (e) {

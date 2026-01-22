@@ -15,6 +15,61 @@ import { readStatus, triggerFile } from "../_lib/common";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
+
+type TelegramStatusEntry = {
+  state?: string;
+  message?: string;
+  userInfo?: any;
+};
+
+async function readTelegramStatus(): Promise<Record<string, TelegramStatusEntry>> {
+  try {
+    const content = await fs.readFile(telegramStatusFile, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
+
+function resolveTelegramAccountStatuses(
+  account: AccountConfig,
+  telegramStatus: Record<string, TelegramStatusEntry>,
+) {
+  const telegramAccounts = account.telegramConfig?.accounts || [];
+  const enabledAccounts = telegramAccounts.filter((acc) => acc.enabled !== false);
+
+  const botAccount =
+    enabledAccounts.find((acc) => acc.type === "bot") ||
+    telegramAccounts.find((acc) => acc.type === "bot") ||
+    null;
+  const clientAccount =
+    enabledAccounts.find((acc) => acc.type === "client") ||
+    telegramAccounts.find((acc) => acc.type === "client") ||
+    null;
+
+  const hasExplicitClient = telegramAccounts.some(
+    (acc) => acc.type === "client" || acc.id === account.id,
+  );
+  const hasExplicitBot = telegramAccounts.some((acc) => acc.type === "bot");
+  const hasLegacyClientConfig = Boolean(
+    (account.telegramSessionPath || account.telegramSessionString) &&
+      account.telegramApiId &&
+      account.telegramApiHash,
+  );
+  const hasLegacyBotConfig = Boolean(account.telegramBotToken);
+
+  const botAccountId =
+    botAccount?.id || (!hasExplicitBot && hasLegacyBotConfig ? `${account.id}_bot` : undefined);
+  const clientAccountId =
+    clientAccount?.id || (!hasExplicitClient && hasLegacyClientConfig ? account.id : undefined);
+
+  return {
+    botStatus: botAccountId ? telegramStatus[botAccountId] : undefined,
+    clientStatus: clientAccountId ? telegramStatus[clientAccountId] : undefined,
+  };
+}
+
 interface FrontendMapping {
   id: string;
   sourceChannelId: string;
@@ -84,6 +139,10 @@ interface FrontendAccount {
   telegramSessionPath?: string;
   telegramSessionString?: string;
   sessionType?: "file" | "string";
+  telegramBotState?: string;
+  telegramBotMessage?: string;
+  telegramClientState?: string;
+  telegramClientMessage?: string;
   // Telegram 超长消息处理配置
   enableTelegramOverflow?: boolean; // 是否启用Telegram超长消息处理
   telegramOverflowThreshold?: number; // 全局字数阈值
@@ -404,11 +463,19 @@ export async function GET() {
   try {
     const multi = await getMultiConfig();
     const status = await readStatus();
+    const telegramStatus = await readTelegramStatus();
     const payload: FrontendPayload = {
-      accounts: multi.accounts.map((acc) => ({
-        ...accountToFrontend(acc),
-        ...(status[acc.id] || {}),
-      })),
+      accounts: multi.accounts.map((acc) => {
+        const { botStatus, clientStatus } = resolveTelegramAccountStatuses(acc, telegramStatus);
+        return {
+          ...accountToFrontend(acc),
+          ...(status[acc.id] || {}),
+          telegramBotState: botStatus?.state || "idle",
+          telegramBotMessage: botStatus?.message || "",
+          telegramClientState: clientStatus?.state || "idle",
+          telegramClientMessage: clientStatus?.message || "",
+        };
+      }),
       activeId: multi.activeId || multi.accounts[0]?.id || "",
       loginUser: multi.loginUser || "",
       loginPassword: multi.loginPassword || "",
