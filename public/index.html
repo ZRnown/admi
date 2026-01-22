@@ -274,6 +274,17 @@
       return `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     }
 
+    // HTML 转义函数，防止 XSS
+    function escapeHtml(str) {
+      if (typeof str !== 'string') return String(str);
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
     let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
     let saveTimer = null;
     let isLoggedIn = false;
@@ -1044,7 +1055,7 @@
                 <div class="flex flex-wrap gap-2 mb-3">
                   ${(acc.allowedUsersIds || []).map(id => `
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-green-50 text-green-600 text-sm border border-green-100">
-                      ${id} <button onclick="removeKeyword('allowedUsersIds', '${id}')" class="hover:text-green-800">✕</button>
+                      ${escapeHtml(String(id))} <button onclick="removeKeyword('allowedUsersIds', ${JSON.stringify(String(id))})" class="hover:text-green-800">✕</button>
                     </span>
                   `).join('')}
                   <input type="text" placeholder="输入用户ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'allowedUsersIds')"
@@ -1057,7 +1068,7 @@
                 <div class="flex flex-wrap gap-2 mb-3">
                   ${(acc.mutedUsersIds || []).map(id => `
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-sm border border-red-100">
-                      ${id} <button onclick="removeKeyword('mutedUsersIds', '${id}')" class="hover:text-red-800">✕</button>
+                      ${escapeHtml(String(id))} <button onclick="removeKeyword('mutedUsersIds', ${JSON.stringify(String(id))})" class="hover:text-red-800">✕</button>
                     </span>
                   `).join('')}
                   <input type="text" placeholder="输入用户ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'mutedUsersIds')"
