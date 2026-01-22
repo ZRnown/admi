@@ -1,44 +1,54 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMultiConfig, type AccountConfig } from "@/src/config";
-import { getBridgeClient } from "@/app/api/telegram/_lib/bridgeClient";
+import { promises as fs } from "fs";
+import path from "path";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function resolveClientAccount(account: AccountConfig, telegramAccountId?: string) {
+// 状态文件和触发文件路径
+const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
+const triggerFile = path.resolve(process.cwd(), ".data", "trigger_reload");
+
+function resolveClientAccountId(account: AccountConfig, telegramAccountId?: string) {
   const candidates = account.telegramConfig?.accounts || [];
   const target =
     (telegramAccountId
       ? candidates.find((acc) => acc.id === telegramAccountId)
       : candidates.find((acc) => acc.type === "client" && acc.enabled !== false)) || null;
 
-  if (target) {
-    return {
-      id: target.id,
-      name: target.name || account.name || "Telegram Client",
-      type: "client",
-      token: target.token || target.apiHash || account.telegramApiHash || "",
-      session_path: target.sessionPath || undefined,
-      session_string: target.sessionString || undefined,
-      api_id: target.apiId || account.telegramApiId,
-      api_hash: target.apiHash || account.telegramApiHash,
-      proxy_url: target.proxyUrl || account.proxyUrl,
-      enabled: target.enabled !== false,
-    };
-  }
+  return target?.id || account.id;
+}
 
-  return {
-    id: account.id,
-    name: account.name || "Telegram Client",
-    type: "client",
-    token: account.telegramApiHash || "",
-    session_path: account.telegramSessionPath || undefined,
-    session_string: account.telegramSessionString || undefined,
-    api_id: account.telegramApiId,
-    api_hash: account.telegramApiHash,
-    proxy_url: account.proxyUrl,
-    enabled: true,
-  };
+async function readTelegramStatus(): Promise<Record<string, any>> {
+  try {
+    const content = await fs.readFile(telegramStatusFile, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
+
+async function triggerBotReload() {
+  try {
+    await fs.mkdir(path.dirname(triggerFile), { recursive: true });
+    await fs.writeFile(triggerFile, Date.now().toString());
+  } catch {
+    // 忽略错误
+  }
+}
+
+async function waitForStatus(accountId: string, maxWaitMs: number = 10000): Promise<any> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWaitMs) {
+    const statusData = await readTelegramStatus();
+    const status = statusData[accountId];
+    if (status && (status.state === "online" || status.state === "error")) {
+      return status;
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  return null;
 }
 
 export async function POST(req: NextRequest) {
@@ -58,37 +68,71 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "账号不存在" }, { status: 404 });
     }
 
-    const clientAccount = resolveClientAccount(account, telegramAccountId);
-    if (!clientAccount.api_id || !clientAccount.api_hash) {
+    const clientAccountId = resolveClientAccountId(account, telegramAccountId);
+
+    // 检查是否有必要的配置
+    const candidates = account.telegramConfig?.accounts || [];
+    const clientAccount = candidates.find((acc) => acc.id === clientAccountId) || {
+      apiId: account.telegramApiId,
+      apiHash: account.telegramApiHash,
+      sessionPath: account.telegramSessionPath,
+      sessionString: account.telegramSessionString,
+    };
+
+    if (!clientAccount.apiId || !clientAccount.apiHash) {
       return NextResponse.json(
         { state: "error", message: "缺少 Telegram API ID 或 API Hash" },
         { status: 400 },
       );
     }
-    if (!clientAccount.session_string && !clientAccount.session_path) {
+    if (!clientAccount.sessionString && !clientAccount.sessionPath) {
       return NextResponse.json(
         { state: "error", message: "缺少 Telegram Session（文件或字符串）" },
         { status: 400 },
       );
     }
 
-    const bridgeClient = await getBridgeClient();
-    const result = await bridgeClient.connectClient(clientAccount);
+    // 触发 Bot 进程重新加载配置
+    await triggerBotReload();
 
-    if (result?.success) {
-      const user = result.userInfo || {};
-      const name = user.username ? `@${user.username}` : `${user.firstName || ""} ${user.lastName || ""}`.trim();
+    // 等待连接状态更新
+    const status = await waitForStatus(clientAccountId, 15000);
+
+    if (status) {
+      if (status.state === "online") {
+        const userInfo = status.userInfo || {};
+        const name = userInfo.username
+          ? `@${userInfo.username}`
+          : `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim();
+        return NextResponse.json({
+          state: "online",
+          message: name ? `连接成功: ${name}` : "连接成功",
+          userInfo: status.userInfo,
+        });
+      } else {
+        return NextResponse.json({
+          state: status.state,
+          message: status.message || "连接失败",
+        });
+      }
+    }
+
+    // 超时，返回当前状态
+    const currentStatus = await readTelegramStatus();
+    const currentAccountStatus = currentStatus[clientAccountId];
+
+    if (currentAccountStatus) {
       return NextResponse.json({
-        state: "online",
-        message: name ? `连接成功: ${name}` : "连接成功",
-        userInfo: result.userInfo,
+        state: currentAccountStatus.state || "connecting",
+        message: currentAccountStatus.message || "正在连接...",
+        userInfo: currentAccountStatus.userInfo,
       });
     }
 
-    return NextResponse.json(
-      { state: "error", message: result?.message || "连接失败" },
-      { status: 400 },
-    );
+    return NextResponse.json({
+      state: "connecting",
+      message: "正在连接，请稍后刷新状态",
+    });
   } catch (e: any) {
     return NextResponse.json(
       { state: "error", message: String(e?.message || e) },

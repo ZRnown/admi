@@ -8,6 +8,8 @@ import sys
 import signal
 import glob
 import os
+import json
+from pathlib import Path
 from loguru import logger
 from .ipc import IPCServer
 from .client import TelegramClientManager
@@ -25,6 +27,11 @@ class TelegramBridgeService:
         self.bot_manager = TelegramBotManager()
         self.forwarder = TelegramForwarder()
         self.running = False
+
+        # 状态文件路径
+        base_dir = Path(__file__).resolve().parents[4]
+        self.status_file = base_dir / ".data" / "telegram_status.json"
+        self.status_file.parent.mkdir(parents=True, exist_ok=True)
 
         # 设置Discord发送器
         if discord_sender:
@@ -54,6 +61,33 @@ class TelegramBridgeService:
                             logger.warning(f"Could not remove {lock_file}: {e}")
         except Exception as e:
             logger.error(f"Error during lock cleanup: {e}")
+
+    def _write_telegram_status(self, account_id: str, state: str, message: str = "", user_info: dict = None):
+        """写入Telegram账号状态到文件"""
+        try:
+            # 读取现有状态
+            status_data = {}
+            if self.status_file.exists():
+                try:
+                    with open(self.status_file, "r", encoding="utf-8") as f:
+                        status_data = json.load(f)
+                except Exception:
+                    pass
+
+            # 更新状态
+            status_data[account_id] = {
+                "state": state,
+                "message": message,
+                "userInfo": user_info
+            }
+
+            # 写入文件
+            with open(self.status_file, "w", encoding="utf-8") as f:
+                json.dump(status_data, f, ensure_ascii=False, indent=2)
+
+            logger.debug(f"Telegram status updated: {account_id} -> {state}")
+        except Exception as e:
+            logger.error(f"Failed to write telegram status: {e}")
 
     def _setup_telegram_message_handlers(self):
         """设置Telegram消息处理器"""
@@ -164,13 +198,35 @@ class TelegramBridgeService:
     def _register_handlers(self):
         """注册IPC消息处理器"""
         async def wrap_connect_client(params):
-            return await self.client_manager.connect(params)
+            account_id = params.get("id") or params.get("accountId")
+            self._write_telegram_status(account_id, "connecting", "正在连接...")
+            result = await self.client_manager.connect(params)
+            # 根据连接结果更新状态
+            if result.get("success"):
+                user_info = result.get("user_info")
+                self._write_telegram_status(account_id, "online", "已连接", user_info)
+            else:
+                error_msg = result.get("message") or result.get("error") or "连接失败"
+                self._write_telegram_status(account_id, "error", error_msg)
+            return result
 
         async def wrap_connect_bot(params):
-            return await self.bot_manager.connect(params)
+            account_id = params.get("id") or params.get("accountId")
+            self._write_telegram_status(account_id, "connecting", "正在连接...")
+            result = await self.bot_manager.connect(params)
+            if result.get("success"):
+                user_info = result.get("user_info")
+                self._write_telegram_status(account_id, "online", "已连接", user_info)
+            else:
+                error_msg = result.get("message") or result.get("error") or "连接失败"
+                self._write_telegram_status(account_id, "error", error_msg)
+            return result
 
         async def wrap_disconnect_client(params):
-            return await self.client_manager.disconnect(params.get("accountId"))
+            account_id = params.get("accountId")
+            result = await self.client_manager.disconnect(account_id)
+            self._write_telegram_status(account_id, "idle", "已断开")
+            return result
 
         async def wrap_get_client_status(params):
             return self.client_manager.get_status(params.get("accountId"))
@@ -179,7 +235,10 @@ class TelegramBridgeService:
             return await self.client_manager.get_channels(params.get("accountId"))
 
         async def wrap_disconnect_bot(params):
-            return await self.bot_manager.disconnect(params.get("accountId"))
+            account_id = params.get("accountId")
+            result = await self.bot_manager.disconnect(account_id)
+            self._write_telegram_status(account_id, "idle", "已断开")
+            return result
 
         async def wrap_get_bot_status(params):
             return self.bot_manager.get_status(params.get("accountId"))
@@ -233,12 +292,30 @@ class TelegramBridgeService:
         accounts = [TelegramAccount(**acc) if isinstance(acc, dict) else acc for acc in accounts_data]
         mappings = [TelegramMapping(**m) if isinstance(m, dict) else m for m in mappings_data]
 
-        # 更新客户端配置
+        # 更新客户端配置（会自动连接启用的账号）
         await self.client_manager.update_config(accounts)
         await self.bot_manager.update_config(accounts)
 
         # 更新映射配置
         self.forwarder.update_config(accounts, mappings)
+
+        # 写入每个账号的连接状态到文件
+        for account in accounts:
+            account_id = getattr(account, "id", None)
+            if not account_id:
+                continue
+            account_type = getattr(account, "type", "client")
+
+            if account_type == "bot":
+                status = self.bot_manager.get_status(account_id)
+            else:
+                status = self.client_manager.get_status(account_id)
+
+            if status:
+                state = "online" if status.status.value == "connected" else status.status.value
+                self._write_telegram_status(account_id, state, status.error_message or "")
+            elif account.enabled:
+                self._write_telegram_status(account_id, "idle", "等待连接")
 
         # 为每个Telegram账号注册消息处理器，并更新监听的频道列表
         self.bot_manager.message_handlers = {}
