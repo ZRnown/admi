@@ -1569,11 +1569,11 @@
               </div>
               <div class="flex flex-col items-end justify-center gap-2 pt-5 md:pt-0">
                 <div class="text-xs">
-                  <span class="px-2 py-0.5 rounded-full ${r.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : r.loginState === 'error' ? 'bg-red-50 text-red-700' : r.loginState === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}">${r.loginState || 'idle'}</span>
-                  ${r.loginMessage ? `<span class="ml-1 text-slate-500">${r.loginMessage}</span>` : ''}
+                  <span id="relay-status-badge-${r.id}" class="px-2 py-0.5 rounded-full ${r.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : r.loginState === 'error' ? 'bg-red-50 text-red-700' : r.loginState === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}">${r.loginState || 'idle'}</span>
+                  <span id="relay-status-msg-${r.id}" class="ml-1 text-slate-500">${r.loginMessage || ''}</span>
                 </div>
                 <div class="flex items-center gap-2">
-                  <button onclick="requestRelayLogin('${r.id}')" ${r.loginState === 'pending' || r.loginState === 'online' ? 'disabled' : ''} class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${r.loginState === 'pending' || r.loginState === 'online' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'} text-slate-600">登录</button>
+                  <button id="relay-login-btn-${r.id}" onclick="requestRelayLogin('${r.id}')" ${r.loginState === 'pending' || r.loginState === 'online' ? 'disabled' : ''} class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${r.loginState === 'pending' || r.loginState === 'online' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'} text-slate-600">登录</button>
                   <button onclick="requestRelayStop('${r.id}')" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">停止</button>
                   <button onclick="removeBotRelay(${idx + startIdx})" class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 hover:bg-slate-100 text-slate-600">删除</button>
                 </div>
@@ -3189,6 +3189,37 @@
       }
     }
 
+    function updateRelayStatusElement(relayId, state, message) {
+      const normalizedState = state || 'idle';
+      const badgeEl = document.getElementById(`relay-status-badge-${relayId}`);
+      const msgEl = document.getElementById(`relay-status-msg-${relayId}`);
+      const loginBtn = document.getElementById(`relay-login-btn-${relayId}`);
+
+      if (badgeEl) {
+        badgeEl.textContent = normalizedState;
+        badgeEl.className = `px-2 py-0.5 rounded-full ${
+          normalizedState === 'online'
+            ? 'bg-emerald-50 text-emerald-700'
+            : normalizedState === 'error'
+              ? 'bg-red-50 text-red-700'
+              : normalizedState === 'pending'
+                ? 'bg-amber-50 text-amber-700'
+                : 'bg-slate-100 text-slate-600'
+        }`;
+      }
+      if (msgEl) {
+        msgEl.textContent = message || '';
+      }
+      if (loginBtn) {
+        const isPending = normalizedState === 'pending';
+        const isOnline = normalizedState === 'online';
+        loginBtn.disabled = isPending || isOnline;
+        loginBtn.className = `px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${
+          isPending || isOnline ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'
+        } text-slate-600`;
+      }
+    }
+
     function shouldApplyRemoteState(localState, remoteState) {
       if ((localState === 'pending' || localState === 'connecting') && remoteState === 'idle') {
         return false;
@@ -3253,27 +3284,39 @@
               }
             }
 
-            if (Array.isArray(remoteAcc.botRelays) && Array.isArray(localAcc.botRelays)) {
-              if (remoteAcc.botRelays.length !== localAcc.botRelays.length) {
+            if (Array.isArray(remoteAcc.botRelays)) {
+              if (!Array.isArray(localAcc.botRelays) || remoteAcc.botRelays.length !== localAcc.botRelays.length) {
                 localAcc.botRelays = remoteAcc.botRelays;
                 if (isActive) {
                   shouldRender = true;
                 }
-                return;
-              }
-
-              const relayChanged = remoteAcc.botRelays.some((relay, idx) => {
-                const localRelay = localAcc.botRelays[idx];
-                return (
-                  relay?.loginState !== localRelay?.loginState ||
-                  relay?.loginMessage !== localRelay?.loginMessage
+              } else {
+                const isSameOrder = remoteAcc.botRelays.every(
+                  (relay, idx) => relay?.id === localAcc.botRelays[idx]?.id
                 );
-              });
-
-              if (relayChanged) {
-                localAcc.botRelays = remoteAcc.botRelays;
-                if (isActive) {
-                  shouldRender = true;
+                if (!isSameOrder) {
+                  localAcc.botRelays = remoteAcc.botRelays;
+                  if (isActive) {
+                    shouldRender = true;
+                  }
+                } else {
+                  remoteAcc.botRelays.forEach((relay, idx) => {
+                    const localRelay = localAcc.botRelays[idx];
+                    const remoteState = relay?.loginState || 'idle';
+                    const remoteMessage = relay?.loginMessage || '';
+                    if (!shouldApplyRemoteState(localRelay?.loginState, remoteState)) {
+                      return;
+                    }
+                    const relayChanged =
+                      remoteState !== localRelay?.loginState || remoteMessage !== localRelay?.loginMessage;
+                    if (relayChanged) {
+                      localRelay.loginState = remoteState;
+                      localRelay.loginMessage = remoteMessage;
+                      if (isActive) {
+                        updateRelayStatusElement(relay.id, remoteState, remoteMessage);
+                      }
+                    }
+                  });
                 }
               }
             }

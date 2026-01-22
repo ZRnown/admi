@@ -810,11 +810,26 @@ export class Bot {
         if (isWebhook) {
           // Webhook 消息：使用之前获取的webhookName（避免重复获取）
           username = webhookName !== "unknown" ? webhookName : "Webhook";
-          // webhook的头像可能在webhook对象中，也可能在author中
-          avatarUrl = (message as any).webhook?.avatar 
-            || (message as any).avatarURL
-            || (message.author as any)?.displayAvatarURL?.({ size: 128, format: "png" })
-            || (message.author as any)?.avatarURL?.({ size: 128, format: "png" });
+          const anyAuthor = message.author as any;
+          if (typeof anyAuthor?.displayAvatarURL === "function") {
+            avatarUrl = anyAuthor.displayAvatarURL({ size: 128, dynamic: true });
+          } else if (typeof anyAuthor?.avatarURL === "function") {
+            avatarUrl = anyAuthor.avatarURL({ size: 128, dynamic: true });
+          }
+
+          if (!avatarUrl) {
+            const webhook = (message as any).webhook;
+            if (typeof webhook?.avatarURL === "function") {
+              avatarUrl = webhook.avatarURL({ size: 128, dynamic: true });
+            } else if (typeof webhook?.avatar === "string") {
+              if (/^https?:\/\//i.test(webhook.avatar)) {
+                avatarUrl = webhook.avatar;
+              } else if (webhookId) {
+                const ext = webhook.avatar.startsWith("a_") ? "gif" : "png";
+                avatarUrl = `https://cdn.discordapp.com/avatars/${webhookId}/${webhook.avatar}.${ext}?size=128`;
+              }
+            }
+          }
         } else {
           // 普通用户消息
           username = (message.member as any)?.displayName || message.author?.username || message.author?.tag;
