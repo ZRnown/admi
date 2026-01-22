@@ -35,6 +35,14 @@ function gracefulShutdown(signal) {
 
   log('SHUTDOWN', `收到 ${signal} 信号，正在关闭所有服务...`, colors.yellow);
 
+  // 清理可能残留的 Python 进程
+  try {
+    log('SHUTDOWN', '正在清理 Python 僵尸进程...', colors.yellow);
+    execSync('pkill -f "python.*telegram_bridge" || true');
+  } catch (e) {
+    // 忽略错误
+  }
+
   processes.forEach((proc, index) => {
     if (proc && !proc.killed) {
       log('SHUTDOWN', `正在停止进程 ${index + 1}...`, colors.yellow);

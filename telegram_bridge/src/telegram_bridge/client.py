@@ -267,43 +267,50 @@ class TelegramClientManager:
                 # 更新连接状态
                 self.connection_manager.update_state(account_id, ConnectionStatus.CONNECTING)
 
-                # 创建客户端
-                if account.session_string:
-                    # 使用session字符串
-                    session_string = await self.session_manager.load_session_string(account_id)
-                    if not session_string:
-                        session_string = account.session_string
-                        await self.session_manager.save_session_string(account_id, session_string)
-
-                    client = TelegramClient(
-                        session_string,
-                        account.api_id,
-                        account.api_hash,
-                        proxy=account.proxy_url
-                    )
-                else:
-                    # 使用session文件
-                    session_path = account.session_path or str(self.session_manager.get_session_path(account_id))
-                    client = TelegramClient(
-                        session_path,
-                        account.api_id,
-                        account.api_hash,
-                        proxy=account.proxy_url
-                    )
-
-                # 连接客户端（避免交互式登录阻塞），添加重试机制处理database locked
-                max_retries = 3
+                # 创建客户端并连接，添加重试机制处理database locked
+                max_retries = 5
                 retry_delay = 1.0
-                last_error = None
+                client = None
+
                 for attempt in range(max_retries):
                     try:
+                        # 创建客户端
+                        if account.session_string:
+                            # 使用session字符串
+                            session_string = await self.session_manager.load_session_string(account_id)
+                            if not session_string:
+                                session_string = account.session_string
+                                await self.session_manager.save_session_string(account_id, session_string)
+
+                            client = TelegramClient(
+                                session_string,
+                                account.api_id,
+                                account.api_hash,
+                                proxy=account.proxy_url
+                            )
+                        else:
+                            # 使用session文件
+                            session_path = account.session_path or str(self.session_manager.get_session_path(account_id))
+                            client = TelegramClient(
+                                session_path,
+                                account.api_id,
+                                account.api_hash,
+                                proxy=account.proxy_url
+                            )
+
+                        # 连接客户端
                         await client.connect()
                         break
                     except Exception as e:
-                        last_error = e
                         error_msg = str(e).lower()
                         if "database is locked" in error_msg or "locked" in error_msg:
                             logger.warning(f"Database locked on attempt {attempt + 1}/{max_retries}, retrying...")
+                            if client:
+                                try:
+                                    await client.disconnect()
+                                except:
+                                    pass
+                                client = None
                             await asyncio.sleep(retry_delay * (attempt + 1))
                             if attempt == max_retries - 1:
                                 raise

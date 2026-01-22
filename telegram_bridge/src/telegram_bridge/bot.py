@@ -166,25 +166,31 @@ class TelegramBotManager:
                 use_api_id = account.api_id if account.api_id else DEFAULT_API_CREDENTIALS[0][0]
                 use_api_hash = account.api_hash if account.api_hash else DEFAULT_API_CREDENTIALS[0][1]
 
-                # 创建机器人客户端
-                client = TelegramClient(
-                    f"bot_{account_id}",
-                    api_id=use_api_id,
-                    api_hash=use_api_hash,
-                    proxy=account.proxy_url
-                )
-
-                # 使用Bot Token启动，添加重试机制处理database locked
-                max_retries = 3
+                # 创建机器人客户端并启动，添加重试机制处理database locked
+                max_retries = 5
                 retry_delay = 1.0
+                client = None
+
                 for attempt in range(max_retries):
                     try:
+                        client = TelegramClient(
+                            f"bot_{account_id}",
+                            api_id=use_api_id,
+                            api_hash=use_api_hash,
+                            proxy=account.proxy_url
+                        )
                         await client.start(bot_token=account.token)
                         break
                     except Exception as e:
                         error_msg = str(e).lower()
                         if "database is locked" in error_msg or "locked" in error_msg:
                             logger.warning(f"Database locked on attempt {attempt + 1}/{max_retries}, retrying...")
+                            if client:
+                                try:
+                                    await client.disconnect()
+                                except:
+                                    pass
+                                client = None
                             await asyncio.sleep(retry_delay * (attempt + 1))
                             if attempt == max_retries - 1:
                                 raise

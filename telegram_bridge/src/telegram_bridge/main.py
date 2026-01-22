@@ -6,6 +6,8 @@ Telegram Bridge Service 主入口
 import asyncio
 import sys
 import signal
+import glob
+import os
 from loguru import logger
 from .ipc import IPCServer
 from .client import TelegramClientManager
@@ -33,6 +35,25 @@ class TelegramBridgeService:
 
         # 注册Telegram消息处理器（将Telegram消息转发到Discord）
         self._setup_telegram_message_handlers()
+
+    def _cleanup_stale_locks(self):
+        """清理残留的 session 锁文件"""
+        try:
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+            session_dir = os.path.join(base_dir, ".data", "telegram_sessions")
+
+            if os.path.exists(session_dir):
+                logger.info(f"Cleaning up stale session locks in {session_dir}...")
+                patterns = ["*.session-journal", "*.session-wal"]
+                for pattern in patterns:
+                    for lock_file in glob.glob(os.path.join(session_dir, pattern)):
+                        try:
+                            os.remove(lock_file)
+                            logger.info(f"Removed stale lock file: {lock_file}")
+                        except Exception as e:
+                            logger.warning(f"Could not remove {lock_file}: {e}")
+        except Exception as e:
+            logger.error(f"Error during lock cleanup: {e}")
 
     def _setup_telegram_message_handlers(self):
         """设置Telegram消息处理器"""
@@ -89,6 +110,9 @@ class TelegramBridgeService:
         logger.info("Starting Telegram Bridge Service...")
 
         try:
+            # 清理残留的锁文件
+            self._cleanup_stale_locks()
+
             # 注册IPC处理器
             self._register_handlers()
 
