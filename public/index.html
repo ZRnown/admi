@@ -1860,7 +1860,7 @@
       currentRuleConfigType = '';
     }
 
-    function saveRuleConfig() {
+    async function saveRuleConfig() {
       if (currentRuleConfigIndex < 0) return;
 
       const acc = getActiveAccount();
@@ -1914,7 +1914,7 @@
         };
       }
 
-      saveConfig();
+      await saveConfigImmediate();
       closeRuleConfigModal();
       render();
     }
