@@ -24,7 +24,7 @@ export interface TelegramAccountConfig {
   enabled?: boolean;
 }
 
-export interface TelegramMapping {
+export interface TelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;     // 源频道ID
   targetChannelId: string;     // 目标频道ID
@@ -431,6 +431,24 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     input?.channelTranslateDirection && typeof input.channelTranslateDirection === "object" ? input.channelTranslateDirection : {};
   const sessionType: "file" | "string" = input?.sessionType === "string" ? "string" : "file";
 
+  // 处理 Discord->Discord mappings（保留规则级别配置）
+  const mappings: DiscordMappingRule[] = Array.isArray(input?.mappings)
+    ? input.mappings.map((m: any) => ({
+        id: typeof m.id === "string" ? m.id : randomUUID(),
+        sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
+        targetWebhookUrl: typeof m.targetWebhookUrl === "string" ? m.targetWebhookUrl : "",
+        note: typeof m.note === "string" ? m.note : undefined,
+        translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,
+        // RuleLevelConfig 规则级别过滤配置
+        allowedUsersIds: Array.isArray(m.allowedUsersIds) ? m.allowedUsersIds : [],
+        mutedUsersIds: Array.isArray(m.mutedUsersIds) ? m.mutedUsersIds : [],
+        blockedKeywords: Array.isArray(m.blockedKeywords) ? m.blockedKeywords : [],
+        excludeKeywords: Array.isArray(m.excludeKeywords) ? m.excludeKeywords : [],
+        ocrBlockedKeywords: Array.isArray(m.ocrBlockedKeywords) ? m.ocrBlockedKeywords : [],
+        replacementsDictionary: typeof m.replacementsDictionary === 'object' && m.replacementsDictionary ? m.replacementsDictionary : {},
+      }))
+    : [];
+
   // 处理Telegram配置
   const telegramConfig: FrontendTelegramConfig | undefined = input?.telegramConfig && typeof input.telegramConfig === "object" ? {
     accounts: Array.isArray(input.telegramConfig.accounts) ? input.telegramConfig.accounts.map((acc: any) => ({
@@ -468,7 +486,14 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
               enabled: mapping.longMessage.enabled === true,
               threshold: typeof mapping.longMessage.threshold === "number" ? mapping.longMessage.threshold : undefined,
               appendMessage: typeof mapping.longMessage.appendMessage === "string" ? mapping.longMessage.appendMessage : undefined
-            } : undefined
+            } : undefined,
+            // RuleLevelConfig 规则级别过滤配置
+            allowedUsersIds: Array.isArray(mapping.allowedUsersIds) ? mapping.allowedUsersIds : [],
+            mutedUsersIds: Array.isArray(mapping.mutedUsersIds) ? mapping.mutedUsersIds : [],
+            blockedKeywords: Array.isArray(mapping.blockedKeywords) ? mapping.blockedKeywords : [],
+            excludeKeywords: Array.isArray(mapping.excludeKeywords) ? mapping.excludeKeywords : [],
+            ocrBlockedKeywords: Array.isArray(mapping.ocrBlockedKeywords) ? mapping.ocrBlockedKeywords : [],
+            replacementsDictionary: typeof mapping.replacementsDictionary === 'object' && mapping.replacementsDictionary ? mapping.replacementsDictionary : {}
           };
         })
       : [],
@@ -486,6 +511,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     loginState: typeof input?.loginState === "string" ? input.loginState : "idle",
     loginMessage: typeof input?.loginMessage === "string" ? input.loginMessage : "",
     channelWebhooks: input?.channelWebhooks || {},
+    mappings,
     channelFeishuWebhooks,
     enableFeishuForward: input?.enableFeishuForward === true,
     enableDiscordForward: input?.enableDiscordForward !== false,
