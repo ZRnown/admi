@@ -65,6 +65,14 @@ class TelegramBridgeService:
     def _write_telegram_status(self, account_id: str, state: str, message: str = "", user_info: dict = None):
         """写入Telegram账号状态到文件"""
         try:
+            if state == "online" and user_info:
+                display_name = self._format_telegram_display_name(user_info)
+                if display_name:
+                    if not message or message in ["已连接", "连接成功", "connected", "online"]:
+                        message = f"已连接: {display_name}"
+                    elif display_name not in message:
+                        message = f"{message}: {display_name}"
+
             # 读取现有状态
             status_data = {}
             if self.status_file.exists():
@@ -88,6 +96,21 @@ class TelegramBridgeService:
             logger.debug(f"Telegram status updated: {account_id} -> {state}")
         except Exception as e:
             logger.error(f"Failed to write telegram status: {e}")
+
+    @staticmethod
+    def _format_telegram_display_name(user_info: dict) -> str:
+        if not user_info:
+            return ""
+        username = user_info.get("username")
+        if isinstance(username, str) and username.strip():
+            return f"@{username.strip()}"
+        display_name = user_info.get("displayName") or user_info.get("display_name")
+        if isinstance(display_name, str) and display_name.strip():
+            return display_name.strip()
+        first_name = user_info.get("firstName") or user_info.get("first_name") or ""
+        last_name = user_info.get("lastName") or user_info.get("last_name") or ""
+        full_name = f"{first_name} {last_name}".strip()
+        return full_name
 
     def _setup_telegram_message_handlers(self):
         """设置Telegram消息处理器"""
@@ -203,7 +226,7 @@ class TelegramBridgeService:
             result = await self.client_manager.connect(params)
             # 根据连接结果更新状态
             if result.get("success"):
-                user_info = result.get("user_info")
+                user_info = result.get("user_info") or result.get("userInfo")
                 self._write_telegram_status(account_id, "online", "已连接", user_info)
             else:
                 error_msg = result.get("message") or result.get("error") or "连接失败"
@@ -215,7 +238,7 @@ class TelegramBridgeService:
             self._write_telegram_status(account_id, "connecting", "正在连接...")
             result = await self.bot_manager.connect(params)
             if result.get("success"):
-                user_info = result.get("user_info")
+                user_info = result.get("user_info") or result.get("userInfo")
                 self._write_telegram_status(account_id, "online", "已连接", user_info)
             else:
                 error_msg = result.get("message") or result.get("error") or "连接失败"

@@ -132,6 +132,27 @@ async function writeStatus(accountId: string, state: string, message?: string) {
   } catch {}
 }
 
+function formatDiscordUserLabel(user: any): string {
+  if (!user) return "";
+  const tag = typeof user.tag === "string" ? user.tag.trim() : "";
+  if (tag) return tag;
+  const username = typeof user.username === "string" ? user.username.trim() : "";
+  const discriminator = typeof user.discriminator === "string" ? user.discriminator.trim() : "";
+  if (username && discriminator && discriminator !== "0" && discriminator !== "0000") {
+    return `${username}#${discriminator}`;
+  }
+  if (username) return username;
+  const globalName = typeof user.globalName === "string" ? user.globalName.trim() : "";
+  if (globalName) return globalName;
+  if (user.id) return `ID:${user.id}`;
+  return "";
+}
+
+function buildDiscordLoginMessage(user: any, fallback: string): string {
+  const label = formatDiscordUserLabel(user);
+  return label ? `${fallback}: ${label}` : fallback;
+}
+
 async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const env = getEnv();
   const senderBotsBySource = new Map<string, SenderBot>();
@@ -571,7 +592,11 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
       
       if (isAlreadyLoggedIn) {
-        await writeStatus(account.id, "online", "登录成功");
+        await writeStatus(
+          account.id,
+          "online",
+          buildDiscordLoginMessage((existing.client as any)?.user, "登录成功"),
+        );
       }
       return;
     }
@@ -667,7 +692,11 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
         }
         // 现在才注册重连处理器，避免登录过程中的临时断开事件
         setupReconnectHandlers(account.id, logger);
-        await writeStatus(account.id, "online", "登录成功");
+        await writeStatus(
+          account.id,
+          "online",
+          buildDiscordLoginMessage((bot.client as any)?.user, "登录成功"),
+        );
         await logger.info(`账号 "${account.name}" 登录成功（通过 ready 事件），已注册重连处理器`);
       }
     };
@@ -703,7 +732,11 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
             currentRunning.loginTimeout = undefined;
           }
           setupReconnectHandlers(account.id, logger);
-      await writeStatus(account.id, "online", "登录成功");
+          await writeStatus(
+            account.id,
+            "online",
+            buildDiscordLoginMessage((bot.client as any)?.user, "登录成功"),
+          );
           await logger.info(`账号 "${account.name}" 登录成功（通过状态检查），已注册重连处理器`);
           // 标记 ready 已处理，防止 readyHandler 重复处理
           readyHandled = true;
@@ -795,7 +828,11 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
     // WebSocket 状态：0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
     if (wsState === 1) {
       await logger.info(`账号 "${running.account.name}" 已经连接（readyState=${wsState}），跳过重连`);
-      await writeStatus(accountId, "online", "已连接");
+      await writeStatus(
+        accountId,
+        "online",
+        buildDiscordLoginMessage((client as any)?.user, "已连接"),
+      );
       // 清除可能存在的重连定时器
       if (running.reconnectTimer) {
         clearTimeout(running.reconnectTimer);
@@ -911,8 +948,12 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
             currentRunningAfterReady.loginTimeout = undefined;
           }
           // 现在才注册重连处理器
-      setupReconnectHandlers(accountId, logger);
-          await writeStatus(accountId, "online", "重连成功");
+          setupReconnectHandlers(accountId, logger);
+          await writeStatus(
+            accountId,
+            "online",
+            buildDiscordLoginMessage((currentRunningAfterReady.client as any)?.user, "重连成功"),
+          );
           // 重连成功，重置计数
           currentRunningAfterReady.reconnectCount = 0;
           await logger.info(`账号 "${currentRunningAfterReady.account.name}" 重连成功，已注册重连处理器`);
@@ -1059,7 +1100,11 @@ function setupReconnectHandlers(accountId: string, logger: FileLogger) {
     const currentRunning = runningAccounts.get(accountId);
     if (currentRunning) {
       await logger.info(`账号 "${currentRunning.account.name}" 连接已恢复`);
-      await writeStatus(accountId, "online", "连接已恢复");
+      await writeStatus(
+        accountId,
+        "online",
+        buildDiscordLoginMessage((currentRunning.client as any)?.user, "连接已恢复"),
+      );
     }
   });
 }
