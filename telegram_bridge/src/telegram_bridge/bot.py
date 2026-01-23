@@ -28,6 +28,7 @@ class TelegramBotManager:
         self._update_tasks: Dict[str, asyncio.Task] = {}
         self._keepalive_tasks: Dict[str, asyncio.Task] = {}
         self._entity_cache: Dict[str, Dict[int, float]] = {}
+        self._account_configs: Dict[str, TelegramAccount] = {}  # 保存账号配置用于重连
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
         self.avatar_dir = Path(avatar_root)
@@ -260,8 +261,9 @@ class TelegramBotManager:
                     "username": me.username
                 }
 
-                # 保存机器人
+                # 保存机器人和账号配置（用于重连）
                 self.bots[account_id] = client
+                self._account_configs[account_id] = account
 
                 # 更新连接状态
                 self.connection_manager.update_state(
@@ -345,12 +347,14 @@ class TelegramBotManager:
 
         # 如果连接断开，启动自动重连
         if state.status in [ConnectionStatus.DISCONNECTED, ConnectionStatus.ERROR]:
-            if account_id in self.bots:  # 只为已配置的账号重连
+            # 只为有保存配置的账号重连
+            if account_id in self._account_configs:
                 logger.info(f"Starting auto-reconnect for bot {account_id}")
+                account_config = self._account_configs[account_id]
 
                 async def reconnect_func():
-                    # 重新连接逻辑
-                    return {"success": False, "message": "Reconnect not implemented"}
+                    # 使用保存的账号配置重新连接
+                    return await self.connect(account_config)
 
                 asyncio.create_task(
                     self.connection_manager.start_reconnect(account_id, reconnect_func)

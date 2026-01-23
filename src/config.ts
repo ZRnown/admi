@@ -91,6 +91,10 @@ export interface RuleLevelConfig {
   replacementsDictionary?: Record<string, string>;
   // 使用源用户的昵称和头像（规则级别）
   showSourceIdentity?: boolean;
+  // 忽略图片（规则级别）
+  ignoreImages?: boolean;
+  // 忽略音频（规则级别）
+  ignoreAudio?: boolean;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -392,6 +396,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ocrBlockedKeywords: [],
       replacementsDictionary: {},
       showSourceIdentity: undefined,
+      ignoreImages: undefined,
+      ignoreAudio: undefined,
     };
   }
   return {
@@ -405,6 +411,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         ? raw.replacementsDictionary
         : {},
     showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
+    ignoreImages: raw.ignoreImages === true ? true : undefined,
+    ignoreAudio: raw.ignoreAudio === true ? true : undefined,
   };
 }
 

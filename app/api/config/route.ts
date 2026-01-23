@@ -217,6 +217,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ocrBlockedKeywords: [],
       replacementsDictionary: {},
       showSourceIdentity: undefined,
+      ignoreImages: undefined,
+      ignoreAudio: undefined,
     };
   }
   return {
@@ -230,6 +232,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         ? raw.replacementsDictionary
         : {},
     showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
+    ignoreImages: raw.ignoreImages === true ? true : undefined,
+    ignoreAudio: raw.ignoreAudio === true ? true : undefined,
   };
 }
 

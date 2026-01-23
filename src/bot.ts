@@ -249,6 +249,8 @@ export class Bot {
     excludeKeywords: string[];
     ocrBlockedKeywords: string[];
     replacementsDictionary: Record<string, string>;
+    ignoreImages?: boolean;
+    ignoreAudio?: boolean;
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
@@ -274,6 +276,8 @@ export class Bot {
         excludeKeywords: [],
         ocrBlockedKeywords: [],
         replacementsDictionary: {},
+        ignoreImages: undefined,
+        ignoreAudio: undefined,
       };
     }
     return {
@@ -283,6 +287,8 @@ export class Bot {
       excludeKeywords: (rule.excludeKeywords || []).filter(Boolean),
       ocrBlockedKeywords: (rule.ocrBlockedKeywords || []).filter(Boolean),
       replacementsDictionary: rule.replacementsDictionary || {},
+      ignoreImages: rule.ignoreImages,
+      ignoreAudio: rule.ignoreAudio,
     };
   }
 
@@ -438,33 +444,45 @@ export class Bot {
         this.logger.info(`${logPrefix} [SKIP] Ignoring bot/webhook message (ignoreBot=true)`);
         return;
       }
-      
-      // 检查附件类型并忽略
+
+      // 检查附件类型并忽略（全局 + 规则级别）
       if (message.attachments && message.attachments.size > 0) {
+        // 获取规则级别的忽略配置
+        const ignoreRuleConfig = this.getRuleLevelConfig(message.channelId);
+        // 规则级别设置优先，如果规则级别未设置则使用全局设置
+        const shouldIgnoreImages = ignoreRuleConfig.ignoreImages !== undefined
+          ? ignoreRuleConfig.ignoreImages
+          : this.config.ignoreImages;
+        const shouldIgnoreAudio = ignoreRuleConfig.ignoreAudio !== undefined
+          ? ignoreRuleConfig.ignoreAudio
+          : this.config.ignoreAudio;
+        const shouldIgnoreVideo = this.config.ignoreVideo;
+        const shouldIgnoreDocuments = this.config.ignoreDocuments;
+
         for (const att of message.attachments.values()) {
           const ct = (att.contentType || "").toLowerCase();
           const url = att.url.toLowerCase();
-          
+
           // 忽略图片
-          if (this.config.ignoreImages && (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url))) {
-            this.logger.info(`${logPrefix} [SKIP] Ignoring image attachment (ignoreImages=true)`);
+          if (shouldIgnoreImages && (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url))) {
+            this.logger.info(`${logPrefix} [SKIP] Ignoring image attachment (ignoreImages=true, rule=${ignoreRuleConfig.ignoreImages})`);
             return;
           }
-          
+
           // 忽略音频
-          if (this.config.ignoreAudio && (ct.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(url))) {
-            this.logger.info(`${logPrefix} [SKIP] Ignoring audio attachment (ignoreAudio=true)`);
+          if (shouldIgnoreAudio && (ct.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(url))) {
+            this.logger.info(`${logPrefix} [SKIP] Ignoring audio attachment (ignoreAudio=true, rule=${ignoreRuleConfig.ignoreAudio})`);
             return;
           }
-          
+
           // 忽略视频
-          if (this.config.ignoreVideo && (ct.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi|flv)$/i.test(url))) {
+          if (shouldIgnoreVideo && (ct.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi|flv)$/i.test(url))) {
             this.logger.info(`${logPrefix} [SKIP] Ignoring video attachment (ignoreVideo=true)`);
             return;
           }
-          
+
           // 忽略文档
-          if (this.config.ignoreDocuments && (
+          if (shouldIgnoreDocuments && (
             ct.includes("application/pdf") ||
             ct.includes("application/msword") ||
             ct.includes("application/vnd.openxmlformats") ||

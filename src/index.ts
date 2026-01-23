@@ -1371,7 +1371,10 @@ async function main() {
       setupTelegramBridgeClient();
       if (currentConfig) {
         try {
+          // 等待 IPC 服务器准备好
+          await new Promise(resolve => setTimeout(resolve, 1000));
           await syncConfigToTelegramBridge(currentConfig);
+          console.log("[Main] Config synced to Telegram Bridge, enabled accounts will auto-connect");
         } catch (error: any) {
           console.error(`[Main] Failed to sync config to Telegram Bridge: ${error?.message || error}`);
         }

@@ -192,6 +192,22 @@
           <p class="text-xs text-slate-500 mt-1">勾选后，此规则转发的消息将显示原始发送者的昵称和头像</p>
         </div>
 
+        <!-- 忽略媒体选项 -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-3">忽略媒体（覆盖全局设置）</h3>
+          <div class="flex flex-wrap gap-4">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleIgnoreImages" class="h-4 w-4 rounded border-slate-300">
+              忽略图片
+            </label>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleIgnoreAudio" class="h-4 w-4 rounded border-slate-300">
+              忽略音频
+            </label>
+          </div>
+          <p class="text-xs text-slate-500 mt-2">勾选后，此规则将忽略对应类型的媒体附件</p>
+        </div>
+
         <!-- 用户过滤 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-3">用户过滤</h3>
@@ -1841,11 +1857,16 @@
         excludeKeywords: [...(mapping.excludeKeywords || [])],
         ocrBlockedKeywords: [...(mapping.ocrBlockedKeywords || [])],
         replacements: Object.entries(mapping.replacementsDictionary || {}).map(([k, v]) => ({ from: k, to: v })),
-        showSourceIdentity: mapping.showSourceIdentity === true
+        showSourceIdentity: mapping.showSourceIdentity === true,
+        ignoreImages: mapping.ignoreImages === true,
+        ignoreAudio: mapping.ignoreAudio === true
       };
 
       // 设置显示源用户选项
       document.getElementById('ruleShowSourceIdentity').checked = ruleConfigData.showSourceIdentity;
+      // 设置忽略媒体选项
+      document.getElementById('ruleIgnoreImages').checked = ruleConfigData.ignoreImages;
+      document.getElementById('ruleIgnoreAudio').checked = ruleConfigData.ignoreAudio;
 
       // 渲染所有标签
       renderRuleTags('allowedUsersIds');
@@ -1924,6 +1945,10 @@
 
       // 保存显示源用户选项
       mapping.showSourceIdentity = document.getElementById('ruleShowSourceIdentity').checked || undefined;
+
+      // 保存忽略媒体选项
+      mapping.ignoreImages = document.getElementById('ruleIgnoreImages').checked || undefined;
+      mapping.ignoreAudio = document.getElementById('ruleIgnoreAudio').checked || undefined;
 
       // 超长消息处理（仅 DC→TG）
       if (currentRuleConfigType === 'discord-to-telegram') {
