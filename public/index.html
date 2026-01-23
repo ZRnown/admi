@@ -3306,6 +3306,33 @@
               }
             }
 
+            const remoteTelegramAccounts = remoteAcc.telegramConfig?.accounts;
+            if (Array.isArray(remoteTelegramAccounts)) {
+              if (!localAcc.telegramConfig || typeof localAcc.telegramConfig !== 'object') {
+                const remoteForwarding = remoteAcc.telegramConfig?.enableTelegramForward;
+                localAcc.telegramConfig = {
+                  accounts: [],
+                  mappings: [],
+                  enableTelegramForward: typeof remoteForwarding === 'boolean' ? remoteForwarding : true
+                };
+              }
+              if (!Array.isArray(localAcc.telegramConfig.accounts)) {
+                localAcc.telegramConfig.accounts = [];
+              }
+              const localTelegramAccounts = localAcc.telegramConfig.accounts;
+              for (const remoteTg of remoteTelegramAccounts) {
+                if (!remoteTg || !remoteTg.id) continue;
+                const localTg = localTelegramAccounts.find((item) => item.id === remoteTg.id);
+                if (!localTg) {
+                  localTelegramAccounts.push(remoteTg);
+                  continue;
+                }
+                if (remoteTg.enabled !== undefined && localTg.enabled !== remoteTg.enabled) {
+                  localTg.enabled = remoteTg.enabled;
+                }
+              }
+            }
+
             if (Array.isArray(remoteAcc.botRelays)) {
               if (!Array.isArray(localAcc.botRelays) || remoteAcc.botRelays.length !== localAcc.botRelays.length) {
                 localAcc.botRelays = remoteAcc.botRelays;

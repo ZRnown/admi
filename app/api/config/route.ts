@@ -240,6 +240,50 @@ function normalizeRuleConfigs(raw: any): Record<string, RuleLevelConfig> {
   return result;
 }
 
+function mergeTelegramConfig(
+  incoming?: FrontendTelegramConfig,
+  fallback?: FrontendTelegramConfig,
+): FrontendTelegramConfig | undefined {
+  if (!incoming && !fallback) return undefined;
+  if (!incoming) return fallback;
+  if (!fallback) return incoming;
+
+  const incomingAccounts = Array.isArray(incoming.accounts) ? incoming.accounts : [];
+  const fallbackAccounts = Array.isArray(fallback.accounts) ? fallback.accounts : [];
+  const mergedAccountMap = new Map<string, any>();
+
+  for (const acc of fallbackAccounts) {
+    if (acc?.id) {
+      mergedAccountMap.set(acc.id, { ...acc });
+    }
+  }
+
+  for (const acc of incomingAccounts) {
+    if (!acc?.id) continue;
+    const prev = mergedAccountMap.get(acc.id);
+    if (prev) {
+      const merged = { ...prev, ...acc };
+      if (acc.enabled === undefined && prev.enabled !== undefined) {
+        merged.enabled = prev.enabled;
+      }
+      mergedAccountMap.set(acc.id, merged);
+    } else {
+      mergedAccountMap.set(acc.id, { ...acc });
+    }
+  }
+
+  return {
+    ...fallback,
+    ...incoming,
+    accounts: Array.from(mergedAccountMap.values()),
+    mappings: Array.isArray(incoming.mappings) ? incoming.mappings : fallback.mappings,
+    enableTelegramForward:
+      typeof incoming.enableTelegramForward === "boolean"
+        ? incoming.enableTelegramForward
+        : fallback.enableTelegramForward,
+  };
+}
+
 function accountToFrontend(account: AccountConfig): FrontendAccount {
   const mappings: FrontendMapping[] = [];
   const channelTranslate: Record<string, boolean> = (account as any).channelTranslate || {};
@@ -444,6 +488,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     }
   }
   const channelFeishuWebhooks = normalizeFeishuTargets(dto.channelFeishuWebhooks);
+  const mergedTelegramConfig = mergeTelegramConfig(
+    dto.telegramConfig && typeof dto.telegramConfig === "object" ? dto.telegramConfig : undefined,
+    base.telegramConfig,
+  );
 
   let loginRequested: boolean;
   if (fallback && fallback.loginRequested === true) {
@@ -546,7 +594,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     telegramOverflowThreshold: typeof dto.telegramOverflowThreshold === "number" && dto.telegramOverflowThreshold > 0 ? dto.telegramOverflowThreshold : 0,
     telegramOverflowMessage: typeof dto.telegramOverflowMessage === "string" && dto.telegramOverflowMessage.trim() ? dto.telegramOverflowMessage.trim() : "",
     // Telegram 配置（包含 accounts 和 mappings）
-    telegramConfig: dto.telegramConfig && typeof dto.telegramConfig === "object" ? dto.telegramConfig : base.telegramConfig,
+    telegramConfig: mergedTelegramConfig,
   };
 }
 
