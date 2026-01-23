@@ -1,7 +1,11 @@
+import { promises as fs } from "node:fs";
 import https from "node:https";
-import { URL } from "node:url";
+import { URL, fileURLToPath } from "node:url";
 
 import { ChannelId } from "./config.js";
+
+const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 30000;
 
 export class SenderBot {
   replacementsDictionary: Record<string, string> = {};
@@ -109,19 +113,38 @@ export class SenderBot {
     });
   }
 
-  private async downloadUploads(uploads: Array<{ url: string; filename: string; isImage?: boolean }>): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
+  private async downloadUploads(
+    uploads: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean }>,
+  ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
     const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
     for (const u of uploads) {
-      const buf = await this.downloadUrl(u.url);
+      let buf: Buffer;
+      if (u.localPath) {
+        buf = await this.readLocalFile(u.localPath);
+      } else if (u.url) {
+        if (u.url.startsWith("file://")) {
+          buf = await this.readLocalFile(fileURLToPath(u.url));
+        } else {
+          buf = await this.downloadUrl(u.url);
+        }
+      } else {
+        continue;
+      }
       results.push({ filename: u.filename, buffer: buf, isImage: u.isImage });
     }
     return results;
   }
 
+  private async readLocalFile(filePath: string): Promise<Buffer> {
+    const resolvedPath = filePath.startsWith("file://") ? fileURLToPath(filePath) : filePath;
+    const stat = await fs.stat(resolvedPath);
+    if (stat.size > MAX_UPLOAD_SIZE) {
+      throw new Error(`File too large (${stat.size} bytes)`);
+    }
+    return await fs.readFile(resolvedPath);
+  }
+
   private async downloadUrl(fileUrl: string): Promise<Buffer> {
-    // 定义最大下载大小 (15MB，留点 Buffer 给 Discord 的 25MB 限制)
-    const MAX_DOWNLOAD_SIZE = 15 * 1024 * 1024;
-    const DOWNLOAD_TIMEOUT_MS = 30000; // 30s
     const u = new URL(fileUrl);
     const options: https.RequestOptions = {
       method: "GET",
@@ -134,7 +157,7 @@ export class SenderBot {
       const req = https.request(options, (res) => {
         // 检查 Content-Length (如果有)
         const sizeStr = res.headers['content-length'];
-        if (sizeStr && parseInt(sizeStr) > MAX_DOWNLOAD_SIZE) {
+        if (sizeStr && parseInt(sizeStr) > MAX_UPLOAD_SIZE) {
           req.destroy();
           return reject(new Error(`File too large (${sizeStr} bytes)`));
         }
@@ -144,7 +167,7 @@ export class SenderBot {
         
         res.on("data", (d: Buffer) => {
           total += d.length;
-          if (total > MAX_DOWNLOAD_SIZE) {
+          if (total > MAX_UPLOAD_SIZE) {
             req.destroy();
             reject(new Error("File download exceeded size limit"));
             return;
@@ -570,7 +593,7 @@ export class SenderBot {
     replyToTarget?: { channelId: string; messageId: string };
     useEmbed?: boolean;
     extraEmbeds?: any[];
-    uploads?: Array<{ url: string; filename: string; isImage?: boolean; isVideo?: boolean }>;
+    uploads?: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean; isVideo?: boolean }>;
     components?: any[];
     // 可选：覆盖当前消息是否启用翻译；未设置则沿用实例级 enableTranslation
     enableTranslationOverride?: boolean;

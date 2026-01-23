@@ -445,10 +445,50 @@ function setupTelegramBridgeClient() {
           }
 
           // 处理附件
-          const uploads: Array<{ url: string; filename: string }> = [];
-          if (params.photo) uploads.push({ url: params.photo, filename: 'photo.jpg' });
-          if (params.video) uploads.push({ url: params.video, filename: 'video.mp4' });
-          if (params.document) uploads.push({ url: params.document, filename: 'document' });
+          const uploads: Array<{
+            url?: string;
+            localPath?: string;
+            filename: string;
+            isImage?: boolean;
+            isVideo?: boolean;
+          }> = [];
+          const seenUploads = new Set<string>();
+          const pushUpload = (entry: {
+            url?: string;
+            localPath?: string;
+            filename: string;
+            isImage?: boolean;
+            isVideo?: boolean;
+          }) => {
+            const key = entry.localPath || entry.url;
+            if (!key || seenUploads.has(key)) return;
+            seenUploads.add(key);
+            uploads.push(entry);
+          };
+
+          if (params.photo) {
+            pushUpload({ url: params.photo, filename: "photo.jpg", isImage: true });
+          }
+          if (params.video) {
+            pushUpload({ url: params.video, filename: "video.mp4", isVideo: true });
+          }
+          if (params.document) {
+            pushUpload({ url: params.document, filename: "document" });
+          }
+          for (const media of mediaItems) {
+            if (!media) continue;
+            const localPath = typeof media.localPath === "string" ? media.localPath : undefined;
+            const url = typeof media.url === "string" ? media.url : undefined;
+            if (!localPath && !url) continue;
+            const mimeType = typeof media.mimeType === "string" ? media.mimeType : "";
+            const isImage = media.type === "photo" || mimeType.startsWith("image/");
+            const isVideo = media.type === "video" || mimeType.startsWith("video/");
+            const filename =
+              (typeof media.fileName === "string" && media.fileName.trim()) ||
+              (typeof media.filename === "string" && media.filename.trim()) ||
+              (isImage ? "photo.jpg" : isVideo ? "video.mp4" : "file");
+            pushUpload({ localPath, url, filename, isImage, isVideo });
+          }
 
           // 发送消息
           await tempSender.sendData([{
@@ -1077,6 +1117,10 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       JSON.stringify(account.channelWebhooks || {}) !== JSON.stringify(oldAccount.channelWebhooks || {}) ||
       JSON.stringify(account.replacementsDictionary || {}) !==
         JSON.stringify(oldAccount.replacementsDictionary || {});
+    const ruleConfigChanged =
+      JSON.stringify(account.mappings || []) !== JSON.stringify(oldAccount.mappings || []) ||
+      JSON.stringify(account.telegramConfig?.mappings || []) !== JSON.stringify(oldAccount.telegramConfig?.mappings || []) ||
+      JSON.stringify(account.feishuRuleConfigs || {}) !== JSON.stringify(oldAccount.feishuRuleConfigs || {});
     const relayChanged =
       JSON.stringify(account.botRelays || []) !== JSON.stringify(oldAccount.botRelays || []) ||
       JSON.stringify(account.channelRelayMap || {}) !== JSON.stringify(oldAccount.channelRelayMap || {});
@@ -1088,6 +1132,13 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       JSON.stringify(account.blockedKeywords || []) !== JSON.stringify(oldAccount.blockedKeywords || []) ||
       JSON.stringify(account.excludeKeywords || []) !== JSON.stringify(oldAccount.excludeKeywords || []) ||
       account.showSourceIdentity !== oldAccount.showSourceIdentity;
+    const ignoreSettingsChanged =
+      account.ignoreSelf !== oldAccount.ignoreSelf ||
+      account.ignoreBot !== oldAccount.ignoreBot ||
+      account.ignoreImages !== oldAccount.ignoreImages ||
+      account.ignoreAudio !== oldAccount.ignoreAudio ||
+      account.ignoreVideo !== oldAccount.ignoreVideo ||
+      account.ignoreDocuments !== oldAccount.ignoreDocuments;
     // 检测用户过滤配置变化
     const userFilterChanged =
       JSON.stringify(account.allowedUsersIds || []) !== JSON.stringify(oldAccount.allowedUsersIds || []) ||
@@ -1114,7 +1165,16 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       }
 
       // 如果有配置变化，进行热更新（不重启）
-      if (mappingsChanged || translationChanged || keywordsChanged || userFilterChanged || relayChanged || forwardingTypeChanged) {
+      if (
+        mappingsChanged ||
+        ruleConfigChanged ||
+        translationChanged ||
+        keywordsChanged ||
+        ignoreSettingsChanged ||
+        userFilterChanged ||
+        relayChanged ||
+        forwardingTypeChanged
+      ) {
         let senderBotsBySource = existing.senderBotsBySource;
         let defaultSenderBot = existing.defaultSenderBot;
         let feishuSendersBySource = (existing as any).feishuSendersBySource;
@@ -1159,7 +1219,20 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     // 没有任何变化则跳过
-    if (!typeChanged && !tokenChanged && !mappingsChanged && !translationChanged && !keywordsChanged && !userFilterChanged && !relayChanged && !restartRequested && !loginRequestedBecameTrue && !forwardingTypeChanged) {
+    if (
+      !typeChanged &&
+      !tokenChanged &&
+      !mappingsChanged &&
+      !ruleConfigChanged &&
+      !translationChanged &&
+      !keywordsChanged &&
+      !ignoreSettingsChanged &&
+      !userFilterChanged &&
+      !relayChanged &&
+      !restartRequested &&
+      !loginRequestedBecameTrue &&
+      !forwardingTypeChanged
+    ) {
       continue;
     }
 
@@ -1195,7 +1268,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     existing.defaultSenderBot = defaultSenderBot;
     (existing as any).feishuSendersBySource = feishuSendersBySource;
 
-    if (keywordsChanged || mappingsChanged || translationChanged) {
+    if (keywordsChanged || ignoreSettingsChanged || mappingsChanged || ruleConfigChanged || translationChanged) {
       await logger.info(`账号 "${account.name}" 配置已热更新`);
     }
   }
