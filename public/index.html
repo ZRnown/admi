@@ -34,7 +34,7 @@
   </div>
 
   <!-- 主配置页面 -->
-  <div id="mainPage" class="max-w-7xl mx-auto space-y-8" style="display: none;">
+  <div id="mainPage" class="max-w-[1400px] mx-auto space-y-8" style="display: none;">
     <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-200">
       <div>
         <h1 class="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">Discord Forwarder Config</h1>
@@ -181,6 +181,15 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- 显示源用户选项 -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" id="ruleShowSourceIdentity" class="h-4 w-4 rounded border-slate-300">
+            使用源用户的昵称和头像（覆盖全局设置）
+          </label>
+          <p class="text-xs text-slate-500 mt-1">勾选后，此规则转发的消息将显示原始发送者的昵称和头像</p>
         </div>
 
         <!-- 用户过滤 -->
@@ -1218,7 +1227,7 @@
             </select>
             ` : ''}
             <input type="text" value="${m.note || ''}" onchange="updateMapping(${idx + startIdx}, 'note', this.value)"
-              placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+              placeholder="备注" class="w-48 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
             <select onchange="updateMapping(${idx + startIdx}, 'translateDirection', this.value)"
               ${!acc.enableTranslation ? 'disabled' : ''}
               class="px-2 py-1 rounded border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none ${!acc.enableTranslation ? 'opacity-50 cursor-not-allowed' : ''}">
@@ -1282,7 +1291,7 @@
                 placeholder="飞书 Webhook 地址" class="flex-1 min-w-[260px] px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             `}
             <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx + startIdx}, this.value)"
-              placeholder="备注" class="w-32 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs">
+              placeholder="备注" class="w-48 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
             <button onclick="openRuleConfigModal(${idx + startIdx}, 'discord-to-feishu')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="规则配置">
               ⚙️
             </button>
@@ -1831,8 +1840,12 @@
         blockedKeywords: [...(mapping.blockedKeywords || [])],
         excludeKeywords: [...(mapping.excludeKeywords || [])],
         ocrBlockedKeywords: [...(mapping.ocrBlockedKeywords || [])],
-        replacements: Object.entries(mapping.replacementsDictionary || {}).map(([k, v]) => ({ from: k, to: v }))
+        replacements: Object.entries(mapping.replacementsDictionary || {}).map(([k, v]) => ({ from: k, to: v })),
+        showSourceIdentity: mapping.showSourceIdentity === true
       };
+
+      // 设置显示源用户选项
+      document.getElementById('ruleShowSourceIdentity').checked = ruleConfigData.showSourceIdentity;
 
       // 渲染所有标签
       renderRuleTags('allowedUsersIds');
@@ -1908,6 +1921,9 @@
         if (item.from) replacements[item.from] = item.to || '';
       });
       mapping.replacementsDictionary = replacements;
+
+      // 保存显示源用户选项
+      mapping.showSourceIdentity = document.getElementById('ruleShowSourceIdentity').checked || undefined;
 
       // 超长消息处理（仅 DC→TG）
       if (currentRuleConfigType === 'discord-to-telegram') {

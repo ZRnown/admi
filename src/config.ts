@@ -89,6 +89,8 @@ export interface RuleLevelConfig {
   ocrBlockedKeywords?: string[];
   // 关键词替换 { 原词: 替换词 }
   replacementsDictionary?: Record<string, string>;
+  // 使用源用户的昵称和头像（规则级别）
+  showSourceIdentity?: boolean;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -389,6 +391,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       excludeKeywords: [],
       ocrBlockedKeywords: [],
       replacementsDictionary: {},
+      showSourceIdentity: undefined,
     };
   }
   return {
@@ -401,6 +404,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       raw.replacementsDictionary && typeof raw.replacementsDictionary === "object"
         ? raw.replacementsDictionary
         : {},
+    showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
   };
 }
 

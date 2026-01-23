@@ -216,6 +216,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       excludeKeywords: [],
       ocrBlockedKeywords: [],
       replacementsDictionary: {},
+      showSourceIdentity: undefined,
     };
   }
   return {
@@ -228,6 +229,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       raw.replacementsDictionary && typeof raw.replacementsDictionary === "object"
         ? raw.replacementsDictionary
         : {},
+    showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
   };
 }
 
