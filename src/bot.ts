@@ -886,15 +886,51 @@ export class Bot {
     }
 
     // 收集需要上传的附件：首张图片将内嵌到同一个 Embed，视频/其他作为同条消息的附件（可直接播放）
+    // 根据忽略设置过滤附件
     const uploads: Array<{ url: string; filename: string; isImage?: boolean; isVideo?: boolean }> = [];
     let hasCurrentImage = false;
     try {
+      // 获取忽略设置（全局 + 规则级别）
+      const uploadRuleConfig = this.getRuleLevelConfig(message.channelId);
+      const skipImages = uploadRuleConfig.ignoreImages !== undefined
+        ? uploadRuleConfig.ignoreImages
+        : this.config.ignoreImages;
+      const skipAudio = uploadRuleConfig.ignoreAudio !== undefined
+        ? uploadRuleConfig.ignoreAudio
+        : this.config.ignoreAudio;
+      const skipVideo = this.config.ignoreVideo;
+      const skipDocuments = this.config.ignoreDocuments;
+
       for (const att of message.attachments.values()) {
         const url = att.url;
         const filename = att.name || "file";
         const ct = (att.contentType || "").toLowerCase();
         const isImage = ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url);
         const isVideo = ct.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi)$/i.test(url);
+        const isAudio = ct.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(url);
+        const isDocument = ct.includes("application/pdf") ||
+          ct.includes("application/msword") ||
+          ct.includes("application/vnd.openxmlformats") ||
+          /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)$/i.test(url);
+
+        // 根据忽略设置跳过特定类型的附件
+        if (skipImages && isImage) {
+          this.logger.debug(`${logPrefix} [FILTER] Skipping image attachment: ${filename}`);
+          continue;
+        }
+        if (skipAudio && isAudio) {
+          this.logger.debug(`${logPrefix} [FILTER] Skipping audio attachment: ${filename}`);
+          continue;
+        }
+        if (skipVideo && isVideo) {
+          this.logger.debug(`${logPrefix} [FILTER] Skipping video attachment: ${filename}`);
+          continue;
+        }
+        if (skipDocuments && isDocument) {
+          this.logger.debug(`${logPrefix} [FILTER] Skipping document attachment: ${filename}`);
+          continue;
+        }
+
         if (isImage) hasCurrentImage = true;
         uploads.push({ url, filename, isImage, isVideo });
       }
