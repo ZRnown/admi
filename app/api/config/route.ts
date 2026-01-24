@@ -632,7 +632,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     ignoreDocuments: dto.ignoreDocuments === true,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
-    feishuStyle: dto.feishuStyle === "style2" ? "style2" : (base.feishuStyle || "style1"),
+    feishuStyle: dto.feishuStyle === "style1" || dto.feishuStyle === "style2" ? dto.feishuStyle : (base.feishuStyle || "style1"),
     // Telegram认证配置保存
     telegramBotToken: typeof dto.telegramBotToken === "string" && dto.telegramBotToken.trim() ? dto.telegramBotToken.trim() : undefined,
     telegramApiId:
