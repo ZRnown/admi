@@ -458,6 +458,8 @@ class TelegramBotManager:
     async def send_message(self, account_id: str, chat_id: int, message: str, attachments: Optional[List[Dict[str, Any]]] = None, parse_mode: Optional[str] = None) -> Dict[str, Any]:
         """发送消息 - 使用 Bot API 而不是 Telethon（避免实体缓存问题）"""
         try:
+            logger.info(f"BotManager.send_message: account_id={account_id}, chat_id={chat_id}, message_len={len(message) if message else 0}, attachments_count={len(attachments) if attachments else 0}")
+
             if account_id not in self.bots:
                 return {
                     "success": False,
@@ -476,6 +478,7 @@ class TelegramBotManager:
 
             # 如果有附件，使用对应的 API 发送
             if attachments and len(attachments) > 0:
+                logger.info(f"Sending media with {len(attachments)} attachments")
                 return await self._send_media_via_bot_api(token, chat_id, message, attachments, parse_mode)
 
             # 没有附件，使用 sendMessage API
