@@ -1259,7 +1259,8 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         let defaultSenderBot = existing.defaultSenderBot;
         let feishuSendersBySource = (existing as any).feishuSendersBySource;
         // 如果映射或翻译配置变化，需要重新构建 SenderBot
-        if (mappingsChanged || translationChanged || relayChanged) {
+        // 注意：ruleConfigChanged 包含 mappings 数组的变化，支持相同源ID多个webhook
+        if (mappingsChanged || ruleConfigChanged || translationChanged || relayChanged) {
           try {
             const built = await buildSenderBots(account, logger);
             senderBotsBySource = built.senderBotsBySource;
@@ -1365,29 +1366,16 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
 
 async function main() {
   const logger = new FileLogger();
-  
+
   // 在启动时先确保文件存在。这是唯一一次允许创建默认文件的机会。
   // 之后的热重载只负责读取，不会创建文件，避免在原子保存间隙时覆盖配置
   await ensureConfigFile();
-  
+
   const multi = await getMultiConfig();
   currentConfig = multi;
 
-  // --- 启动时强制重置登录状态，防止自动登录 ---
-  let needSaveConfig = false;
-  for (const account of multi.accounts) {
-    if (account.loginRequested) {
-      account.loginRequested = false;
-      needSaveConfig = true;
-      await logger.info(`账号 "${account.name}" 登录状态已重置，需要手动点击登录`);
-    }
-  }
-  // 如果有账号被重置，保存配置
-  if (needSaveConfig) {
-    const { saveMultiConfig } = await import("./config.js");
-    await saveMultiConfig(multi);
-    await logger.info("已重置所有账号的登录状态");
-  }
+  // 启动时自动连接所有已配置 loginRequested=true 的账号
+  await logger.info("系统启动，将自动连接所有已配置的账号...");
 
   // 只启动已请求登录的账号，不自动登录
   for (const account of multi.accounts) {

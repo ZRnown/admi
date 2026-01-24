@@ -100,6 +100,7 @@
 
     <footer class="text-center text-slate-400 text-xs py-8">
       <p>Discord Forwarder Management</p>
+      <p class="mt-2">技术支持：Discord: zrnown | Telegram: @momoShuangXiangBot</p>
     </footer>
   </div>
 
@@ -782,9 +783,9 @@
                     class="px-3 py-1.5 text-xs font-medium rounded-md ${acc.telegramBotState === 'connecting' || acc.telegramBotState === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
                     ${acc.telegramBotState === 'connecting' ? '连接中...' : acc.telegramBotState === 'online' ? '已连接' : '连接'}
                   </button>
-                  <button id="btn-tg-bot-disconnect" onclick="disconnectTelegramBot()" ${acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error') ? 'disabled' : ''}
-                    class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                    断开
+                  <button id="btn-tg-bot-disconnect" onclick="disconnectTelegramBot()" ${acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error' && acc.telegramBotState !== 'connecting' ? 'disabled' : ''}
+                    class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error' && acc.telegramBotState !== 'connecting' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                    ${acc.telegramBotState === 'connecting' ? '中断' : '断开'}
                   </button>
                 </div>
                 <div class="text-xs text-slate-500 mt-1">
@@ -866,9 +867,9 @@
                     class="flex-1 px-3 py-2 text-sm font-medium rounded-md ${acc.telegramClientState === 'connecting' || acc.telegramClientState === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
                     ${acc.telegramClientState === 'connecting' ? '连接中...' : acc.telegramClientState === 'online' ? '已连接' : '连接'}
                   </button>
-                  <button id="btn-tg-client-disconnect" onclick="disconnectTelegramClient()" ${acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error') ? 'disabled' : ''}
-                    class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-slate-200 ${acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                    断开
+                  <button id="btn-tg-client-disconnect" onclick="disconnectTelegramClient()" ${acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error' && acc.telegramClientState !== 'connecting' ? 'disabled' : ''}
+                    class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-slate-200 ${acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error' && acc.telegramClientState !== 'connecting' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                    ${acc.telegramClientState === 'connecting' ? '中断' : '断开'}
                   </button>
                 </div>
                 <div class="text-xs text-slate-500 mt-2">
@@ -3082,7 +3083,7 @@
     // Telegram Bot 断开函数
     async function disconnectTelegramBot() {
       const acc = getActiveAccount();
-      if (acc.telegramBotState === 'connecting' || (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error')) return;
+      if (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error' && acc.telegramBotState !== 'connecting') return;
 
       acc.telegramBotState = 'idle';
       acc.telegramBotMessage = '正在断开...';
@@ -3156,7 +3157,7 @@
     // Telegram Client 断开函数
     async function disconnectTelegramClient() {
       const acc = getActiveAccount();
-      if (acc.telegramClientState === 'connecting' || (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error')) return;
+      if (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error' && acc.telegramClientState !== 'connecting') return;
 
       acc.telegramClientState = 'idle';
       acc.telegramClientMessage = '正在断开...';
