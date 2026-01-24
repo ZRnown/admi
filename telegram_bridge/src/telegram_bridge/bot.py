@@ -474,7 +474,11 @@ class TelegramBotManager:
                     "message": "Bot token not found"
                 }
 
-            # 使用 Bot API 发送消息
+            # 如果有附件，使用对应的 API 发送
+            if attachments and len(attachments) > 0:
+                return await self._send_media_via_bot_api(token, chat_id, message, attachments, parse_mode)
+
+            # 没有附件，使用 sendMessage API
             return await self._send_message_via_bot_api(token, chat_id, message, parse_mode)
 
         except Exception as e:
@@ -515,6 +519,73 @@ class TelegramBotManager:
                         }
         except Exception as e:
             logger.error(f"Failed to send message via Bot API: {e}")
+            return {
+                "success": False,
+                "error": "BOT_API_REQUEST_FAILED",
+                "message": str(e)
+            }
+
+    async def _send_media_via_bot_api(self, token: str, chat_id: int, caption: str, attachments: List[Dict[str, Any]], parse_mode: Optional[str] = None) -> Dict[str, Any]:
+        """使用 Telegram Bot API 发送媒体消息"""
+        try:
+            # 获取第一个附件
+            attachment = attachments[0]
+            media_type = attachment.get("type", "document")
+            media_url = attachment.get("url")
+
+            if not media_url:
+                logger.error("No media URL provided")
+                return {
+                    "success": False,
+                    "error": "NO_MEDIA_URL",
+                    "message": "No media URL provided"
+                }
+
+            # 根据媒体类型选择 API
+            if media_type == "photo":
+                api_method = "sendPhoto"
+                media_key = "photo"
+            elif media_type == "video":
+                api_method = "sendVideo"
+                media_key = "video"
+            elif media_type == "audio":
+                api_method = "sendAudio"
+                media_key = "audio"
+            else:
+                api_method = "sendDocument"
+                media_key = "document"
+
+            url = f"https://api.telegram.org/bot{token}/{api_method}"
+            payload = {
+                "chat_id": chat_id,
+                media_key: media_url
+            }
+
+            # caption 可以为空
+            if caption:
+                payload["caption"] = caption
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload) as resp:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        logger.info(f"Media sent via Bot API ({api_method}) to chat_id {chat_id}")
+                        return {
+                            "success": True,
+                            "messageId": data["result"]["message_id"]
+                        }
+                    else:
+                        error_msg = data.get("description", "Unknown error")
+                        logger.error(f"Bot API error ({api_method}): {error_msg}")
+                        return {
+                            "success": False,
+                            "error": "BOT_API_ERROR",
+                            "message": error_msg
+                        }
+        except Exception as e:
+            logger.error(f"Failed to send media via Bot API: {e}")
             return {
                 "success": False,
                 "error": "BOT_API_REQUEST_FAILED",
