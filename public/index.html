@@ -2977,32 +2977,38 @@
     // 自动检查 Telegram Bot 连接状态（页面加载时调用）
     async function autoCheckTelegramBotStatus() {
       for (const acc of state.accounts) {
-        // 检查是否有 Token 和转发规则
-        if (acc.telegramBotToken && acc.telegramBotToken.trim() !== '') {
-          const telegramMappings = acc.telegramConfig?.mappings || [];
-          const hasDiscordToTelegramMapping = telegramMappings.some(m => m.type === 'discord-to-telegram');
+        // 检查是否有 Token
+        if (!acc.telegramBotToken || acc.telegramBotToken.trim() === '') {
+          // 没有 token，不自动连接，设置为 idle
+          acc.telegramBotState = 'idle';
+          acc.telegramBotMessage = '';
+          continue;
+        }
 
-          // 只有配置了转发规则才自动检查状态
-          if (!hasDiscordToTelegramMapping) {
-            acc.telegramBotState = 'idle';
-            continue;
-          }
+        // 检查是否有转发规则
+        const telegramMappings = acc.telegramConfig?.mappings || [];
+        const hasDiscordToTelegramMapping = telegramMappings.some(m => m.type === 'discord-to-telegram');
 
-          try {
-            const res = await fetch('/api/telegram/bot/connect', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ accountId: acc.id })
-            });
-            const data = await res.json();
-            acc.telegramBotState = data.state || (res.ok ? 'online' : 'error');
-            if (data.message) {
-              acc.telegramBotMessage = data.message;
-            }
-          } catch (e) {
-            acc.telegramBotState = 'error';
-            acc.telegramBotMessage = '连接检查失败';
+        // 只有配置了转发规则才自动连接
+        if (!hasDiscordToTelegramMapping) {
+          acc.telegramBotState = 'idle';
+          continue;
+        }
+
+        try {
+          const res = await fetch('/api/telegram/bot/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId: acc.id })
+          });
+          const data = await res.json();
+          acc.telegramBotState = data.state || (res.ok ? 'online' : 'error');
+          if (data.message) {
+            acc.telegramBotMessage = data.message;
           }
+        } catch (e) {
+          acc.telegramBotState = 'error';
+          acc.telegramBotMessage = '连接检查失败';
         }
       }
     }

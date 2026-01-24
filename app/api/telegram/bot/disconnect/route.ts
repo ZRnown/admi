@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMultiConfig, saveMultiConfig } from "@/src/config";
+import { getBridgeClient } from "../_lib/bridgeClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +31,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Telegram Bot Token 是无状态的，断开只是一个状态标记
+    // 通知 Telegram Bridge 断开连接
+    try {
+      const client = await getBridgeClient();
+      await client.disconnectBot(botStatusId);
+    } catch (e) {
+      // 忽略断开错误，可能 Bridge 未运行
+      console.log("[Telegram Bot Disconnect] Bridge disconnect error:", e);
+    }
+
     return NextResponse.json({
       state: 'idle',
       message: '已断开',
