@@ -91,10 +91,18 @@ export interface RuleLevelConfig {
   replacementsDictionary?: Record<string, string>;
   // 使用源用户的昵称和头像（规则级别）
   showSourceIdentity?: boolean;
+  // 忽略自己的消息（规则级别）
+  ignoreSelf?: boolean;
+  // 忽略机器人消息（规则级别）
+  ignoreBot?: boolean;
   // 忽略图片（规则级别）
   ignoreImages?: boolean;
   // 忽略音频（规则级别）
   ignoreAudio?: boolean;
+  // 忽略视频（规则级别）
+  ignoreVideo?: boolean;
+  // 忽略文档（规则级别）
+  ignoreDocuments?: boolean;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -396,8 +404,12 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ocrBlockedKeywords: [],
       replacementsDictionary: {},
       showSourceIdentity: undefined,
+      ignoreSelf: undefined,
+      ignoreBot: undefined,
       ignoreImages: undefined,
       ignoreAudio: undefined,
+      ignoreVideo: undefined,
+      ignoreDocuments: undefined,
     };
   }
   return {
@@ -411,8 +423,12 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         ? raw.replacementsDictionary
         : {},
     showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
+    ignoreSelf: raw.ignoreSelf === true ? true : undefined,
+    ignoreBot: raw.ignoreBot === true ? true : undefined,
     ignoreImages: raw.ignoreImages === true ? true : undefined,
     ignoreAudio: raw.ignoreAudio === true ? true : undefined,
+    ignoreVideo: raw.ignoreVideo === true ? true : undefined,
+    ignoreDocuments: raw.ignoreDocuments === true ? true : undefined,
   };
 }
 
@@ -495,6 +511,13 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         excludeKeywords: Array.isArray(m.excludeKeywords) ? m.excludeKeywords : [],
         ocrBlockedKeywords: Array.isArray(m.ocrBlockedKeywords) ? m.ocrBlockedKeywords : [],
         replacementsDictionary: typeof m.replacementsDictionary === 'object' && m.replacementsDictionary ? m.replacementsDictionary : {},
+        // 规则级别忽略配置
+        ignoreSelf: m.ignoreSelf === true ? true : undefined,
+        ignoreBot: m.ignoreBot === true ? true : undefined,
+        ignoreImages: m.ignoreImages === true ? true : undefined,
+        ignoreAudio: m.ignoreAudio === true ? true : undefined,
+        ignoreVideo: m.ignoreVideo === true ? true : undefined,
+        ignoreDocuments: m.ignoreDocuments === true ? true : undefined,
       }))
     : [];
 

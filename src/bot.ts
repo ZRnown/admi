@@ -249,8 +249,12 @@ export class Bot {
     excludeKeywords: string[];
     ocrBlockedKeywords: string[];
     replacementsDictionary: Record<string, string>;
+    ignoreSelf?: boolean;
+    ignoreBot?: boolean;
     ignoreImages?: boolean;
     ignoreAudio?: boolean;
+    ignoreVideo?: boolean;
+    ignoreDocuments?: boolean;
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
@@ -276,8 +280,12 @@ export class Bot {
         excludeKeywords: [],
         ocrBlockedKeywords: [],
         replacementsDictionary: {},
+        ignoreSelf: undefined,
+        ignoreBot: undefined,
         ignoreImages: undefined,
         ignoreAudio: undefined,
+        ignoreVideo: undefined,
+        ignoreDocuments: undefined,
       };
     }
     return {
@@ -287,8 +295,12 @@ export class Bot {
       excludeKeywords: (rule.excludeKeywords || []).filter(Boolean),
       ocrBlockedKeywords: (rule.ocrBlockedKeywords || []).filter(Boolean),
       replacementsDictionary: rule.replacementsDictionary || {},
+      ignoreSelf: rule.ignoreSelf,
+      ignoreBot: rule.ignoreBot,
       ignoreImages: rule.ignoreImages,
       ignoreAudio: rule.ignoreAudio,
+      ignoreVideo: rule.ignoreVideo,
+      ignoreDocuments: rule.ignoreDocuments,
     };
   }
 
@@ -424,31 +436,38 @@ export class Bot {
     
     // 详细记录消息信息
     const logPrefix = isWebhook ? `[WEBHOOK]` : `[USER]`;
-    const authorInfo = isWebhook 
+    const authorInfo = isWebhook
       ? `webhookId=${webhookId} webhookName="${webhookName}"`
       : `authorId=${message.author?.id} authorTag="${message.author?.tag || message.author?.username || "unknown"}"`;
-    
+
     this.logger.info(`${logPrefix} [START] Processing message: channel=${message.channelId} id=${message.id} ${authorInfo}`);
     this.logger.info(`${logPrefix} [CONTENT] content="${(message.content || "").substring(0, 200)}" contentLength=${message.content?.length || 0} embeds=${message.embeds?.length || 0} attachments=${message.attachments?.size || 0}`);
-    
-    // 忽略选项检查
+
+    // 获取规则级别的忽略配置（提前获取，用于所有忽略检查）
+    const ignoreRuleConfig = this.getRuleLevelConfig(message.channelId);
+
+    // 忽略选项检查（规则级别优先，未设置则使用全局设置）
     try {
       // 忽略自己的消息
-      if (this.config.ignoreSelf && message.author?.id === (this.client as any).user?.id) {
-        this.logger.info(`${logPrefix} [SKIP] Ignoring own message (ignoreSelf=true)`);
+      const shouldIgnoreSelf = ignoreRuleConfig.ignoreSelf !== undefined
+        ? ignoreRuleConfig.ignoreSelf
+        : this.config.ignoreSelf;
+      if (shouldIgnoreSelf && message.author?.id === (this.client as any).user?.id) {
+        this.logger.info(`${logPrefix} [SKIP] Ignoring own message (ignoreSelf=true, rule=${ignoreRuleConfig.ignoreSelf})`);
         return;
       }
-      
+
       // 忽略机器人消息
-      if (this.config.ignoreBot && (message.author?.bot || isWebhook)) {
-        this.logger.info(`${logPrefix} [SKIP] Ignoring bot/webhook message (ignoreBot=true)`);
+      const shouldIgnoreBot = ignoreRuleConfig.ignoreBot !== undefined
+        ? ignoreRuleConfig.ignoreBot
+        : this.config.ignoreBot;
+      if (shouldIgnoreBot && (message.author?.bot || isWebhook)) {
+        this.logger.info(`${logPrefix} [SKIP] Ignoring bot/webhook message (ignoreBot=true, rule=${ignoreRuleConfig.ignoreBot})`);
         return;
       }
 
       // 检查附件类型并忽略（全局 + 规则级别）
       if (message.attachments && message.attachments.size > 0) {
-        // 获取规则级别的忽略配置
-        const ignoreRuleConfig = this.getRuleLevelConfig(message.channelId);
         // 规则级别设置优先，如果规则级别未设置则使用全局设置
         const shouldIgnoreImages = ignoreRuleConfig.ignoreImages !== undefined
           ? ignoreRuleConfig.ignoreImages
@@ -456,8 +475,12 @@ export class Bot {
         const shouldIgnoreAudio = ignoreRuleConfig.ignoreAudio !== undefined
           ? ignoreRuleConfig.ignoreAudio
           : this.config.ignoreAudio;
-        const shouldIgnoreVideo = this.config.ignoreVideo;
-        const shouldIgnoreDocuments = this.config.ignoreDocuments;
+        const shouldIgnoreVideo = ignoreRuleConfig.ignoreVideo !== undefined
+          ? ignoreRuleConfig.ignoreVideo
+          : this.config.ignoreVideo;
+        const shouldIgnoreDocuments = ignoreRuleConfig.ignoreDocuments !== undefined
+          ? ignoreRuleConfig.ignoreDocuments
+          : this.config.ignoreDocuments;
 
         for (const att of message.attachments.values()) {
           const ct = (att.contentType || "").toLowerCase();

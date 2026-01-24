@@ -102,6 +102,13 @@ interface FrontendMapping {
   excludeKeywords?: string[];
   ocrBlockedKeywords?: string[];
   replacementsDictionary?: Record<string, string>;
+  // 规则级别的忽略配置
+  ignoreSelf?: boolean;
+  ignoreBot?: boolean;
+  ignoreImages?: boolean;
+  ignoreAudio?: boolean;
+  ignoreVideo?: boolean;
+  ignoreDocuments?: boolean;
 }
 
 interface FrontendAccount {
@@ -217,8 +224,12 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ocrBlockedKeywords: [],
       replacementsDictionary: {},
       showSourceIdentity: undefined,
+      ignoreSelf: undefined,
+      ignoreBot: undefined,
       ignoreImages: undefined,
       ignoreAudio: undefined,
+      ignoreVideo: undefined,
+      ignoreDocuments: undefined,
     };
   }
   return {
@@ -232,8 +243,12 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         ? raw.replacementsDictionary
         : {},
     showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
+    ignoreSelf: raw.ignoreSelf === true ? true : undefined,
+    ignoreBot: raw.ignoreBot === true ? true : undefined,
     ignoreImages: raw.ignoreImages === true ? true : undefined,
     ignoreAudio: raw.ignoreAudio === true ? true : undefined,
+    ignoreVideo: raw.ignoreVideo === true ? true : undefined,
+    ignoreDocuments: raw.ignoreDocuments === true ? true : undefined,
   };
 }
 
@@ -318,6 +333,13 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         excludeKeywords: savedRule.excludeKeywords || [],
         ocrBlockedKeywords: savedRule.ocrBlockedKeywords || [],
         replacementsDictionary: savedRule.replacementsDictionary || {},
+        // 规则级别的忽略配置
+        ignoreSelf: savedRule.ignoreSelf,
+        ignoreBot: savedRule.ignoreBot,
+        ignoreImages: savedRule.ignoreImages,
+        ignoreAudio: savedRule.ignoreAudio,
+        ignoreVideo: savedRule.ignoreVideo,
+        ignoreDocuments: savedRule.ignoreDocuments,
       });
     }
   } else {
@@ -501,6 +523,13 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           excludeKeywords: mapping.excludeKeywords || [],
           ocrBlockedKeywords: mapping.ocrBlockedKeywords || [],
           replacementsDictionary: mapping.replacementsDictionary || {},
+          // 规则级别的忽略配置
+          ignoreSelf: mapping.ignoreSelf,
+          ignoreBot: mapping.ignoreBot,
+          ignoreImages: mapping.ignoreImages,
+          ignoreAudio: mapping.ignoreAudio,
+          ignoreVideo: mapping.ignoreVideo,
+          ignoreDocuments: mapping.ignoreDocuments,
         });
       }
     }

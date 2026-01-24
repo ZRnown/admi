@@ -194,8 +194,16 @@
 
         <!-- 忽略媒体选项 -->
         <div class="border border-slate-200 rounded-lg p-4">
-          <h3 class="font-medium text-slate-800 mb-3">忽略媒体（覆盖全局设置）</h3>
+          <h3 class="font-medium text-slate-800 mb-3">忽略选项（覆盖全局设置）</h3>
           <div class="flex flex-wrap gap-4">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleIgnoreSelf" class="h-4 w-4 rounded border-slate-300">
+              忽略自己的消息
+            </label>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleIgnoreBot" class="h-4 w-4 rounded border-slate-300">
+              忽略机器人消息
+            </label>
             <label class="inline-flex items-center gap-2 text-sm text-slate-700">
               <input type="checkbox" id="ruleIgnoreImages" class="h-4 w-4 rounded border-slate-300">
               忽略图片
@@ -204,8 +212,16 @@
               <input type="checkbox" id="ruleIgnoreAudio" class="h-4 w-4 rounded border-slate-300">
               忽略音频
             </label>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleIgnoreVideo" class="h-4 w-4 rounded border-slate-300">
+              忽略视频
+            </label>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleIgnoreDocuments" class="h-4 w-4 rounded border-slate-300">
+              忽略文档
+            </label>
           </div>
-          <p class="text-xs text-slate-500 mt-2">勾选后，此规则将忽略对应类型的媒体附件</p>
+          <p class="text-xs text-slate-500 mt-2">勾选后，此规则将忽略对应类型的消息或附件</p>
         </div>
 
         <!-- 用户过滤 -->
@@ -1858,15 +1874,23 @@
         ocrBlockedKeywords: [...(mapping.ocrBlockedKeywords || [])],
         replacements: Object.entries(mapping.replacementsDictionary || {}).map(([k, v]) => ({ from: k, to: v })),
         showSourceIdentity: mapping.showSourceIdentity === true,
+        ignoreSelf: mapping.ignoreSelf === true,
+        ignoreBot: mapping.ignoreBot === true,
         ignoreImages: mapping.ignoreImages === true,
-        ignoreAudio: mapping.ignoreAudio === true
+        ignoreAudio: mapping.ignoreAudio === true,
+        ignoreVideo: mapping.ignoreVideo === true,
+        ignoreDocuments: mapping.ignoreDocuments === true
       };
 
       // 设置显示源用户选项
       document.getElementById('ruleShowSourceIdentity').checked = ruleConfigData.showSourceIdentity;
-      // 设置忽略媒体选项
+      // 设置忽略选项
+      document.getElementById('ruleIgnoreSelf').checked = ruleConfigData.ignoreSelf;
+      document.getElementById('ruleIgnoreBot').checked = ruleConfigData.ignoreBot;
       document.getElementById('ruleIgnoreImages').checked = ruleConfigData.ignoreImages;
       document.getElementById('ruleIgnoreAudio').checked = ruleConfigData.ignoreAudio;
+      document.getElementById('ruleIgnoreVideo').checked = ruleConfigData.ignoreVideo;
+      document.getElementById('ruleIgnoreDocuments').checked = ruleConfigData.ignoreDocuments;
 
       // 渲染所有标签
       renderRuleTags('allowedUsersIds');
@@ -1946,9 +1970,13 @@
       // 保存显示源用户选项
       mapping.showSourceIdentity = document.getElementById('ruleShowSourceIdentity').checked || undefined;
 
-      // 保存忽略媒体选项
+      // 保存忽略选项
+      mapping.ignoreSelf = document.getElementById('ruleIgnoreSelf').checked || undefined;
+      mapping.ignoreBot = document.getElementById('ruleIgnoreBot').checked || undefined;
       mapping.ignoreImages = document.getElementById('ruleIgnoreImages').checked || undefined;
       mapping.ignoreAudio = document.getElementById('ruleIgnoreAudio').checked || undefined;
+      mapping.ignoreVideo = document.getElementById('ruleIgnoreVideo').checked || undefined;
+      mapping.ignoreDocuments = document.getElementById('ruleIgnoreDocuments').checked || undefined;
 
       // 超长消息处理（仅 DC→TG）
       if (currentRuleConfigType === 'discord-to-telegram') {
