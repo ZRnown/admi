@@ -6,6 +6,7 @@ Telegram机器人管理器
 import asyncio
 import os
 import time
+import aiohttp
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from telethon import TelegramClient, events
@@ -21,6 +22,7 @@ class TelegramBotManager:
 
     def __init__(self, reconnect_config: Optional[ReconnectConfig] = None):
         self.bots: Dict[str, TelegramClient] = {}
+        self.bot_tokens: Dict[str, str] = {}  # 保存 bot token 用于 Bot API 调用
         self.message_handlers: Dict[str, callable] = {}
         self.connection_manager = ConnectionManager(reconnect_config or ReconnectConfig())
         self.media_handler = MediaHandler()
@@ -263,6 +265,7 @@ class TelegramBotManager:
 
                 # 保存机器人和账号配置（用于重连）
                 self.bots[account_id] = client
+                self.bot_tokens[account_id] = account.token  # 保存 token 用于 Bot API
                 self._account_configs[account_id] = account
 
                 # 更新连接状态
@@ -447,7 +450,7 @@ class TelegramBotManager:
             }
 
     async def send_message(self, account_id: str, chat_id: int, message: str, attachments: Optional[List[Dict[str, Any]]] = None, parse_mode: Optional[str] = None) -> Dict[str, Any]:
-        """发送消息"""
+        """发送消息 - 使用 Bot API 而不是 Telethon（避免实体缓存问题）"""
         try:
             if account_id not in self.bots:
                 return {
@@ -456,59 +459,59 @@ class TelegramBotManager:
                     "message": "Bot not connected"
                 }
 
-            bot = self.bots[account_id]
+            # 获取 bot token
+            token = self.bot_tokens.get(account_id)
+            if not token:
+                return {
+                    "success": False,
+                    "error": "TOKEN_NOT_FOUND",
+                    "message": "Bot token not found"
+                }
 
-            # 先尝试获取实体，解决 "Could not find the input entity" 问题
-            # Telethon 需要先"认识"一个频道才能发送消息
-            entity = None
-            try:
-                entity = await bot.get_entity(chat_id)
-                logger.debug(f"Got entity for chat_id {chat_id}: {type(entity).__name__}")
-            except Exception as e:
-                logger.warning(f"First attempt to get entity failed for chat_id {chat_id}: {e}")
-                # 尝试刷新对话列表来获取实体缓存
-                try:
-                    logger.info(f"Refreshing dialogs to find entity for chat_id {chat_id}...")
-                    dialogs = await bot.get_dialogs()
-                    logger.info(f"Got {len(dialogs)} dialogs, retrying get_entity...")
-                    entity = await bot.get_entity(chat_id)
-                    logger.info(f"Successfully got entity after refresh: {type(entity).__name__}")
-                except Exception as e2:
-                    logger.error(f"Failed to get entity after refresh for chat_id {chat_id}: {e2}")
-                    return {
-                        "success": False,
-                        "error": "ENTITY_NOT_FOUND",
-                        "message": f"无法找到目标频道/群组。请确保 Bot 已被添加到该频道/群组并具有发送消息权限。错误: {e2}"
-                    }
-
-            # 处理附件
-            if attachments:
-                for attachment in attachments:
-                    result = await self._send_media_attachment(
-                        bot, entity, attachment, message if message else None
-                    )
-                    if result["success"]:
-                        return result  # 只发送第一个附件
-                    else:
-                        logger.error(f"Failed to send media attachment: {result['error']}")
-
-            # 发送文本消息
-            kwargs = {}
-            if parse_mode:
-                kwargs["parse_mode"] = parse_mode
-
-            result = await bot.send_message(entity, message, **kwargs)
-
-            return {
-                "success": True,
-                "messageId": result.id
-            }
+            # 使用 Bot API 发送消息
+            return await self._send_message_via_bot_api(token, chat_id, message, parse_mode)
 
         except Exception as e:
             logger.error(f"Failed to send message for bot {account_id}: {e}")
             return {
                 "success": False,
                 "error": "SEND_MESSAGE_FAILED",
+                "message": str(e)
+            }
+
+    async def _send_message_via_bot_api(self, token: str, chat_id: int, text: str, parse_mode: Optional[str] = None) -> Dict[str, Any]:
+        """使用 Telegram Bot API 发送消息"""
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload) as resp:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        logger.info(f"Message sent via Bot API to chat_id {chat_id}")
+                        return {
+                            "success": True,
+                            "messageId": data["result"]["message_id"]
+                        }
+                    else:
+                        error_msg = data.get("description", "Unknown error")
+                        logger.error(f"Bot API error: {error_msg}")
+                        return {
+                            "success": False,
+                            "error": "BOT_API_ERROR",
+                            "message": error_msg
+                        }
+        except Exception as e:
+            logger.error(f"Failed to send message via Bot API: {e}")
+            return {
+                "success": False,
+                "error": "BOT_API_REQUEST_FAILED",
                 "message": str(e)
             }
 
