@@ -298,27 +298,48 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
   // 获取后端保存的详细映射规则列表
   const savedMappings = (account as any).mappings || [];
 
-  for (const [channelId, webhookUrl] of Object.entries(account.channelWebhooks || {})) {
-    // 尝试找到对应的保存规则
-    const savedRule = savedMappings.find((m: any) => m.sourceChannelId === channelId);
-
-    mappings.push({
-      id: savedRule?.id || channelId,
-      sourceChannelId: channelId,
-      targetWebhookUrl: webhookUrl,
-      note: account.channelNotes?.[channelId],
-      translateDirection: !account.enableTranslation
-        ? "off"
-        : (channelTranslateDirection[channelId] as any) || "auto",
-      longMessage: (account as any).channelLongMessage?.[channelId] || { enabled: false },
-      // 恢复规则级别的配置
-      allowedUsersIds: (savedRule?.allowedUsersIds || []).map(String),
-      mutedUsersIds: (savedRule?.mutedUsersIds || []).map(String),
-      blockedKeywords: savedRule?.blockedKeywords || [],
-      excludeKeywords: savedRule?.excludeKeywords || [],
-      ocrBlockedKeywords: savedRule?.ocrBlockedKeywords || [],
-      replacementsDictionary: savedRule?.replacementsDictionary || {},
-    });
+  // 优先使用 savedMappings 数组（支持相同源ID的多个规则）
+  if (savedMappings.length > 0) {
+    for (const savedRule of savedMappings) {
+      if (!savedRule?.sourceChannelId || !savedRule?.targetWebhookUrl) continue;
+      const channelId = String(savedRule.sourceChannelId);
+      mappings.push({
+        id: savedRule.id || channelId,
+        sourceChannelId: channelId,
+        targetWebhookUrl: String(savedRule.targetWebhookUrl),
+        note: savedRule.note || account.channelNotes?.[channelId],
+        translateDirection: !account.enableTranslation
+          ? "off"
+          : savedRule.translateDirection || (channelTranslateDirection[channelId] as any) || "auto",
+        longMessage: savedRule.longMessage || (account as any).channelLongMessage?.[channelId] || { enabled: false },
+        allowedUsersIds: (savedRule.allowedUsersIds || []).map(String),
+        mutedUsersIds: (savedRule.mutedUsersIds || []).map(String),
+        blockedKeywords: savedRule.blockedKeywords || [],
+        excludeKeywords: savedRule.excludeKeywords || [],
+        ocrBlockedKeywords: savedRule.ocrBlockedKeywords || [],
+        replacementsDictionary: savedRule.replacementsDictionary || {},
+      });
+    }
+  } else {
+    // 兼容旧数据：从 channelWebhooks 对象读取
+    for (const [channelId, webhookUrl] of Object.entries(account.channelWebhooks || {})) {
+      mappings.push({
+        id: channelId,
+        sourceChannelId: channelId,
+        targetWebhookUrl: webhookUrl,
+        note: account.channelNotes?.[channelId],
+        translateDirection: !account.enableTranslation
+          ? "off"
+          : (channelTranslateDirection[channelId] as any) || "auto",
+        longMessage: (account as any).channelLongMessage?.[channelId] || { enabled: false },
+        allowedUsersIds: [],
+        mutedUsersIds: [],
+        blockedKeywords: [],
+        excludeKeywords: [],
+        ocrBlockedKeywords: [],
+        replacementsDictionary: {},
+      });
+    }
   }
   const replacements = Object.entries(account.replacementsDictionary || {}).map(([from, to]) => ({
     from,
