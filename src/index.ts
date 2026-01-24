@@ -255,7 +255,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   );
 
   // 如果没有配置任何转发规则（Discord/Feishu/Telegram），且 Discord 转发未关闭，则报错
-  if (!defaultSenderBot && account.enableDiscordForward !== false && !hasTelegramMappings) {
+  if (!defaultSenderBot && !hasFeishuWebhooks && account.enableDiscordForward !== false && !hasTelegramMappings) {
     throw new Error("At least one forwarding rule must be configured (Discord webhook, Feishu webhook, or Telegram mapping).");
   }
 

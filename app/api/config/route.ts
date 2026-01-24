@@ -750,3 +750,42 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
   }
 }
+
+export async function PUT(req: NextRequest) {
+  try {
+    const body = await req.json();
+
+    // 验证配置格式
+    if (!body?.accounts || !Array.isArray(body.accounts)) {
+      return NextResponse.json({ error: "配置格式错误：缺少 accounts 数组" }, { status: 400 });
+    }
+
+    // 转换前端格式到后端格式
+    const accounts = (body.accounts as FrontendAccount[]).map((acc) => {
+      return dtoToAccount(acc);
+    });
+
+    const activeId = typeof body.activeId === "string" ? body.activeId : accounts[0]?.id;
+
+    const next: MultiConfig = {
+      accounts,
+      activeId,
+      loginUser: typeof body.loginUser === "string" ? body.loginUser : undefined,
+      loginPassword: typeof body.loginPassword === "string" ? body.loginPassword : undefined,
+      telegramAvatarBaseUrl: typeof body.telegramAvatarBaseUrl === "string" ? body.telegramAvatarBaseUrl.trim() : undefined,
+      enabledForwardingTypes: Array.isArray(body.enabledForwardingTypes) ? body.enabledForwardingTypes : undefined,
+    };
+
+    await saveMultiConfig(next);
+
+    // 触发配置重载
+    try {
+      await fs.mkdir(path.dirname(triggerFile), { recursive: true });
+      await fs.writeFile(triggerFile, Date.now().toString(), "utf-8");
+    } catch {}
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
+  }
+}

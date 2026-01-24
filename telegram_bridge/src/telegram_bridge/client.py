@@ -59,17 +59,31 @@ class TelegramClientManager:
     async def _disconnect_client(self, account_id: str) -> Dict[str, Any]:
         """断开Telegram客户端连接（内部方法，不处理锁）"""
         try:
+            # 先取消注册状态回调，避免断开时触发自动重连导致闪烁
+            self.connection_manager.unregister_status_callback(account_id)
+
             # 停止重连
             await self.connection_manager.stop_reconnect(account_id)
             await self._stop_update_task(account_id)
             await self._stop_keepalive_task(account_id)
 
+            # 清除所有缓存
+            if account_id in self._account_configs:
+                del self._account_configs[account_id]
+            if account_id in self._watched_chats:
+                del self._watched_chats[account_id]
+            if account_id in self._entity_cache:
+                del self._entity_cache[account_id]
+
             if account_id in self.clients:
                 client = self.clients[account_id]
-                await client.disconnect()
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass  # 忽略断开时的错误
                 del self.clients[account_id]
 
-            # 更新连接状态
+            # 更新连接状态（不会触发回调，因为已取消注册）
             self.connection_manager.update_state(account_id, ConnectionStatus.DISCONNECTED)
 
             logger.info(f"Telegram client disconnected for account {account_id}")
