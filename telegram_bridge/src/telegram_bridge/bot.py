@@ -316,6 +316,12 @@ class TelegramBotManager:
             await self._stop_update_task(account_id)
             await self._stop_keepalive_task(account_id)
 
+            # 清除旧配置，防止自动重连使用旧配置
+            if account_id in self._account_configs:
+                del self._account_configs[account_id]
+            if account_id in self.bot_tokens:
+                del self.bot_tokens[account_id]
+
             if account_id in self.bots:
                 bot = self.bots[account_id]
                 await bot.disconnect()
