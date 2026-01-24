@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMultiConfig, saveMultiConfig } from "@/src/config";
-import { getBridgeClient } from "../_lib/bridgeClient";
+import { getBridgeClient } from "../../_lib/bridgeClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
