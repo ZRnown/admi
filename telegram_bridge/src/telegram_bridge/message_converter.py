@@ -392,11 +392,12 @@ class DiscordToTelegramConverter(MessageConverter):
         """映射Discord附件类型到Telegram类型"""
         content_type = attachment.get("contentType", "").lower()
 
-        if content_type.startswith("image/"):
+        # 支持标准 MIME 类型 (image/png) 和简化类型 (image)
+        if content_type.startswith("image/") or content_type == "image":
             return "photo"
-        elif content_type.startswith("video/"):
+        elif content_type.startswith("video/") or content_type == "video":
             return "video"
-        elif content_type.startswith("audio/"):
+        elif content_type.startswith("audio/") or content_type == "audio":
             return "audio"
         else:
             return "document"
