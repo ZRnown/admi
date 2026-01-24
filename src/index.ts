@@ -29,7 +29,7 @@ interface RunningAccount {
   account: AccountConfig;
   client: Client;
   bot: Bot;
-  senderBotsBySource: Map<string, SenderBot>;
+  senderBotsBySource: Map<string, SenderBot[]>;  // 支持相同源ID对应多个webhook
   defaultSenderBot?: SenderBot; // 如果关闭 Discord 转发，可能为 undefined
   feishuSendersBySource?: Map<string, any>;
   isManuallyStopped: boolean; // 标记是否手动停止
@@ -155,12 +155,12 @@ function buildDiscordLoginMessage(user: any, fallback: string): string {
 
 async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const env = getEnv();
-  const senderBotsBySource = new Map<string, SenderBot>();
+  // 修改为数组类型，支持相同源ID对应多个webhook
+  const senderBotsBySource = new Map<string, SenderBot[]>();
   const feishuSendersBySource = new Map<string, FeishuSender>();
   let defaultSenderBot: SenderBot | undefined;
   const prepares: Promise<any>[] = [];
 
-  const webhooks = account.enableDiscordForward !== false ? (account.channelWebhooks || {}) : {};
   const feishuWebhooks = account.enableFeishuForward ? account.channelFeishuWebhooks || {} : {};
   const replacements = account.replacementsDictionary || {};
   const proxy = account.proxyUrl || env.PROXY_URL;
@@ -174,26 +174,61 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
   const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
 
-  if (Object.keys(webhooks).length > 0) {
-    for (const [channelId, webhookUrl] of Object.entries(webhooks)) {
-      const relayId = account.channelRelayMap?.[channelId];
-      const relayToken = relayId ? relayById.get(relayId)?.token?.trim() : undefined;
-      const useRelay = enableBotRelay && !!relayToken;
-      const sb = new SenderBot({
-        replacementsDictionary: replacements,
-        webhookUrl,
-        httpAgent,
-        enableTranslation,
-        deepseekApiKey,
-        translationProvider,
-        translationApiKey,
-        translationSecret,
-        enableBotRelay: useRelay,
-        botRelayToken: relayToken,
-      });
-      prepares.push(sb.prepare());
-      senderBotsBySource.set(channelId, sb);
-      if (!defaultSenderBot) defaultSenderBot = sb;
+  // 优先使用 mappings 数组（支持相同源ID的多个规则）
+  const mappings = (account as any).mappings || [];
+  const webhooks = account.enableDiscordForward !== false ? (account.channelWebhooks || {}) : {};
+
+  if (account.enableDiscordForward !== false) {
+    if (mappings.length > 0) {
+      // 使用 mappings 数组构建（支持相同源ID多个webhook）
+      for (const mapping of mappings) {
+        if (!mapping?.sourceChannelId || !mapping?.targetWebhookUrl) continue;
+        const channelId = String(mapping.sourceChannelId);
+        const webhookUrl = String(mapping.targetWebhookUrl);
+        const relayId = account.channelRelayMap?.[channelId];
+        const relayToken = relayId ? relayById.get(relayId)?.token?.trim() : undefined;
+        const useRelay = enableBotRelay && !!relayToken;
+        const sb = new SenderBot({
+          replacementsDictionary: replacements,
+          webhookUrl,
+          httpAgent,
+          enableTranslation,
+          deepseekApiKey,
+          translationProvider,
+          translationApiKey,
+          translationSecret,
+          enableBotRelay: useRelay,
+          botRelayToken: relayToken,
+        });
+        prepares.push(sb.prepare());
+        // 将 SenderBot 添加到数组中
+        const existing = senderBotsBySource.get(channelId) || [];
+        existing.push(sb);
+        senderBotsBySource.set(channelId, existing);
+        if (!defaultSenderBot) defaultSenderBot = sb;
+      }
+    } else if (Object.keys(webhooks).length > 0) {
+      // 兼容旧数据：从 channelWebhooks 对象读取
+      for (const [channelId, webhookUrl] of Object.entries(webhooks)) {
+        const relayId = account.channelRelayMap?.[channelId];
+        const relayToken = relayId ? relayById.get(relayId)?.token?.trim() : undefined;
+        const useRelay = enableBotRelay && !!relayToken;
+        const sb = new SenderBot({
+          replacementsDictionary: replacements,
+          webhookUrl,
+          httpAgent,
+          enableTranslation,
+          deepseekApiKey,
+          translationProvider,
+          translationApiKey,
+          translationSecret,
+          enableBotRelay: useRelay,
+          botRelayToken: relayToken,
+        });
+        prepares.push(sb.prepare());
+        senderBotsBySource.set(channelId, [sb]);
+        if (!defaultSenderBot) defaultSenderBot = sb;
+      }
     }
   }
 

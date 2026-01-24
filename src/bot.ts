@@ -71,7 +71,7 @@ class DedupeCache {
 
 export class Bot {
   senderBot?: SenderBot; // default sender (可选，如果关闭 Discord 转发则为 undefined)
-  private senderBotsBySource?: Map<string, SenderBot>;
+  private senderBotsBySource?: Map<string, SenderBot[]>;  // 支持相同源ID对应多个webhook
   private feishuSendersBySource?: Map<string, FeishuSender>;
   config: Config;
   client: Client;
@@ -101,7 +101,7 @@ export class Bot {
     client: Client,
     config: Config,
     senderBot: SenderBot | undefined,
-    senderBotsBySource?: Map<string, SenderBot>,
+    senderBotsBySource?: Map<string, SenderBot[]>,
     feishuSendersBySource?: Map<string, FeishuSender>,
   ) {
     this.config = config;
@@ -198,7 +198,7 @@ export class Bot {
   updateRuntimeConfig(
     config: Config,
     defaultSender: SenderBot | undefined,
-    senderBotsBySource?: Map<string, SenderBot>,
+    senderBotsBySource?: Map<string, SenderBot[]>,
     feishuSendersBySource?: Map<string, FeishuSender>,
   ) {
     this.config = config;
@@ -229,8 +229,8 @@ export class Bot {
     this.logger.info("runtime config updated: channelWebhooks / blockedKeywords / OCR 已刷新");
   }
 
-  private getSenderForChannel(channelId: string): SenderBot | undefined {
-    return this.senderBotsBySource?.get(channelId);
+  private getSendersForChannel(channelId: string): SenderBot[] {
+    return this.senderBotsBySource?.get(channelId) || [];
   }
 
   private getFeishuSenderForChannel(channelId: string): FeishuSender | undefined {
@@ -393,7 +393,7 @@ export class Bot {
     }
 
     // 快速检查：路由映射是否存在，不存在则快速返回
-    const senderForThis = this.getSenderForChannel(message.channelId);
+    const sendersForThis = this.getSendersForChannel(message.channelId);
     const feishuSenderForThis = this.getFeishuSenderForChannel(message.channelId);
 
     // 检查是否有 Telegram 映射
@@ -403,12 +403,12 @@ export class Bot {
     );
 
     // 只有在没有任何转发目标时才返回
-    if (!senderForThis && !feishuSenderForThis && !hasTelegramMapping) {
+    if (sendersForThis.length === 0 && !feishuSenderForThis && !hasTelegramMapping) {
       return; // 快速返回，不做多余计算
     }
-    
+
     // 记录消息检测日志（仅在启用机器人中转时，帮助调试）
-    if (senderForThis && senderForThis.enableBotRelay) {
+    if (sendersForThis.length > 0 && sendersForThis.some(s => s.enableBotRelay)) {
       this.logger.info(`[Bot] 检测到消息 (id=${message.id}, channel=${message.channelId}, author=${message.author?.tag || 'unknown'})，准备转发`);
     }
 
@@ -619,9 +619,9 @@ export class Bot {
 
     // GIF 链接的处理移动到附件收集之后
 
-    // 路由：仅当该源频道在映射中时才转发；未映射则跳过（senderForThis 已在前面检查过）
-    if (senderForThis) {
-      this.logger.info(`${logPrefix} [ROUTE] Found mapping for channel ${message.channelId}, will forward to webhook`);
+    // 路由：仅当该源频道在映射中时才转发；未映射则跳过（sendersForThis 已在前面检查过）
+    if (sendersForThis.length > 0) {
+      this.logger.info(`${logPrefix} [ROUTE] Found ${sendersForThis.length} mapping(s) for channel ${message.channelId}, will forward to webhook(s)`);
     } else if (feishuSenderForThis) {
       this.logger.info(`${logPrefix} [ROUTE] Found Feishu mapping for channel ${message.channelId}, will forward to Feishu`);
     }
@@ -758,7 +758,9 @@ export class Bot {
         // 不重发，改为：若无映射，尝试在目标历史中扫描已有消息并建立映射
         if (!mapped) {
           try {
-            const found = await this.tryResolveMappingFromTarget(ref.id, senderForThis);
+            // 使用第一个 sender 来扫描目标频道
+            const firstSender = sendersForThis.length > 0 ? sendersForThis[0] : undefined;
+            const found = await this.tryResolveMappingFromTarget(ref.id, firstSender);
             if (found) {
               mapped = found;
             }
@@ -770,15 +772,17 @@ export class Bot {
         if (mapped) {
           replyToTarget = { channelId: mapped.channelId, messageId: mapped.messageId };
           // 无论是否有附件/Embed，都生成 CTA 行；有资产时用"查看附件"，否则用"查看消息"
-          if (senderForThis?.webhookGuildId) {
-            const link = `https://discord.com/channels/${senderForThis.webhookGuildId}/${mapped.channelId}/${mapped.messageId}`;
+          // 使用第一个 sender 来获取 webhookGuildId
+          const firstSender = sendersForThis.length > 0 ? sendersForThis[0] : undefined;
+          if (firstSender?.webhookGuildId) {
+            const link = `https://discord.com/channels/${firstSender.webhookGuildId}/${mapped.channelId}/${mapped.messageId}`;
             let display: string;
             if (this.config.showSourceIdentity) {
               // 显示源用户名称
               display = (ref.member as any)?.displayName || ref.author?.username || ref.author?.tag || "用户";
             } else {
               // 使用 webhook 名称
-              display = (senderForThis as any).webhookName || "Webhook";
+              display = (firstSender as any).webhookName || "Webhook";
             }
             const hasAssets = (ref.attachments?.size ?? 0) > 0 || (ref.embeds?.length ?? 0) > 0;
             const label = hasAssets ? "查看附件" : "查看消息";
@@ -990,58 +994,69 @@ export class Bot {
     }];
 
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
-    
+
     // 检查 Discord 转发开关
     const enableDiscordForward = this.config.enableDiscordForward !== false;
-    const shouldSendDiscord = senderForThis && enableDiscordForward;
-    if (senderForThis && !enableDiscordForward) {
+    const shouldSendDiscord = sendersForThis.length > 0 && enableDiscordForward;
+    if (sendersForThis.length > 0 && !enableDiscordForward) {
       this.logger.info(`${logPrefix} [SKIP] Discord 转发已关闭，跳过转发`);
     }
-    
+
     this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${discordContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed}, style=${forwardStyle})`);
     if (shouldSendDiscord) {
-    const results = await senderForThis.sendData(toSend);
-    if (results && results.length > 0) {
-      const first = results[0];
-      if (first.sourceMessageId) {
-        if (this.sourceToTarget.has(first.sourceMessageId)) {
-          this.sourceToTarget.delete(first.sourceMessageId);
+      // 遍历所有匹配的 SenderBot，向每个 webhook 发送消息
+      for (let senderIndex = 0; senderIndex < sendersForThis.length; senderIndex++) {
+        const senderForThis = sendersForThis[senderIndex];
+        try {
+          const results = await senderForThis.sendData(toSend);
+          if (results && results.length > 0) {
+            const first = results[0];
+            if (first.sourceMessageId) {
+              // 只为第一个 sender 保存映射（用于回复跳转）
+              if (senderIndex === 0) {
+                if (this.sourceToTarget.has(first.sourceMessageId)) {
+                  this.sourceToTarget.delete(first.sourceMessageId);
+                }
+                this.sourceToTarget.set(first.sourceMessageId, {
+                  channelId: first.targetChannelId,
+                  messageId: first.targetMessageId,
+                  timestamp: Date.now()
+                });
+                this.limitMapSize();
+                this.isMappingDirty = true;
+              }
+
+              const authorTag = isWebhook
+                ? (webhookName !== "unknown" ? webhookName : "Webhook")
+                : (message.author?.tag || message.author?.username || "未知用户");
+              const contentPreview = (message.content || "").trim();
+              const contentDisplay = contentPreview.length > 100
+                ? contentPreview.substring(0, 100) + "..."
+                : contentPreview || "(无文本内容)";
+              const hasAttachments = (message.attachments?.size || 0) > 0;
+              const hasEmbeds = (message.embeds?.length || 0) > 0;
+              const isReply = !!message.reference;
+              const attachmentCount = message.attachments?.size || 0;
+
+              let logMsg = `${logPrefix} [SUCCESS] 转发成功 [${senderIndex + 1}/${sendersForThis.length}]: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
+              logMsg += `\n  内容: ${contentDisplay}`;
+              if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
+              if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
+              if (isReply) logMsg += ` | 回复消息`;
+              if (isWebhook) logMsg += ` | Webhook消息`;
+              logMsg += `\n  源消息ID: ${first.sourceMessageId} -> 目标消息ID: ${first.targetMessageId}`;
+
+              console.log(logMsg);
+              this.logger.info(logMsg);
+            } else {
+              this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId [${senderIndex + 1}/${sendersForThis.length}]`);
+            }
+          } else {
+            this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results [${senderIndex + 1}/${sendersForThis.length}]`);
+          }
+        } catch (err: any) {
+          this.logger.error(`${logPrefix} [ERROR] Send failed [${senderIndex + 1}/${sendersForThis.length}]: ${String(err?.message || err)}`);
         }
-        this.sourceToTarget.set(first.sourceMessageId, {
-          channelId: first.targetChannelId,
-          messageId: first.targetMessageId,
-          timestamp: Date.now()
-        });
-        this.limitMapSize();
-          this.isMappingDirty = true;
-        
-        const authorTag = isWebhook 
-          ? (webhookName !== "unknown" ? webhookName : "Webhook")
-          : (message.author?.tag || message.author?.username || "未知用户");
-        const contentPreview = (message.content || "").trim();
-        const contentDisplay = contentPreview.length > 100 
-          ? contentPreview.substring(0, 100) + "..." 
-          : contentPreview || "(无文本内容)";
-        const hasAttachments = (message.attachments?.size || 0) > 0;
-        const hasEmbeds = (message.embeds?.length || 0) > 0;
-        const isReply = !!message.reference;
-        const attachmentCount = message.attachments?.size || 0;
-        
-        let logMsg = `${logPrefix} [SUCCESS] 转发成功: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
-        logMsg += `\n  内容: ${contentDisplay}`;
-        if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
-        if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
-        if (isReply) logMsg += ` | 回复消息`;
-        if (isWebhook) logMsg += ` | Webhook消息`;
-        logMsg += `\n  源消息ID: ${first.sourceMessageId} -> 目标消息ID: ${first.targetMessageId}`;
-        
-        console.log(logMsg);
-        this.logger.info(logMsg);
-      } else {
-        this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId`);
-      }
-    } else {
-      this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results`);
       }
     }
 
