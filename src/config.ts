@@ -536,7 +536,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       loginNonce: typeof acc.loginNonce === "number" ? acc.loginNonce : undefined,
       loginState: typeof acc.loginState === "string" ? acc.loginState : "idle",
       loginMessage: typeof acc.loginMessage === "string" ? acc.loginMessage : "",
-      enabled: acc.enabled === true
+      enabled: acc.enabled !== false
     })) : [],
     mappings: Array.isArray(input.telegramConfig.mappings)
       ? input.telegramConfig.mappings.map((mapping: any) => {

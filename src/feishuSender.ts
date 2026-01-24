@@ -151,10 +151,6 @@ export class FeishuSender {
 
     // 默认行为：target 以 http 开头则视为 webhook，否则使用 API
     const isWebhook = this.target.startsWith("http");
-    if (this.mode === "webhook") {
-      return isWebhook ? this.sendViaWebhook(data) : this.sendViaAPI(data);
-    }
-
     return isWebhook ? this.sendViaWebhook(data) : this.sendViaAPI(data);
   }
 
@@ -176,6 +172,14 @@ export class FeishuSender {
     }
 
     return elements;
+  }
+
+  private buildPostContent(elements: any[]) {
+    return {
+      zh_cn: {
+        content: [elements],
+      },
+    };
   }
 
   private async collectImageKeys(data: FeishuSendPayload, token: string): Promise<string[]> {
@@ -222,12 +226,7 @@ export class FeishuSender {
     const payload = JSON.stringify({
       receive_id: this.target,
       msg_type: "post",
-      content: JSON.stringify({
-        zh_cn: {
-          title: "Discord 转发消息",
-          content: [elements],
-        },
-      }),
+      content: JSON.stringify(this.buildPostContent(elements)),
     });
 
     await this.request(url, payload, "POST", token);
@@ -253,12 +252,7 @@ export class FeishuSender {
     );
     const payload = JSON.stringify({
       msg_type: "post",
-      content: JSON.stringify({
-        zh_cn: {
-          title: "Discord 转发消息",
-          content: [elements],
-        },
-      }),
+      content: JSON.stringify(this.buildPostContent(elements)),
       reply_in_thread: true,
     });
 
@@ -269,9 +263,25 @@ export class FeishuSender {
     // Webhook 方式发送，更简单
     const elements: any[] = this.buildBaseElements(data);
 
-    // Webhook 方式不支持图片上传，只能发送文本
     if (data.attachments && data.attachments.length > 0) {
-      elements.push({ tag: "text", text: `\n[包含 ${data.attachments.length} 个附件]` });
+      const canUploadImages = Boolean(this.appId && this.appSecret);
+      if (canUploadImages) {
+        try {
+          const token = await this.getToken();
+          const imageKeys = await this.collectImageKeys(data, token);
+          for (const imgKey of imageKeys) {
+            elements.push({ tag: "img", image_key: imgKey });
+          }
+          const nonImageCount = data.attachments.length - imageKeys.length;
+          if (nonImageCount > 0) {
+            elements.push({ tag: "text", text: `\n[包含 ${nonImageCount} 个非图片附件]` });
+          }
+        } catch (e) {
+          elements.push({ tag: "text", text: `\n[包含 ${data.attachments.length} 个附件]` });
+        }
+      } else {
+        elements.push({ tag: "text", text: `\n[包含 ${data.attachments.length} 个附件]` });
+      }
     }
 
     if (elements.length === 0) return;
@@ -280,12 +290,7 @@ export class FeishuSender {
     const payload = JSON.stringify({
       msg_type: "post",
       content: {
-        post: {
-          zh_cn: {
-            title: "Discord 转发消息",
-            content: [elements],
-          },
-        },
+        post: this.buildPostContent(elements),
       },
     });
 

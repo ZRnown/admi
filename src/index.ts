@@ -1592,7 +1592,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
             apiId: tgAccount.apiId,
             apiHash: tgAccount.apiHash,
             proxyUrl: tgAccount.proxyUrl,
-            enabled: tgAccount.enabled === true
+            enabled: tgAccount.enabled !== false
           });
         }
       }
@@ -1626,7 +1626,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           apiHash: account.telegramApiHash,
           proxyUrl: account.proxyUrl,
           // 优先使用已保存的 enabled 状态，否则默认 false
-          enabled: existingBotEntry ? existingBotEntry.enabled === true : false,
+          enabled: existingBotEntry ? existingBotEntry.enabled !== false : false,
         });
       }
 
@@ -1647,7 +1647,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           apiHash: account.telegramApiHash,
           proxyUrl: account.proxyUrl,
           // 优先使用已保存的 enabled 状态，否则默认 false
-          enabled: existingClientEntry ? existingClientEntry.enabled === true : false,
+          enabled: existingClientEntry ? existingClientEntry.enabled !== false : false,
         });
       }
 
