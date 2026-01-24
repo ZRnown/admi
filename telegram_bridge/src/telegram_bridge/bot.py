@@ -727,8 +727,15 @@ class TelegramBotManager:
                 logger.info(f"Disconnecting bot {account_id} (removed or disabled)")
                 await self.disconnect(account_id)
 
-        # 2. 连接新启用的机器人账号
+        # 2. 连接新启用的机器人账号，或者 token 变化时重新连接
         for account in normalized:
             if account.type == "bot" and account.enabled:
                 if account.id not in self.bots:
                     await self.connect(account)
+                else:
+                    # 检查 token 是否变化，如果变化则重新连接
+                    old_token = self.bot_tokens.get(account.id)
+                    if old_token and old_token != account.token:
+                        logger.info(f"Token changed for bot {account.id}, reconnecting...")
+                        await self.disconnect(account.id)
+                        await self.connect(account)

@@ -108,6 +108,9 @@ export async function POST(req: NextRequest) {
         };
         account.telegramConfig.accounts.push(botAccount);
       } else {
+        // 更新 token 和名称（修复缓存问题）
+        botAccount.token = account.telegramBotToken || '';
+        botAccount.name = result.userInfo?.username || 'Telegram Bot';
         botAccount.enabled = true;
       }
       await saveMultiConfig(multi);
