@@ -460,16 +460,26 @@ class TelegramBotManager:
 
             # 先尝试获取实体，解决 "Could not find the input entity" 问题
             # Telethon 需要先"认识"一个频道才能发送消息
+            entity = None
             try:
                 entity = await bot.get_entity(chat_id)
                 logger.debug(f"Got entity for chat_id {chat_id}: {type(entity).__name__}")
             except Exception as e:
-                logger.error(f"Failed to get entity for chat_id {chat_id}: {e}")
-                return {
-                    "success": False,
-                    "error": "ENTITY_NOT_FOUND",
-                    "message": f"无法找到目标频道/群组。请确保 Bot 已被添加到该频道/群组并具有发送消息权限。错误: {e}"
-                }
+                logger.warning(f"First attempt to get entity failed for chat_id {chat_id}: {e}")
+                # 尝试刷新对话列表来获取实体缓存
+                try:
+                    logger.info(f"Refreshing dialogs to find entity for chat_id {chat_id}...")
+                    dialogs = await bot.get_dialogs()
+                    logger.info(f"Got {len(dialogs)} dialogs, retrying get_entity...")
+                    entity = await bot.get_entity(chat_id)
+                    logger.info(f"Successfully got entity after refresh: {type(entity).__name__}")
+                except Exception as e2:
+                    logger.error(f"Failed to get entity after refresh for chat_id {chat_id}: {e2}")
+                    return {
+                        "success": False,
+                        "error": "ENTITY_NOT_FOUND",
+                        "message": f"无法找到目标频道/群组。请确保 Bot 已被添加到该频道/群组并具有发送消息权限。错误: {e2}"
+                    }
 
             # 处理附件
             if attachments:
