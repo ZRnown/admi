@@ -458,11 +458,24 @@ class TelegramBotManager:
 
             bot = self.bots[account_id]
 
+            # 先尝试获取实体，解决 "Could not find the input entity" 问题
+            # Telethon 需要先"认识"一个频道才能发送消息
+            try:
+                entity = await bot.get_entity(chat_id)
+                logger.debug(f"Got entity for chat_id {chat_id}: {type(entity).__name__}")
+            except Exception as e:
+                logger.error(f"Failed to get entity for chat_id {chat_id}: {e}")
+                return {
+                    "success": False,
+                    "error": "ENTITY_NOT_FOUND",
+                    "message": f"无法找到目标频道/群组。请确保 Bot 已被添加到该频道/群组并具有发送消息权限。错误: {e}"
+                }
+
             # 处理附件
             if attachments:
                 for attachment in attachments:
                     result = await self._send_media_attachment(
-                        bot, chat_id, attachment, message if message else None
+                        bot, entity, attachment, message if message else None
                     )
                     if result["success"]:
                         return result  # 只发送第一个附件
@@ -474,7 +487,7 @@ class TelegramBotManager:
             if parse_mode:
                 kwargs["parse_mode"] = parse_mode
 
-            result = await bot.send_message(chat_id, message, **kwargs)
+            result = await bot.send_message(entity, message, **kwargs)
 
             return {
                 "success": True,
