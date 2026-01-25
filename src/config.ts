@@ -9,6 +9,10 @@ export type ChatId = ChannelId;
 
 const CONFIG_PATH = resolveConfigPath();
 
+export function getConfigPath(): string {
+  return CONFIG_PATH;
+}
+
 const FORWARDING_TYPES = [
   "discord-to-discord",
   "discord-to-telegram",
@@ -90,7 +94,7 @@ export interface FrontendTelegramAccount {
   enabled?: boolean;
 }
 
-export interface FrontendTelegramMapping {
+export interface FrontendTelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;
   targetChannelId: string;
@@ -122,6 +126,8 @@ export interface RuleLevelConfig {
   excludeKeywords?: string[];
   // OCR 屏蔽关键词
   ocrBlockedKeywords?: string[];
+  // OCR 触发关键词（命中才转发）
+  ocrTriggerKeywords?: string[];
   // 关键词替换 { 原词: 替换词 }
   replacementsDictionary?: Record<string, string>;
   // 使用源用户的昵称和头像（规则级别）
@@ -184,6 +190,8 @@ export interface LegacyConfig {
   mutedUsersIds?: ChannelId[];
   channelConfigs?: Record<string, ChannelConfig>;
   blockedKeywords?: string[];
+  // 关键词是否忽略大小写（默认开启）
+  caseInsensitiveKeywords?: boolean;
   // 需要从内容中“排除”的关键词（会被删除，而不是整条消息屏蔽）
   excludeKeywords?: string[];
   // 是否在目标中伪装为源用户头像和昵称
@@ -235,6 +243,8 @@ export interface LegacyConfig {
   ocrServerUrl?: string;
   // OCR 屏蔽关键词（检测到这些词的图片不会转发）
   ocrBlockedKeywords?: string[];
+  // OCR 触发关键词（命中才转发）
+  ocrTriggerKeywords?: string[];
   // 每个来源频道是否启用翻译（true = 开启翻译；未设置则回退到全局 enableTranslation）
   channelTranslate?: Record<string, boolean>;
   // 每个来源频道的翻译方向配置 (off = 关闭翻译, auto = 自动检测, zh-en = 中译英, en-zh = 英译中)
@@ -291,6 +301,7 @@ export interface AccountConfig extends LegacyConfig {
   enableOCR?: boolean;
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
+  ocrTriggerKeywords?: string[];
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
@@ -343,6 +354,7 @@ function createDefaultAccount(): AccountConfig {
     channelWebhooks: {},
     channelNotes: {},
     blockedKeywords: [],
+    caseInsensitiveKeywords: true,
     excludeKeywords: [],
     showSourceIdentity: false,
     showDate: false,
@@ -365,8 +377,9 @@ function createDefaultAccount(): AccountConfig {
     channelFeishuWebhooks: {},
     feishuAppId: undefined,
     feishuAppSecret: undefined,
-  ocrServerUrl: "http://localhost:9003",
-  ocrBlockedKeywords: [],
+    ocrServerUrl: "http://localhost:9003",
+    ocrBlockedKeywords: [],
+    ocrTriggerKeywords: [],
     botRelays: [],
     channelRelayMap: {},
     feishuStyle: "style1",
@@ -437,6 +450,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       blockedKeywords: [],
       excludeKeywords: [],
       ocrBlockedKeywords: [],
+      ocrTriggerKeywords: [],
       replacementsDictionary: {},
       showSourceIdentity: undefined,
       ignoreSelf: undefined,
@@ -453,6 +467,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     blockedKeywords: Array.isArray(raw.blockedKeywords) ? raw.blockedKeywords.filter(Boolean) : [],
     excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
     ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
+    ocrTriggerKeywords: Array.isArray(raw.ocrTriggerKeywords) ? raw.ocrTriggerKeywords.filter(Boolean) : [],
     replacementsDictionary:
       raw.replacementsDictionary && typeof raw.replacementsDictionary === "object"
         ? raw.replacementsDictionary
@@ -591,6 +606,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         blockedKeywords: Array.isArray(m.blockedKeywords) ? m.blockedKeywords : [],
         excludeKeywords: Array.isArray(m.excludeKeywords) ? m.excludeKeywords : [],
         ocrBlockedKeywords: Array.isArray(m.ocrBlockedKeywords) ? m.ocrBlockedKeywords : [],
+        ocrTriggerKeywords: Array.isArray(m.ocrTriggerKeywords) ? m.ocrTriggerKeywords : [],
         replacementsDictionary: typeof m.replacementsDictionary === 'object' && m.replacementsDictionary ? m.replacementsDictionary : {},
         // 规则级别忽略配置
         ignoreSelf: m.ignoreSelf === true ? true : undefined,
@@ -646,6 +662,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             blockedKeywords: Array.isArray(mapping.blockedKeywords) ? mapping.blockedKeywords : [],
             excludeKeywords: Array.isArray(mapping.excludeKeywords) ? mapping.excludeKeywords : [],
             ocrBlockedKeywords: Array.isArray(mapping.ocrBlockedKeywords) ? mapping.ocrBlockedKeywords : [],
+            ocrTriggerKeywords: Array.isArray(mapping.ocrTriggerKeywords) ? mapping.ocrTriggerKeywords : [],
             replacementsDictionary: typeof mapping.replacementsDictionary === 'object' && mapping.replacementsDictionary ? mapping.replacementsDictionary : {}
           };
         })
@@ -673,6 +690,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     feishuAppSecret: typeof input?.feishuAppSecret === "string" && input.feishuAppSecret.trim() ? input.feishuAppSecret.trim() : undefined,
     channelNotes: input?.channelNotes || {},
     blockedKeywords: Array.isArray(input?.blockedKeywords) ? input.blockedKeywords : [],
+    caseInsensitiveKeywords: input?.caseInsensitiveKeywords === false ? false : true,
     excludeKeywords: Array.isArray(input?.excludeKeywords) ? input.excludeKeywords : [],
     showSourceIdentity: input?.showSourceIdentity === true,
     publicBaseUrl:
@@ -711,26 +729,27 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     ignoreAudio: input?.ignoreAudio === true,
     ignoreVideo: input?.ignoreVideo === true,
     ignoreDocuments: input?.ignoreDocuments === true,
-  ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
-  ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
+    ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
+    ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
+    ocrTriggerKeywords: Array.isArray(input?.ocrTriggerKeywords) ? input.ocrTriggerKeywords : [],
 
-  // --- 修复：添加 Telegram 相关顶层字段 ---
-  telegramBotToken: typeof input?.telegramBotToken === "string" ? input.telegramBotToken.trim() : undefined,
-  telegramApiId: typeof input?.telegramApiId === "number" ? input.telegramApiId : (typeof input?.telegramApiId === "string" && !isNaN(Number(input.telegramApiId)) ? Number(input.telegramApiId) : undefined),
-  telegramApiHash: typeof input?.telegramApiHash === "string" ? input.telegramApiHash.trim() : undefined,
-  telegramSessionPath: typeof input?.telegramSessionPath === "string" ? input.telegramSessionPath.trim() : undefined,
+    // --- 修复：添加 Telegram 相关顶层字段 ---
+    telegramBotToken: typeof input?.telegramBotToken === "string" ? input.telegramBotToken.trim() : undefined,
+    telegramApiId: typeof input?.telegramApiId === "number" ? input.telegramApiId : (typeof input?.telegramApiId === "string" && !isNaN(Number(input.telegramApiId)) ? Number(input.telegramApiId) : undefined),
+    telegramApiHash: typeof input?.telegramApiHash === "string" ? input.telegramApiHash.trim() : undefined,
+    telegramSessionPath: typeof input?.telegramSessionPath === "string" ? input.telegramSessionPath.trim() : undefined,
     telegramSessionString: typeof input?.telegramSessionString === "string" ? input.telegramSessionString.trim() : undefined,
     sessionType,
-  // --- 修复结束 ---
+    // --- 修复结束 ---
 
-  // Telegram转发增强配置（全局默认设置）
-  telegramLongMessage: input?.telegramLongMessage && typeof input.telegramLongMessage === "object" ? {
-    enabled: input.telegramLongMessage.enabled === true,
-    threshold: typeof input.telegramLongMessage.threshold === "number" ? input.telegramLongMessage.threshold : undefined,
-    appendMessage: typeof input.telegramLongMessage.appendMessage === "string" ? input.telegramLongMessage.appendMessage : undefined
-  } : undefined,
-  telegramOverflowThreshold: typeof input?.telegramOverflowThreshold === "number" ? input.telegramOverflowThreshold : undefined,
-  telegramOverflowMessage: typeof input?.telegramOverflowMessage === "string" ? input.telegramOverflowMessage : undefined,
+    // Telegram转发增强配置（全局默认设置）
+    telegramLongMessage: input?.telegramLongMessage && typeof input.telegramLongMessage === "object" ? {
+      enabled: input.telegramLongMessage.enabled === true,
+      threshold: typeof input.telegramLongMessage.threshold === "number" ? input.telegramLongMessage.threshold : undefined,
+      appendMessage: typeof input.telegramLongMessage.appendMessage === "string" ? input.telegramLongMessage.appendMessage : undefined
+    } : undefined,
+    telegramOverflowThreshold: typeof input?.telegramOverflowThreshold === "number" ? input.telegramOverflowThreshold : undefined,
+    telegramOverflowMessage: typeof input?.telegramOverflowMessage === "string" ? input.telegramOverflowMessage : undefined,
     feishuStyle,
     channelTranslate,
     channelTranslateDirection,
@@ -835,7 +854,10 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       feishuAppSecret: undefined,
       channelNotes: {},
       blockedKeywords: [],
+      caseInsensitiveKeywords: true,
       excludeKeywords: [],
+      ocrBlockedKeywords: [],
+      ocrTriggerKeywords: [],
       showSourceIdentity: false,
       publicBaseUrl: undefined,
       replacementsDictionary: {},
@@ -855,17 +877,17 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       enableTranslation: false,
       deepseekApiKey: undefined,
       enableTelegramOverflow: false,
-    translationProvider: "deepseek",
-    translationApiKey: undefined,
-    translationSecret: undefined,
-    enableBotRelay: false,
-    botRelays: [],
-    channelRelayMap: {},
-    ignoreSelf: false,
-    ignoreBot: false,
-    ignoreImages: false,
-    ignoreAudio: false,
-    ignoreVideo: false,
+      translationProvider: "deepseek",
+      translationApiKey: undefined,
+      translationSecret: undefined,
+      enableBotRelay: false,
+      botRelays: [],
+      channelRelayMap: {},
+      ignoreSelf: false,
+      ignoreBot: false,
+      ignoreImages: false,
+      ignoreAudio: false,
+      ignoreVideo: false,
       ignoreDocuments: false,
       feishuStyle: "style1",
       channelTranslate: {},
@@ -883,6 +905,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     feishuAppSecret: account.feishuAppSecret,
     channelNotes: account.channelNotes,
     blockedKeywords: account.blockedKeywords,
+    caseInsensitiveKeywords: account.caseInsensitiveKeywords,
     excludeKeywords: account.excludeKeywords,
     showSourceIdentity: account.showSourceIdentity,
     publicBaseUrl: account.publicBaseUrl,
@@ -916,6 +939,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreDocuments: account.ignoreDocuments,
     ocrServerUrl: account.ocrServerUrl,
     ocrBlockedKeywords: account.ocrBlockedKeywords,
+    ocrTriggerKeywords: account.ocrTriggerKeywords,
     enableTelegramOverflow: (account as any).enableTelegramOverflow,
     telegramOverflowThreshold: (account as any).telegramOverflowThreshold,
     telegramOverflowMessage: (account as any).telegramOverflowMessage,

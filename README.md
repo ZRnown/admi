@@ -1,4 +1,4 @@
-# Discord Forwarder
+# 转发狗
 
 Discord 消息转发工具，支持多账号、多频道映射、关键词过滤、自动翻译等功能。
 
@@ -76,6 +76,35 @@ pnpm start:bot
 ```bash
 pnpm dev:server
 ```
+
+## 📌 转发类型使用说明
+
+### Discord → Discord
+
+1. 选择转发类型为“Discord → Discord”。
+2. 填写 Discord Token（自用号或机器人 Token）。
+3. 在“转发规则”中填写来源频道/子区 ID 和目标 Webhook URL。
+4. 需要伪装源用户时勾选“使用源用户昵称和头像”。
+
+### Discord → Telegram
+
+1. 选择转发类型为“Discord → Telegram”。
+2. 填写 Discord Token 与 Telegram Bot Token。
+3. 将 Bot 拉入目标 Telegram 群/频道并授予发消息权限。
+4. 在“转发规则”中填写来源 Discord 频道/子区 ID 和目标 Telegram Chat ID。
+
+### Telegram → Discord
+
+1. 选择转发类型为“Telegram → Discord”。
+2. 填写 Telegram API ID / API Hash，并完成 Session 认证（文件或字符串）。
+3. 在“转发规则”中填写来源 Telegram Chat ID 或用户名（可用 @xxx 或 xxx），目标填 Discord Webhook URL。
+
+### Discord → 飞书
+
+1. 选择转发类型为“Discord → 飞书”。
+2. 填写 Discord Token，并开启飞书转发。
+3. 目标可用飞书 Webhook 或线程 ID（Thread）。
+4. 需要转发图片/视频时填写飞书 App ID / Secret，并在飞书后台开通 `im:resource:upload` 与 `im:message:send_as_bot` 权限。
 
 ## 📄 许可证
 

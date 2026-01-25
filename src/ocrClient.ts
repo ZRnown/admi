@@ -5,6 +5,7 @@ import nodeHttps from "https";
 import nodeHttp from "http"; // 新增引入 http
 
 import nodeUrl from "url";
+import { matchKeywordGroups } from "./keywordMatcher.js";
 
 export interface OCRResult {
   code: number;
@@ -45,7 +46,7 @@ export class OCRClient {
       console.log(`[OCR] 识别完成，检测到 ${textCount} 个文本块`);
 
       if (result?.data && result.data.length > 0) {
-        const allText = result.data.map(item => item.text).join(' ');
+        const allText = OCRClient.extractText(result);
         console.log(`[OCR] 识别到的文字: "${allText.substring(0, 200)}${allText.length > 200 ? '...' : ''}"`);
       }
 
@@ -201,26 +202,26 @@ export class OCRClient {
    */
   checkOCRKeywords(
     ocrResult: OCRResult | null,
-    blockedKeywords: string[]
+    blockedKeywords: string[],
+    options?: { caseInsensitive?: boolean },
   ): { shouldBlock: boolean; matchedKeywords: string[] } {
-    if (!ocrResult?.data || ocrResult.data.length === 0) {
+    const allText = OCRClient.extractText(ocrResult);
+    if (!allText) {
       return { shouldBlock: false, matchedKeywords: [] };
     }
 
-    // 收集所有识别到的文本
-    const allText = ocrResult.data.map(item => item.text).join(" ");
-    const lowerText = allText.toLowerCase();
-
-    // 检查是否应该被屏蔽
-    if (blockedKeywords.length > 0) {
-      const matchedBlocked = blockedKeywords.filter(keyword =>
-        lowerText.includes(keyword.toLowerCase())
-      );
-      if (matchedBlocked.length > 0) {
-        return { shouldBlock: true, matchedKeywords: matchedBlocked };
-      }
+    const { matchedGroups, matchedKeywords } = matchKeywordGroups(allText, blockedKeywords, options);
+    if (matchedGroups.length > 0) {
+      return { shouldBlock: true, matchedKeywords };
     }
 
     return { shouldBlock: false, matchedKeywords: [] };
+  }
+
+  static extractText(ocrResult: OCRResult | null): string {
+    if (!ocrResult?.data || ocrResult.data.length === 0) {
+      return "";
+    }
+    return ocrResult.data.map(item => item.text).join(" ");
   }
 }

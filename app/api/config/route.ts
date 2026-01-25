@@ -12,6 +12,7 @@ import {
   type RuleLevelConfig,
 } from "@/src/config";
 import { readStatus, triggerFile } from "../_lib/common";
+import { requireAuth } from "@/app/api/_lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,6 +102,7 @@ interface FrontendMapping {
   blockedKeywords?: string[];
   excludeKeywords?: string[];
   ocrBlockedKeywords?: string[];
+  ocrTriggerKeywords?: string[];
   replacementsDictionary?: Record<string, string>;
   // 规则级别的忽略配置
   ignoreSelf?: boolean;
@@ -125,6 +127,7 @@ interface FrontendAccount {
   showSourceIdentity: boolean;
   mappings: FrontendMapping[];
   blockedKeywords: string[];
+  caseInsensitiveKeywords?: boolean;
   excludeKeywords: string[];
   replacements: { from: string; to: string }[];
   allowedUsersIds: string[];
@@ -153,6 +156,7 @@ interface FrontendAccount {
   // OCR 图片检测相关
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
+  ocrTriggerKeywords?: string[];
   // Discord -> Discord 转发样式：style1 = 内嵌（默认），style2 = 纯文本 + 时间
   feishuStyle?: "style1" | "style2";
   // Telegram认证配置（用于Discord→Telegram）
@@ -222,6 +226,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       blockedKeywords: [],
       excludeKeywords: [],
       ocrBlockedKeywords: [],
+      ocrTriggerKeywords: [],
       replacementsDictionary: {},
       showSourceIdentity: undefined,
       ignoreSelf: undefined,
@@ -238,6 +243,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     blockedKeywords: Array.isArray(raw.blockedKeywords) ? raw.blockedKeywords.filter(Boolean) : [],
     excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
     ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
+    ocrTriggerKeywords: Array.isArray(raw.ocrTriggerKeywords) ? raw.ocrTriggerKeywords.filter(Boolean) : [],
     replacementsDictionary:
       raw.replacementsDictionary && typeof raw.replacementsDictionary === "object"
         ? raw.replacementsDictionary
@@ -332,6 +338,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         blockedKeywords: savedRule.blockedKeywords || [],
         excludeKeywords: savedRule.excludeKeywords || [],
         ocrBlockedKeywords: savedRule.ocrBlockedKeywords || [],
+        ocrTriggerKeywords: savedRule.ocrTriggerKeywords || [],
         replacementsDictionary: savedRule.replacementsDictionary || {},
         // 规则级别的忽略配置
         ignoreSelf: savedRule.ignoreSelf,
@@ -359,6 +366,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         blockedKeywords: [],
         excludeKeywords: [],
         ocrBlockedKeywords: [],
+        ocrTriggerKeywords: [],
         replacementsDictionary: {},
       });
     }
@@ -382,6 +390,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     showSourceIdentity: account.showSourceIdentity === true,
     mappings,
     blockedKeywords: account.blockedKeywords || [],
+    caseInsensitiveKeywords: account.caseInsensitiveKeywords !== false,
     excludeKeywords: account.excludeKeywords || [],
     replacements,
     allowedUsersIds: (account.allowedUsersIds || []).map((id: any) => String(id)),
@@ -409,6 +418,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     ignoreDocuments: account.ignoreDocuments === true,
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
     ocrBlockedKeywords: account.ocrBlockedKeywords || [],
+    ocrTriggerKeywords: account.ocrTriggerKeywords || [],
     feishuStyle: account.feishuStyle || "style1",
     // Telegram认证配置
     telegramBotToken: (account as any).telegramBotToken || "",
@@ -522,6 +532,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           blockedKeywords: mapping.blockedKeywords || [],
           excludeKeywords: mapping.excludeKeywords || [],
           ocrBlockedKeywords: mapping.ocrBlockedKeywords || [],
+          ocrTriggerKeywords: mapping.ocrTriggerKeywords || [],
           replacementsDictionary: mapping.replacementsDictionary || {},
           // 规则级别的忽略配置
           ignoreSelf: mapping.ignoreSelf,
@@ -587,6 +598,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     channelTranslateDirection,
     channelLongMessage,
     blockedKeywords: Array.isArray(dto.blockedKeywords) ? dto.blockedKeywords : [],
+    caseInsensitiveKeywords:
+      typeof dto.caseInsensitiveKeywords === "boolean"
+        ? dto.caseInsensitiveKeywords
+        : base.caseInsensitiveKeywords ?? true,
     excludeKeywords: Array.isArray(dto.excludeKeywords) ? dto.excludeKeywords : [],
     replacementsDictionary,
     allowedUsersIds: Array.isArray(dto.allowedUsersIds) ? dto.allowedUsersIds : base.allowedUsersIds || [],
@@ -632,6 +647,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     ignoreDocuments: dto.ignoreDocuments === true,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
+    ocrTriggerKeywords: Array.isArray(dto.ocrTriggerKeywords) ? dto.ocrTriggerKeywords : [],
     feishuStyle: dto.feishuStyle === "style1" || dto.feishuStyle === "style2" ? dto.feishuStyle : (base.feishuStyle || "style1"),
     // Telegram认证配置保存
     telegramBotToken: typeof dto.telegramBotToken === "string" && dto.telegramBotToken.trim() ? dto.telegramBotToken.trim() : undefined,
@@ -654,8 +670,11 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
   };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (auth) return auth;
+
     const multi = await getMultiConfig();
     const status = await readStatus();
     const telegramStatus = await readTelegramStatus();
@@ -685,6 +704,9 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (auth) return auth;
+
     const body = await req.json();
     let next: MultiConfig;
 
@@ -753,6 +775,9 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (auth) return auth;
+
     const body = await req.json();
 
     // 验证配置格式

@@ -13,6 +13,7 @@ import {
   type AccountConfig,
   accountToLegacyConfig,
   ensureConfigFile,
+  getConfigPath,
 } from "./config.js";
 import { getEnv } from "./env.js";
 import { SenderBot } from "./senderBot.js";
@@ -21,6 +22,7 @@ import { ProxyAgent } from "proxy-agent";
 import { FileLogger } from "./logger.js";
 import { telegramBridgeManager } from "./processManager.js";
 import { TelegramBridgeClient } from "./telegramBridgeClient.js";
+import { matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -99,6 +101,12 @@ function formatTimestampFromSeconds(seconds?: number): string {
   const now = seconds ? new Date(seconds * 1000) : new Date();
   const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+function formatLogPreview(text?: string, limit = 160): string {
+  const normalized = (text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "(无文本内容)";
+  return normalized.length > limit ? normalized.slice(0, limit) + "..." : normalized;
 }
 
 function parseFeishuTarget(raw: any): { mode: "webhook" | "thread"; target: string } | null {
@@ -280,6 +288,7 @@ function setupTelegramBridgeClient() {
 
   telegramBridgeClient = new TelegramBridgeClient(bridgeProcess);
   console.log("[Main] Telegram Bridge IPC client initialized");
+  const telegramForwardLogger = new FileLogger();
 
   telegramBridgeClient.on("telegram_message", async (params) => {
     const accounts = currentConfig?.accounts || [];
@@ -315,17 +324,34 @@ function setupTelegramBridgeClient() {
 
       let content = params.text || "";
       const mediaItems = Array.isArray(params.media) ? params.media : [];
-      const globalRequiredKeywords = (account.blockedKeywords || []).filter(Boolean);
-      const globalExcludeKeywords = (account.excludeKeywords || []).filter(Boolean);
+      const globalRequiredGroups = parseKeywordGroups(account.blockedKeywords);
+      const globalExcludeGroups = parseKeywordGroups(account.excludeKeywords);
+      const globalOcrBlockedGroups = parseKeywordGroups(account.ocrBlockedKeywords);
+      const globalOcrTriggerGroups = parseKeywordGroups(account.ocrTriggerKeywords);
       const globalReplacements = account.replacementsDictionary || {};
-      const normalizedContent = content.toLowerCase();
+      const normalizedContent = content;
+      const caseInsensitive = account.caseInsensitiveKeywords ?? true;
+      const hasRuleOcrFilters = matchingRules.some(
+        (rule: any) =>
+          parseKeywordGroups(rule.ocrBlockedKeywords).length > 0 ||
+          parseKeywordGroups(rule.ocrTriggerKeywords).length > 0,
+      );
+
+      const isImage = (m: any) =>
+        m?.type === "photo" || String(m?.mimeType || "").startsWith("image/");
+      const isVideo = (m: any) =>
+        m?.type === "video" || String(m?.mimeType || "").startsWith("video/");
+      const isAudio = (m: any) =>
+        m?.type === "audio" || String(m?.mimeType || "").startsWith("audio/");
+      const isDocument = (m: any) =>
+        m?.type === "document" && !isImage(m) && !isVideo(m) && !isAudio(m);
 
       try {
-        if (globalRequiredKeywords.length > 0) {
-          const matched = globalRequiredKeywords.filter((kw) =>
-            normalizedContent.includes(String(kw).toLowerCase()),
-          );
-          if (matched.length === 0) {
+        if (globalRequiredGroups.length > 0) {
+          const { matchedGroups } = matchParsedKeywordGroups(normalizedContent, globalRequiredGroups, {
+            caseInsensitive,
+          });
+          if (matchedGroups.length === 0) {
             console.log(`[Main] Telegram message skipped (no required keyword match). chat=${sourceChatId}`);
             continue;
           }
@@ -335,11 +361,11 @@ function setupTelegramBridgeClient() {
       }
 
       try {
-        if (globalExcludeKeywords.length > 0) {
-          const matched = globalExcludeKeywords.filter((kw) =>
-            normalizedContent.includes(String(kw).toLowerCase()),
-          );
-          if (matched.length > 0) {
+        if (globalExcludeGroups.length > 0) {
+          const { matchedGroups } = matchParsedKeywordGroups(normalizedContent, globalExcludeGroups, {
+            caseInsensitive,
+          });
+          if (matchedGroups.length > 0) {
             console.log(`[Main] Telegram message skipped (exclude keyword matched). chat=${sourceChatId}`);
             continue;
           }
@@ -349,15 +375,6 @@ function setupTelegramBridgeClient() {
       }
 
       try {
-        const isImage = (m: any) =>
-          m?.type === "photo" || String(m?.mimeType || "").startsWith("image/");
-        const isVideo = (m: any) =>
-          m?.type === "video" || String(m?.mimeType || "").startsWith("video/");
-        const isAudio = (m: any) =>
-          m?.type === "audio" || String(m?.mimeType || "").startsWith("audio/");
-        const isDocument = (m: any) =>
-          m?.type === "document" && !isImage(m) && !isVideo(m) && !isAudio(m);
-
         const hasImage = Boolean(params.photo) || mediaItems.some(isImage);
         const hasVideo = Boolean(params.video) || mediaItems.some(isVideo);
         const hasAudio = mediaItems.some(isAudio);
@@ -383,27 +400,68 @@ function setupTelegramBridgeClient() {
         console.error(`[Main] Telegram ignore filter error: ${String(e?.message || e)}`);
       }
 
+      const imageMediaItems = mediaItems.filter((m: any) => m?.localPath && isImage(m));
+      const needsOcrCheck =
+        globalOcrBlockedGroups.length > 0 || globalOcrTriggerGroups.length > 0 || hasRuleOcrFilters;
+      const ocrClient = needsOcrCheck ? getOcrClient(account) : null;
+      const ocrTexts: string[] = [];
+      let ocrChecked = false;
+
+      const runOcr = async () => {
+        if (ocrChecked || !ocrClient) return;
+        for (const item of imageMediaItems) {
+          if (!item?.localPath) continue;
+          const result = await ocrClient.recognizeLocalFile(item.localPath);
+          ocrTexts.push(OCRClient.extractText(result));
+        }
+        ocrChecked = true;
+      };
+
       try {
-        const ocrKeywords = (account.ocrBlockedKeywords || []).filter(Boolean);
-        const hasLocalMedia = mediaItems.some((m: any) => m?.localPath);
-        if (ocrKeywords.length > 0 && hasLocalMedia) {
-          const ocrClient = getOcrClient(account);
-          if (!ocrClient) {
-            console.warn(`[Main] OCR server not configured, skipping OCR filter for account ${account.name}`);
+        if (needsOcrCheck) {
+          if (imageMediaItems.length === 0) {
+            if (globalOcrTriggerGroups.length > 0) {
+              console.log(`[Main] Telegram message skipped (no images for OCR trigger). chat=${sourceChatId}`);
+              continue;
+            }
+          } else if (!ocrClient) {
+            if (globalOcrTriggerGroups.length > 0) {
+              console.warn(`[Main] OCR server not configured, skipping OCR trigger for account ${account.name}`);
+              continue;
+            }
           } else {
-            let shouldBlock = false;
-            for (const item of mediaItems) {
-              if (!item?.localPath) continue;
-              const result = await ocrClient.recognizeLocalFile(item.localPath);
-              const check = ocrClient.checkOCRKeywords(result, ocrKeywords);
-              if (check.shouldBlock) {
-                shouldBlock = true;
-                console.log(`[Main] Telegram message blocked by OCR keywords: ${check.matchedKeywords.join(", ")}`);
-                break;
+            await runOcr();
+
+            if (globalOcrBlockedGroups.length > 0) {
+              let blocked = false;
+              let blockedKeywords: string[] = [];
+              for (const text of ocrTexts) {
+                const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(text, globalOcrBlockedGroups, {
+                  caseInsensitive,
+                });
+                if (matchedGroups.length > 0) {
+                  blocked = true;
+                  blockedKeywords = matchedKeywords;
+                  break;
+                }
+              }
+              if (blocked) {
+                console.log(
+                  `[Main] Telegram message blocked by OCR keywords: ${blockedKeywords.join(", ")}`,
+                );
+                continue;
               }
             }
-            if (shouldBlock) {
-              continue;
+
+            if (globalOcrTriggerGroups.length > 0) {
+              const triggered = ocrTexts.some(
+                (text) =>
+                  matchParsedKeywordGroups(text, globalOcrTriggerGroups, { caseInsensitive }).matchedGroups.length > 0,
+              );
+              if (!triggered) {
+                console.log(`[Main] Telegram message skipped (no OCR trigger match). chat=${sourceChatId}`);
+                continue;
+              }
             }
           }
         }
@@ -413,12 +471,12 @@ function setupTelegramBridgeClient() {
 
       for (const rule of matchingRules) {
         try {
-          const ruleRequiredKeywords = (rule.blockedKeywords || []).filter(Boolean);
-          if (globalRequiredKeywords.length === 0 && ruleRequiredKeywords.length > 0) {
-            const matched = ruleRequiredKeywords.filter((kw) =>
-              normalizedContent.includes(String(kw).toLowerCase()),
-            );
-            if (matched.length === 0) {
+          const ruleRequiredGroups = parseKeywordGroups(rule.blockedKeywords);
+          if (globalRequiredGroups.length === 0 && ruleRequiredGroups.length > 0) {
+            const { matchedGroups } = matchParsedKeywordGroups(normalizedContent, ruleRequiredGroups, {
+              caseInsensitive,
+            });
+            if (matchedGroups.length === 0) {
               console.log(
                 `[Main] Telegram message skipped (no rule keyword match). chat=${sourceChatId}`,
               );
@@ -426,16 +484,74 @@ function setupTelegramBridgeClient() {
             }
           }
 
-          const ruleExcludeKeywords = (rule.excludeKeywords || []).filter(Boolean);
-          if (ruleExcludeKeywords.length > 0) {
-            const matched = ruleExcludeKeywords.filter((kw) =>
-              normalizedContent.includes(String(kw).toLowerCase()),
-            );
-            if (matched.length > 0) {
+          const ruleExcludeGroups = parseKeywordGroups(rule.excludeKeywords);
+          if (ruleExcludeGroups.length > 0) {
+            const { matchedGroups } = matchParsedKeywordGroups(normalizedContent, ruleExcludeGroups, {
+              caseInsensitive,
+            });
+            if (matchedGroups.length > 0) {
               console.log(
                 `[Main] Telegram message skipped (rule exclude keyword matched). chat=${sourceChatId}`,
               );
               continue;
+            }
+          }
+
+          const ruleOcrBlockedGroups = parseKeywordGroups(rule.ocrBlockedKeywords);
+          const ruleOcrTriggerGroups = parseKeywordGroups(rule.ocrTriggerKeywords);
+          const activeRuleOcrTriggerGroups =
+            globalOcrTriggerGroups.length > 0 ? [] : ruleOcrTriggerGroups;
+
+          if (ruleOcrBlockedGroups.length > 0 || activeRuleOcrTriggerGroups.length > 0) {
+            if (imageMediaItems.length === 0) {
+              if (activeRuleOcrTriggerGroups.length > 0) {
+                console.log(`[Main] Telegram message skipped (no images for rule OCR trigger). chat=${sourceChatId}`);
+                continue;
+              }
+            } else if (!ocrClient) {
+              if (activeRuleOcrTriggerGroups.length > 0) {
+                console.warn(`[Main] OCR server not configured, skipping rule OCR trigger for account ${account.name}`);
+                continue;
+              }
+            } else {
+              if (!ocrChecked) {
+                await runOcr();
+              }
+
+              if (ruleOcrBlockedGroups.length > 0) {
+                let blocked = false;
+                let blockedKeywords: string[] = [];
+                for (const text of ocrTexts) {
+                  const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(text, ruleOcrBlockedGroups, {
+                    caseInsensitive,
+                  });
+                  if (matchedGroups.length > 0) {
+                    blocked = true;
+                    blockedKeywords = matchedKeywords;
+                    break;
+                  }
+                }
+                if (blocked) {
+                  console.log(
+                    `[Main] Telegram message skipped (rule OCR blocked keywords: ${blockedKeywords.join(", ")}). chat=${sourceChatId}`,
+                  );
+                  continue;
+                }
+              }
+
+              if (activeRuleOcrTriggerGroups.length > 0) {
+                const triggered = ocrTexts.some(
+                  (text) =>
+                    matchParsedKeywordGroups(text, activeRuleOcrTriggerGroups, { caseInsensitive }).matchedGroups.length >
+                      0,
+                );
+                if (!triggered) {
+                  console.log(
+                    `[Main] Telegram message skipped (no rule OCR trigger match). chat=${sourceChatId}`,
+                  );
+                  continue;
+                }
+              }
             }
           }
 
@@ -451,7 +567,6 @@ function setupTelegramBridgeClient() {
             }
           }
 
-          console.log(`[Main] Forwarding Telegram chat ${sourceChatId} -> Discord webhook ${rule.targetChannelId}`);
           const tempSender = new SenderBot({
             webhookUrl: rule.targetChannelId,
           });
@@ -546,6 +661,20 @@ function setupTelegramBridgeClient() {
             pushUpload({ localPath, url, filename, isImage, isVideo });
           }
 
+          const sourceLabelParts = [];
+          if (typeof params.chat_title === "string" && params.chat_title.trim()) {
+            sourceLabelParts.push(params.chat_title.trim());
+          }
+          if (sourceChatUsername) {
+            sourceLabelParts.push(`@${sourceChatUsername}`);
+          }
+          if (sourceChatId) {
+            sourceLabelParts.push(`id=${sourceChatId}`);
+          }
+          const sourceLabel = sourceLabelParts.join(" | ") || sourceChatId || "unknown";
+          const contentPreview = formatLogPreview(contentForRule);
+          const senderLabel = senderDisplayName || "Telegram User";
+
           // 发送消息
           await tempSender.sendData([{
             content: contentForRule,
@@ -556,9 +685,28 @@ function setupTelegramBridgeClient() {
             extraEmbeds,
           }]);
 
-          console.log(`[Main] Forwarded Telegram message to Discord (rule: ${rule.sourceChannelId} -> ${rule.targetChannelId})`);
+          const logMsg =
+            `[TG->DC] 转发成功 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+            `目标: ${rule.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
+          console.log(logMsg);
+          telegramForwardLogger.info(logMsg);
         } catch (error: any) {
-          console.error(`[Main] Failed to forward Telegram message:`, error.message);
+          const sourceLabelParts = [];
+          if (typeof params.chat_title === "string" && params.chat_title.trim()) {
+            sourceLabelParts.push(params.chat_title.trim());
+          }
+          if (sourceChatUsername) {
+            sourceLabelParts.push(`@${sourceChatUsername}`);
+          }
+          if (sourceChatId) {
+            sourceLabelParts.push(`id=${sourceChatId}`);
+          }
+          const sourceLabel = sourceLabelParts.join(" | ") || sourceChatId || "unknown";
+          const errorMsg =
+            `[TG->DC] 转发失败 | 账号: ${account.name} | 来自: ${senderDisplayName || "Telegram User"} | ` +
+            `源: ${sourceLabel} | 目标: ${rule.targetChannelId} | 错误: ${String(error?.message || error)}`;
+          console.error(errorMsg);
+          telegramForwardLogger.error(errorMsg);
         }
       }
     }
@@ -1414,7 +1562,7 @@ async function main() {
     console.error(`[Main] Error starting Telegram Bridge: ${error.message}`);
   }
 
-  const cfgPath = path.resolve(process.cwd(), "config.json");
+  const cfgPath = getConfigPath();
   let pendingReload: NodeJS.Timeout | null = null;
   let checking = false; // 防止并发检查
 

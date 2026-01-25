@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Discord Forwarder Config</title>
+  <title>转发狗</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-white p-4 md:p-8 font-sans">
   <!-- 登录页面 -->
   <div id="loginPage" class="max-w-md mx-auto mt-20">
     <div class="rounded-xl border border-slate-200 shadow-lg p-8">
-      <h1 class="text-2xl font-bold text-slate-900 text-center mb-2">Discord Forwarder Config</h1>
+      <h1 class="text-2xl font-bold text-slate-900 text-center mb-2">转发狗</h1>
       <p class="text-slate-500 text-center text-sm mb-6">可视化配置生成器 · 轻松管理转发规则</p>
       <div class="space-y-4">
         <div>
@@ -37,7 +37,7 @@
   <div id="mainPage" class="max-w-[1400px] mx-auto space-y-8" style="display: none;">
     <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-200">
       <div>
-        <h1 class="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">Discord Forwarder Config</h1>
+        <h1 class="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">转发狗</h1>
         <p class="text-slate-500 mt-1 text-sm md:text-base">可视化配置生成器 · 轻松管理转发规则</p>
       </div>
       <div class="flex items-center gap-3">
@@ -86,6 +86,11 @@
             <li>转发时如需伪装为源用户，请勾选「使用源用户昵称和头像」（Discord→Telegram 仅使用昵称）。</li>
             <li>排除关键词会直接删除命中的词，而不会阻止整条消息转发。</li>
             <li>可以添加多个转发实例并行运行，后端会为每个实例独立登录并转发。</li>
+            <li class="mt-3 font-semibold text-slate-700">转发类型说明：</li>
+            <li class="pl-4">• Discord → Discord：填 Discord Token，规则中填写来源频道 ID 与目标 Webhook URL。</li>
+            <li class="pl-4">• Discord → Telegram：填 Discord Token + Telegram Bot Token，Bot 需在目标群/频道具备发消息权限，规则中填写 Discord 频道 ID 与 Telegram Chat ID。</li>
+            <li class="pl-4">• Telegram → Discord：填 Telegram API ID/Hash 并完成 Session 认证，规则中填写来源 Chat ID 或用户名（@xxx/xxx）与 Discord Webhook URL。</li>
+            <li class="pl-4">• Discord → 飞书：填 Discord Token，配置飞书 Webhook 或线程 ID，若需图片/视频转发请填写飞书 App ID/Secret 并开通相关权限。</li>
             <li class="mt-3 font-semibold text-slate-700">关于 Token：</li>
             <li class="pl-4">• 此 Token 与 Discord Bot Token 不同。</li>
             <li class="pl-4">• 此 Token 在您更改密码时会发生变化。</li>
@@ -99,7 +104,7 @@
     </div>
 
     <footer class="text-center text-slate-400 text-xs py-8">
-      <p>Discord Forwarder Management</p>
+      <p>转发狗管理</p>
       <p class="mt-2">技术支持：Discord: zrnown | Telegram: @momoShuangXiangBot</p>
     </footer>
   </div>
@@ -251,7 +256,7 @@
           <h3 class="font-medium text-slate-800 mb-2">关键词触发</h3>
           <p class="text-xs text-slate-500 mb-3">至少命中一个关键词才会转发（留空则不过滤）</p>
           <div class="flex flex-wrap gap-2 mb-2" id="ruleBlockedKeywordsTags"></div>
-          <input type="text" id="ruleBlockedKeywordsInput" placeholder="输入关键词后回车..."
+          <input type="text" id="ruleBlockedKeywordsInput" placeholder="输入关键词后回车（逗号=与）..."
             onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'blockedKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
@@ -261,7 +266,7 @@
           <h3 class="font-medium text-slate-800 mb-2">屏蔽关键词</h3>
           <p class="text-xs text-slate-500 mb-3">命中任意一个关键词则不转发</p>
           <div class="flex flex-wrap gap-2 mb-2" id="ruleExcludeKeywordsTags"></div>
-          <input type="text" id="ruleExcludeKeywordsInput" placeholder="输入关键词后回车..."
+          <input type="text" id="ruleExcludeKeywordsInput" placeholder="输入关键词后回车（逗号=与）..."
             onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'excludeKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
@@ -271,8 +276,18 @@
           <h3 class="font-medium text-slate-800 mb-2">OCR 屏蔽关键词</h3>
           <p class="text-xs text-slate-500 mb-3">检测到这些词的图片不会转发</p>
           <div class="flex flex-wrap gap-2 mb-2" id="ruleOcrBlockedKeywordsTags"></div>
-          <input type="text" id="ruleOcrBlockedKeywordsInput" placeholder="输入关键词后回车..."
+          <input type="text" id="ruleOcrBlockedKeywordsInput" placeholder="输入关键词后回车（逗号=与）..."
             onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'ocrBlockedKeywords')}"
+            class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <!-- OCR 触发关键词 -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-2">OCR 触发关键词</h3>
+          <p class="text-xs text-slate-500 mb-3">命中这些词的图片才会转发（逗号=与）</p>
+          <div class="flex flex-wrap gap-2 mb-2" id="ruleOcrTriggerKeywordsTags"></div>
+          <input type="text" id="ruleOcrTriggerKeywordsInput" placeholder="输入关键词后回车（逗号=与）..."
+            onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'ocrTriggerKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
 
@@ -370,9 +385,26 @@
     });
 
     // 检查登录状态
-    function checkLoginStatus() {
+    async function checkLoginStatus() {
       const saved = localStorage.getItem('isLoggedIn');
-      return saved === 'true';
+      let authed = saved === 'true';
+      try {
+        const res = await fetch('/api/auth/status');
+        if (res.ok) {
+          const data = await res.json();
+          authed = data.authenticated === true;
+        } else {
+          authed = false;
+        }
+      } catch (e) {
+        // 网络异常时保留本地状态
+      }
+      if (authed) {
+        setLoginStatus(true);
+      } else {
+        setLoginStatus(false);
+      }
+      return authed;
     }
 
     // 设置登录状态
@@ -381,12 +413,29 @@
       localStorage.setItem('isLoggedIn', loggedIn ? 'true' : 'false');
     }
 
+    function showLoginPage(message) {
+      document.getElementById('loginPage').style.display = 'block';
+      document.getElementById('mainPage').style.display = 'none';
+      document.getElementById('app').style.display = 'none';
+      const errorEl = document.getElementById('loginError');
+      if (message) {
+        errorEl.textContent = message;
+        errorEl.classList.remove('hidden');
+      } else {
+        errorEl.classList.add('hidden');
+      }
+    }
+
+    function handleUnauthorized(message) {
+      setLoginStatus(false);
+      showLoginPage(message || '登录已失效，请重新登录');
+    }
+
     // 初始化
     async function init() {
-      // 检查是否已登录
-      if (!checkLoginStatus()) {
-        document.getElementById('loginPage').style.display = 'block';
-        document.getElementById('mainPage').style.display = 'none';
+      const authed = await checkLoginStatus();
+      if (!authed) {
+        showLoginPage();
         return;
       }
 
@@ -405,21 +454,27 @@
         if (activeAccount) {
           currentForwardingType = activeAccount.forwardingType || 'discord-to-discord';
         }
-        // 自动检查 Telegram Bot 连接状态
-        await autoCheckTelegramBotStatus();
-        // 自动检查 Telegram Client 连接状态
-        await autoCheckTelegramClientStatus();
       } catch (e) {
         console.error('初始化失败', e);
+        if (!isLoggedIn) {
+          return;
+        }
         // 即使加载失败，也显示界面
         if (state.accounts.length === 0) {
           addAccount();
         }
-      } finally {
-        document.getElementById('app').style.display = 'block';
-        render();
-        startStatusPolling();
       }
+
+      if (!isLoggedIn) {
+        return;
+      }
+
+      document.getElementById('app').style.display = 'block';
+      render();
+      startStatusPolling();
+      // 自动检查 Telegram 连接状态（异步，不阻塞渲染）
+      autoCheckTelegramBotStatus();
+      autoCheckTelegramClientStatus();
     }
 
     // 处理登录
@@ -434,31 +489,22 @@
         return;
       }
 
-      // 加载配置以获取正确的账密
       try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
         if (!res.ok) {
-          errorEl.textContent = '无法连接到服务器';
+          errorEl.textContent = data?.error || '用户名或密码错误';
           errorEl.classList.remove('hidden');
           return;
         }
-        const data = await res.json();
-        const configUser = data.loginUser || 'admin';
-        const configPassword = data.loginPassword || 'admin123';
-
-        // 如果配置中账密为空，使用默认值
-        const expectedUser = configUser || 'admin';
-        const expectedPassword = configPassword || 'admin123';
-
-        if (username === expectedUser && password === expectedPassword) {
-          setLoginStatus(true);
-          errorEl.classList.add('hidden');
-          // 重新初始化以显示主页面
-          await init();
-        } else {
-          errorEl.textContent = '用户名或密码错误';
-          errorEl.classList.remove('hidden');
-        }
+        setLoginStatus(true);
+        errorEl.classList.add('hidden');
+        // 重新初始化以显示主页面
+        await init();
       } catch (e) {
         console.error('登录失败', e);
         errorEl.textContent = '登录失败，请重试';
@@ -467,14 +513,17 @@
     }
 
     // 处理退出登录
-    function handleLogout() {
+    async function handleLogout() {
       if (confirm('确定要退出登录吗？')) {
+        try {
+          await fetch('/api/auth/logout', { method: 'POST' });
+        } catch (e) {
+          console.warn('登出请求失败', e);
+        }
         setLoginStatus(false);
-        document.getElementById('loginPage').style.display = 'block';
-        document.getElementById('mainPage').style.display = 'none';
-        document.getElementById('app').style.display = 'none';
         document.getElementById('loginUsername').value = '';
         document.getElementById('loginPassword').value = '';
+        showLoginPage();
       }
     }
 
@@ -538,16 +587,24 @@
         } else {
           // 如果密码为空，从当前配置中获取原密码
           const res = await fetch('/api/config');
+          if (res.status === 401) {
+            handleUnauthorized();
+            return;
+          }
           const data = await res.json();
           saveData.loginPassword = data.loginPassword || state.loginPassword;
         }
 
         // 直接调用 API 保存配置
-        await fetch('/api/config', {
+        const saveRes = await fetch('/api/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(saveData)
         });
+        if (saveRes.status === 401) {
+          handleUnauthorized();
+          return;
+        }
         errorEl.classList.add('hidden');
         closeChangePasswordModal();
         if (newPassword) {
@@ -569,6 +626,10 @@
     async function loadConfig() {
       try {
         const res = await fetch('/api/config');
+        if (res.status === 401) {
+          handleUnauthorized();
+          throw new Error('unauthorized');
+        }
         if (!res.ok) {
           console.error('加载配置失败: HTTP', res.status);
           return;
@@ -612,6 +673,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(state)
         });
+        if (res.status === 401) {
+          handleUnauthorized();
+          return;
+        }
         if (!res.ok) {
           throw new Error(`保存失败: HTTP ${res.status}`);
         }
@@ -638,6 +703,10 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(state)
+          }).then((res) => {
+            if (res.status === 401) {
+              handleUnauthorized();
+            }
           });
         } catch (e) {
           console.error('保存失败', e);
@@ -1128,13 +1197,18 @@
             <h2 class="font-semibold text-slate-800">关键词触发（至少命中一个才转发）</h2>
           </div>
           <div class="p-6">
+            <div class="flex items-center gap-2 mb-3 text-sm text-slate-600">
+              <input type="checkbox" ${acc.caseInsensitiveKeywords !== false ? 'checked' : ''} onchange="updateField('caseInsensitiveKeywords', this.checked)"
+                class="h-4 w-4 rounded border-slate-300">
+              <label>关键词不区分大小写（全局/规则/OCR）</label>
+            </div>
             <div class="flex flex-wrap gap-2 mb-3">
               ${(acc.blockedKeywords || []).map((k, idx) => `
                 <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-sm border border-red-100">
                   ${escapeHtml(k)} <button onclick="removeKeyword('blockedKeywords', ${idx})" class="hover:text-red-800">✕</button>
                 </span>
               `).join('')}
-              <input type="text" placeholder="输入关键词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'blockedKeywords')"
+              <input type="text" placeholder="输入关键词后回车（逗号=与）..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'blockedKeywords')"
                 class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
             </div>
           </div>
@@ -1152,7 +1226,7 @@
                   ${escapeHtml(k)} <button onclick="removeKeyword('excludeKeywords', ${idx})" class="hover:text-amber-900">✕</button>
                 </span>
               `).join('')}
-              <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'excludeKeywords')"
+              <input type="text" placeholder="输入屏蔽词后回车（逗号=与）..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'excludeKeywords')"
                 class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
             </div>
             <div class="border-t pt-4">
@@ -1164,7 +1238,19 @@
                       ${escapeHtml(k)} <button onclick="removeOCRKeyword('ocrBlockedKeywords', ${idx})" class="hover:text-amber-900">✕</button>
                     </span>
                   `).join('')}
-                  <input type="text" placeholder="输入屏蔽词后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrBlockedKeywords', true)"
+                  <input type="text" placeholder="输入屏蔽词后回车（逗号=与）..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrBlockedKeywords', true)"
+                    class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+                </div>
+              </div>
+              <div class="pt-4 border-t border-slate-100">
+                <label class="block text-sm font-medium text-slate-700 mb-3">OCR 触发关键词（命中才转发，逗号=与）</label>
+                <div class="flex flex-wrap gap-2 mb-3">
+                  ${(acc.ocrTriggerKeywords || []).map((k, idx) => `
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm border border-emerald-100">
+                      ${escapeHtml(k)} <button onclick="removeOCRKeyword('ocrTriggerKeywords', ${idx})" class="hover:text-emerald-900">✕</button>
+                    </span>
+                  `).join('')}
+                  <input type="text" placeholder="输入关键词后回车（逗号=与）..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrTriggerKeywords', true)"
                     class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
                 </div>
               </div>
@@ -1756,6 +1842,7 @@
       blockedKeywords: [],
       excludeKeywords: [],
       ocrBlockedKeywords: [],
+      ocrTriggerKeywords: [],
       replacements: [] // 存储为 [{from, to}] 格式，与全局一致
     };
 
@@ -1771,7 +1858,8 @@
         mutedUsersIds: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-100', hover: 'hover:text-red-800' },
         blockedKeywords: { bg: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-100', hover: 'hover:text-indigo-800' },
         excludeKeywords: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-100', hover: 'hover:text-amber-900' },
-        ocrBlockedKeywords: { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-100', hover: 'hover:text-orange-800' }
+        ocrBlockedKeywords: { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-100', hover: 'hover:text-orange-800' },
+        ocrTriggerKeywords: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-100', hover: 'hover:text-emerald-900' }
       };
       const colors = colorMap[field] || colorMap.blockedKeywords;
 
@@ -1873,6 +1961,7 @@
         blockedKeywords: [...(mapping.blockedKeywords || [])],
         excludeKeywords: [...(mapping.excludeKeywords || [])],
         ocrBlockedKeywords: [...(mapping.ocrBlockedKeywords || [])],
+        ocrTriggerKeywords: [...(mapping.ocrTriggerKeywords || [])],
         replacements: Object.entries(mapping.replacementsDictionary || {}).map(([k, v]) => ({ from: k, to: v })),
         showSourceIdentity: mapping.showSourceIdentity === true,
         ignoreSelf: mapping.ignoreSelf === true,
@@ -1899,6 +1988,7 @@
       renderRuleTags('blockedKeywords');
       renderRuleTags('excludeKeywords');
       renderRuleTags('ocrBlockedKeywords');
+      renderRuleTags('ocrTriggerKeywords');
       renderRuleReplacements();
 
       // 超长消息处理（仅 DC→TG 显示）
@@ -1960,6 +2050,7 @@
       mapping.blockedKeywords = [...ruleConfigData.blockedKeywords];
       mapping.excludeKeywords = [...ruleConfigData.excludeKeywords];
       mapping.ocrBlockedKeywords = [...ruleConfigData.ocrBlockedKeywords];
+      mapping.ocrTriggerKeywords = [...ruleConfigData.ocrTriggerKeywords];
 
       // 转换关键词替换为字典格式
       const replacements = {};
@@ -2203,12 +2294,13 @@
         publicBaseUrl: '',
         ignoreSelf: false,
         ignoreBot: false,
-         ignoreImages: false,
-         ignoreAudio: false,
-         ignoreVideo: false,
-         ignoreDocuments: false,
-         ocrServerUrl: 'http://localhost:9003',
-         ocrBlockedKeywords: []
+        ignoreImages: false,
+        ignoreAudio: false,
+        ignoreVideo: false,
+        ignoreDocuments: false,
+        ocrServerUrl: 'http://localhost:9003',
+        ocrBlockedKeywords: [],
+        ocrTriggerKeywords: []
        };
       state.accounts.push(newAcc);
       state.activeId = newAcc.id;
@@ -2952,8 +3044,8 @@
       const acc = getActiveAccount();
       if (acc.loginState === 'pending' || (acc.loginState !== 'online' && acc.loginState !== 'error')) return;
       
-      acc.loginState = 'idle';
-      acc.loginMessage = '正在停止...';
+      acc.loginState = 'disconnecting';
+      acc.loginMessage = '正在断开...';
       render();
 
       try {
@@ -3091,7 +3183,7 @@
       const acc = getActiveAccount();
       if (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error' && acc.telegramBotState !== 'connecting') return;
 
-      acc.telegramBotState = 'idle';
+      acc.telegramBotState = 'disconnecting';
       acc.telegramBotMessage = '正在断开...';
       render();
 
@@ -3165,7 +3257,7 @@
       const acc = getActiveAccount();
       if (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error' && acc.telegramClientState !== 'connecting') return;
 
-      acc.telegramClientState = 'idle';
+      acc.telegramClientState = 'disconnecting';
       acc.telegramClientMessage = '正在断开...';
       render();
 
@@ -3198,6 +3290,10 @@
     async function exportConfig() {
       try {
         const res = await fetch('/api/config');
+        if (res.status === 401) {
+          handleUnauthorized();
+          return;
+        }
         const data = await res.json();
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -3240,6 +3336,11 @@
           body: JSON.stringify(importedConfig)
         });
 
+        if (res.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
         if (!res.ok) {
           const errData = await res.json();
           throw new Error(errData.error || '导入失败');
@@ -3261,24 +3362,29 @@
       const btnConnect = document.getElementById(type === 'discord' ? 'btn-discord-login' : `btn-${type}-connect`);
       const btnDisconnect = document.getElementById(type === 'discord' ? 'btn-discord-stop' : `btn-${type}-disconnect`);
 
+      const normalizedState = state || 'idle';
+      const displayState = normalizedState === 'disconnecting' ? '断开中' : normalizedState;
+      const badgeState = normalizedState === 'disconnecting' ? 'pending' : normalizedState;
+
       if (badgeEl) {
-        badgeEl.textContent = state || 'idle';
-        badgeEl.className = `px-2 py-0.5 rounded-full ${state === 'online' ? 'bg-emerald-50 text-emerald-700' : state === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}`;
+        badgeEl.textContent = displayState;
+        badgeEl.className = `px-2 py-0.5 rounded-full ${badgeState === 'online' ? 'bg-emerald-50 text-emerald-700' : badgeState === 'error' ? 'bg-red-50 text-red-700' : badgeState === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`;
       }
       if (msgEl) {
         msgEl.textContent = message || '';
       }
 
-      const isOnline = state === 'online';
-      const isPending = state === 'pending' || state === 'connecting';
-      const isError = state === 'error';
+      const isOnline = normalizedState === 'online';
+      const isDisconnecting = normalizedState === 'disconnecting';
+      const isPending = normalizedState === 'pending' || normalizedState === 'connecting' || isDisconnecting;
+      const isError = normalizedState === 'error';
       const isClient = type === 'tg-client';
       const baseClass = isClient ? 'flex-1 px-3 py-2 text-sm' : 'px-3 py-1.5 text-xs';
 
       if (btnConnect) {
         btnConnect.disabled = isPending || isOnline;
         btnConnect.className = `${baseClass} font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white`;
-        btnConnect.textContent = isPending ? '连接中...' : isOnline ? '已连接' : '连接';
+        btnConnect.textContent = isPending ? (isDisconnecting ? '断开中...' : '连接中...') : isOnline ? '已连接' : '连接';
       }
 
       if (btnDisconnect) {
@@ -3319,6 +3425,9 @@
     }
 
     function shouldApplyRemoteState(localState, remoteState) {
+      if (localState === 'disconnecting' && (remoteState === 'online' || remoteState === 'pending' || remoteState === 'connecting')) {
+        return false;
+      }
       if ((localState === 'pending' || localState === 'connecting') && remoteState === 'idle') {
         return false;
       }
@@ -3330,8 +3439,13 @@
       setInterval(async () => {
         try {
           if (!document.getElementById('configForm')) return;
+          if (!isLoggedIn) return;
 
           const res = await fetch('/api/config');
+          if (res.status === 401) {
+            handleUnauthorized();
+            return;
+          }
           const data = await res.json();
           if (!Array.isArray(data?.accounts)) return;
 

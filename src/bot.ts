@@ -15,6 +15,7 @@ import { FeishuSender } from "./feishuSender.js";
 import { OCRClient } from "./ocrClient.js";
 import { FileLogger } from "./logger.js";
 import { getTelegramBridgeClient } from "./index.js";
+import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -42,6 +43,125 @@ function collectEmbedText(embeds: any[]): string[] {
     }
   }
   return pieces;
+}
+
+function getMessageSnapshots(message: Message): Message[] {
+  const snapshots = (message as any).messageSnapshots ?? (message as any).message_snapshots;
+  if (!snapshots) return [];
+  if (Array.isArray(snapshots)) {
+    return snapshots
+      .map((snapshot: any) => (snapshot && typeof snapshot === "object" && "message" in snapshot ? snapshot.message : snapshot))
+      .filter(Boolean);
+  }
+  if (typeof snapshots.values === "function") {
+    return Array.from(snapshots.values());
+  }
+  return [];
+}
+
+function hasImageAttachment(attachments: any): boolean {
+  if (!attachments) return false;
+  const values = typeof attachments.values === "function" ? attachments.values() : Array.isArray(attachments) ? attachments : [];
+  for (const att of values) {
+    const contentType = String(att?.contentType || "").toLowerCase();
+    const url = String(att?.url || att?.proxyURL || "").toLowerCase();
+    if (contentType.startsWith("image/") || (url && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function collectEmbedImageUrls(embeds: any[]): string[] {
+  const urls: string[] = [];
+  for (const embed of embeds || []) {
+    const raw = (embed && typeof embed === "object" && "data" in embed && embed.data) ? embed.data : embed;
+    if (!raw || typeof raw !== "object") continue;
+    const imageUrl = String((raw as any).image?.url || (raw as any).thumbnail?.url || "");
+    const rawUrl = String((raw as any).url || "");
+    if ((raw as any).type === "image" && (imageUrl || rawUrl)) {
+      if (imageUrl) urls.push(imageUrl);
+      if (rawUrl) urls.push(rawUrl);
+      continue;
+    }
+    if (imageUrl && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(imageUrl)) {
+      urls.push(imageUrl);
+    }
+    if (rawUrl && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(rawUrl)) {
+      urls.push(rawUrl);
+    }
+  }
+  return urls;
+}
+
+function hasImageInEmbeds(embeds: any[]): boolean {
+  return collectEmbedImageUrls(embeds).length > 0;
+}
+
+function hasForwardedImage(message: Message): boolean {
+  const snapshots = getMessageSnapshots(message);
+  const isForwarded = message.reference?.type === "FORWARD" || snapshots.length > 0;
+  if (!isForwarded) return false;
+  if (hasImageInEmbeds(message.embeds || [])) return true;
+  for (const snapshot of snapshots) {
+    if (hasImageAttachment((snapshot as any).attachments)) return true;
+    if (hasImageInEmbeds((snapshot as any).embeds || [])) return true;
+  }
+  return false;
+}
+
+type ImageAsset = { url: string; contentType?: string; name?: string };
+
+function collectImageAssets(message: Message): ImageAsset[] {
+  const assets: ImageAsset[] = [];
+  const seen = new Set<string>();
+
+  const addAsset = (url?: string, contentType?: string, name?: string) => {
+    if (!url) return;
+    if (seen.has(url)) return;
+    seen.add(url);
+    assets.push({ url, contentType, name });
+  };
+
+  const addFromAttachments = (attachments: any) => {
+    if (!attachments) return;
+    const values = typeof attachments.values === "function" ? attachments.values() : Array.isArray(attachments) ? attachments : [];
+    for (const att of values) {
+      const contentType = String(att?.contentType || "").toLowerCase();
+      const url = String(att?.url || att?.proxyURL || "");
+      if (!url) continue;
+      if (contentType.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url)) {
+        addAsset(url, contentType, att?.name);
+      }
+    }
+  };
+
+  addFromAttachments(message.attachments);
+
+  const snapshots = getMessageSnapshots(message);
+  for (const snapshot of snapshots) {
+    addFromAttachments((snapshot as any).attachments);
+  }
+
+  const isForwarded = message.reference?.type === "FORWARD" || snapshots.length > 0;
+  if (isForwarded) {
+    for (const url of collectEmbedImageUrls(message.embeds || [])) {
+      addAsset(url, undefined, undefined);
+    }
+    for (const snapshot of snapshots) {
+      for (const url of collectEmbedImageUrls((snapshot as any).embeds || [])) {
+        addAsset(url, undefined, undefined);
+      }
+    }
+  }
+
+  return assets;
+}
+
+function formatLogPreview(text?: string, limit = 160): string {
+  const normalized = (text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "(无文本内容)";
+  return normalized.length > limit ? normalized.slice(0, limit) + "..." : normalized;
 }
 
 // 简单的定长去重缓存，无定时器，高性能
@@ -110,15 +230,15 @@ export class Bot {
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
 
-    // 初始化OCR客户端 - 自动根据屏蔽词启用/禁用
-    const hasOCRKeywords = (config.ocrBlockedKeywords?.length || 0) > 0;
+    // 初始化OCR客户端 - 自动根据屏蔽/触发词启用/禁用
+    const hasOCRKeywords = this.hasOcrFilters(config);
     if (hasOCRKeywords && config.ocrServerUrl) {
       this.ocrClient = new OCRClient(config.ocrServerUrl, undefined); // 不使用代理，直接连接
-      console.log(`[Bot] ✅ OCR已自动启用（检测到${config.ocrBlockedKeywords?.length || 0}个屏蔽词），服务器URL: ${config.ocrServerUrl}`);
+      console.log(`[Bot] ✅ OCR已自动启用（检测到OCR过滤配置），服务器URL: ${config.ocrServerUrl}`);
     } else {
       this.ocrClient = undefined;
       if (!hasOCRKeywords) {
-        console.log(`[Bot] ⏸️  OCR已自动禁用（未配置屏蔽词）`);
+        console.log(`[Bot] ⏸️  OCR已自动禁用（未配置OCR过滤）`);
       } else {
         console.log(`[Bot] ⏸️  OCR已自动禁用（未配置OCR服务器URL）`);
       }
@@ -206,20 +326,20 @@ export class Bot {
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
 
-    // 更新OCR配置 - 自动根据屏蔽词启用/禁用
-    const hasOCRKeywords = (config.ocrBlockedKeywords?.length || 0) > 0;
+    // 更新OCR配置 - 自动根据屏蔽/触发词启用/禁用
+    const hasOCRKeywords = this.hasOcrFilters(config);
     const previousHasOCR = this.ocrClient !== undefined;
 
     if (hasOCRKeywords && config.ocrServerUrl) {
       if (!previousHasOCR) {
         this.ocrClient = new OCRClient(config.ocrServerUrl, undefined); // 不使用代理，直接连接
-        console.log(`[Bot] ✅ OCR已自动启用（新增${config.ocrBlockedKeywords?.length || 0}个屏蔽词）`);
+        console.log(`[Bot] ✅ OCR已自动启用（检测到OCR过滤配置）`);
       }
     } else {
       if (previousHasOCR) {
         this.ocrClient = undefined;
         if (!hasOCRKeywords) {
-          console.log(`[Bot] ⏸️  OCR已自动禁用（屏蔽词已清空）`);
+          console.log(`[Bot] ⏸️  OCR已自动禁用（未配置OCR过滤）`);
         } else {
           console.log(`[Bot] ⏸️  OCR已自动禁用（未配置OCR服务器URL）`);
         }
@@ -231,6 +351,27 @@ export class Bot {
 
   private getSendersForChannel(channelId: string): SenderBot[] {
     return this.senderBotsBySource?.get(channelId) || [];
+  }
+
+  private hasOcrFilters(config: Config): boolean {
+    if ((config.ocrBlockedKeywords?.length || 0) > 0 || (config.ocrTriggerKeywords?.length || 0) > 0) {
+      return true;
+    }
+    const hasRuleOcr = (rule: any) =>
+      (rule?.ocrBlockedKeywords?.length || 0) > 0 || (rule?.ocrTriggerKeywords?.length || 0) > 0;
+    const mappings = (config as any).mappings || [];
+    for (const rule of mappings) {
+      if (hasRuleOcr(rule)) return true;
+    }
+    const telegramMappings = (config as any).telegramConfig?.mappings || [];
+    for (const rule of telegramMappings) {
+      if (hasRuleOcr(rule)) return true;
+    }
+    const feishuRuleConfigs = (config as any).feishuRuleConfigs || {};
+    for (const rule of Object.values(feishuRuleConfigs)) {
+      if (hasRuleOcr(rule)) return true;
+    }
+    return false;
   }
 
   private getFeishuSenderForChannel(channelId: string): FeishuSender | undefined {
@@ -248,6 +389,7 @@ export class Bot {
     blockedKeywords: string[];
     excludeKeywords: string[];
     ocrBlockedKeywords: string[];
+    ocrTriggerKeywords: string[];
     replacementsDictionary: Record<string, string>;
     ignoreSelf?: boolean;
     ignoreBot?: boolean;
@@ -279,6 +421,7 @@ export class Bot {
         blockedKeywords: [],
         excludeKeywords: [],
         ocrBlockedKeywords: [],
+        ocrTriggerKeywords: [],
         replacementsDictionary: {},
         ignoreSelf: undefined,
         ignoreBot: undefined,
@@ -294,6 +437,7 @@ export class Bot {
       blockedKeywords: (rule.blockedKeywords || []).filter(Boolean),
       excludeKeywords: (rule.excludeKeywords || []).filter(Boolean),
       ocrBlockedKeywords: (rule.ocrBlockedKeywords || []).filter(Boolean),
+      ocrTriggerKeywords: (rule.ocrTriggerKeywords || []).filter(Boolean),
       replacementsDictionary: rule.replacementsDictionary || {},
       ignoreSelf: rule.ignoreSelf,
       ignoreBot: rule.ignoreBot,
@@ -439,62 +583,68 @@ export class Bot {
     const authorInfo = isWebhook
       ? `webhookId=${webhookId} webhookName="${webhookName}"`
       : `authorId=${message.author?.id} authorTag="${message.author?.tag || message.author?.username || "unknown"}"`;
+    const authorLabel = isWebhook
+      ? (webhookName !== "unknown" ? webhookName : message.author?.username || "Webhook")
+      : (message.member as any)?.displayName || message.author?.tag || message.author?.username || "unknown";
 
     this.logger.info(`${logPrefix} [START] Processing message: channel=${message.channelId} id=${message.id} ${authorInfo}`);
     this.logger.info(`${logPrefix} [CONTENT] content="${(message.content || "").substring(0, 200)}" contentLength=${message.content?.length || 0} embeds=${message.embeds?.length || 0} attachments=${message.attachments?.size || 0}`);
 
-    // 获取规则级别的忽略配置（提前获取，用于所有忽略检查）
-    const ignoreRuleConfig = this.getRuleLevelConfig(message.channelId);
+    // 获取规则级别配置（提前获取，用于过滤与OCR检查）
+    const ruleConfig = this.getRuleLevelConfig(message.channelId);
+    const caseInsensitive = this.config.caseInsensitiveKeywords ?? true;
 
     // 忽略选项检查（规则级别优先，未设置则使用全局设置）
     try {
       // 忽略自己的消息
-      const shouldIgnoreSelf = ignoreRuleConfig.ignoreSelf !== undefined
-        ? ignoreRuleConfig.ignoreSelf
+      const shouldIgnoreSelf = ruleConfig.ignoreSelf !== undefined
+        ? ruleConfig.ignoreSelf
         : this.config.ignoreSelf;
       if (shouldIgnoreSelf && message.author?.id === (this.client as any).user?.id) {
-        this.logger.info(`${logPrefix} [SKIP] Ignoring own message (ignoreSelf=true, rule=${ignoreRuleConfig.ignoreSelf})`);
+        this.logger.info(`${logPrefix} [SKIP] Ignoring own message (ignoreSelf=true, rule=${ruleConfig.ignoreSelf})`);
         return;
       }
 
       // 忽略机器人消息
-      const shouldIgnoreBot = ignoreRuleConfig.ignoreBot !== undefined
-        ? ignoreRuleConfig.ignoreBot
+      const shouldIgnoreBot = ruleConfig.ignoreBot !== undefined
+        ? ruleConfig.ignoreBot
         : this.config.ignoreBot;
       if (shouldIgnoreBot && (message.author?.bot || isWebhook)) {
-        this.logger.info(`${logPrefix} [SKIP] Ignoring bot/webhook message (ignoreBot=true, rule=${ignoreRuleConfig.ignoreBot})`);
+        this.logger.info(`${logPrefix} [SKIP] Ignoring bot/webhook message (ignoreBot=true, rule=${ruleConfig.ignoreBot})`);
         return;
       }
 
       // 检查附件类型并忽略（全局 + 规则级别）
-      if (message.attachments && message.attachments.size > 0) {
-        // 规则级别设置优先，如果规则级别未设置则使用全局设置
-        const shouldIgnoreImages = ignoreRuleConfig.ignoreImages !== undefined
-          ? ignoreRuleConfig.ignoreImages
-          : this.config.ignoreImages;
-        const shouldIgnoreAudio = ignoreRuleConfig.ignoreAudio !== undefined
-          ? ignoreRuleConfig.ignoreAudio
-          : this.config.ignoreAudio;
-        const shouldIgnoreVideo = ignoreRuleConfig.ignoreVideo !== undefined
-          ? ignoreRuleConfig.ignoreVideo
-          : this.config.ignoreVideo;
-        const shouldIgnoreDocuments = ignoreRuleConfig.ignoreDocuments !== undefined
-          ? ignoreRuleConfig.ignoreDocuments
-          : this.config.ignoreDocuments;
+      // 规则级别设置优先，如果规则级别未设置则使用全局设置
+      const shouldIgnoreImages = ruleConfig.ignoreImages !== undefined
+        ? ruleConfig.ignoreImages
+        : this.config.ignoreImages;
+      const shouldIgnoreAudio = ruleConfig.ignoreAudio !== undefined
+        ? ruleConfig.ignoreAudio
+        : this.config.ignoreAudio;
+      const shouldIgnoreVideo = ruleConfig.ignoreVideo !== undefined
+        ? ruleConfig.ignoreVideo
+        : this.config.ignoreVideo;
+      const shouldIgnoreDocuments = ruleConfig.ignoreDocuments !== undefined
+        ? ruleConfig.ignoreDocuments
+        : this.config.ignoreDocuments;
 
+      if (shouldIgnoreImages) {
+        const hasImage = hasImageAttachment(message.attachments) || hasForwardedImage(message);
+        if (hasImage) {
+          this.logger.info(`${logPrefix} [SKIP] Ignoring image attachment (ignoreImages=true, rule=${ruleConfig.ignoreImages})`);
+          return;
+        }
+      }
+
+      if (message.attachments && message.attachments.size > 0) {
         for (const att of message.attachments.values()) {
           const ct = (att.contentType || "").toLowerCase();
-          const url = att.url.toLowerCase();
-
-          // 忽略图片
-          if (shouldIgnoreImages && (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url))) {
-            this.logger.info(`${logPrefix} [SKIP] Ignoring image attachment (ignoreImages=true, rule=${ignoreRuleConfig.ignoreImages})`);
-            return;
-          }
+          const url = (att.url || "").toLowerCase();
 
           // 忽略音频
           if (shouldIgnoreAudio && (ct.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(url))) {
-            this.logger.info(`${logPrefix} [SKIP] Ignoring audio attachment (ignoreAudio=true, rule=${ignoreRuleConfig.ignoreAudio})`);
+            this.logger.info(`${logPrefix} [SKIP] Ignoring audio attachment (ignoreAudio=true, rule=${ruleConfig.ignoreAudio})`);
             return;
           }
 
@@ -522,77 +672,96 @@ export class Bot {
 
     // OCR 图片检测过滤（全局 + 规则级别）
     try {
-      if (this.ocrClient && message.attachments && message.attachments.size > 0) {
-        // 获取规则级别的 OCR 屏蔽关键词
-        const earlyRuleConfig = this.getRuleLevelConfig(message.channelId);
-        const globalOcrKws = (this.config.ocrBlockedKeywords || []).filter(Boolean);
-        const ruleOcrKws = earlyRuleConfig.ocrBlockedKeywords;
-        const allOcrKws = [...new Set([...globalOcrKws, ...ruleOcrKws])];
+      const globalOcrBlocked = parseKeywordGroups(this.config.ocrBlockedKeywords);
+      const ruleOcrBlocked = parseKeywordGroups(ruleConfig.ocrBlockedKeywords);
+      const allOcrBlocked = [...globalOcrBlocked, ...ruleOcrBlocked];
+      const globalOcrTrigger = parseKeywordGroups(this.config.ocrTriggerKeywords);
+      const ruleOcrTrigger = parseKeywordGroups(ruleConfig.ocrTriggerKeywords);
+      const activeOcrTrigger = globalOcrTrigger.length > 0 ? globalOcrTrigger : ruleOcrTrigger;
+      const needsOcrCheck = allOcrBlocked.length > 0 || activeOcrTrigger.length > 0;
 
-        if (allOcrKws.length > 0) {
-          console.log(`[OCR] 消息包含 ${message.attachments.size} 个附件，开始检测图片...`);
+      if (needsOcrCheck) {
+        const imageAttachments = collectImageAssets(message);
+
+        if (imageAttachments.length === 0) {
+          if (activeOcrTrigger.length > 0) {
+            const msg = `${logPrefix} [OCR] 未检测到图片，且已配置OCR触发关键词，跳过转发`;
+            console.log(`[OCR] ${msg}`);
+            this.logger.info(msg);
+            return;
+          }
+        } else if (!this.ocrClient) {
+          if (activeOcrTrigger.length > 0) {
+            const msg = `${logPrefix} [OCR] OCR客户端未初始化，无法执行触发过滤，跳过转发`;
+            console.log(`[OCR] ${msg}`);
+            this.logger.info(msg);
+            return;
+          }
+          console.log(`[OCR] OCR客户端未初始化，跳过屏蔽检测`);
+        } else {
+          console.log(`[OCR] 消息包含 ${imageAttachments.length} 张图片，开始检测...`);
           this.logger.info(`${logPrefix} [OCR] 开始检测图片中的文字...`);
 
-          let totalImages = 0;
           let checkedImages = 0;
+          let triggerMatched = activeOcrTrigger.length === 0;
 
-          for (const attachment of message.attachments.values()) {
-            const contentType = attachment.contentType || "";
-            const url = attachment.url;
+          for (const attachment of imageAttachments) {
+              const url = attachment.url;
+              const contentType = attachment.contentType || "";
+              console.log(`[OCR] 检测到图片 ${attachment.name || attachment.url} (类型: ${contentType || "unknown"})`);
 
-            // 只处理图片
-            const isImage = contentType.startsWith("image/") ||
-              /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url);
+            try {
+              console.log(`[OCR] 开始OCR识别...`);
+              const ocrResult = await this.ocrClient.recognizeImage(url);
+              const ocrText = OCRClient.extractText(ocrResult);
+              checkedImages++;
 
-            if (isImage) {
-              totalImages++;
-              console.log(`[OCR] 检测到图片 ${attachment.name || attachment.url} (类型: ${contentType || 'unknown'})`);
-
-              try {
-                console.log(`[OCR] 开始OCR识别...`);
-                const ocrResult = await this.ocrClient.recognizeImage(url);
-                const { shouldBlock, matchedKeywords } = this.ocrClient.checkOCRKeywords(
-                  ocrResult,
-                  allOcrKws
-                );
-
-                checkedImages++;
-
-                if (shouldBlock) {
-                  const errorMsg = `${logPrefix} [OCR] 检测到敏感文字 "${matchedKeywords.join('", "')}"，跳过转发`;
+              if (allOcrBlocked.length > 0) {
+                const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(ocrText, allOcrBlocked, {
+                  caseInsensitive,
+                });
+                if (matchedGroups.length > 0) {
+                  const errorMsg = `${logPrefix} [OCR] 检测到屏蔽文字 "${matchedKeywords.join('", "')}"，跳过转发`;
                   console.log(`[OCR] ${errorMsg}`);
                   this.logger.info(errorMsg);
                   return;
-                } else {
-                  console.log(`[OCR] 图片检测通过，未检测到敏感词`);
                 }
-              } catch (ocrError: any) {
-                const errorMsg = `${logPrefix} [OCR] 识别失败: ${ocrError.message}，继续处理其他附件`;
-                console.error(`[OCR] ${errorMsg}`);
-                console.error(`[OCR] 错误详情:`, ocrError);
-                console.error(`[OCR] 错误堆栈: ${ocrError.stack}`);
-                this.logger.error(errorMsg);
               }
-            } else {
-              console.log(`[OCR] 跳过非图片附件: ${attachment.name || attachment.url}`);
+
+              if (!triggerMatched && activeOcrTrigger.length > 0) {
+                const { matchedGroups } = matchParsedKeywordGroups(ocrText, activeOcrTrigger, { caseInsensitive });
+                if (matchedGroups.length > 0) {
+                  triggerMatched = true;
+                  const hitMsg = `${logPrefix} [OCR] 触发关键词命中: ${formatKeywordGroups(matchedGroups)}`;
+                  console.log(`[OCR] ${hitMsg}`);
+                  this.logger.info(hitMsg);
+                }
+              }
+            } catch (ocrError: any) {
+              const errorMsg = `${logPrefix} [OCR] 识别失败: ${ocrError.message}，继续处理其他附件`;
+              console.error(`[OCR] ${errorMsg}`);
+              console.error(`[OCR] 错误详情:`, ocrError);
+              console.error(`[OCR] 错误堆栈: ${ocrError.stack}`);
+              this.logger.error(errorMsg);
             }
           }
 
-          const finalMsg = `${logPrefix} [OCR] 图片检测完成，总图片数=${totalImages}，已检测=${checkedImages}，允许转发`;
+          if (activeOcrTrigger.length > 0 && !triggerMatched) {
+            const msg = `${logPrefix} [OCR] 未命中触发关键词，跳过转发`;
+            console.log(`[OCR] ${msg}`);
+            this.logger.info(msg);
+            return;
+          }
+
+          const finalMsg = `${logPrefix} [OCR] 图片检测完成，总图片数=${imageAttachments.length}，已检测=${checkedImages}，允许转发`;
           console.log(`[OCR] ${finalMsg}`);
           this.logger.info(finalMsg);
-        }
-      } else {
-        if (!this.ocrClient) {
-          console.log(`[OCR] OCR客户端未初始化，跳过检测`);
-        } else if (!message.attachments || message.attachments.size === 0) {
-          console.log(`[OCR] 消息无附件，跳过检测`);
         }
       }
     } catch (e: any) {
       const errorMsg = `${logPrefix} [ERROR] OCR filter check failed: ${String(e?.message || e)}`;
       console.error(`[OCR] ${errorMsg}`);
-      console.error(`[OCR] 错误堆栈: ${e?.stack || 'N/A'}`);
+      console.error(`[OCR] 错误堆栈: ${e?.stack || "N/A"}`);
       this.logger.error(errorMsg);
     }
 
@@ -649,8 +818,6 @@ export class Bot {
       this.logger.info(`${logPrefix} [ROUTE] Found Feishu mapping for channel ${message.channelId}, will forward to Feishu`);
     }
 
-    // 获取规则级别配置
-    const ruleConfig = this.getRuleLevelConfig(message.channelId);
     const applyReplacementDictionary = (input: string, dict: Record<string, string>) => {
       let next = input;
       for (const [from, to] of Object.entries(dict || {})) {
@@ -710,30 +877,29 @@ export class Bot {
     // keyword filter: 全局 + 规则级别关键词触发
     // 优先级：全局设置 > 规则级别设置
     try {
-      const globalKws = (this.config.blockedKeywords || []).filter(Boolean);
-      const ruleKws = ruleConfig.blockedKeywords;
-      const lower = (s: string) => s.toLowerCase();
+      const globalGroups = parseKeywordGroups(this.config.blockedKeywords);
+      const ruleGroups = parseKeywordGroups(ruleConfig.blockedKeywords);
       const pieces: string[] = [];
       pieces.push(message.content || "");
       pieces.push(...collectEmbedText(message.embeds || []));
-      const hay = lower(pieces.join("\n"));
+      const hay = pieces.join("\n");
 
       // 全局关键词触发优先
-      if (globalKws.length > 0) {
-        const matched = globalKws.filter((k) => hay.includes(lower(k)));
-        if (matched.length === 0) {
+      if (globalGroups.length > 0) {
+        const { matchedGroups } = matchParsedKeywordGroups(hay, globalGroups, { caseInsensitive });
+        if (matchedGroups.length === 0) {
           this.logger.info(`${logPrefix} [SKIP] No global keyword matched`);
           return;
         }
-        this.logger.info(`${logPrefix} [FILTER] Global keyword matched: ${matched.join(",")}`);
-      } else if (ruleKws.length > 0) {
+        this.logger.info(`${logPrefix} [FILTER] Global keyword matched: ${formatKeywordGroups(matchedGroups)}`);
+      } else if (ruleGroups.length > 0) {
         // 规则级别关键词触发
-        const matched = ruleKws.filter((k) => hay.includes(lower(k)));
-        if (matched.length === 0) {
+        const { matchedGroups } = matchParsedKeywordGroups(hay, ruleGroups, { caseInsensitive });
+        if (matchedGroups.length === 0) {
           this.logger.info(`${logPrefix} [SKIP] No rule keyword matched`);
           return;
         }
-        this.logger.info(`${logPrefix} [FILTER] Rule keyword matched: ${matched.join(",")}`);
+        this.logger.info(`${logPrefix} [FILTER] Rule keyword matched: ${formatKeywordGroups(matchedGroups)}`);
       }
     } catch (e: any) {
       this.logger.error(`${logPrefix} [ERROR] Keyword filter failed: ${String(e?.message || e)}`);
@@ -741,27 +907,26 @@ export class Bot {
 
     // exclude keywords: 全局 + 规则级别屏蔽关键词
     try {
-      const globalExcludes = (this.config.excludeKeywords || []).filter(Boolean);
-      const ruleExcludes = ruleConfig.excludeKeywords;
-      const lower = (s: string) => s.toLowerCase();
+      const globalExcludes = parseKeywordGroups(this.config.excludeKeywords);
+      const ruleExcludes = parseKeywordGroups(ruleConfig.excludeKeywords);
       const pieces: string[] = [];
       pieces.push(message.content || "");
       pieces.push(...collectEmbedText(message.embeds || []));
-      const hay = lower(pieces.join("\n"));
+      const hay = pieces.join("\n");
 
       // 全局屏蔽关键词优先
       if (globalExcludes.length > 0) {
-        const matched = globalExcludes.filter((k) => hay.includes(lower(k)));
-        if (matched.length > 0) {
-          this.logger.info(`${logPrefix} [SKIP] Global exclude keyword matched: ${matched.join(",")}`);
+        const { matchedGroups } = matchParsedKeywordGroups(hay, globalExcludes, { caseInsensitive });
+        if (matchedGroups.length > 0) {
+          this.logger.info(`${logPrefix} [SKIP] Global exclude keyword matched: ${formatKeywordGroups(matchedGroups)}`);
           return;
         }
       }
       // 规则级别屏蔽关键词
       if (ruleExcludes.length > 0) {
-        const matched = ruleExcludes.filter((k) => hay.includes(lower(k)));
-        if (matched.length > 0) {
-          this.logger.info(`${logPrefix} [SKIP] Rule exclude keyword matched: ${matched.join(",")}`);
+        const { matchedGroups } = matchParsedKeywordGroups(hay, ruleExcludes, { caseInsensitive });
+        if (matchedGroups.length > 0) {
+          this.logger.info(`${logPrefix} [SKIP] Rule exclude keyword matched: ${formatKeywordGroups(matchedGroups)}`);
           return;
         }
       }
@@ -1102,9 +1267,22 @@ export class Bot {
           attachments: uploads.map((u) => ({ url: u.url, filename: u.filename, isImage: u.isImage })),
           embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
         });
-        this.logger.info(`${logPrefix} [FEISHU] 转发到飞书成功 (附件数=${uploads.length}, 图片数=${uploads.filter(u => u.isImage).length})`);
+        const feishuTarget = feishuSenderForThis.target;
+        const feishuPreview = formatLogPreview(feishuContent);
+        const imageCount = uploads.filter((u) => u.isImage).length;
+        const logMsg =
+          `${logPrefix} [FEISHU] 转发成功 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
+          `目标: ${feishuTarget} | 内容: ${feishuPreview} | 附件: ${uploads.length} | 图片: ${imageCount}`;
+        console.log(logMsg);
+        this.logger.info(logMsg);
       } catch (err: any) {
-        this.logger.error(`${logPrefix} [FEISHU] 转发失败: ${String(err?.message || err)}`);
+        const feishuTarget = feishuSenderForThis.target;
+        const feishuPreview = formatLogPreview(finalContent);
+        const errorMsg =
+          `${logPrefix} [FEISHU] 转发失败 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
+          `目标: ${feishuTarget} | 内容: ${feishuPreview} | 错误: ${String(err?.message || err)}`;
+        console.error(errorMsg);
+        this.logger.error(errorMsg);
       }
     }
 
@@ -1137,6 +1315,7 @@ export class Bot {
               applyReplacementDictionary(contentForTelegram, this.config.replacementsDictionary || {}),
               (mapping as any).replacementsDictionary || ruleConfig.replacementsDictionary || {},
             );
+            const contentPreview = formatLogPreview(contentForTelegram);
 
             // 准备消息数据
             const messageData = {
@@ -1164,14 +1343,17 @@ export class Bot {
             // 发送到 Telegram Bridge
             await bridgeClient.handleDiscordMessage(messageData);
 
-            this.logger.info(
-              `${logPrefix} [TELEGRAM] 转发到 Telegram 成功 (target=${mapping.targetChannelId}, ` +
-              `attachments=${uploads.length})`
-            );
+            const logMsg =
+              `${logPrefix} [TELEGRAM] 转发成功 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
+              `目标: ${mapping.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
+            console.log(logMsg);
+            this.logger.info(logMsg);
           } catch (err: any) {
-            this.logger.error(
-              `${logPrefix} [TELEGRAM] 转发失败 (target=${mapping.targetChannelId}): ${String(err?.message || err)}`
-            );
+            const errorMsg =
+              `${logPrefix} [TELEGRAM] 转发失败 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
+              `目标: ${mapping.targetChannelId} | 错误: ${String(err?.message || err)}`;
+            console.error(errorMsg);
+            this.logger.error(errorMsg);
           }
         }
       } else {
