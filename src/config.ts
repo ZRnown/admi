@@ -763,10 +763,7 @@ function migrateLegacyToMulti(raw: any): MultiConfig {
 export async function getMultiConfig(): Promise<MultiConfig> {
   const raw = await readRawConfig();
   const envForwardingTypes = parseEnvForwardingTypes(getEnv().ENABLED_FORWARDING_TYPES);
-  const persistedForwardingTypes = envForwardingTypes
-    ? undefined
-    : normalizeForwardingTypes(raw?.enabledForwardingTypes);
-  const effectiveForwardingTypes = envForwardingTypes ?? persistedForwardingTypes;
+  const effectiveForwardingTypes = envForwardingTypes;
   if (Array.isArray(raw?.accounts)) {
     const accounts = raw.accounts.map((acc: any, idx: number) =>
       normalizeAccount(acc, idx === 0 ? "默认账号" : `账号${idx + 1}`),
@@ -790,7 +787,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
       loginPassword,
       telegramAvatarBaseUrl,
       version: CONFIG_VERSION,
-      enabledForwardingTypes: persistedForwardingTypes,
+      enabledForwardingTypes: envForwardingTypes,
     };
 
     // 如果版本有更新，保存配置
@@ -803,7 +800,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
     return {
       ...config,
       accounts: restrictedAccounts,
-      enabledForwardingTypes: effectiveForwardingTypes,
+      enabledForwardingTypes: envForwardingTypes,
     };
   }
   const legacyConfig = migrateLegacyToMulti(raw);
@@ -814,7 +811,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
   return {
     ...legacyConfig,
     accounts: legacyRestrictedAccounts,
-    enabledForwardingTypes: effectiveForwardingTypes,
+    enabledForwardingTypes: envForwardingTypes,
   };
 }
 
