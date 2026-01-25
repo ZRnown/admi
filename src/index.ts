@@ -109,6 +109,20 @@ function formatLogPreview(text?: string, limit = 160): string {
   return normalized.length > limit ? normalized.slice(0, limit) + "..." : normalized;
 }
 
+function applyLongMessageConfig(
+  content: string,
+  config?: { enabled?: boolean; threshold?: number; appendMessage?: string },
+): string {
+  if (!config?.enabled) return content;
+  const threshold = typeof config.threshold === "number" ? config.threshold : 0;
+  if (threshold > 0 && content.length > threshold) {
+    const trimmed = content.slice(0, threshold);
+    const append = typeof config.appendMessage === "string" ? config.appendMessage.trim() : "";
+    return append ? `${trimmed}\n${append}` : trimmed;
+  }
+  return content;
+}
+
 function parseFeishuTarget(raw: any): { mode: "webhook" | "thread"; target: string } | null {
   if (typeof raw === "string") {
     const trimmed = raw.trim();
@@ -570,6 +584,7 @@ function setupTelegramBridgeClient() {
               contentForRule = contentForRule.replaceAll(from, String(to ?? ""));
             }
           }
+          contentForRule = applyLongMessageConfig(contentForRule, rule.longMessage);
 
           const tempSender = new SenderBot({
             webhookUrl: rule.targetChannelId,

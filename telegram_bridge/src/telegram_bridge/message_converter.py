@@ -280,10 +280,9 @@ class DiscordToTelegramConverter(MessageConverter):
             if long_message_config:
                 threshold = long_message_config.get('threshold', 0)
                 append_message = long_message_config.get('appendMessage', '')
-                if append_message:
-                    # 0 表示直接追加，>0 表示超过阈值才追加
-                    should_append = threshold <= 0 or len(telegram_content) > threshold
-                    if should_append:
+                if isinstance(threshold, (int, float)) and threshold > 0 and len(telegram_content) > threshold:
+                    telegram_content = telegram_content[:threshold]
+                    if append_message:
                         # 将转义的换行符转换回实际换行符，并确保另起一行追加
                         normalized_append = append_message.replace('\\n', '\n')
                         telegram_content += f"\n{normalized_append}"

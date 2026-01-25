@@ -18,6 +18,17 @@ pnpm install
 cp config.sample.json config.json
 ```
 
+### 2.1 可选环境变量（.env）
+
+`.env` 放在项目根目录（与 `package.json` 同级）。不配置则保持默认行为。
+
+```bash
+# 仅允许显示指定转发类型（留空或不设置则全部可用）
+ENABLED_FORWARDING_TYPES=discord-to-discord,discord-to-telegram,telegram-to-discord,discord-to-feishu
+```
+
+管理界面“导入配置”会覆盖当前所有配置，导入后以导入内容为准。
+
 ### 3. 启动服务
 
 #### 启动管理界面（可选）

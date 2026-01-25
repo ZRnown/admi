@@ -128,6 +128,12 @@ export interface RuleLevelConfig {
   ocrBlockedKeywords?: string[];
   // OCR 触发关键词（命中才转发）
   ocrTriggerKeywords?: string[];
+  // 超长消息处理（规则级别）
+  longMessage?: {
+    enabled: boolean;
+    threshold?: number;
+    appendMessage?: string;
+  };
   // 关键词替换 { 原词: 替换词 }
   replacementsDictionary?: Record<string, string>;
   // 使用源用户的昵称和头像（规则级别）
@@ -451,6 +457,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       excludeKeywords: [],
       ocrBlockedKeywords: [],
       ocrTriggerKeywords: [],
+      longMessage: undefined,
       replacementsDictionary: {},
       showSourceIdentity: undefined,
       ignoreSelf: undefined,
@@ -468,6 +475,15 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
     ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
     ocrTriggerKeywords: Array.isArray(raw.ocrTriggerKeywords) ? raw.ocrTriggerKeywords.filter(Boolean) : [],
+    longMessage:
+      raw.longMessage && typeof raw.longMessage === "object"
+        ? {
+            enabled: raw.longMessage.enabled === true,
+            threshold: typeof raw.longMessage.threshold === "number" ? raw.longMessage.threshold : undefined,
+            appendMessage:
+              typeof raw.longMessage.appendMessage === "string" ? raw.longMessage.appendMessage : undefined,
+          }
+        : undefined,
     replacementsDictionary:
       raw.replacementsDictionary && typeof raw.replacementsDictionary === "object"
         ? raw.replacementsDictionary
@@ -607,6 +623,15 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         excludeKeywords: Array.isArray(m.excludeKeywords) ? m.excludeKeywords : [],
         ocrBlockedKeywords: Array.isArray(m.ocrBlockedKeywords) ? m.ocrBlockedKeywords : [],
         ocrTriggerKeywords: Array.isArray(m.ocrTriggerKeywords) ? m.ocrTriggerKeywords : [],
+        longMessage:
+          m.longMessage && typeof m.longMessage === "object"
+            ? {
+                enabled: m.longMessage.enabled === true,
+                threshold: typeof m.longMessage.threshold === "number" ? m.longMessage.threshold : undefined,
+                appendMessage:
+                  typeof m.longMessage.appendMessage === "string" ? m.longMessage.appendMessage : undefined,
+              }
+            : undefined,
         replacementsDictionary: typeof m.replacementsDictionary === 'object' && m.replacementsDictionary ? m.replacementsDictionary : {},
         // 规则级别忽略配置
         ignoreSelf: m.ignoreSelf === true ? true : undefined,
@@ -835,9 +860,10 @@ export async function getMultiConfig(): Promise<MultiConfig> {
 }
 
 export async function saveMultiConfig(config: MultiConfig) {
-  const payload = JSON.stringify(config, null, 2) + "\n";
+  const { enabledForwardingTypes: _ignored, ...payload } = config;
+  const content = JSON.stringify(payload, null, 2) + "\n";
   const tmpPath = path.join(path.dirname(CONFIG_PATH), `config.json.tmp-${randomUUID()}`);
-  await writeFile(tmpPath, payload);
+  await writeFile(tmpPath, content);
   await rename(tmpPath, CONFIG_PATH);
 }
 

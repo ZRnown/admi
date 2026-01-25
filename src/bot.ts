@@ -170,6 +170,20 @@ function formatLogPreview(text?: string, limit = 160): string {
   return normalized.length > limit ? normalized.slice(0, limit) + "..." : normalized;
 }
 
+function applyLongMessageConfig(
+  content: string,
+  config?: { enabled?: boolean; threshold?: number; appendMessage?: string },
+): string {
+  if (!config?.enabled) return content;
+  const threshold = typeof config.threshold === "number" ? config.threshold : 0;
+  if (threshold > 0 && content.length > threshold) {
+    const trimmed = content.slice(0, threshold);
+    const append = typeof config.appendMessage === "string" ? config.appendMessage.trim() : "";
+    return append ? `${trimmed}\n${append}` : trimmed;
+  }
+  return content;
+}
+
 // 简单的定长去重缓存，无定时器，高性能
 class DedupeCache {
   private items = new Set<string>();
@@ -396,6 +410,11 @@ export class Bot {
     excludeKeywords: string[];
     ocrBlockedKeywords: string[];
     ocrTriggerKeywords: string[];
+    longMessage?: {
+      enabled: boolean;
+      threshold?: number;
+      appendMessage?: string;
+    };
     replacementsDictionary: Record<string, string>;
     ignoreSelf?: boolean;
     ignoreBot?: boolean;
@@ -428,6 +447,7 @@ export class Bot {
         excludeKeywords: [],
         ocrBlockedKeywords: [],
         ocrTriggerKeywords: [],
+        longMessage: undefined,
         replacementsDictionary: {},
         ignoreSelf: undefined,
         ignoreBot: undefined,
@@ -444,6 +464,15 @@ export class Bot {
       excludeKeywords: (rule.excludeKeywords || []).filter(Boolean),
       ocrBlockedKeywords: (rule.ocrBlockedKeywords || []).filter(Boolean),
       ocrTriggerKeywords: (rule.ocrTriggerKeywords || []).filter(Boolean),
+      longMessage:
+        rule.longMessage && typeof rule.longMessage === "object"
+          ? {
+              enabled: rule.longMessage.enabled === true,
+              threshold: typeof rule.longMessage.threshold === "number" ? rule.longMessage.threshold : undefined,
+              appendMessage:
+                typeof rule.longMessage.appendMessage === "string" ? rule.longMessage.appendMessage : undefined,
+            }
+          : undefined,
       replacementsDictionary: rule.replacementsDictionary || {},
       ignoreSelf: rule.ignoreSelf,
       ignoreBot: rule.ignoreBot,
@@ -1038,6 +1067,12 @@ export class Bot {
       }
     }
 
+    const longMessageConfig = ruleConfig.longMessage;
+    if (longMessageConfig?.enabled) {
+      discordContent = applyLongMessageConfig(discordContent, longMessageConfig);
+    }
+    const feishuContentRaw = applyLongMessageConfig(finalContent, longMessageConfig);
+
     // 根据配置决定是否伪装为源用户头像和昵称
     // 对于 webhook 消息，使用 webhook 的名称和头像
     let username: string | undefined = undefined;
@@ -1131,6 +1166,20 @@ export class Bot {
 
         if (isImage) hasCurrentImage = true;
         uploads.push({ url, filename, isImage, isVideo });
+      }
+
+      const extraImages = collectImageAssets(message);
+      if (extraImages.length > 0) {
+        const seenUploads = new Set(uploads.map((item) => item.url));
+        for (const asset of extraImages) {
+          if (!asset.url || seenUploads.has(asset.url)) continue;
+          seenUploads.add(asset.url);
+          uploads.push({
+            url: asset.url,
+            filename: asset.name || "image",
+            isImage: true,
+          });
+        }
       }
     } catch {}
 
@@ -1263,7 +1312,7 @@ export class Bot {
     if (shouldSendFeishu) {
       try {
         const feishuContent = applyReplacementDictionary(
-          applyReplacementDictionary(finalContent, this.config.replacementsDictionary || {}),
+          applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {}),
           ruleConfig.replacementsDictionary || {},
         );
         await feishuSenderForThis.send({
@@ -1283,7 +1332,7 @@ export class Bot {
         this.logger.info(logMsg);
       } catch (err: any) {
         const feishuTarget = feishuSenderForThis.target;
-        const feishuPreview = formatLogPreview(finalContent);
+        const feishuPreview = formatLogPreview(feishuContentRaw);
         const errorMsg =
           `${logPrefix} [FEISHU] 转发失败 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
           `目标: ${feishuTarget} | 内容: ${feishuPreview} | 错误: ${String(err?.message || err)}`;

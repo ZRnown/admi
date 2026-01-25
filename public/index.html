@@ -91,6 +91,7 @@
             <li class="pl-4">• Discord → Telegram：填 Discord Token + Telegram Bot Token，Bot 需在目标群/频道具备发消息权限，规则中填写 Discord 频道 ID 与 Telegram Chat ID。</li>
             <li class="pl-4">• Telegram → Discord：填 Telegram API ID/Hash 并完成 Session 认证，规则中填写来源 Chat ID 或用户名（@xxx/xxx）与 Discord Webhook URL。</li>
             <li class="pl-4">• Discord → 飞书：填 Discord Token，配置飞书 Webhook 或线程 ID，若需图片/视频转发请填写飞书 App ID/Secret 并开通相关权限。</li>
+            <li class="pl-4">• 限制可选类型：在 `.env` 设置 `ENABLED_FORWARDING_TYPES=discord-to-discord,discord-to-telegram` 等，留空表示全部可用。</li>
             <li class="mt-3 font-semibold text-slate-700">关于 Token：</li>
             <li class="pl-4">• 此 Token 与 Discord Bot Token 不同。</li>
             <li class="pl-4">• 此 Token 在您更改密码时会发生变化。</li>
@@ -166,7 +167,7 @@
       <p class="text-sm text-slate-500 mb-4">配置此规则的过滤选项（优先级低于全局设置）</p>
 
       <div class="space-y-6">
-        <!-- 超长消息处理（仅 DC→TG 显示，放在最上面） -->
+        <!-- 超长消息处理（规则级别） -->
         <div id="ruleLongMessageSection" class="hidden border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-3">超长消息处理</h3>
           <div class="space-y-3">
@@ -256,7 +257,7 @@
           <h3 class="font-medium text-slate-800 mb-2">关键词触发</h3>
           <p class="text-xs text-slate-500 mb-3">至少命中一个关键词才会转发（留空则不过滤）</p>
           <div class="flex flex-wrap gap-2 mb-2" id="ruleBlockedKeywordsTags"></div>
-          <input type="text" id="ruleBlockedKeywordsInput" placeholder="输入关键词后回车（逗号=与）..."
+          <input type="text" id="ruleBlockedKeywordsInput" placeholder="输入关键词后回车；逗号表示同时包含（如：关键词A,关键词B）"
             onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'blockedKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
@@ -266,7 +267,7 @@
           <h3 class="font-medium text-slate-800 mb-2">屏蔽关键词</h3>
           <p class="text-xs text-slate-500 mb-3">命中任意一个关键词则不转发</p>
           <div class="flex flex-wrap gap-2 mb-2" id="ruleExcludeKeywordsTags"></div>
-          <input type="text" id="ruleExcludeKeywordsInput" placeholder="输入关键词后回车（逗号=与）..."
+          <input type="text" id="ruleExcludeKeywordsInput" placeholder="输入关键词后回车；逗号表示同时包含（如：关键词A,关键词B）"
             onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'excludeKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
@@ -276,7 +277,7 @@
           <h3 class="font-medium text-slate-800 mb-2">OCR 屏蔽关键词</h3>
           <p class="text-xs text-slate-500 mb-3">检测到这些词的图片不会转发</p>
           <div class="flex flex-wrap gap-2 mb-2" id="ruleOcrBlockedKeywordsTags"></div>
-          <input type="text" id="ruleOcrBlockedKeywordsInput" placeholder="输入关键词后回车（逗号=与）..."
+          <input type="text" id="ruleOcrBlockedKeywordsInput" placeholder="输入关键词后回车；逗号表示同时包含（如：关键词A,关键词B）"
             onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'ocrBlockedKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
@@ -284,9 +285,9 @@
         <!-- OCR 触发关键词 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-2">OCR 触发关键词</h3>
-          <p class="text-xs text-slate-500 mb-3">命中这些词的图片才会转发（逗号=与）</p>
+          <p class="text-xs text-slate-500 mb-3">命中这些词的图片才会转发（逗号表示同时包含）</p>
           <div class="flex flex-wrap gap-2 mb-2" id="ruleOcrTriggerKeywordsTags"></div>
-          <input type="text" id="ruleOcrTriggerKeywordsInput" placeholder="输入关键词后回车（逗号=与）..."
+          <input type="text" id="ruleOcrTriggerKeywordsInput" placeholder="输入关键词后回车；逗号表示同时包含（如：关键词A,关键词B）"
             onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'ocrTriggerKeywords')}"
             class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none">
         </div>
@@ -342,6 +343,14 @@
         .replace(/'/g, '&#039;');
     }
 
+    function formatKeywordLabel(value) {
+      const raw = String(value ?? '').trim();
+      if (!raw) return '';
+      const parts = raw.split(/[，,]/).map((part) => part.trim()).filter(Boolean);
+      if (parts.length <= 1) return escapeHtml(raw);
+      return escapeHtml(parts.join('&'));
+    }
+
     let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
     let saveTimer = null;
     let isLoggedIn = false;
@@ -350,6 +359,26 @@
     let pendingStatusRender = false;
     let lastFormInteractionAt = 0;
     let isSaving = false;
+    let suspendAutoSave = false;
+    const disconnectHold = new Map();
+
+    function setDisconnectHold(key, durationMs = 5000) {
+      disconnectHold.set(key, Date.now() + durationMs);
+    }
+
+    function getDisconnectHold(key) {
+      const until = disconnectHold.get(key);
+      if (!until) return 0;
+      if (until <= Date.now()) {
+        disconnectHold.delete(key);
+        return 0;
+      }
+      return until;
+    }
+
+    function clearDisconnectHold(key) {
+      disconnectHold.delete(key);
+    }
 
     function isFormTarget(el) {
       if (!el) return false;
@@ -386,24 +415,17 @@
 
     // 检查登录状态
     async function checkLoginStatus() {
-      const saved = localStorage.getItem('isLoggedIn');
-      let authed = saved === 'true';
+      let authed = false;
       try {
         const res = await fetch('/api/auth/status');
         if (res.ok) {
           const data = await res.json();
           authed = data.authenticated === true;
-        } else {
-          authed = false;
         }
       } catch (e) {
-        // 网络异常时保留本地状态
+        authed = false;
       }
-      if (authed) {
-        setLoginStatus(true);
-      } else {
-        setLoginStatus(false);
-      }
+      setLoginStatus(authed);
       return authed;
     }
 
@@ -662,6 +684,7 @@
 
     // 立即保存配置（无防抖，用于关键字段更新）
     async function saveConfigImmediate() {
+      if (suspendAutoSave) return;
       isSaving = true;
       try {
         const activeAcc = state.accounts.find(a => a.id === state.activeId);
@@ -692,8 +715,10 @@
 
     // 保存配置（防抖）
     async function saveConfig() {
+      if (suspendAutoSave) return;
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
+        if (suspendAutoSave) return;
         try {
           const activeAcc = state.accounts.find(a => a.id === state.activeId);
           if (activeAcc?.telegramConfig) {
@@ -1059,6 +1084,20 @@
           </div>
         </div>
 
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">关键词设置</h2>
+            <p class="text-xs text-slate-500 mt-1">控制关键词匹配的全局规则</p>
+          </div>
+          <div class="p-6">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${acc.caseInsensitiveKeywords !== false ? 'checked' : ''} onchange="updateField('caseInsensitiveKeywords', this.checked)"
+                class="h-4 w-4 rounded border-slate-300">
+              关键词不区分大小写（全局/规则/OCR）
+            </label>
+          </div>
+        </div>
+
         <!-- 转发规则 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
@@ -1197,18 +1236,13 @@
             <h2 class="font-semibold text-slate-800">关键词触发（至少命中一个才转发）</h2>
           </div>
           <div class="p-6">
-            <div class="flex items-center gap-2 mb-3 text-sm text-slate-600">
-              <input type="checkbox" ${acc.caseInsensitiveKeywords !== false ? 'checked' : ''} onchange="updateField('caseInsensitiveKeywords', this.checked)"
-                class="h-4 w-4 rounded border-slate-300">
-              <label>关键词不区分大小写（全局/规则/OCR）</label>
-            </div>
             <div class="flex flex-wrap gap-2 mb-3">
               ${(acc.blockedKeywords || []).map((k, idx) => `
                 <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-sm border border-red-100">
-                  ${escapeHtml(k)} <button onclick="removeKeyword('blockedKeywords', ${idx})" class="hover:text-red-800">✕</button>
+                  ${formatKeywordLabel(k)} <button onclick="removeKeyword('blockedKeywords', ${idx})" class="hover:text-red-800">✕</button>
                 </span>
               `).join('')}
-              <input type="text" placeholder="输入关键词后回车（逗号=与）..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'blockedKeywords')"
+              <input type="text" placeholder="输入关键词后回车；逗号表示同时包含（如：关键词A,关键词B）" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'blockedKeywords')"
                 class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
             </div>
           </div>
@@ -1223,10 +1257,10 @@
             <div class="flex flex-wrap gap-2 mb-3">
               ${(acc.excludeKeywords || []).map((k, idx) => `
                 <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-sm border border-amber-100">
-                  ${escapeHtml(k)} <button onclick="removeKeyword('excludeKeywords', ${idx})" class="hover:text-amber-900">✕</button>
+                  ${formatKeywordLabel(k)} <button onclick="removeKeyword('excludeKeywords', ${idx})" class="hover:text-amber-900">✕</button>
                 </span>
               `).join('')}
-              <input type="text" placeholder="输入屏蔽词后回车（逗号=与）..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'excludeKeywords')"
+              <input type="text" placeholder="输入屏蔽词后回车；逗号表示同时包含（如：关键词A,关键词B）" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'excludeKeywords')"
                 class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
             </div>
             <div class="border-t pt-4">
@@ -1235,22 +1269,22 @@
                 <div class="flex flex-wrap gap-2 mb-3">
                   ${(acc.ocrBlockedKeywords || []).map((k, idx) => `
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-sm border border-amber-100">
-                      ${escapeHtml(k)} <button onclick="removeOCRKeyword('ocrBlockedKeywords', ${idx})" class="hover:text-amber-900">✕</button>
+                      ${formatKeywordLabel(k)} <button onclick="removeOCRKeyword('ocrBlockedKeywords', ${idx})" class="hover:text-amber-900">✕</button>
                     </span>
                   `).join('')}
-                  <input type="text" placeholder="输入屏蔽词后回车（逗号=与）..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrBlockedKeywords', true)"
+                  <input type="text" placeholder="输入屏蔽词后回车；逗号表示同时包含（如：关键词A,关键词B）" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrBlockedKeywords', true)"
                     class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
                 </div>
               </div>
               <div class="pt-4 border-t border-slate-100">
-                <label class="block text-sm font-medium text-slate-700 mb-3">OCR 触发关键词（命中才转发，逗号=与）</label>
+                <label class="block text-sm font-medium text-slate-700 mb-3">OCR 触发关键词（命中才转发；逗号表示同时包含）</label>
                 <div class="flex flex-wrap gap-2 mb-3">
                   ${(acc.ocrTriggerKeywords || []).map((k, idx) => `
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm border border-emerald-100">
-                      ${escapeHtml(k)} <button onclick="removeOCRKeyword('ocrTriggerKeywords', ${idx})" class="hover:text-emerald-900">✕</button>
+                      ${formatKeywordLabel(k)} <button onclick="removeOCRKeyword('ocrTriggerKeywords', ${idx})" class="hover:text-emerald-900">✕</button>
                     </span>
                   `).join('')}
-                  <input type="text" placeholder="输入关键词后回车（逗号=与）..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrTriggerKeywords', true)"
+                  <input type="text" placeholder="输入关键词后回车；逗号表示同时包含（如：关键词A,关键词B）" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrTriggerKeywords', true)"
                     class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
                 </div>
               </div>
@@ -1853,6 +1887,7 @@
       if (!container) return;
 
       const data = ruleConfigData[field] || [];
+      const keywordFields = new Set(["blockedKeywords", "excludeKeywords", "ocrBlockedKeywords", "ocrTriggerKeywords"]);
       const colorMap = {
         allowedUsersIds: { bg: 'bg-green-50', text: 'text-green-600', border: 'border-green-100', hover: 'hover:text-green-800' },
         mutedUsersIds: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-100', hover: 'hover:text-red-800' },
@@ -1865,7 +1900,7 @@
 
       container.innerHTML = data.map((item, idx) => `
         <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full ${colors.bg} ${colors.text} text-sm border ${colors.border}">
-          ${item} <button onclick="removeRuleKeyword('${field}', ${idx})" class="${colors.hover}">✕</button>
+          ${keywordFields.has(field) ? formatKeywordLabel(item) : escapeHtml(String(item))} <button onclick="removeRuleKeyword('${field}', ${idx})" class="${colors.hover}">✕</button>
         </span>
       `).join('');
     }
@@ -1991,9 +2026,10 @@
       renderRuleTags('ocrTriggerKeywords');
       renderRuleReplacements();
 
-      // 超长消息处理（仅 DC→TG 显示）
+      // 超长消息处理（Discord/TG/飞书规则）
       const longMsgSection = document.getElementById('ruleLongMessageSection');
-      if (forwardingType === 'discord-to-telegram') {
+      const supportsLongMessage = ['discord-to-telegram', 'telegram-to-discord', 'discord-to-discord', 'discord-to-feishu'].includes(forwardingType);
+      if (supportsLongMessage) {
         longMsgSection.classList.remove('hidden');
         const longMsg = mapping.longMessage || {};
         document.getElementById('ruleLongMessageEnabled').checked = longMsg.enabled || false;
@@ -2070,8 +2106,8 @@
       mapping.ignoreVideo = document.getElementById('ruleIgnoreVideo').checked || undefined;
       mapping.ignoreDocuments = document.getElementById('ruleIgnoreDocuments').checked || undefined;
 
-      // 超长消息处理（仅 DC→TG）
-      if (currentRuleConfigType === 'discord-to-telegram') {
+      // 超长消息处理（Discord/TG/飞书规则）
+      if (['discord-to-telegram', 'telegram-to-discord', 'discord-to-discord', 'discord-to-feishu'].includes(currentRuleConfigType)) {
         mapping.longMessage = {
           enabled: document.getElementById('ruleLongMessageEnabled').checked,
           threshold: parseInt(document.getElementById('ruleLongMessageThreshold').value) || 0,
@@ -2685,74 +2721,70 @@
       render();
     }
 
-    async function handleKeywordEnter(inputEl, field, isOCR = false) {
+    function handleKeywordEnter(inputEl, field, isOCR = false) {
       const value = inputEl.value;
       if (!value || !value.trim()) return;
 
       inputEl.value = '';
 
       if (isOCR) {
-        await addOCRKeyword(field, value);
+        addOCRKeyword(field, value);
       } else {
-        await addKeyword(field, value);
+        addKeyword(field, value);
       }
     }
 
-    async function addKeyword(field, value) {
+    function addKeyword(field, value) {
       if (!value || !value.trim()) return;
       const acc = getActiveAccount();
       if (!acc[field]) acc[field] = [];
-      if (!acc[field].includes(value.trim())) {
-        acc[field].push(value.trim());
+      const normalized = value.trim();
+      if (!acc[field].includes(normalized)) {
+        acc[field].push(normalized);
         console.log('[DEBUG] 添加关键词:', value, '当前列表:', acc[field]);
-        try {
-          await saveConfigImmediate();
-          render();
-        } catch (e) {
+        render();
+        void saveConfigImmediate().catch((e) => {
           console.error('[ERROR] 添加关键词失败', e);
           // 回滚
-          acc[field] = acc[field].filter(k => k !== value.trim());
+          acc[field] = acc[field].filter(k => k !== normalized);
           render();
-        }
+        });
       } else {
         alert('该关键词已存在');
       }
     }
 
-    async function removeKeyword(field, idx) {
+    function removeKeyword(field, idx) {
       const acc = getActiveAccount();
       if (!acc[field] || idx < 0 || idx >= acc[field].length) return;
       const oldValue = [...acc[field]];
       const removed = acc[field][idx];
       acc[field].splice(idx, 1); // 按索引删除
       console.log('[DEBUG] 删除关键词:', removed, '索引:', idx, '剩余列表:', acc[field]);
-      try {
-        await saveConfigImmediate();
-        render();
-      } catch (e) {
+      render();
+      void saveConfigImmediate().catch((e) => {
         console.error('[ERROR] 删除关键词失败', e);
         // 回滚
         acc[field] = oldValue;
         render();
-      }
+      });
     }
 
-    async function addOCRKeyword(field, value) {
+    function addOCRKeyword(field, value) {
       if (!value.trim()) return;
       const acc = getActiveAccount();
       if (!acc[field]) acc[field] = [];
-      if (!acc[field].includes(value.trim())) {
-        acc[field].push(value.trim());
+      const normalized = value.trim();
+      if (!acc[field].includes(normalized)) {
+        acc[field].push(normalized);
         console.log('[DEBUG] 添加OCR关键词:', value, '当前列表:', acc[field]);
-        try {
-          await saveConfigImmediate();
-          render();
-        } catch (e) {
+        render();
+        void saveConfigImmediate().catch((e) => {
           console.error('[ERROR] 添加OCR关键词失败', e);
           // 回滚
-          acc[field] = acc[field].filter(k => k !== value.trim());
+          acc[field] = acc[field].filter(k => k !== normalized);
           render();
-        }
+        });
       } else {
         alert('该关键词已存在');
       }
@@ -2819,22 +2851,20 @@
       }
     }
 
-    async function removeOCRKeyword(field, idx) {
+    function removeOCRKeyword(field, idx) {
       const acc = getActiveAccount();
       if (!acc[field] || idx < 0 || idx >= acc[field].length) return;
       const oldValue = [...acc[field]];
       const removed = acc[field][idx];
       acc[field].splice(idx, 1); // 按索引删除
       console.log('[DEBUG] 删除OCR关键词:', removed, '索引:', idx, '剩余列表:', acc[field]);
-      try {
-        await saveConfigImmediate();
-        render();
-      } catch (e) {
+      render();
+      void saveConfigImmediate().catch((e) => {
         console.error('[ERROR] 删除OCR关键词失败', e);
         // 回滚
         acc[field] = oldValue;
         render();
-      }
+      });
     }
 
     function addReplacement() {
@@ -3018,6 +3048,8 @@
       const acc = getActiveAccount();
       if (acc.loginState === 'online' || acc.loginState === 'pending') return;
       
+      acc.loginRequested = true;
+      clearDisconnectHold(`discord:${acc.id}`);
       acc.loginState = 'pending';
       acc.loginMessage = '正在登录...';
       render();
@@ -3044,6 +3076,9 @@
       const acc = getActiveAccount();
       if (acc.loginState === 'pending' || (acc.loginState !== 'online' && acc.loginState !== 'error')) return;
       
+      acc.loginRequested = false;
+      const holdKey = `discord:${acc.id}`;
+      setDisconnectHold(holdKey);
       acc.loginState = 'disconnecting';
       acc.loginMessage = '正在断开...';
       render();
@@ -3056,11 +3091,17 @@
         });
         const data = await res.json();
         if (res.ok) {
-          acc.loginState = data.loginState || 'idle';
-          acc.loginMessage = data.loginMessage || '已停止';
+          const nextState = data.loginState || 'idle';
+          if (nextState !== 'idle') {
+            acc.loginState = nextState;
+            acc.loginMessage = data.loginMessage || '已停止';
+          } else {
+            acc.loginMessage = data.loginMessage || '正在断开...';
+          }
         }
       } catch (e) {
-        acc.loginState = acc.loginState || 'idle';
+        clearDisconnectHold(holdKey);
+        acc.loginState = 'error';
         acc.loginMessage = '停止请求失败';
       }
       render();
@@ -3183,6 +3224,8 @@
       const acc = getActiveAccount();
       if (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error' && acc.telegramBotState !== 'connecting') return;
 
+      const holdKey = `tg-bot:${acc.id}`;
+      setDisconnectHold(holdKey);
       acc.telegramBotState = 'disconnecting';
       acc.telegramBotMessage = '正在断开...';
       render();
@@ -3195,11 +3238,17 @@
         });
         const data = await res.json();
         if (res.ok) {
-          acc.telegramBotState = data.state || 'idle';
-          acc.telegramBotMessage = data.message || '已断开';
+          const nextState = data.state || 'idle';
+          if (nextState !== 'idle') {
+            acc.telegramBotState = nextState;
+            acc.telegramBotMessage = data.message || '已断开';
+          } else {
+            acc.telegramBotMessage = data.message || '正在断开...';
+          }
         }
       } catch (e) {
-        acc.telegramBotState = acc.telegramBotState || 'idle';
+        clearDisconnectHold(holdKey);
+        acc.telegramBotState = 'error';
         acc.telegramBotMessage = '断开请求失败';
       }
       render();
@@ -3257,6 +3306,8 @@
       const acc = getActiveAccount();
       if (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error' && acc.telegramClientState !== 'connecting') return;
 
+      const holdKey = `tg-client:${acc.id}`;
+      setDisconnectHold(holdKey);
       acc.telegramClientState = 'disconnecting';
       acc.telegramClientMessage = '正在断开...';
       render();
@@ -3269,11 +3320,17 @@
         });
         const data = await res.json();
         if (res.ok) {
-          acc.telegramClientState = data.state || 'idle';
-          acc.telegramClientMessage = data.message || '已断开';
+          const nextState = data.state || 'idle';
+          if (nextState !== 'idle') {
+            acc.telegramClientState = nextState;
+            acc.telegramClientMessage = data.message || '已断开';
+          } else {
+            acc.telegramClientMessage = data.message || '正在断开...';
+          }
         }
       } catch (e) {
-        acc.telegramClientState = acc.telegramClientState || 'idle';
+        clearDisconnectHold(holdKey);
+        acc.telegramClientState = 'error';
         acc.telegramClientMessage = '断开请求失败';
       }
       render();
@@ -3299,7 +3356,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `discord-forwarder-config-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+        a.download = `转发狗-config-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
         a.click();
         URL.revokeObjectURL(url);
       } catch (e) {
@@ -3314,6 +3371,13 @@
     async function handleImportConfig(event) {
       const file = event.target.files[0];
       if (!file) return;
+      const prevSuspend = suspendAutoSave;
+      suspendAutoSave = true;
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      let reloadScheduled = false;
 
       try {
         const text = await file.text();
@@ -3347,10 +3411,14 @@
         }
 
         alert('配置导入成功！页面将刷新。');
+        reloadScheduled = true;
         location.reload();
       } catch (e) {
         alert('导入失败: ' + e.message);
       } finally {
+        if (!reloadScheduled) {
+          suspendAutoSave = prevSuspend;
+        }
         // 清空文件输入，允许再次选择同一文件
         event.target.value = '';
       }
@@ -3424,9 +3492,10 @@
       }
     }
 
-    function shouldApplyRemoteState(localState, remoteState) {
+    function shouldApplyRemoteState(localState, remoteState, holdUntil) {
+      const holdActive = typeof holdUntil === 'number' ? holdUntil > Date.now() : true;
       if (localState === 'disconnecting' && (remoteState === 'online' || remoteState === 'pending' || remoteState === 'connecting')) {
-        return false;
+        return !holdActive;
       }
       if ((localState === 'pending' || localState === 'connecting') && remoteState === 'idle') {
         return false;
@@ -3457,9 +3526,14 @@
 
             const isActive = localAcc.id === state.activeId;
 
+            if (typeof remoteAcc.loginRequested === 'boolean' && localAcc.loginRequested !== remoteAcc.loginRequested) {
+              localAcc.loginRequested = remoteAcc.loginRequested;
+            }
+
+            const loginHoldUntil = getDisconnectHold(`discord:${localAcc.id}`);
             const remoteLoginState = remoteAcc.loginState || 'idle';
             const remoteLoginMessage = remoteAcc.loginMessage || '';
-            if (shouldApplyRemoteState(localAcc.loginState, remoteLoginState)) {
+            if (shouldApplyRemoteState(localAcc.loginState, remoteLoginState, loginHoldUntil)) {
               const loginChanged = remoteLoginState !== localAcc.loginState || remoteLoginMessage !== localAcc.loginMessage;
               if (loginChanged) {
                 localAcc.loginState = remoteLoginState;
@@ -3469,10 +3543,14 @@
                 }
               }
             }
+            if (remoteLoginState === 'idle' || remoteLoginState === 'error') {
+              clearDisconnectHold(`discord:${localAcc.id}`);
+            }
 
+            const botHoldUntil = getDisconnectHold(`tg-bot:${localAcc.id}`);
             const remoteBotState = remoteAcc.telegramBotState || 'idle';
             const remoteBotMessage = remoteAcc.telegramBotMessage || '';
-            if (shouldApplyRemoteState(localAcc.telegramBotState, remoteBotState)) {
+            if (shouldApplyRemoteState(localAcc.telegramBotState, remoteBotState, botHoldUntil)) {
               const botChanged = remoteBotState !== localAcc.telegramBotState || remoteBotMessage !== localAcc.telegramBotMessage;
               if (botChanged) {
                 localAcc.telegramBotState = remoteBotState;
@@ -3482,10 +3560,14 @@
                 }
               }
             }
+            if (remoteBotState === 'idle' || remoteBotState === 'error') {
+              clearDisconnectHold(`tg-bot:${localAcc.id}`);
+            }
 
+            const clientHoldUntil = getDisconnectHold(`tg-client:${localAcc.id}`);
             const remoteClientState = remoteAcc.telegramClientState || 'idle';
             const remoteClientMessage = remoteAcc.telegramClientMessage || '';
-            if (shouldApplyRemoteState(localAcc.telegramClientState, remoteClientState)) {
+            if (shouldApplyRemoteState(localAcc.telegramClientState, remoteClientState, clientHoldUntil)) {
               const clientChanged = remoteClientState !== localAcc.telegramClientState || remoteClientMessage !== localAcc.telegramClientMessage;
               if (clientChanged) {
                 localAcc.telegramClientState = remoteClientState;
@@ -3494,6 +3576,9 @@
                   updateStatusElement('tg-client', remoteClientState, remoteClientMessage);
                 }
               }
+            }
+            if (remoteClientState === 'idle' || remoteClientState === 'error') {
+              clearDisconnectHold(`tg-client:${localAcc.id}`);
             }
 
             const remoteTelegramAccounts = remoteAcc.telegramConfig?.accounts;

@@ -90,7 +90,7 @@ interface FrontendMapping {
   translate?: boolean;
   // 翻译方向: off = 关闭翻译, auto = 自动检测, zh-en = 中译英, en-zh = 英译中
   translateDirection?: "off" | "auto" | "zh-en" | "en-zh";
-  // Telegram 超长消息处理（仅对目标为Telegram的规则有效）
+  // 超长消息处理（规则级别）
   longMessage?: {
     enabled: boolean;
     threshold?: number;
@@ -227,6 +227,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       excludeKeywords: [],
       ocrBlockedKeywords: [],
       ocrTriggerKeywords: [],
+      longMessage: undefined,
       replacementsDictionary: {},
       showSourceIdentity: undefined,
       ignoreSelf: undefined,
@@ -244,6 +245,15 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
     ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
     ocrTriggerKeywords: Array.isArray(raw.ocrTriggerKeywords) ? raw.ocrTriggerKeywords.filter(Boolean) : [],
+    longMessage:
+      raw.longMessage && typeof raw.longMessage === "object"
+        ? {
+            enabled: raw.longMessage.enabled === true,
+            threshold: typeof raw.longMessage.threshold === "number" ? raw.longMessage.threshold : undefined,
+            appendMessage:
+              typeof raw.longMessage.appendMessage === "string" ? raw.longMessage.appendMessage : undefined,
+          }
+        : undefined,
     replacementsDictionary:
       raw.replacementsDictionary && typeof raw.replacementsDictionary === "object"
         ? raw.replacementsDictionary
