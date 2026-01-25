@@ -98,9 +98,15 @@ function hasImageInEmbeds(embeds: any[]): boolean {
   return collectEmbedImageUrls(embeds).length > 0;
 }
 
+function isForwardReference(message: Message): boolean {
+  const refType = message.reference?.type;
+  if (refType === undefined || refType === null) return false;
+  return refType === 1 || String(refType) === "FORWARD";
+}
+
 function hasForwardedImage(message: Message): boolean {
   const snapshots = getMessageSnapshots(message);
-  const isForwarded = message.reference?.type === "FORWARD" || snapshots.length > 0;
+  const isForwarded = isForwardReference(message) || snapshots.length > 0;
   if (!isForwarded) return false;
   if (hasImageInEmbeds(message.embeds || [])) return true;
   for (const snapshot of snapshots) {
@@ -143,7 +149,7 @@ function collectImageAssets(message: Message): ImageAsset[] {
     addFromAttachments((snapshot as any).attachments);
   }
 
-  const isForwarded = message.reference?.type === "FORWARD" || snapshots.length > 0;
+  const isForwarded = isForwardReference(message) || snapshots.length > 0;
   if (isForwarded) {
     for (const url of collectEmbedImageUrls(message.embeds || [])) {
       addAsset(url, undefined, undefined);
