@@ -1,10 +1,45 @@
 import { readFile, writeFile, rename } from "fs/promises";
 import { existsSync } from "fs";
+import path from "node:path";
 import { randomUUID } from "crypto";
 import { getEnv } from "./env";
 
 export type ChannelId = number | string;
 export type ChatId = ChannelId;
+
+const CONFIG_PATH = resolveConfigPath();
+
+const FORWARDING_TYPES = [
+  "discord-to-discord",
+  "discord-to-telegram",
+  "telegram-to-discord",
+  "discord-to-feishu",
+] as const;
+
+type ForwardingType = (typeof FORWARDING_TYPES)[number];
+
+function resolveConfigPath(): string {
+  if (process.env.CONFIG_PATH) {
+    return process.env.CONFIG_PATH;
+  }
+  const root = findRepoRoot(process.cwd());
+  const base = root || process.cwd();
+  return path.join(base, "config.json");
+}
+
+function findRepoRoot(startDir: string): string | null {
+  let current = startDir;
+  while (true) {
+    if (existsSync(path.join(current, "package.json"))) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
 
 // Telegram相关类型定义
 export interface TelegramAccountConfig {
@@ -223,7 +258,7 @@ export interface LegacyConfig {
     appendMessage?: string;
   };
   // 转发类型
-  forwardingType?: 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'discord-to-feishu';
+  forwardingType?: ForwardingType;
   // Discord→Discord 规则列表（带规则级别用户过滤）
   mappings?: DiscordMappingRule[];
   // 飞书规则级别过滤配置
@@ -288,7 +323,7 @@ export interface MultiConfig {
   // 配置版本，用于迁移
   version?: string;
   // 启用的转发类型（如果不设置，默认全部启用）
-  enabledForwardingTypes?: Array<"discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "discord-to-feishu">;
+  enabledForwardingTypes?: ForwardingType[];
 }
 
 function createDefaultAccount(): AccountConfig {
@@ -346,7 +381,7 @@ export const CONFIG_VERSION = "1.1.0"; // 添加Telegram支持
 // 导出 ensureConfigFile 供程序启动时调用，而不是在每次读取时调用
 // 这样可以避免在原子保存间隙时误判文件不存在而覆盖配置
 export async function ensureConfigFile() {
-  if (!existsSync("./config.json")) {
+  if (!existsSync(CONFIG_PATH)) {
     const defaultAccount = createDefaultAccount();
     const multi: MultiConfig = {
       accounts: [defaultAccount],
@@ -355,8 +390,8 @@ export async function ensureConfigFile() {
       loginPassword: "admin123",
       version: CONFIG_VERSION
     };
-    await writeFile("./config.json", JSON.stringify(multi, null, 2) + "\n");
-    console.log("Created default config.json");
+    await writeFile(CONFIG_PATH, JSON.stringify(multi, null, 2) + "\n");
+    console.log(`Created default config.json at ${CONFIG_PATH}`);
   }
 }
 
@@ -367,7 +402,7 @@ async function readRawConfig(): Promise<any> {
   // 绝对不要在读取时创建文件，这会导致在原子保存间隙时覆盖用户配置
   
   try {
-    const buf = await readFile("./config.json");
+    const buf = await readFile(CONFIG_PATH);
     return JSON.parse(buf.toString());
   } catch (e) {
     // 如果读取失败（例如文件正在写入中），抛出错误让上层处理
@@ -439,6 +474,52 @@ function normalizeRuleConfigs(raw: any): Record<string, RuleLevelConfig> {
     result[sourceId] = normalizeRuleConfig(config);
   }
   return result;
+}
+
+function normalizeForwardingTypes(input?: any): ForwardingType[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const filtered = input.filter((value): value is ForwardingType =>
+    FORWARDING_TYPES.includes(value as ForwardingType),
+  );
+  const unique = Array.from(new Set(filtered));
+  return unique.length > 0 ? unique : undefined;
+}
+
+function parseEnvForwardingTypes(raw?: string): ForwardingType[] | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  let parts: string[] = [];
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        parts = parsed.map((value) => String(value));
+      }
+    } catch {}
+  }
+  if (parts.length === 0) {
+    parts = trimmed.split(/[,\s]+/);
+  }
+  const normalized = normalizeForwardingTypes(parts);
+  if (!normalized) {
+    console.warn(`[Config] ENABLED_FORWARDING_TYPES has no valid values: ${raw}`);
+  }
+  return normalized;
+}
+
+function applyForwardingTypeRestrictions(
+  accounts: AccountConfig[],
+  allowedTypes?: ForwardingType[],
+): AccountConfig[] {
+  if (!allowedTypes || allowedTypes.length === 0) return accounts;
+  return accounts.map((account) => {
+    const current = account.forwardingType || "discord-to-discord";
+    if (allowedTypes.includes(current as ForwardingType)) {
+      return account;
+    }
+    return { ...account, forwardingType: allowedTypes[0] };
+  });
 }
 
 function normalizeAccount(input: any, fallbackName = "未命名账号"): AccountConfig {
@@ -654,9 +735,9 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     channelTranslate,
     channelTranslateDirection,
     telegramConfig,
-    forwardingType: ['discord-to-discord', 'discord-to-telegram', 'telegram-to-discord', 'discord-to-feishu'].includes(input?.forwardingType)
-      ? input.forwardingType
-      : 'discord-to-discord',
+    forwardingType: FORWARDING_TYPES.includes(input?.forwardingType as ForwardingType)
+      ? (input.forwardingType as ForwardingType)
+      : "discord-to-discord",
   };
 }
 
@@ -681,6 +762,11 @@ function migrateLegacyToMulti(raw: any): MultiConfig {
 
 export async function getMultiConfig(): Promise<MultiConfig> {
   const raw = await readRawConfig();
+  const envForwardingTypes = parseEnvForwardingTypes(getEnv().ENABLED_FORWARDING_TYPES);
+  const persistedForwardingTypes = envForwardingTypes
+    ? undefined
+    : normalizeForwardingTypes(raw?.enabledForwardingTypes);
+  const effectiveForwardingTypes = envForwardingTypes ?? persistedForwardingTypes;
   if (Array.isArray(raw?.accounts)) {
     const accounts = raw.accounts.map((acc: any, idx: number) =>
       normalizeAccount(acc, idx === 0 ? "默认账号" : `账号${idx + 1}`),
@@ -704,6 +790,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
       loginPassword,
       telegramAvatarBaseUrl,
       version: CONFIG_VERSION,
+      enabledForwardingTypes: persistedForwardingTypes,
     };
 
     // 如果版本有更新，保存配置
@@ -712,16 +799,30 @@ export async function getMultiConfig(): Promise<MultiConfig> {
       console.log(`Migrated config from version ${version} to ${CONFIG_VERSION}`);
     }
 
-    return config;
+    const restrictedAccounts = applyForwardingTypeRestrictions(migratedAccounts, effectiveForwardingTypes);
+    return {
+      ...config,
+      accounts: restrictedAccounts,
+      enabledForwardingTypes: effectiveForwardingTypes,
+    };
   }
-  return migrateLegacyToMulti(raw);
+  const legacyConfig = migrateLegacyToMulti(raw);
+  const legacyRestrictedAccounts = applyForwardingTypeRestrictions(
+    legacyConfig.accounts,
+    effectiveForwardingTypes,
+  );
+  return {
+    ...legacyConfig,
+    accounts: legacyRestrictedAccounts,
+    enabledForwardingTypes: effectiveForwardingTypes,
+  };
 }
 
 export async function saveMultiConfig(config: MultiConfig) {
   const payload = JSON.stringify(config, null, 2) + "\n";
-  const tmpPath = `./config.json.tmp-${randomUUID()}`;
+  const tmpPath = path.join(path.dirname(CONFIG_PATH), `config.json.tmp-${randomUUID()}`);
   await writeFile(tmpPath, payload);
-  await rename(tmpPath, "./config.json");
+  await rename(tmpPath, CONFIG_PATH);
 }
 
 export type Config = LegacyConfig;

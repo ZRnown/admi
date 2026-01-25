@@ -773,7 +773,6 @@ export async function PUT(req: NextRequest) {
       loginUser: typeof body.loginUser === "string" ? body.loginUser : undefined,
       loginPassword: typeof body.loginPassword === "string" ? body.loginPassword : undefined,
       telegramAvatarBaseUrl: typeof body.telegramAvatarBaseUrl === "string" ? body.telegramAvatarBaseUrl.trim() : undefined,
-      enabledForwardingTypes: Array.isArray(body.enabledForwardingTypes) ? body.enabledForwardingTypes : undefined,
     };
 
     await saveMultiConfig(next);
