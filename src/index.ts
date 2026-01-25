@@ -470,6 +470,10 @@ function setupTelegramBridgeClient() {
       }
 
       for (const rule of matchingRules) {
+        const senderDisplayName =
+          params.from_display_name ||
+          params.from_username ||
+          "Telegram User";
         try {
           const ruleRequiredGroups = parseKeywordGroups(rule.blockedKeywords);
           if (globalRequiredGroups.length === 0 && ruleRequiredGroups.length > 0) {
@@ -573,10 +577,6 @@ function setupTelegramBridgeClient() {
 
           const forwardStyle = account.feishuStyle === "style2" ? "style2" : "style1";
           const showSourceIdentity = account.showSourceIdentity === true;
-          const senderDisplayName =
-            params.from_display_name ||
-            params.from_username ||
-            "Telegram User";
           const avatarUrl = showSourceIdentity
             ? buildTelegramAvatarUrl(
                 params.from_avatar_file,
