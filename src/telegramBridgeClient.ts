@@ -88,7 +88,9 @@ export class TelegramBridgeClient extends EventEmitter {
     });
 
     this.process.stderr.on("data", (data: Buffer) => {
-      console.error("[Telegram Bridge Error]", data.toString("utf-8"));
+      const text = data.toString("utf-8").trim();
+      if (!text) return;
+      console.log(`[TG-Bridge] ${text}`);
     });
 
     this.process.on("error", (error: Error) => {

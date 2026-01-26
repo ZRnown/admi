@@ -735,22 +735,14 @@ export class Bot {
       if (needsOcrCheck) {
         const imageAttachments = collectImageAssets(message);
 
-        if (imageAttachments.length === 0) {
-          if (activeOcrTrigger.length > 0) {
-            const msg = `${logPrefix} [OCR] 未检测到图片，且已配置OCR触发关键词，跳过转发`;
+        if (imageAttachments.length > 0) {
+          if (!this.ocrClient) {
+            const msg = `${logPrefix} [OCR] OCR客户端未初始化，无法检测图片，跳过转发`;
             console.log(`[OCR] ${msg}`);
             this.logger.info(msg);
             return;
           }
-        } else if (!this.ocrClient) {
-          if (activeOcrTrigger.length > 0) {
-            const msg = `${logPrefix} [OCR] OCR客户端未初始化，无法执行触发过滤，跳过转发`;
-            console.log(`[OCR] ${msg}`);
-            this.logger.info(msg);
-            return;
-          }
-          console.log(`[OCR] OCR客户端未初始化，跳过屏蔽检测`);
-        } else {
+
           console.log(`[OCR] 消息包含 ${imageAttachments.length} 张图片，开始检测...`);
           this.logger.info(`${logPrefix} [OCR] 开始检测图片中的文字...`);
 
@@ -926,22 +918,25 @@ export class Bot {
       this.logger.error(`${logPrefix} [ERROR] User filter check failed: ${String(e?.message || e)}`);
     }
 
+    const textHay = collectMessageTextPieces(message).join("\n");
+    const hasTextForKeywords = textHay.trim().length > 0;
+
     // keyword filter: 全局 + 规则级别关键词触发
     // 优先级：全局设置 > 规则级别设置
     try {
       const globalGroups = parseKeywordGroups(this.config.blockedKeywords);
       const ruleGroups = parseKeywordGroups(ruleConfig.blockedKeywords);
-      const hay = collectMessageTextPieces(message).join("\n");
+      const hay = textHay;
 
       // 全局关键词触发优先
-      if (globalGroups.length > 0) {
+      if (globalGroups.length > 0 && hasTextForKeywords) {
         const { matchedGroups } = matchParsedKeywordGroups(hay, globalGroups, { caseInsensitive });
         if (matchedGroups.length === 0) {
           this.logger.info(`${logPrefix} [SKIP] No global keyword matched`);
           return;
         }
         this.logger.info(`${logPrefix} [FILTER] Global keyword matched: ${formatKeywordGroups(matchedGroups)}`);
-      } else if (ruleGroups.length > 0) {
+      } else if (ruleGroups.length > 0 && hasTextForKeywords) {
         // 规则级别关键词触发
         const { matchedGroups } = matchParsedKeywordGroups(hay, ruleGroups, { caseInsensitive });
         if (matchedGroups.length === 0) {
@@ -958,10 +953,10 @@ export class Bot {
     try {
       const globalExcludes = parseKeywordGroups(this.config.excludeKeywords);
       const ruleExcludes = parseKeywordGroups(ruleConfig.excludeKeywords);
-      const hay = collectMessageTextPieces(message).join("\n");
+      const hay = textHay;
 
       // 全局屏蔽关键词优先
-      if (globalExcludes.length > 0) {
+      if (globalExcludes.length > 0 && hasTextForKeywords) {
         const { matchedGroups } = matchParsedKeywordGroups(hay, globalExcludes, { caseInsensitive });
         if (matchedGroups.length > 0) {
           this.logger.info(`${logPrefix} [SKIP] Global exclude keyword matched: ${formatKeywordGroups(matchedGroups)}`);
@@ -969,7 +964,7 @@ export class Bot {
         }
       }
       // 规则级别屏蔽关键词
-      if (ruleExcludes.length > 0) {
+      if (ruleExcludes.length > 0 && hasTextForKeywords) {
         const { matchedGroups } = matchParsedKeywordGroups(hay, ruleExcludes, { caseInsensitive });
         if (matchedGroups.length > 0) {
           this.logger.info(`${logPrefix} [SKIP] Rule exclude keyword matched: ${formatKeywordGroups(matchedGroups)}`);
