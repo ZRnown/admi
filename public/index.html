@@ -202,7 +202,7 @@
         <!-- 忽略媒体选项 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-3">忽略选项（覆盖全局设置）</h3>
-          <div class="flex flex-wrap gap-4">
+          <div class="flex flex-wrap gap-3">
             <label class="inline-flex items-center gap-2 text-sm text-slate-700">
               <input type="checkbox" id="ruleIgnoreSelf" class="h-4 w-4 rounded border-slate-300">
               忽略自己的消息
@@ -227,28 +227,26 @@
               <input type="checkbox" id="ruleIgnoreDocuments" class="h-4 w-4 rounded border-slate-300">
               忽略文档
             </label>
-          </div>
-          <div class="mt-3 grid gap-3 md:grid-cols-2">
-            <div class="flex items-center gap-2 text-sm text-slate-700">
-              <label class="inline-flex items-center gap-2">
+            <div class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <label class="inline-flex items-center gap-1">
                 <input type="checkbox" id="ruleIgnoreEnglish" class="h-4 w-4 rounded border-slate-300">
                 忽略英文
               </label>
               <input type="number" id="ruleIgnoreEnglishThreshold" min="0" max="100" placeholder="100"
-                class="w-20 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+                class="w-16 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
               <span class="text-xs text-slate-500">%</span>
             </div>
-            <div class="flex items-center gap-2 text-sm text-slate-700">
-              <label class="inline-flex items-center gap-2">
+            <div class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <label class="inline-flex items-center gap-1">
                 <input type="checkbox" id="ruleIgnoreChinese" class="h-4 w-4 rounded border-slate-300">
                 忽略中文
               </label>
               <input type="number" id="ruleIgnoreChineseThreshold" min="0" max="100" placeholder="100"
-                class="w-20 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+                class="w-16 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
               <span class="text-xs text-slate-500">%</span>
             </div>
           </div>
-          <p class="text-xs text-slate-500 mt-2">勾选后，此规则将忽略对应类型的消息或附件</p>
+          <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；当英文/中文字符占比 ≥ 阈值时忽略，100% 表示完全英文/中文才忽略。</p>
         </div>
 
         <!-- 用户过滤 -->
@@ -667,7 +665,7 @@
     // 加载配置
     async function loadConfig() {
       try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/api/config?includeSecrets=1');
         if (res.status === 401) {
           handleUnauthorized();
           throw new Error('unauthorized');
@@ -1075,7 +1073,7 @@
             <p class="text-xs text-slate-500 mt-1">选择您想要忽略的项目</p>
           </div>
           <div class="p-6">
-            <div class="flex flex-wrap items-center gap-4">
+            <div class="flex flex-wrap items-center gap-3">
               <label class="inline-flex items-center gap-2 text-sm text-slate-700">
               <input type="checkbox" ${acc.ignoreSelf ? 'checked' : ''} onchange="updateField('ignoreSelf', this.checked)" 
                 class="h-4 w-4 rounded border-slate-300"> 忽略自己的消息
@@ -1100,29 +1098,28 @@
               <input type="checkbox" ${acc.ignoreDocuments ? 'checked' : ''} onchange="updateField('ignoreDocuments', this.checked)" 
                 class="h-4 w-4 rounded border-slate-300"> 忽略文档
               </label>
-            </div>
-            <div class="grid gap-3 mt-3 md:grid-cols-2">
-              <div class="flex items-center gap-2 text-sm text-slate-700">
-                <label class="inline-flex items-center gap-2">
+              <div class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <label class="inline-flex items-center gap-1">
                   <input type="checkbox" ${acc.ignoreEnglish ? 'checked' : ''} onchange="updateField('ignoreEnglish', this.checked)" 
                     class="h-4 w-4 rounded border-slate-300"> 忽略英文
                 </label>
                 <input type="number" min="0" max="100" value="${acc.ignoreEnglishThreshold ?? 100}"
                   onchange="updateField('ignoreEnglishThreshold', Number(this.value))"
-                  class="w-20 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+                  class="w-16 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
                 <span class="text-xs text-slate-500">%</span>
               </div>
-              <div class="flex items-center gap-2 text-sm text-slate-700">
-                <label class="inline-flex items-center gap-2">
+              <div class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <label class="inline-flex items-center gap-1">
                   <input type="checkbox" ${acc.ignoreChinese ? 'checked' : ''} onchange="updateField('ignoreChinese', this.checked)" 
                     class="h-4 w-4 rounded border-slate-300"> 忽略中文
                 </label>
                 <input type="number" min="0" max="100" value="${acc.ignoreChineseThreshold ?? 100}"
                   onchange="updateField('ignoreChineseThreshold', Number(this.value))"
-                  class="w-20 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+                  class="w-16 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
                 <span class="text-xs text-slate-500">%</span>
               </div>
             </div>
+            <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；当英文/中文字符占比 ≥ 阈值时忽略，100% 表示完全英文/中文才忽略。</p>
           </div>
         </div>
 
