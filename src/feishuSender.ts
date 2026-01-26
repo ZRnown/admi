@@ -1,6 +1,6 @@
 import https from "node:https";
 import { URL } from "node:url";
-import { getEnv } from "./env.js";
+import { getEnv } from "./env";
 
 const MASKED_SECRET = "********";
 
