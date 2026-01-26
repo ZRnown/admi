@@ -88,9 +88,7 @@ export class TelegramBridgeClient extends EventEmitter {
     });
 
     this.process.stderr.on("data", (data: Buffer) => {
-      const text = data.toString("utf-8").trim();
-      if (!text) return;
-      console.log(`[TG-Bridge] ${text}`);
+      // stderr 已由进程管理器统一输出，这里避免重复日志
     });
 
     this.process.on("error", (error: Error) => {

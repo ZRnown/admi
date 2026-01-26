@@ -1440,7 +1440,11 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       account.ignoreImages !== oldAccount.ignoreImages ||
       account.ignoreAudio !== oldAccount.ignoreAudio ||
       account.ignoreVideo !== oldAccount.ignoreVideo ||
-      account.ignoreDocuments !== oldAccount.ignoreDocuments;
+      account.ignoreDocuments !== oldAccount.ignoreDocuments ||
+      account.ignoreEnglish !== oldAccount.ignoreEnglish ||
+      account.ignoreEnglishThreshold !== oldAccount.ignoreEnglishThreshold ||
+      account.ignoreChinese !== oldAccount.ignoreChinese ||
+      account.ignoreChineseThreshold !== oldAccount.ignoreChineseThreshold;
     // 检测用户过滤配置变化
     const userFilterChanged =
       JSON.stringify(account.allowedUsersIds || []) !== JSON.stringify(oldAccount.allowedUsersIds || []) ||
