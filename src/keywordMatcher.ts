@@ -30,6 +30,15 @@ export function parseKeywordGroups(input?: unknown): KeywordGroup[] {
   return groups;
 }
 
+function normalizeMatchText(value: string, caseInsensitive: boolean): string {
+  let output = String(value ?? "");
+  try {
+    output = output.normalize("NFKC");
+  } catch {}
+  output = output.replace(/\p{Cf}/gu, "");
+  return caseInsensitive ? output.toLowerCase() : output;
+}
+
 export function matchParsedKeywordGroups(
   text: string,
   groups: KeywordGroup[],
@@ -40,10 +49,10 @@ export function matchParsedKeywordGroups(
   }
 
   const caseInsensitive = options.caseInsensitive !== false;
-  const haystack = caseInsensitive ? text.toLowerCase() : text;
+  const haystack = normalizeMatchText(text, caseInsensitive);
   const matchedGroups = groups.filter((group) =>
     group.every((keyword) => {
-      const needle = caseInsensitive ? keyword.toLowerCase() : keyword;
+      const needle = normalizeMatchText(keyword, caseInsensitive);
       return haystack.includes(needle);
     }),
   );

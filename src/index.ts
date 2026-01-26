@@ -495,8 +495,11 @@ function setupTelegramBridgeClient() {
               caseInsensitive,
             });
             if (matchedGroups.length === 0) {
+              const preview = normalizedContent.replace(/\s+/g, " ").slice(0, 160);
               console.log(
-                `[Main] Telegram message skipped (no rule keyword match). chat=${sourceChatId}`,
+                `[Main] Telegram message skipped (no rule keyword match). chat=${sourceChatId} keywords=${JSON.stringify(
+                  rule.blockedKeywords || [],
+                )} preview="${preview}"`,
               );
               continue;
             }
