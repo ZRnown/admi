@@ -19,7 +19,7 @@ export function parseKeywordGroups(input?: unknown): KeywordGroup[] {
     const raw = String(entry).trim();
     if (!raw) continue;
     const parts = raw
-      .split(/[，,]/)
+      .split(/[，,&＆]/)
       .map((part) => part.trim())
       .filter(Boolean);
     if (parts.length > 0) {
@@ -73,5 +73,5 @@ export function hasKeywordGroupMatch(
 }
 
 export function formatKeywordGroups(groups: KeywordGroup[]): string {
-  return groups.map((group) => group.join(",")).join(" | ");
+  return groups.map((group) => group.join("&")).join(" | ");
 }

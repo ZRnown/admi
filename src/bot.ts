@@ -59,6 +59,23 @@ function getMessageSnapshots(message: Message): Message[] {
   return [];
 }
 
+function collectMessageTextPieces(message: Message): string[] {
+  const pieces: string[] = [];
+  if (message.content) {
+    pieces.push(String(message.content));
+  }
+  pieces.push(...collectEmbedText(message.embeds || []));
+  const snapshots = getMessageSnapshots(message);
+  for (const snapshot of snapshots) {
+    const snapshotContent = (snapshot as any)?.content;
+    if (snapshotContent) {
+      pieces.push(String(snapshotContent));
+    }
+    pieces.push(...collectEmbedText((snapshot as any)?.embeds || []));
+  }
+  return pieces;
+}
+
 function hasImageAttachment(attachments: any): boolean {
   if (!attachments) return false;
   const values = typeof attachments.values === "function" ? attachments.values() : Array.isArray(attachments) ? attachments : [];
@@ -914,10 +931,7 @@ export class Bot {
     try {
       const globalGroups = parseKeywordGroups(this.config.blockedKeywords);
       const ruleGroups = parseKeywordGroups(ruleConfig.blockedKeywords);
-      const pieces: string[] = [];
-      pieces.push(message.content || "");
-      pieces.push(...collectEmbedText(message.embeds || []));
-      const hay = pieces.join("\n");
+      const hay = collectMessageTextPieces(message).join("\n");
 
       // 全局关键词触发优先
       if (globalGroups.length > 0) {
@@ -944,10 +958,7 @@ export class Bot {
     try {
       const globalExcludes = parseKeywordGroups(this.config.excludeKeywords);
       const ruleExcludes = parseKeywordGroups(ruleConfig.excludeKeywords);
-      const pieces: string[] = [];
-      pieces.push(message.content || "");
-      pieces.push(...collectEmbedText(message.embeds || []));
-      const hay = pieces.join("\n");
+      const hay = collectMessageTextPieces(message).join("\n");
 
       // 全局屏蔽关键词优先
       if (globalExcludes.length > 0) {
