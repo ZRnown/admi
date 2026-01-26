@@ -30,17 +30,35 @@ export type Client<Ready extends boolean = boolean> =
 
 function collectEmbedText(embeds: any[]): string[] {
   const pieces: string[] = [];
-  for (const embed of embeds || []) {
-    const raw = (embed && typeof embed === "object" && "data" in embed && embed.data) ? embed.data : embed;
-    if (!raw || typeof raw !== "object") continue;
-    if ((raw as any).title) pieces.push(String((raw as any).title));
-    if ((raw as any).description) pieces.push(String((raw as any).description));
-    if ((raw as any).footer?.text) pieces.push(String((raw as any).footer.text));
-    if ((raw as any).author?.name) pieces.push(String((raw as any).author.name));
+  const seen = new Set<string>();
+  const push = (value: any) => {
+    if (value === undefined || value === null) return;
+    const text = String(value).trim();
+    if (!text || seen.has(text)) return;
+    seen.add(text);
+    pieces.push(text);
+  };
+  const extract = (raw: any) => {
+    if (!raw || typeof raw !== "object") return;
+    push((raw as any).title);
+    push((raw as any).description);
+    push((raw as any).footer?.text);
+    push((raw as any).author?.name);
     const fields = Array.isArray((raw as any).fields) ? (raw as any).fields : [];
     for (const field of fields) {
-      if (field?.name) pieces.push(String(field.name));
-      if (field?.value) pieces.push(String(field.value));
+      push(field?.name);
+      push(field?.value);
+    }
+  };
+  for (const embed of embeds || []) {
+    extract(embed);
+    if (embed && typeof embed === "object") {
+      if ("data" in embed) extract((embed as any).data);
+      if (typeof (embed as any).toJSON === "function") {
+        try {
+          extract((embed as any).toJSON());
+        } catch {}
+      }
     }
   }
   return pieces;
