@@ -6,6 +6,8 @@ export interface Env {
   DISCORD_TOKEN: string;
   PROXY_URL?: string;
   ENABLED_FORWARDING_TYPES?: string;
+  FEISHU_APP_ID?: string;
+  FEISHU_APP_SECRET?: string;
 }
 
 function readEnvFile(): Record<string, string> {
@@ -69,5 +71,7 @@ export function getEnv(): Env {
     PROXY_URL: envFile.PROXY_URL || process.env.PROXY_URL || undefined,
     ENABLED_FORWARDING_TYPES:
       envFile.ENABLED_FORWARDING_TYPES || process.env.ENABLED_FORWARDING_TYPES || undefined,
+    FEISHU_APP_ID: envFile.FEISHU_APP_ID || process.env.FEISHU_APP_ID || undefined,
+    FEISHU_APP_SECRET: envFile.FEISHU_APP_SECRET || process.env.FEISHU_APP_SECRET || undefined,
   };
 }

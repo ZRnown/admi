@@ -16,6 +16,7 @@ import { OCRClient } from "./ocrClient.js";
 import { FileLogger } from "./logger.js";
 import { getTelegramBridgeClient } from "./index.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
+import { clampPercent, getLanguageRatio } from "./languageFilter.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -439,6 +440,10 @@ export class Bot {
     ignoreAudio?: boolean;
     ignoreVideo?: boolean;
     ignoreDocuments?: boolean;
+    ignoreEnglish?: boolean;
+    ignoreEnglishThreshold?: number;
+    ignoreChinese?: boolean;
+    ignoreChineseThreshold?: number;
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
@@ -472,6 +477,10 @@ export class Bot {
         ignoreAudio: undefined,
         ignoreVideo: undefined,
         ignoreDocuments: undefined,
+        ignoreEnglish: undefined,
+        ignoreEnglishThreshold: undefined,
+        ignoreChinese: undefined,
+        ignoreChineseThreshold: undefined,
       };
     }
     return {
@@ -497,6 +506,10 @@ export class Bot {
       ignoreAudio: rule.ignoreAudio,
       ignoreVideo: rule.ignoreVideo,
       ignoreDocuments: rule.ignoreDocuments,
+      ignoreEnglish: rule.ignoreEnglish,
+      ignoreEnglishThreshold: rule.ignoreEnglishThreshold,
+      ignoreChinese: rule.ignoreChinese,
+      ignoreChineseThreshold: rule.ignoreChineseThreshold,
     };
   }
 
@@ -920,6 +933,40 @@ export class Bot {
 
     const textHay = collectMessageTextPieces(message).join("\n");
     const hasTextForKeywords = textHay.trim().length > 0;
+
+    // language filter: 仅对文本生效（全局 + 规则级别）
+    if (hasTextForKeywords) {
+      try {
+        const ratio = getLanguageRatio(textHay);
+        if (ratio.total > 0) {
+          const englishThreshold = clampPercent(this.config.ignoreEnglishThreshold, 100);
+          const chineseThreshold = clampPercent(this.config.ignoreChineseThreshold, 100);
+          const ruleEnglishThreshold = clampPercent(ruleConfig.ignoreEnglishThreshold, 100);
+          const ruleChineseThreshold = clampPercent(ruleConfig.ignoreChineseThreshold, 100);
+          const englishRatio = Math.round(ratio.englishRatio);
+          const chineseRatio = Math.round(ratio.chineseRatio);
+
+          if (this.config.ignoreEnglish && englishRatio >= englishThreshold) {
+            this.logger.info(`${logPrefix} [SKIP] 忽略英文(占比${englishRatio}%>=${englishThreshold}%)`);
+            return;
+          }
+          if (this.config.ignoreChinese && chineseRatio >= chineseThreshold) {
+            this.logger.info(`${logPrefix} [SKIP] 忽略中文(占比${chineseRatio}%>=${chineseThreshold}%)`);
+            return;
+          }
+          if (ruleConfig.ignoreEnglish && englishRatio >= ruleEnglishThreshold) {
+            this.logger.info(`${logPrefix} [SKIP] 规则忽略英文(占比${englishRatio}%>=${ruleEnglishThreshold}%)`);
+            return;
+          }
+          if (ruleConfig.ignoreChinese && chineseRatio >= ruleChineseThreshold) {
+            this.logger.info(`${logPrefix} [SKIP] 规则忽略中文(占比${chineseRatio}%>=${ruleChineseThreshold}%)`);
+            return;
+          }
+        }
+      } catch (e: any) {
+        this.logger.error(`${logPrefix} [ERROR] 语言占比过滤失败: ${String(e?.message || e)}`);
+      }
+    }
 
     // keyword filter: 全局 + 规则级别关键词触发
     // 优先级：全局设置 > 规则级别设置

@@ -150,6 +150,11 @@ export interface RuleLevelConfig {
   ignoreVideo?: boolean;
   // 忽略文档（规则级别）
   ignoreDocuments?: boolean;
+  // 忽略英文/中文（规则级别）
+  ignoreEnglish?: boolean;
+  ignoreEnglishThreshold?: number;
+  ignoreChinese?: boolean;
+  ignoreChineseThreshold?: number;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -243,6 +248,10 @@ export interface LegacyConfig {
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
   ignoreDocuments?: boolean;
+  ignoreEnglish?: boolean;
+  ignoreEnglishThreshold?: number;
+  ignoreChinese?: boolean;
+  ignoreChineseThreshold?: number;
   // Discord -> Discord 转发样式：style1 = 当前内嵌样式；style2 = 纯文本样式（带时间等）
   feishuStyle?: "style1" | "style2";
   // OCR 图片检测服务器URL
@@ -466,6 +475,10 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ignoreAudio: undefined,
       ignoreVideo: undefined,
       ignoreDocuments: undefined,
+      ignoreEnglish: undefined,
+      ignoreEnglishThreshold: undefined,
+      ignoreChinese: undefined,
+      ignoreChineseThreshold: undefined,
     };
   }
   return {
@@ -495,6 +508,20 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     ignoreAudio: raw.ignoreAudio === true ? true : undefined,
     ignoreVideo: raw.ignoreVideo === true ? true : undefined,
     ignoreDocuments: raw.ignoreDocuments === true ? true : undefined,
+    ignoreEnglish: raw.ignoreEnglish === true ? true : undefined,
+    ignoreEnglishThreshold:
+      typeof raw.ignoreEnglishThreshold === "number"
+        ? raw.ignoreEnglishThreshold
+        : typeof raw.ignoreEnglishThreshold === "string" && raw.ignoreEnglishThreshold.trim() && !isNaN(Number(raw.ignoreEnglishThreshold))
+          ? Number(raw.ignoreEnglishThreshold)
+          : undefined,
+    ignoreChinese: raw.ignoreChinese === true ? true : undefined,
+    ignoreChineseThreshold:
+      typeof raw.ignoreChineseThreshold === "number"
+        ? raw.ignoreChineseThreshold
+        : typeof raw.ignoreChineseThreshold === "string" && raw.ignoreChineseThreshold.trim() && !isNaN(Number(raw.ignoreChineseThreshold))
+          ? Number(raw.ignoreChineseThreshold)
+          : undefined,
   };
 }
 
@@ -640,6 +667,20 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         ignoreAudio: m.ignoreAudio === true ? true : undefined,
         ignoreVideo: m.ignoreVideo === true ? true : undefined,
         ignoreDocuments: m.ignoreDocuments === true ? true : undefined,
+        ignoreEnglish: m.ignoreEnglish === true ? true : undefined,
+        ignoreEnglishThreshold:
+          typeof m.ignoreEnglishThreshold === "number"
+            ? m.ignoreEnglishThreshold
+            : typeof m.ignoreEnglishThreshold === "string" && m.ignoreEnglishThreshold.trim() && !isNaN(Number(m.ignoreEnglishThreshold))
+              ? Number(m.ignoreEnglishThreshold)
+              : undefined,
+        ignoreChinese: m.ignoreChinese === true ? true : undefined,
+        ignoreChineseThreshold:
+          typeof m.ignoreChineseThreshold === "number"
+            ? m.ignoreChineseThreshold
+            : typeof m.ignoreChineseThreshold === "string" && m.ignoreChineseThreshold.trim() && !isNaN(Number(m.ignoreChineseThreshold))
+              ? Number(m.ignoreChineseThreshold)
+              : undefined,
       }))
     : [];
 
@@ -688,7 +729,27 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             excludeKeywords: Array.isArray(mapping.excludeKeywords) ? mapping.excludeKeywords : [],
             ocrBlockedKeywords: Array.isArray(mapping.ocrBlockedKeywords) ? mapping.ocrBlockedKeywords : [],
             ocrTriggerKeywords: Array.isArray(mapping.ocrTriggerKeywords) ? mapping.ocrTriggerKeywords : [],
-            replacementsDictionary: typeof mapping.replacementsDictionary === 'object' && mapping.replacementsDictionary ? mapping.replacementsDictionary : {}
+            replacementsDictionary: typeof mapping.replacementsDictionary === 'object' && mapping.replacementsDictionary ? mapping.replacementsDictionary : {},
+            ignoreSelf: mapping.ignoreSelf === true ? true : undefined,
+            ignoreBot: mapping.ignoreBot === true ? true : undefined,
+            ignoreImages: mapping.ignoreImages === true ? true : undefined,
+            ignoreAudio: mapping.ignoreAudio === true ? true : undefined,
+            ignoreVideo: mapping.ignoreVideo === true ? true : undefined,
+            ignoreDocuments: mapping.ignoreDocuments === true ? true : undefined,
+            ignoreEnglish: mapping.ignoreEnglish === true ? true : undefined,
+            ignoreEnglishThreshold:
+              typeof mapping.ignoreEnglishThreshold === "number"
+                ? mapping.ignoreEnglishThreshold
+                : typeof mapping.ignoreEnglishThreshold === "string" && mapping.ignoreEnglishThreshold.trim() && !isNaN(Number(mapping.ignoreEnglishThreshold))
+                  ? Number(mapping.ignoreEnglishThreshold)
+                  : undefined,
+            ignoreChinese: mapping.ignoreChinese === true ? true : undefined,
+            ignoreChineseThreshold:
+              typeof mapping.ignoreChineseThreshold === "number"
+                ? mapping.ignoreChineseThreshold
+                : typeof mapping.ignoreChineseThreshold === "string" && mapping.ignoreChineseThreshold.trim() && !isNaN(Number(mapping.ignoreChineseThreshold))
+                  ? Number(mapping.ignoreChineseThreshold)
+                  : undefined
           };
         })
       : [],
@@ -754,6 +815,20 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     ignoreAudio: input?.ignoreAudio === true,
     ignoreVideo: input?.ignoreVideo === true,
     ignoreDocuments: input?.ignoreDocuments === true,
+    ignoreEnglish: input?.ignoreEnglish === true,
+    ignoreEnglishThreshold:
+      typeof input?.ignoreEnglishThreshold === "number"
+        ? input.ignoreEnglishThreshold
+        : typeof input?.ignoreEnglishThreshold === "string" && input.ignoreEnglishThreshold.trim() && !isNaN(Number(input.ignoreEnglishThreshold))
+          ? Number(input.ignoreEnglishThreshold)
+          : undefined,
+    ignoreChinese: input?.ignoreChinese === true,
+    ignoreChineseThreshold:
+      typeof input?.ignoreChineseThreshold === "number"
+        ? input.ignoreChineseThreshold
+        : typeof input?.ignoreChineseThreshold === "string" && input.ignoreChineseThreshold.trim() && !isNaN(Number(input.ignoreChineseThreshold))
+          ? Number(input.ignoreChineseThreshold)
+          : undefined,
     ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(input?.ocrTriggerKeywords) ? input.ocrTriggerKeywords : [],
@@ -915,6 +990,10 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       ignoreAudio: false,
       ignoreVideo: false,
       ignoreDocuments: false,
+      ignoreEnglish: false,
+      ignoreEnglishThreshold: 100,
+      ignoreChinese: false,
+      ignoreChineseThreshold: 100,
       feishuStyle: "style1",
       channelTranslate: {},
       channelTranslateDirection: {},
@@ -963,6 +1042,10 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreAudio: account.ignoreAudio,
     ignoreVideo: account.ignoreVideo,
     ignoreDocuments: account.ignoreDocuments,
+    ignoreEnglish: account.ignoreEnglish,
+    ignoreEnglishThreshold: account.ignoreEnglishThreshold,
+    ignoreChinese: account.ignoreChinese,
+    ignoreChineseThreshold: account.ignoreChineseThreshold,
     ocrServerUrl: account.ocrServerUrl,
     ocrBlockedKeywords: account.ocrBlockedKeywords,
     ocrTriggerKeywords: account.ocrTriggerKeywords,

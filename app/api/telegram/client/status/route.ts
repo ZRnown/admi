@@ -28,6 +28,24 @@ async function readTelegramStatus(): Promise<Record<string, any>> {
   }
 }
 
+function normalizeTelegramState(state?: string): string {
+  const value = String(state || "").toLowerCase();
+  if (value === "connected" || value === "online") return "online";
+  if (value === "connecting" || value === "pending") return "pending";
+  if (value === "disconnected" || value === "idle") return "idle";
+  if (value === "error") return "error";
+  return state || "idle";
+}
+
+function normalizeTelegramMessage(state: string, message?: string): string {
+  const trimmed = typeof message === "string" ? message.trim() : "";
+  if (trimmed) return trimmed;
+  if (state === "online") return "已连接";
+  if (state === "pending") return "连接中";
+  if (state === "error") return "连接异常";
+  return "未连接";
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -55,9 +73,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ state: "idle", message: "未连接" });
     }
 
+    const normalizedState = normalizeTelegramState(status.state);
+
     return NextResponse.json({
-      state: status.state || "idle",
-      message: status.message || (status.state === "online" ? "已连接" : "未连接"),
+      state: normalizedState,
+      message: normalizeTelegramMessage(normalizedState, status.message),
       userInfo: status.userInfo,
     });
   } catch (e: any) {

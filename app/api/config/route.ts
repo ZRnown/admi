@@ -19,11 +19,29 @@ export const dynamic = "force-dynamic";
 
 const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
 
+const MASKED_SECRET = "********";
+
 type TelegramStatusEntry = {
   state?: string;
   message?: string;
   userInfo?: any;
 };
+
+function isMaskedSecret(value: unknown): boolean {
+  return typeof value === "string" && value === MASKED_SECRET;
+}
+
+function resolveSecretValue(value: unknown, fallback?: string): string | undefined {
+  if (value === undefined) return fallback;
+  if (isMaskedSecret(value)) return fallback;
+  if (typeof value === "string") return value;
+  return fallback;
+}
+
+function maskSecret(value?: string): string {
+  if (!value || !value.trim()) return "";
+  return MASKED_SECRET;
+}
 
 async function readTelegramStatus(): Promise<Record<string, TelegramStatusEntry>> {
   try {
@@ -81,6 +99,24 @@ function resolveTelegramAccountStatuses(
   };
 }
 
+function normalizeTelegramState(state?: string): string {
+  const value = String(state || "").toLowerCase();
+  if (value === "connected" || value === "online") return "online";
+  if (value === "connecting" || value === "pending") return "pending";
+  if (value === "disconnected" || value === "idle") return "idle";
+  if (value === "error") return "error";
+  return state || "idle";
+}
+
+function normalizeTelegramMessage(state: string, message?: string): string {
+  const trimmed = typeof message === "string" ? message.trim() : "";
+  if (trimmed) return trimmed;
+  if (state === "online") return "已连接";
+  if (state === "pending") return "连接中";
+  if (state === "error") return "连接异常";
+  return "未连接";
+}
+
 interface FrontendMapping {
   id: string;
   sourceChannelId: string;
@@ -111,6 +147,10 @@ interface FrontendMapping {
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
   ignoreDocuments?: boolean;
+  ignoreEnglish?: boolean;
+  ignoreEnglishThreshold?: number;
+  ignoreChinese?: boolean;
+  ignoreChineseThreshold?: number;
 }
 
 interface FrontendAccount {
@@ -153,6 +193,10 @@ interface FrontendAccount {
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
   ignoreDocuments?: boolean;
+  ignoreEnglish?: boolean;
+  ignoreEnglishThreshold?: number;
+  ignoreChinese?: boolean;
+  ignoreChineseThreshold?: number;
   // OCR 图片检测相关
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
@@ -236,6 +280,10 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ignoreAudio: undefined,
       ignoreVideo: undefined,
       ignoreDocuments: undefined,
+      ignoreEnglish: undefined,
+      ignoreEnglishThreshold: undefined,
+      ignoreChinese: undefined,
+      ignoreChineseThreshold: undefined,
     };
   }
   return {
@@ -265,6 +313,20 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     ignoreAudio: raw.ignoreAudio === true ? true : undefined,
     ignoreVideo: raw.ignoreVideo === true ? true : undefined,
     ignoreDocuments: raw.ignoreDocuments === true ? true : undefined,
+    ignoreEnglish: raw.ignoreEnglish === true ? true : undefined,
+    ignoreEnglishThreshold:
+      typeof raw.ignoreEnglishThreshold === "number"
+        ? raw.ignoreEnglishThreshold
+        : typeof raw.ignoreEnglishThreshold === "string" && raw.ignoreEnglishThreshold.trim() && !isNaN(Number(raw.ignoreEnglishThreshold))
+          ? Number(raw.ignoreEnglishThreshold)
+          : undefined,
+    ignoreChinese: raw.ignoreChinese === true ? true : undefined,
+    ignoreChineseThreshold:
+      typeof raw.ignoreChineseThreshold === "number"
+        ? raw.ignoreChineseThreshold
+        : typeof raw.ignoreChineseThreshold === "string" && raw.ignoreChineseThreshold.trim() && !isNaN(Number(raw.ignoreChineseThreshold))
+          ? Number(raw.ignoreChineseThreshold)
+          : undefined,
   };
 }
 
@@ -300,6 +362,15 @@ function mergeTelegramConfig(
     const prev = mergedAccountMap.get(acc.id);
     if (prev) {
       const merged = { ...prev, ...acc };
+      if ("token" in acc) {
+        merged.token = resolveSecretValue(acc.token, prev.token) ?? merged.token;
+      }
+      if ("apiHash" in acc) {
+        merged.apiHash = resolveSecretValue(acc.apiHash, prev.apiHash) ?? merged.apiHash;
+      }
+      if ("sessionString" in acc) {
+        merged.sessionString = resolveSecretValue(acc.sessionString, prev.sessionString) ?? merged.sessionString;
+      }
       if (acc.enabled === undefined && prev.enabled !== undefined) {
         merged.enabled = prev.enabled;
       }
@@ -357,6 +428,10 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         ignoreAudio: savedRule.ignoreAudio,
         ignoreVideo: savedRule.ignoreVideo,
         ignoreDocuments: savedRule.ignoreDocuments,
+        ignoreEnglish: savedRule.ignoreEnglish,
+        ignoreEnglishThreshold: savedRule.ignoreEnglishThreshold,
+        ignoreChinese: savedRule.ignoreChinese,
+        ignoreChineseThreshold: savedRule.ignoreChineseThreshold,
       });
     }
   } else {
@@ -426,6 +501,10 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     ignoreAudio: account.ignoreAudio === true,
     ignoreVideo: account.ignoreVideo === true,
     ignoreDocuments: account.ignoreDocuments === true,
+    ignoreEnglish: account.ignoreEnglish === true,
+    ignoreEnglishThreshold: account.ignoreEnglishThreshold,
+    ignoreChinese: account.ignoreChinese === true,
+    ignoreChineseThreshold: account.ignoreChineseThreshold,
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
     ocrBlockedKeywords: account.ocrBlockedKeywords || [],
     ocrTriggerKeywords: account.ocrTriggerKeywords || [],
@@ -445,6 +524,39 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     telegramConfig: (account as any).telegramConfig || undefined,
     feishuRuleConfigs: normalizeRuleConfigs((account as any).feishuRuleConfigs),
   };
+}
+
+function maskFrontendAccount(account: FrontendAccount): FrontendAccount {
+  const masked: FrontendAccount = { ...account };
+  masked.token = maskSecret(account.token);
+  masked.translationApiKey = maskSecret(account.translationApiKey);
+  masked.translationSecret = maskSecret(account.translationSecret);
+  masked.deepseekApiKey = maskSecret(account.deepseekApiKey);
+  masked.feishuAppSecret = maskSecret(account.feishuAppSecret);
+  masked.telegramBotToken = maskSecret(account.telegramBotToken);
+  masked.telegramApiHash = maskSecret(account.telegramApiHash);
+  masked.telegramSessionString = maskSecret(account.telegramSessionString);
+
+  if (Array.isArray(masked.botRelays)) {
+    masked.botRelays = masked.botRelays.map((relay) => ({
+      ...relay,
+      token: maskSecret(relay?.token),
+    }));
+  }
+
+  if (masked.telegramConfig && Array.isArray(masked.telegramConfig.accounts)) {
+    masked.telegramConfig = {
+      ...masked.telegramConfig,
+      accounts: masked.telegramConfig.accounts.map((acc) => ({
+        ...acc,
+        token: maskSecret(acc?.token),
+        apiHash: maskSecret(acc?.apiHash),
+        sessionString: maskSecret(acc?.sessionString),
+      })),
+    };
+  }
+
+  return masked;
 }
 
 function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountConfig {
@@ -485,6 +597,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       ignoreAudio: dto.ignoreAudio === true,
       ignoreVideo: dto.ignoreVideo === true,
       ignoreDocuments: dto.ignoreDocuments === true,
+      ignoreEnglish: dto.ignoreEnglish === true,
+      ignoreEnglishThreshold: dto.ignoreEnglishThreshold,
+      ignoreChinese: dto.ignoreChinese === true,
+      ignoreChineseThreshold: dto.ignoreChineseThreshold,
       feishuStyle: "style1",
     } as AccountConfig);
 
@@ -551,6 +667,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           ignoreAudio: mapping.ignoreAudio,
           ignoreVideo: mapping.ignoreVideo,
           ignoreDocuments: mapping.ignoreDocuments,
+          ignoreEnglish: mapping.ignoreEnglish,
+          ignoreEnglishThreshold: mapping.ignoreEnglishThreshold,
+          ignoreChinese: mapping.ignoreChinese,
+          ignoreChineseThreshold: mapping.ignoreChineseThreshold,
         });
       }
     }
@@ -569,6 +689,30 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     dto.telegramConfig && typeof dto.telegramConfig === "object" ? dto.telegramConfig : undefined,
     base.telegramConfig,
   );
+  const baseRelayMap = new Map<string, any>();
+  for (const relay of base.botRelays || []) {
+    if (relay?.id) {
+      baseRelayMap.set(relay.id, relay);
+    }
+  }
+
+  const nextBotRelays = Array.isArray(dto.botRelays)
+    ? dto.botRelays
+        .map((x: any) => {
+          if (!x) return null;
+          const fallbackRelay = x.id ? baseRelayMap.get(x.id) : undefined;
+          const resolvedToken = resolveSecretValue(x.token, fallbackRelay?.token);
+          if (typeof resolvedToken !== "string" || !resolvedToken.trim()) return null;
+          return {
+            id: typeof x.id === "string" && x.id.trim() ? x.id.trim() : randomUUID(),
+            name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : "中转机器人",
+            token: resolvedToken.trim(),
+            loginState: typeof x.loginState === "string" ? x.loginState : fallbackRelay?.loginState || "idle",
+            loginMessage: typeof x.loginMessage === "string" ? x.loginMessage : fallbackRelay?.loginMessage || "",
+          };
+        })
+        .filter(Boolean)
+    : base.botRelays || [];
 
   let loginRequested: boolean;
   if (fallback && fallback.loginRequested === true) {
@@ -583,7 +727,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     name: dto.name || base.name,
     type: dto.type === "bot" ? "bot" : "selfbot",
     forwardingType: dto.forwardingType || base.forwardingType || "discord-to-discord",
-    token: dto.token || "",
+    token: resolveSecretValue(dto.token, base.token) || "",
     proxyUrl: dto.proxyUrl || "",
     loginRequested,
     loginNonce: dto.loginNonce ?? base.loginNonce,
@@ -596,8 +740,9 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     enableDiscordForward: dto.enableDiscordForward !== false,
     feishuAppId: typeof dto.feishuAppId === "string" && dto.feishuAppId.trim() ? dto.feishuAppId.trim() : base.feishuAppId,
     feishuAppSecret:
-      typeof dto.feishuAppSecret === "string" && dto.feishuAppSecret.trim()
-        ? dto.feishuAppSecret.trim()
+      typeof resolveSecretValue(dto.feishuAppSecret, base.feishuAppSecret) === "string" &&
+      resolveSecretValue(dto.feishuAppSecret, base.feishuAppSecret)!.trim()
+        ? resolveSecretValue(dto.feishuAppSecret, base.feishuAppSecret)!.trim()
         : base.feishuAppSecret,
     publicBaseUrl:
       typeof dto.publicBaseUrl === "string" && dto.publicBaseUrl.trim()
@@ -620,31 +765,25 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     enableTranslation: dto.enableTranslation === true,
     translationProvider: dto.translationProvider || base.translationProvider || "deepseek",
     translationApiKey:
-      typeof dto.translationApiKey === "string" && dto.translationApiKey.trim()
-        ? dto.translationApiKey.trim()
-        : typeof dto.deepseekApiKey === "string" && dto.deepseekApiKey.trim()
-          ? dto.deepseekApiKey.trim()
+      typeof resolveSecretValue(dto.translationApiKey, base.translationApiKey) === "string" &&
+      resolveSecretValue(dto.translationApiKey, base.translationApiKey)!.trim()
+        ? resolveSecretValue(dto.translationApiKey, base.translationApiKey)!.trim()
+        : typeof resolveSecretValue(dto.deepseekApiKey, base.deepseekApiKey) === "string" &&
+            resolveSecretValue(dto.deepseekApiKey, base.deepseekApiKey)!.trim()
+          ? resolveSecretValue(dto.deepseekApiKey, base.deepseekApiKey)!.trim()
           : base.translationApiKey,
     translationSecret:
-      typeof dto.translationSecret === "string" && dto.translationSecret.trim()
-        ? dto.translationSecret.trim()
+      typeof resolveSecretValue(dto.translationSecret, base.translationSecret) === "string" &&
+      resolveSecretValue(dto.translationSecret, base.translationSecret)!.trim()
+        ? resolveSecretValue(dto.translationSecret, base.translationSecret)!.trim()
         : base.translationSecret,
     deepseekApiKey:
-      typeof dto.deepseekApiKey === "string" && dto.deepseekApiKey.trim()
-        ? dto.deepseekApiKey.trim()
+      typeof resolveSecretValue(dto.deepseekApiKey, base.deepseekApiKey) === "string" &&
+      resolveSecretValue(dto.deepseekApiKey, base.deepseekApiKey)!.trim()
+        ? resolveSecretValue(dto.deepseekApiKey, base.deepseekApiKey)!.trim()
         : undefined,
     enableBotRelay: dto.enableBotRelay === true,
-    botRelays: Array.isArray(dto.botRelays)
-      ? dto.botRelays
-          .filter((x: any) => x && typeof x.token === "string" && x.token.trim())
-          .map((x: any) => ({
-            id: typeof x.id === "string" && x.id.trim() ? x.id.trim() : randomUUID(),
-            name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : "中转机器人",
-            token: x.token.trim(),
-            loginState: typeof x.loginState === "string" ? x.loginState : "idle",
-            loginMessage: typeof x.loginMessage === "string" ? x.loginMessage : "",
-          }))
-      : base.botRelays || [],
+    botRelays: nextBotRelays,
     channelRelayMap:
       dto.channelRelayMap && typeof dto.channelRelayMap === "object"
         ? dto.channelRelayMap
@@ -655,21 +794,43 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     ignoreAudio: dto.ignoreAudio === true,
     ignoreVideo: dto.ignoreVideo === true,
     ignoreDocuments: dto.ignoreDocuments === true,
+    ignoreEnglish: dto.ignoreEnglish === true,
+    ignoreEnglishThreshold:
+      typeof dto.ignoreEnglishThreshold === "number"
+        ? dto.ignoreEnglishThreshold
+        : base.ignoreEnglishThreshold,
+    ignoreChinese: dto.ignoreChinese === true,
+    ignoreChineseThreshold:
+      typeof dto.ignoreChineseThreshold === "number"
+        ? dto.ignoreChineseThreshold
+        : base.ignoreChineseThreshold,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(dto.ocrTriggerKeywords) ? dto.ocrTriggerKeywords : [],
     feishuStyle: dto.feishuStyle === "style1" || dto.feishuStyle === "style2" ? dto.feishuStyle : (base.feishuStyle || "style1"),
     // Telegram认证配置保存
-    telegramBotToken: typeof dto.telegramBotToken === "string" && dto.telegramBotToken.trim() ? dto.telegramBotToken.trim() : undefined,
+    telegramBotToken:
+      typeof resolveSecretValue(dto.telegramBotToken, base.telegramBotToken) === "string" &&
+      resolveSecretValue(dto.telegramBotToken, base.telegramBotToken)!.trim()
+        ? resolveSecretValue(dto.telegramBotToken, base.telegramBotToken)!.trim()
+        : base.telegramBotToken,
     telegramApiId:
       typeof dto.telegramApiId === "number"
         ? dto.telegramApiId
         : typeof dto.telegramApiId === "string" && dto.telegramApiId.trim() && !isNaN(Number(dto.telegramApiId))
           ? Number(dto.telegramApiId)
           : undefined,
-    telegramApiHash: typeof dto.telegramApiHash === "string" && dto.telegramApiHash.trim() ? dto.telegramApiHash.trim() : undefined,
+    telegramApiHash:
+      typeof resolveSecretValue(dto.telegramApiHash, base.telegramApiHash) === "string" &&
+      resolveSecretValue(dto.telegramApiHash, base.telegramApiHash)!.trim()
+        ? resolveSecretValue(dto.telegramApiHash, base.telegramApiHash)!.trim()
+        : base.telegramApiHash,
     telegramSessionPath: typeof dto.telegramSessionPath === "string" && dto.telegramSessionPath.trim() ? dto.telegramSessionPath.trim() : undefined,
-    telegramSessionString: typeof dto.telegramSessionString === "string" && dto.telegramSessionString.trim() ? dto.telegramSessionString.trim() : undefined,
+    telegramSessionString:
+      typeof resolveSecretValue(dto.telegramSessionString, base.telegramSessionString) === "string" &&
+      resolveSecretValue(dto.telegramSessionString, base.telegramSessionString)!.trim()
+        ? resolveSecretValue(dto.telegramSessionString, base.telegramSessionString)!.trim()
+        : base.telegramSessionString,
     sessionType: dto.sessionType === "string" ? "string" : "file",
     // Telegram 超长消息处理配置
     enableTelegramOverflow: dto.enableTelegramOverflow === true,
@@ -685,24 +846,30 @@ export async function GET(req: NextRequest) {
     const auth = await requireAuth(req);
     if (auth) return auth;
 
+    const includeSecrets =
+      req.nextUrl.searchParams.get("includeSecrets") === "1" ||
+      req.nextUrl.searchParams.get("export") === "1";
     const multi = await getMultiConfig();
     const status = await readStatus();
     const telegramStatus = await readTelegramStatus();
     const payload: FrontendPayload = {
       accounts: multi.accounts.map((acc) => {
         const { botStatus, clientStatus } = resolveTelegramAccountStatuses(acc, telegramStatus);
-        return {
+        const botState = normalizeTelegramState(botStatus?.state);
+        const clientState = normalizeTelegramState(clientStatus?.state);
+        const frontend = {
           ...accountToFrontend(acc),
           ...(status[acc.id] || {}),
-          telegramBotState: botStatus?.state || "idle",
-          telegramBotMessage: botStatus?.message || "",
-          telegramClientState: clientStatus?.state || "idle",
-          telegramClientMessage: clientStatus?.message || "",
+          telegramBotState: botState,
+          telegramBotMessage: normalizeTelegramMessage(botState, botStatus?.message),
+          telegramClientState: clientState,
+          telegramClientMessage: normalizeTelegramMessage(clientState, clientStatus?.message),
         };
+        return includeSecrets ? frontend : maskFrontendAccount(frontend);
       }),
       activeId: multi.activeId || multi.accounts[0]?.id || "",
       loginUser: multi.loginUser || "",
-      loginPassword: multi.loginPassword || "",
+      loginPassword: includeSecrets ? multi.loginPassword || "" : maskSecret(multi.loginPassword),
       telegramAvatarBaseUrl: multi.telegramAvatarBaseUrl || "",
       enabledForwardingTypes: multi.enabledForwardingTypes,
     };
@@ -727,11 +894,12 @@ export async function POST(req: NextRequest) {
         return dtoToAccount(acc, currentAccount);
       });
       const activeId = typeof body.activeId === "string" ? body.activeId : accounts[0]?.id;
+      const resolvedLoginPassword = resolveSecretValue(body.loginPassword, current.loginPassword);
       next = {
         accounts,
         activeId,
         loginUser: typeof body.loginUser === "string" ? body.loginUser : current.loginUser,
-        loginPassword: typeof body.loginPassword === "string" ? body.loginPassword : current.loginPassword,
+        loginPassword: typeof resolvedLoginPassword === "string" ? resolvedLoginPassword : current.loginPassword,
         telegramAvatarBaseUrl:
           typeof body.telegramAvatarBaseUrl === "string" && body.telegramAvatarBaseUrl.trim()
             ? body.telegramAvatarBaseUrl.trim()
@@ -795,19 +963,25 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "配置格式错误：缺少 accounts 数组" }, { status: 400 });
     }
 
+    const current = await getMultiConfig();
     // 转换前端格式到后端格式
     const accounts = (body.accounts as FrontendAccount[]).map((acc) => {
-      return dtoToAccount(acc);
+      const currentAccount = current.accounts.find((a) => a.id === acc.id);
+      return dtoToAccount(acc, currentAccount);
     });
 
     const activeId = typeof body.activeId === "string" ? body.activeId : accounts[0]?.id;
+    const resolvedLoginPassword = resolveSecretValue(body.loginPassword, current.loginPassword);
 
     const next: MultiConfig = {
       accounts,
       activeId,
-      loginUser: typeof body.loginUser === "string" ? body.loginUser : undefined,
-      loginPassword: typeof body.loginPassword === "string" ? body.loginPassword : undefined,
-      telegramAvatarBaseUrl: typeof body.telegramAvatarBaseUrl === "string" ? body.telegramAvatarBaseUrl.trim() : undefined,
+      loginUser: typeof body.loginUser === "string" ? body.loginUser : current.loginUser,
+      loginPassword: typeof resolvedLoginPassword === "string" ? resolvedLoginPassword : current.loginPassword,
+      telegramAvatarBaseUrl:
+        typeof body.telegramAvatarBaseUrl === "string" && body.telegramAvatarBaseUrl.trim()
+          ? body.telegramAvatarBaseUrl.trim()
+          : current.telegramAvatarBaseUrl,
     };
 
     await saveMultiConfig(next);

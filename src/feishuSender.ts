@@ -1,5 +1,14 @@
 import https from "node:https";
 import { URL } from "node:url";
+import { getEnv } from "./env.js";
+
+const MASKED_SECRET = "********";
+
+function resolveSecret(value?: string): string {
+  if (!value) return "";
+  if (value === MASKED_SECRET) return "";
+  return value;
+}
 
 // 飞书发送负载，与原有结构保持一致，方便 Bot 复用
 export interface FeishuSendPayload {
@@ -30,10 +39,13 @@ export class FeishuSender {
     appSecret?: string,
     options?: { mode?: "webhook" | "thread" },
   ) {
+    const env = getEnv();
     this.target = target;
     this.httpAgent = httpAgent;
-    this.appId = appId || process.env.FEISHU_APP_ID || "";
-    this.appSecret = appSecret || process.env.FEISHU_APP_SECRET || "";
+    const resolvedAppId = resolveSecret(appId);
+    const resolvedAppSecret = resolveSecret(appSecret);
+    this.appId = resolvedAppId || env.FEISHU_APP_ID || "";
+    this.appSecret = resolvedAppSecret || env.FEISHU_APP_SECRET || "";
     this.mode = options?.mode;
   }
 

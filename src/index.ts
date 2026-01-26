@@ -23,6 +23,7 @@ import { FileLogger } from "./logger.js";
 import { telegramBridgeManager } from "./processManager.js";
 import { TelegramBridgeClient } from "./telegramBridgeClient.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
+import { clampPercent, getLanguageRatio } from "./languageFilter.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -388,6 +389,30 @@ function setupTelegramBridgeClient() {
           parseKeywordGroups(rule.ocrBlockedKeywords).length > 0 ||
           parseKeywordGroups(rule.ocrTriggerKeywords).length > 0,
       );
+      let englishRatio: number | null = null;
+      let chineseRatio: number | null = null;
+
+      if (hasText) {
+        try {
+          const ratio = getLanguageRatio(normalizedContent);
+          if (ratio.total > 0) {
+            englishRatio = Math.round(ratio.englishRatio);
+            chineseRatio = Math.round(ratio.chineseRatio);
+            const englishThreshold = clampPercent(account.ignoreEnglishThreshold, 100);
+            const chineseThreshold = clampPercent(account.ignoreChineseThreshold, 100);
+            if (account.ignoreEnglish && englishRatio >= englishThreshold) {
+              logSkip(`忽略英文(占比${englishRatio}%>=${englishThreshold}%)`);
+              continue;
+            }
+            if (account.ignoreChinese && chineseRatio >= chineseThreshold) {
+              logSkip(`忽略中文(占比${chineseRatio}%>=${chineseThreshold}%)`);
+              continue;
+            }
+          }
+        } catch (e: any) {
+          console.error(`[TG->DC] 语言占比过滤异常: ${String(e?.message || e)}`);
+        }
+      }
 
       const isImage = (m: any) =>
         m?.type === "photo" || String(m?.mimeType || "").startsWith("image/");
@@ -531,6 +556,25 @@ function setupTelegramBridgeClient() {
           params.from_username ||
           "Telegram User";
         try {
+          if (hasText && englishRatio !== null && chineseRatio !== null) {
+            const ruleEnglishThreshold = clampPercent(rule.ignoreEnglishThreshold, 100);
+            const ruleChineseThreshold = clampPercent(rule.ignoreChineseThreshold, 100);
+            if (rule.ignoreEnglish && englishRatio >= ruleEnglishThreshold) {
+              logSkip(
+                `规则忽略英文(占比${englishRatio}%>=${ruleEnglishThreshold}%)`,
+                `目标: ${rule.targetChannelId}`,
+              );
+              continue;
+            }
+            if (rule.ignoreChinese && chineseRatio >= ruleChineseThreshold) {
+              logSkip(
+                `规则忽略中文(占比${chineseRatio}%>=${ruleChineseThreshold}%)`,
+                `目标: ${rule.targetChannelId}`,
+              );
+              continue;
+            }
+          }
+
           const ruleRequiredGroups = parseKeywordGroups(rule.blockedKeywords);
           if (globalRequiredGroups.length === 0 && ruleRequiredGroups.length > 0 && hasText) {
             const { matchedGroups } = matchParsedKeywordGroups(normalizedContent, ruleRequiredGroups, {

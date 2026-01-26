@@ -206,7 +206,7 @@ class TelegramClientManager:
         if not hasattr(self, "_watched_chats"):
             self._watched_chats = {}
         self._watched_chats[account_id] = set(normalized)
-        logger.info(f"Updated watched chats for {account_id}: {normalized}")
+        logger.info(f"客户端账号 {account_id} 监听 {len(normalized)} 个聊天")
 
     def _is_watched_chat(
         self,
@@ -707,8 +707,8 @@ class TelegramClientManager:
                 chat_username = getattr(message.chat, "username", None)
 
             if self._is_watched_chat(account_id, message.chat_id, chat_username):
-                logger.info(
-                    f"Telegram update received for account {account_id}: chat={message.chat_id} id={message.id}"
+                logger.debug(
+                    f"收到 Telegram 更新: 账号={account_id} chat={message.chat_id} id={message.id}"
                 )
 
             reply_to_message = None

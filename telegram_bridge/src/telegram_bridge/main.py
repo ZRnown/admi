@@ -117,7 +117,7 @@ class TelegramBridgeService:
         async def on_telegram_message(account_id: str, message_data: dict):
             """处理接收到的Telegram消息"""
             try:
-                logger.info(f"Received Telegram message from account {account_id}: {message_data.get('id')}")
+                logger.debug(f"收到 Telegram 消息: 账号={account_id} id={message_data.get('id')}")
                 logger.debug(f"Telegram message payload: {message_data}")
 
                 # 通过forwarder处理消息（它会根据mappings转发到Discord）
@@ -378,7 +378,6 @@ class TelegramBridgeService:
                 if not account_id:
                     continue
                 account_watched_chats[account_id].add(chat_id)
-                logger.info(f"Targeting chat for keepalive: {chat_id} (Account: {account_id})")
 
         # 3. 应用监听列表并注册处理器
         for account in accounts:
@@ -398,11 +397,11 @@ class TelegramBridgeService:
             if getattr(account, "type", None) == "bot":
                 self.bot_manager.message_handlers[account_id] = handler
                 self.bot_manager.update_watched_chats(account_id, watched_chats)
-                logger.info(f"Bot {account_id} watching {len(watched_chats)} chats: {watched_chats}")
+                logger.info(f"机器人账号 {account_id} 监听 {len(watched_chats)} 个聊天")
             else:
                 self.client_manager.message_handlers[account_id] = handler
                 self.client_manager.update_watched_chats(account_id, watched_chats)
-                logger.info(f"Client {account_id} watching {len(watched_chats)} chats: {watched_chats}")
+                logger.info(f"客户端账号 {account_id} 监听 {len(watched_chats)} 个聊天")
 
         return {"success": True}
 

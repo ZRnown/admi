@@ -59,7 +59,7 @@ class TelegramBotManager:
                     except ValueError:
                         normalized.add(cleaned.lower())
         self._watched_chats[account_id] = normalized
-        logger.info(f"Bot updated watched chats for {account_id}: {normalized}")
+        logger.info(f"机器人账号 {account_id} 监听 {len(normalized)} 个聊天")
 
     def _is_watched_chat(self, account_id: str, chat_id: int, chat_username: str) -> bool:
         """检查是否是监听的频道"""
