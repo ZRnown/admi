@@ -1343,10 +1343,8 @@ export class Bot {
               const authorTag = isWebhook
                 ? (webhookName !== "unknown" ? webhookName : "Webhook")
                 : (message.author?.tag || message.author?.username || "未知用户");
-              const contentPreview = (message.content || "").trim();
-              const contentDisplay = contentPreview.length > 100
-                ? contentPreview.substring(0, 100) + "..."
-                : contentPreview || "(无文本内容)";
+              const contentPreview = collectMessageTextPieces(message).join("\n").trim();
+              const contentDisplay = formatLogPreview(contentPreview, 120);
               const hasAttachments = (message.attachments?.size || 0) > 0;
               const hasEmbeds = (message.embeds?.length || 0) > 0;
               const isReply = !!message.reference;
