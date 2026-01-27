@@ -90,6 +90,7 @@
             <li class="pl-4">• Discord → Discord：填 Discord Token，规则中填写来源频道 ID 与目标 Webhook URL。</li>
             <li class="pl-4">• Discord → Telegram：填 Discord Token + Telegram Bot Token，Bot 需在目标群/频道具备发消息权限，规则中填写 Discord 频道 ID 与 Telegram Chat ID。</li>
             <li class="pl-4">• Telegram → Discord：填 Telegram API ID/Hash 并完成 Session 认证，规则中填写来源 Chat ID 或用户名（@xxx/xxx）与 Discord Webhook URL。</li>
+            <li class="pl-4">• Telegram → Telegram：填 Telegram Bot Token 与 API ID/Hash（用于接收与转发），规则中填写来源 Chat ID 与目标 Chat ID，可在规则内选择“机器人/用户”发送。</li>
             <li class="pl-4">• Discord → 飞书：填 Discord Token，配置飞书 Webhook 或线程 ID，若需图片/视频转发请填写飞书 App ID/Secret 并开通相关权限。</li>
             <li class="pl-4">• 限制可选类型：在 `.env` 设置 `ENABLED_FORWARDING_TYPES=discord-to-discord,discord-to-telegram` 等，留空表示全部可用。</li>
             <li class="mt-3 font-semibold text-slate-700">关于 Token：</li>
@@ -249,6 +250,84 @@
           <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；当英文/中文字符占比 ≥ 阈值时忽略，100% 表示完全英文/中文才忽略。</p>
         </div>
 
+        <!-- Telegram 发送账号（仅 TG→TG） -->
+        <div id="ruleTelegramSenderSection" class="hidden border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-3">Telegram 发送账号</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">发送账号类型</label>
+              <select id="ruleTelegramSenderType" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="">自动选择（优先机器人）</option>
+                <option value="bot">机器人</option>
+                <option value="client">用户</option>
+              </select>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 mt-2">仅对 Telegram → Telegram 转发生效。</p>
+        </div>
+
+        <!-- 水印设置（规则级别） -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-3">水印设置（规则级别）</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">规则水印策略</label>
+              <select id="ruleWatermarkMode" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="inherit">继承全局</option>
+                <option value="enable">强制启用</option>
+                <option value="disable">强制关闭</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
+              <input type="text" id="ruleWatermarkText" placeholder="例如：转发狗"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">文字大小（px）</label>
+              <input type="number" min="8" id="ruleWatermarkTextSize" placeholder="16"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
+              <input type="number" min="0" max="100" id="ruleWatermarkTextOpacity" placeholder="60"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">图片水印地址</label>
+              <input type="text" id="ruleWatermarkImageUrl" placeholder="https://example.com/watermark.png 或 /path/to/file.png"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">图片缩放（%）</label>
+              <input type="number" min="1" max="100" id="ruleWatermarkImageScale" placeholder="20"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">图片透明度（0-100）</label>
+              <input type="number" min="0" max="100" id="ruleWatermarkImageOpacity" placeholder="60"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">水印位置</label>
+              <select id="ruleWatermarkPosition" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="">默认（右下）</option>
+                <option value="top-left">左上</option>
+                <option value="top-right">右上</option>
+                <option value="bottom-left">左下</option>
+                <option value="bottom-right">右下</option>
+                <option value="center">居中</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">边距（px）</label>
+              <input type="number" min="0" id="ruleWatermarkMargin" placeholder="8"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 mt-2">策略为“强制启用”时才会使用此处的文字/图片水印设置。</p>
+        </div>
+
         <!-- 用户过滤 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-3">用户过滤</h3>
@@ -373,7 +452,7 @@
     let saveTimer = null;
     let isLoggedIn = false;
     let pagination = { discordPage: 1, feishuPage: 1, botRelayPage: 1, pageSize: 10 };
-    let currentForwardingType = 'discord-to-discord'; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord'
+    let currentForwardingType = 'discord-to-discord'; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'telegram-to-telegram'
     let pendingStatusRender = false;
     let lastFormInteractionAt = 0;
     let isSaving = false;
@@ -838,6 +917,7 @@
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-discord')) ? `<option value="discord-to-discord" ${acc.forwardingType === 'discord-to-discord' || !acc.forwardingType ? 'selected' : ''}>Discord → Discord</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-telegram')) ? `<option value="discord-to-telegram" ${acc.forwardingType === 'discord-to-telegram' ? 'selected' : ''}>Discord → Telegram</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-discord')) ? `<option value="telegram-to-discord" ${acc.forwardingType === 'telegram-to-discord' ? 'selected' : ''}>Telegram → Discord</option>` : ''}
+                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-telegram')) ? `<option value="telegram-to-telegram" ${acc.forwardingType === 'telegram-to-telegram' ? 'selected' : ''}>Telegram → Telegram</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-feishu')) ? `<option value="discord-to-feishu" ${acc.forwardingType === 'discord-to-feishu' ? 'selected' : ''}>Discord → 飞书</option>` : ''}
               </select>
             </div>
@@ -882,7 +962,7 @@
             </div>
             ` : ''}
 
-            ${forwardingType === 'discord-to-telegram' ? `
+            ${(forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') ? `
             <!-- Discord→Telegram Bot配置 -->
             <div class="border-t pt-4 border-slate-200">
               <h3 class="text-sm font-medium text-slate-800 mb-3">Telegram Bot 配置</h3>
@@ -907,7 +987,9 @@
                 <p class="text-xs text-slate-500 mt-1">从Telegram的@BotFather获取Bot Token，用于发送消息到Telegram频道</p>
               </div>
             </div>
-            ` : forwardingType === 'telegram-to-discord' ? `
+            ` : ''}
+
+            ${(forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') ? `
             <!-- Telegram→Discord Client配置 -->
             <div class="border-t pt-4 border-slate-200">
               <h3 class="text-sm font-medium text-slate-800 mb-3">Telegram Client 配置</h3>
@@ -990,7 +1072,9 @@
                 </div>
               </div>
             </div>
-            ` : forwardingType === 'discord-to-feishu' ? `
+            ` : ''}
+
+            ${forwardingType === 'discord-to-feishu' ? `
             <!-- Discord→飞书配置 -->
             <div class="border-t pt-4 border-slate-200">
               <h3 class="text-sm font-medium text-slate-800 mb-3">飞书应用配置</h3>
@@ -1123,6 +1207,69 @@
           </div>
         </div>
 
+        <!-- 水印设置 -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">水印设置</h2>
+            <p class="text-xs text-slate-500 mt-1">仅对图片生效，文字/图片水印可同时使用</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${(acc.watermark && acc.watermark.enabled) ? 'checked' : ''} onchange="updateWatermarkField('enabled', this.checked)"
+                class="h-4 w-4 rounded border-slate-300"> 启用水印
+            </label>
+            <div class="grid gap-3 md:grid-cols-2">
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
+                <input type="text" value="${(acc.watermark && acc.watermark.text) || ''}" onchange="updateWatermarkField('text', this.value)"
+                  placeholder="例如：转发狗" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">文字大小（px）</label>
+                <input type="number" min="8" value="${(acc.watermark && acc.watermark.textSize) || ''}" onchange="updateWatermarkField('textSize', Number(this.value))"
+                  placeholder="16" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
+                <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.textOpacity) || ''}" onchange="updateWatermarkField('textOpacity', Number(this.value))"
+                  placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">图片水印地址</label>
+                <input type="text" value="${(acc.watermark && acc.watermark.imageUrl) || ''}" onchange="updateWatermarkField('imageUrl', this.value)"
+                  placeholder="https://example.com/watermark.png 或 /path/to/file.png" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">图片缩放（%）</label>
+                <input type="number" min="1" max="100" value="${(acc.watermark && acc.watermark.imageScale) || ''}" onchange="updateWatermarkField('imageScale', Number(this.value))"
+                  placeholder="20" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">图片透明度（0-100）</label>
+                <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.imageOpacity) || ''}" onchange="updateWatermarkField('imageOpacity', Number(this.value))"
+                  placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">水印位置</label>
+                <select onchange="updateWatermarkField('position', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="" ${(acc.watermark && acc.watermark.position) ? '' : 'selected'}>默认（右下）</option>
+                  <option value="top-left" ${(acc.watermark && acc.watermark.position) === 'top-left' ? 'selected' : ''}>左上</option>
+                  <option value="top-right" ${(acc.watermark && acc.watermark.position) === 'top-right' ? 'selected' : ''}>右上</option>
+                  <option value="bottom-left" ${(acc.watermark && acc.watermark.position) === 'bottom-left' ? 'selected' : ''}>左下</option>
+                  <option value="bottom-right" ${(acc.watermark && acc.watermark.position) === 'bottom-right' ? 'selected' : ''}>右下</option>
+                  <option value="center" ${(acc.watermark && acc.watermark.position) === 'center' ? 'selected' : ''}>居中</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">边距（px）</label>
+                <input type="number" min="0" value="${(acc.watermark && acc.watermark.margin) || ''}" onchange="updateWatermarkField('margin', Number(this.value))"
+                  placeholder="8" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+            </div>
+            <p class="text-xs text-slate-500">图片水印支持 URL 或本地路径；透明度越大越清晰。</p>
+          </div>
+        </div>
+
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">关键词设置</h2>
@@ -1144,12 +1291,14 @@
               ${forwardingType === 'discord-to-discord' ? 'Discord 转发规则' :
                 forwardingType === 'discord-to-telegram' ? 'Discord → Telegram 转发规则' :
                 forwardingType === 'telegram-to-discord' ? 'Telegram → Discord 转发规则' :
+                forwardingType === 'telegram-to-telegram' ? 'Telegram → Telegram 转发规则' :
                 'Discord → 飞书 转发规则'}
             </h2>
             <p class="text-xs text-slate-500 mt-1">
               ${forwardingType === 'discord-to-discord' ? '配置Discord频道之间的转发映射关系' :
                 forwardingType === 'discord-to-telegram' ? '配置Discord消息转发到Telegram频道的映射关系' :
                 forwardingType === 'telegram-to-discord' ? '配置Telegram消息转发到Discord频道的映射关系' :
+                forwardingType === 'telegram-to-telegram' ? '配置Telegram消息转发到Telegram频道的映射关系' :
                 '配置Discord消息转发到飞书的映射关系'}
             </p>
           </div>
@@ -1207,6 +1356,18 @@
                 ${isTelegramForwardEnabled(acc) ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
               </div>
               ${isTelegramForwardEnabled(acc) ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Telegram→Discord 转发</div>'}
+            </div>
+            ` : forwardingType === 'telegram-to-telegram' ? `
+            <!-- Telegram→Telegram 转发规则 -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" ${isTelegramForwardEnabled(acc) ? 'checked' : ''} onchange="updateTelegramForwarding(this.checked)" class="h-4 w-4 rounded border-slate-300">
+                  <span class="text-sm text-slate-800 font-medium">Telegram → Telegram 转发规则</span>
+                </div>
+                ${isTelegramForwardEnabled(acc) ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+              </div>
+              ${isTelegramForwardEnabled(acc) ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Telegram→Telegram 转发</div>'}
             </div>
             ` : forwardingType === 'discord-to-feishu' ? `
             <!-- Discord→飞书 转发规则 -->
@@ -1352,7 +1513,7 @@
     function renderMappings(acc, forwardingType) {
       // 根据转发类型决定读取哪个数组，并过滤出对应类型的 mappings
       let allMappings;
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         allMappings = (acc.telegramConfig?.mappings || []);
         // 过滤出当前转发类型的 mappings
         allMappings = allMappings.filter(m => m.type === forwardingType);
@@ -1377,6 +1538,7 @@
         const typeName = forwardingType === 'discord-to-discord' ? 'Discord' :
                         forwardingType === 'discord-to-telegram' ? 'Discord→Telegram' :
                         forwardingType === 'telegram-to-discord' ? 'Telegram→Discord' :
+                        forwardingType === 'telegram-to-telegram' ? 'Telegram→Telegram' :
                         'Discord→飞书';
         return `<div class="text-center py-8 text-slate-400 text-sm">暂无 ${typeName} 规则，点击"添加规则"创建</div>`;
       }
@@ -1397,6 +1559,10 @@
         } else if (forwardingType === 'telegram-to-discord') {
           sourcePlaceholder = 'Telegram 频道/Chat ID';
           targetPlaceholder = 'Discord Webhook URL';
+          arrowIcon = '→';
+        } else if (forwardingType === 'telegram-to-telegram') {
+          sourcePlaceholder = 'Telegram 频道/Chat ID';
+          targetPlaceholder = 'Telegram 频道/Chat ID';
           arrowIcon = '→';
         } else if (forwardingType === 'discord-to-feishu') {
           sourcePlaceholder = 'Discord 频道/子区 ID';
@@ -1849,6 +2015,28 @@
       render();
     }
 
+    function ensureWatermarkConfig(acc) {
+      if (!acc.watermark || typeof acc.watermark !== 'object') {
+        acc.watermark = { enabled: false };
+      }
+    }
+
+    function updateWatermarkField(field, value) {
+      const acc = getActiveAccount();
+      ensureWatermarkConfig(acc);
+      let normalized = value;
+      if (typeof normalized === 'number' && !Number.isFinite(normalized)) {
+        normalized = undefined;
+      }
+      if (field === 'enabled') {
+        acc.watermark.enabled = normalized === true;
+      } else {
+        acc.watermark[field] = normalized;
+      }
+      saveConfig();
+      render();
+    }
+
     function updateTelegramLongMessage(field, value) {
       const acc = getActiveAccount();
       if (!acc.telegramLongMessage) acc.telegramLongMessage = { enabled: false };
@@ -1875,7 +2063,7 @@
 
       // 根据转发类型获取正确的映射配置
       let mapping;
-      if (currentLongMessageForwardingType === 'discord-to-telegram' || currentLongMessageForwardingType === 'telegram-to-discord') {
+      if (currentLongMessageForwardingType === 'discord-to-telegram' || currentLongMessageForwardingType === 'telegram-to-discord' || currentLongMessageForwardingType === 'telegram-to-telegram') {
         if (!acc.telegramConfig) acc.telegramConfig = {};
         if (!acc.telegramConfig.mappings) acc.telegramConfig.mappings = [];
         if (!acc.telegramConfig.mappings[mappingIndex]) return;
@@ -1907,7 +2095,7 @@
 
     // 规则配置弹窗相关函数
     let currentRuleConfigIndex = -1;
-    let currentRuleConfigType = ''; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'discord-to-feishu'
+    let currentRuleConfigType = ''; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'telegram-to-telegram' | 'discord-to-feishu'
     // 临时存储规则配置数据
     let ruleConfigData = {
       allowedUsersIds: [],
@@ -1920,7 +2108,10 @@
       ignoreEnglish: false,
       ignoreEnglishThreshold: 100,
       ignoreChinese: false,
-      ignoreChineseThreshold: 100
+      ignoreChineseThreshold: 100,
+      watermarkMode: "inherit",
+      watermark: {},
+      senderAccountType: ""
     };
 
     // 渲染规则配置标签
@@ -2012,7 +2203,7 @@
       let mapping;
 
       // 根据转发类型获取对应的规则
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         const mappings = (acc.telegramConfig?.mappings || []).filter(m => m.type === forwardingType);
         mapping = mappings[mappingIndex];
       } else if (forwardingType === 'discord-to-feishu') {
@@ -2033,6 +2224,8 @@
       }
 
       // 初始化临时数据
+      const hasRuleWatermark = mapping.watermark && typeof mapping.watermark === 'object';
+      const watermarkMode = hasRuleWatermark ? (mapping.watermark.enabled === false ? 'disable' : 'enable') : 'inherit';
       ruleConfigData = {
         allowedUsersIds: [...(mapping.allowedUsersIds || [])],
         mutedUsersIds: [...(mapping.mutedUsersIds || [])],
@@ -2051,7 +2244,10 @@
         ignoreEnglish: mapping.ignoreEnglish === true,
         ignoreEnglishThreshold: mapping.ignoreEnglishThreshold ?? 100,
         ignoreChinese: mapping.ignoreChinese === true,
-        ignoreChineseThreshold: mapping.ignoreChineseThreshold ?? 100
+        ignoreChineseThreshold: mapping.ignoreChineseThreshold ?? 100,
+        watermarkMode,
+        watermark: hasRuleWatermark ? { ...mapping.watermark } : {},
+        senderAccountType: mapping.senderAccountType || ""
       };
 
       // 设置显示源用户选项
@@ -2068,6 +2264,24 @@
       document.getElementById('ruleIgnoreEnglishThreshold').value = ruleConfigData.ignoreEnglishThreshold ?? 100;
       document.getElementById('ruleIgnoreChineseThreshold').value = ruleConfigData.ignoreChineseThreshold ?? 100;
 
+      const senderSection = document.getElementById('ruleTelegramSenderSection');
+      if (forwardingType === 'telegram-to-telegram') {
+        senderSection.classList.remove('hidden');
+        document.getElementById('ruleTelegramSenderType').value = ruleConfigData.senderAccountType || '';
+      } else {
+        senderSection.classList.add('hidden');
+      }
+
+      document.getElementById('ruleWatermarkMode').value = ruleConfigData.watermarkMode;
+      document.getElementById('ruleWatermarkText').value = ruleConfigData.watermark.text || '';
+      document.getElementById('ruleWatermarkTextSize').value = ruleConfigData.watermark.textSize || '';
+      document.getElementById('ruleWatermarkTextOpacity').value = ruleConfigData.watermark.textOpacity || '';
+      document.getElementById('ruleWatermarkImageUrl').value = ruleConfigData.watermark.imageUrl || '';
+      document.getElementById('ruleWatermarkImageScale').value = ruleConfigData.watermark.imageScale || '';
+      document.getElementById('ruleWatermarkImageOpacity').value = ruleConfigData.watermark.imageOpacity || '';
+      document.getElementById('ruleWatermarkPosition').value = ruleConfigData.watermark.position || '';
+      document.getElementById('ruleWatermarkMargin').value = ruleConfigData.watermark.margin || '';
+
       // 渲染所有标签
       renderRuleTags('allowedUsersIds');
       renderRuleTags('mutedUsersIds');
@@ -2079,7 +2293,7 @@
 
       // 超长消息处理（Discord/TG/飞书规则）
       const longMsgSection = document.getElementById('ruleLongMessageSection');
-      const supportsLongMessage = ['discord-to-telegram', 'telegram-to-discord', 'discord-to-discord', 'discord-to-feishu'].includes(forwardingType);
+      const supportsLongMessage = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu'].includes(forwardingType);
       if (supportsLongMessage) {
         longMsgSection.classList.remove('hidden');
         const longMsg = mapping.longMessage || {};
@@ -2107,7 +2321,7 @@
       let mapping;
 
       // 根据转发类型获取对应的规则
-      if (currentRuleConfigType === 'discord-to-telegram' || currentRuleConfigType === 'telegram-to-discord') {
+      if (currentRuleConfigType === 'discord-to-telegram' || currentRuleConfigType === 'telegram-to-discord' || currentRuleConfigType === 'telegram-to-telegram') {
         ensureTelegramConfig(acc);
         const mappings = (acc.telegramConfig.mappings || []).filter(m => m.type === currentRuleConfigType);
         mapping = mappings[currentRuleConfigIndex];
@@ -2163,8 +2377,39 @@
       mapping.ignoreEnglishThreshold = Number.isFinite(ruleEnglishThreshold) ? ruleEnglishThreshold : undefined;
       mapping.ignoreChineseThreshold = Number.isFinite(ruleChineseThreshold) ? ruleChineseThreshold : undefined;
 
+      if (currentRuleConfigType === 'telegram-to-telegram') {
+        const senderType = document.getElementById('ruleTelegramSenderType').value;
+        mapping.senderAccountType = senderType === 'bot' || senderType === 'client' ? senderType : undefined;
+      } else if (mapping.senderAccountType) {
+        delete mapping.senderAccountType;
+      }
+
+      const watermarkMode = document.getElementById('ruleWatermarkMode').value;
+      if (watermarkMode === 'inherit') {
+        delete mapping.watermark;
+      } else if (watermarkMode === 'disable') {
+        mapping.watermark = { enabled: false };
+      } else {
+        const textSize = parseInt(document.getElementById('ruleWatermarkTextSize').value, 10);
+        const textOpacity = parseInt(document.getElementById('ruleWatermarkTextOpacity').value, 10);
+        const imageScale = parseInt(document.getElementById('ruleWatermarkImageScale').value, 10);
+        const imageOpacity = parseInt(document.getElementById('ruleWatermarkImageOpacity').value, 10);
+        const margin = parseInt(document.getElementById('ruleWatermarkMargin').value, 10);
+        mapping.watermark = {
+          enabled: true,
+          text: document.getElementById('ruleWatermarkText').value.trim() || undefined,
+          textSize: Number.isFinite(textSize) ? textSize : undefined,
+          textOpacity: Number.isFinite(textOpacity) ? textOpacity : undefined,
+          imageUrl: document.getElementById('ruleWatermarkImageUrl').value.trim() || undefined,
+          imageScale: Number.isFinite(imageScale) ? imageScale : undefined,
+          imageOpacity: Number.isFinite(imageOpacity) ? imageOpacity : undefined,
+          position: document.getElementById('ruleWatermarkPosition').value || undefined,
+          margin: Number.isFinite(margin) ? margin : undefined
+        };
+      }
+
       // 超长消息处理（Discord/TG/飞书规则）
-      if (['discord-to-telegram', 'telegram-to-discord', 'discord-to-discord', 'discord-to-feishu'].includes(currentRuleConfigType)) {
+      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu'].includes(currentRuleConfigType)) {
         mapping.longMessage = {
           enabled: document.getElementById('ruleLongMessageEnabled').checked,
           threshold: parseInt(document.getElementById('ruleLongMessageThreshold').value) || 0,
@@ -2189,7 +2434,7 @@
 
       // 根据转发类型从正确的位置获取映射
       let mapping;
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         mapping = acc.telegramConfig?.mappings?.[mappingIndex];
       } else {
         mapping = acc.mappings[mappingIndex];
@@ -2282,39 +2527,45 @@
 
       // 当转发类型改变时，断开其他类型的连接
       if (previousType && previousType !== forwardingType) {
-        // 如果之前是 discord-to-telegram，断开 Telegram Bot
-        if (previousType === 'discord-to-telegram' && acc.telegramBotState === 'online') {
+        const prevNeedsBot = previousType === 'discord-to-telegram' || previousType === 'telegram-to-telegram';
+        const prevNeedsClient = previousType === 'telegram-to-discord' || previousType === 'telegram-to-telegram';
+        const needsBot = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram';
+        const needsClient = forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram';
+
+        if (prevNeedsBot && !needsBot && acc.telegramBotState === 'online') {
           disconnectTelegramBot();
         }
-        // 如果之前是 telegram-to-discord，断开 Telegram Client
-        if (previousType === 'telegram-to-discord' && acc.telegramClientState === 'online') {
+        if (prevNeedsClient && !needsClient && acc.telegramClientState === 'online') {
           disconnectTelegramClient();
         }
-        // 如果之前是需要 Discord 的类型，现在切换到 telegram-to-discord，断开 Discord
+        // 如果之前是需要 Discord 的类型，现在切换到 Telegram-only，断开 Discord
         if ((previousType === 'discord-to-discord' || previousType === 'discord-to-telegram' || previousType === 'discord-to-feishu')
-            && forwardingType === 'telegram-to-discord' && acc.loginState === 'online') {
+            && (forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram')
+            && acc.loginState === 'online') {
           requestStop();
         }
         // 重置不相关的状态
-        if (forwardingType !== 'discord-to-telegram') {
+        if (!needsBot) {
           acc.telegramBotState = 'idle';
         }
-        if (forwardingType !== 'telegram-to-discord') {
+        if (!needsClient) {
           acc.telegramClientState = 'idle';
         }
       }
 
       // 当转发类型改变时，初始化相关字段
-      if (forwardingType === 'discord-to-telegram') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') {
         if (!acc.token) acc.token = '';
         if (!acc.telegramBotState) acc.telegramBotState = 'idle';
         ensureTelegramConfig(acc);
-      } else if (forwardingType === 'telegram-to-discord') {
+      }
+      if (forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         if (!acc.telegramApiId) acc.telegramApiId = '';
         if (!acc.telegramApiHash) acc.telegramApiHash = '';
         if (!acc.telegramClientState) acc.telegramClientState = 'idle';
         ensureTelegramConfig(acc);
-      } else if (forwardingType === 'discord-to-feishu') {
+      }
+      if (forwardingType === 'discord-to-feishu') {
         if (!acc.token) acc.token = '';
         if (!acc.feishuAppId) acc.feishuAppId = '';
         if (!acc.feishuAppSecret) acc.feishuAppSecret = '';
@@ -2395,6 +2646,7 @@
         ignoreEnglishThreshold: 100,
         ignoreChinese: false,
         ignoreChineseThreshold: 100,
+        watermark: { enabled: false },
         ocrServerUrl: 'http://localhost:9003',
         ocrBlockedKeywords: [],
         ocrTriggerKeywords: []
@@ -2424,15 +2676,19 @@
       const forwardingType = acc.forwardingType || currentForwardingType;
 
       // 根据转发类型决定添加到哪里
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         // Discord→Telegram / Telegram→Discord 转发规则
         ensureTelegramConfig(acc);
+
+        const mappingType = forwardingType === 'telegram-to-telegram'
+          ? 'telegram-to-telegram'
+          : (forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram');
 
         const newMapping = {
           id: genId(),
           sourceChannelId: '',
           targetChannelId: '',
-          type: forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram',
+          type: mappingType,
           note: '',
           translate: false,
           translateDirection: 'auto'
@@ -2461,7 +2717,7 @@
     function goToDiscordPage(page) {
       const acc = getActiveAccount();
       const forwardingType = acc.forwardingType || currentForwardingType;
-      const mappings = (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord')
+      const mappings = (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram')
         ? (acc.telegramConfig?.mappings || [])
         : (acc.mappings || []);
       const totalPages = Math.ceil(mappings.length / pagination.pageSize) || 1;
@@ -2475,14 +2731,16 @@
       const forwardingType = acc.forwardingType || currentForwardingType;
 
       // 根据转发类型决定更新哪个数组
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         // 更新 Telegram 规则
         ensureTelegramConfig(acc);
 
         if (acc.telegramConfig.mappings[idx]) {
           acc.telegramConfig.mappings[idx][field] = value;
           if (!acc.telegramConfig.mappings[idx].type) {
-            acc.telegramConfig.mappings[idx].type = forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram';
+            acc.telegramConfig.mappings[idx].type = forwardingType === 'telegram-to-telegram'
+              ? 'telegram-to-telegram'
+              : (forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram');
           }
           console.log('[DEBUG] 更新 Telegram 规则:', idx, field, value);
         }
@@ -2559,7 +2817,7 @@
       const forwardingType = acc.forwardingType || currentForwardingType;
 
       // 根据转发类型决定删除哪个数组中的规则
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         // 删除 Telegram 规则
         if (!acc.telegramConfig || !acc.telegramConfig.mappings || idx >= acc.telegramConfig.mappings.length) return;
 
@@ -3181,7 +3439,9 @@
 
         // 检查是否有转发规则
         const telegramMappings = acc.telegramConfig?.mappings || [];
-        const hasDiscordToTelegramMapping = telegramMappings.some(m => m.type === 'discord-to-telegram');
+        const hasDiscordToTelegramMapping = telegramMappings.some(
+          m => m.type === 'discord-to-telegram' || m.type === 'telegram-to-telegram'
+        );
 
         // 只有配置了转发规则才自动连接
         if (!hasDiscordToTelegramMapping) {
@@ -3211,9 +3471,9 @@
     async function autoCheckTelegramClientStatus() {
       for (const acc of state.accounts) {
         const telegramMappings = acc.telegramConfig?.mappings || [];
-        // 检查是否有任何Telegram相关的mapping（包括telegram-to-discord和discord-to-telegram）
+        // 检查是否有任何Telegram相关的mapping（包括telegram-to-discord、discord-to-telegram、telegram-to-telegram）
         const hasTelegramMapping = telegramMappings.some(m =>
-          m.type === 'telegram-to-discord' || m.type === 'discord-to-telegram'
+          m.type === 'telegram-to-discord' || m.type === 'discord-to-telegram' || m.type === 'telegram-to-telegram'
         );
         if (!hasTelegramMapping) {
           acc.telegramClientState = 'idle';
@@ -3246,11 +3506,13 @@
 
       // 验证是否配置了转发规则
       const telegramMappings = acc.telegramConfig?.mappings || [];
-      const hasDiscordToTelegramMapping = telegramMappings.some(m => m.type === 'discord-to-telegram');
+      const hasDiscordToTelegramMapping = telegramMappings.some(
+        m => m.type === 'discord-to-telegram' || m.type === 'telegram-to-telegram'
+      );
 
       if (!hasDiscordToTelegramMapping) {
         acc.telegramBotState = 'error';
-        acc.telegramBotMessage = '未配置 Discord → Telegram 转发规则，无法启动';
+        acc.telegramBotMessage = '未配置需要 Bot 的 Telegram 转发规则，无法启动';
         render();
         return;
       }

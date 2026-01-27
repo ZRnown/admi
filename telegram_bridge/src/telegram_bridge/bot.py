@@ -384,12 +384,14 @@ class TelegramBotManager:
         bot: TelegramClient,
         chat_id: int,
         attachment: Dict[str, Any],
-        caption: Optional[str] = None
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+        watermark: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """发送媒体附件"""
         try:
             # 处理Discord附件
-            media_result = await self.media_handler.process_discord_attachment(attachment)
+            media_result = await self.media_handler.process_discord_attachment(attachment, watermark)
             if not media_result:
                 return {
                     "success": False,
@@ -401,7 +403,7 @@ class TelegramBotManager:
 
             # 上传到Telegram
             return await self.media_handler.upload_to_telegram(
-                bot, chat_id, file_path, media_type, caption or ""
+                bot, chat_id, file_path, media_type, caption or "", reply_to_message_id
             )
 
         except Exception as e:
@@ -465,7 +467,16 @@ class TelegramBotManager:
                 "message": str(e)
             }
 
-    async def send_message(self, account_id: str, chat_id: int, message: str, attachments: Optional[List[Dict[str, Any]]] = None, parse_mode: Optional[str] = None) -> Dict[str, Any]:
+    async def send_message(
+        self,
+        account_id: str,
+        chat_id: int,
+        message: str,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        parse_mode: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+        watermark: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """发送消息 - 使用 Bot API 而不是 Telethon（避免实体缓存问题）"""
         try:
             logger.info(f"BotManager.send_message: account_id={account_id}, chat_id={chat_id}, message_len={len(message) if message else 0}, attachments_count={len(attachments) if attachments else 0}")
@@ -489,10 +500,22 @@ class TelegramBotManager:
             # 如果有附件，使用对应的 API 发送
             if attachments and len(attachments) > 0:
                 logger.info(f"Sending media with {len(attachments)} attachments")
-                return await self._send_media_via_bot_api(token, chat_id, message, attachments, parse_mode)
+                has_local = any(att.get("localPath") or att.get("path") for att in attachments)
+                if has_local:
+                    bot = self.bots.get(account_id)
+                    if bot:
+                        return await self._send_media_attachment(
+                            bot,
+                            chat_id,
+                            attachments[0],
+                            message if message else None,
+                            reply_to_message_id,
+                            watermark,
+                        )
+                return await self._send_media_via_bot_api(token, chat_id, message, attachments, parse_mode, reply_to_message_id)
 
             # 没有附件，使用 sendMessage API
-            return await self._send_message_via_bot_api(token, chat_id, message, parse_mode)
+            return await self._send_message_via_bot_api(token, chat_id, message, parse_mode, reply_to_message_id)
 
         except Exception as e:
             logger.error(f"Failed to send message for bot {account_id}: {e}")
@@ -502,7 +525,14 @@ class TelegramBotManager:
                 "message": str(e)
             }
 
-    async def _send_message_via_bot_api(self, token: str, chat_id: int, text: str, parse_mode: Optional[str] = None) -> Dict[str, Any]:
+    async def _send_message_via_bot_api(
+        self,
+        token: str,
+        chat_id: int,
+        text: str,
+        parse_mode: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """使用 Telegram Bot API 发送消息"""
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = {
@@ -511,6 +541,8 @@ class TelegramBotManager:
         }
         if parse_mode:
             payload["parse_mode"] = parse_mode
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = reply_to_message_id
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -538,7 +570,15 @@ class TelegramBotManager:
                 "message": str(e)
             }
 
-    async def _send_media_via_bot_api(self, token: str, chat_id: int, caption: str, attachments: List[Dict[str, Any]], parse_mode: Optional[str] = None) -> Dict[str, Any]:
+    async def _send_media_via_bot_api(
+        self,
+        token: str,
+        chat_id: int,
+        caption: str,
+        attachments: List[Dict[str, Any]],
+        parse_mode: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """使用 Telegram Bot API 发送媒体消息"""
         try:
             # 获取第一个附件
@@ -579,6 +619,8 @@ class TelegramBotManager:
                 payload["caption"] = caption
             if parse_mode:
                 payload["parse_mode"] = parse_mode
+            if reply_to_message_id:
+                payload["reply_to_message_id"] = reply_to_message_id
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload) as resp:

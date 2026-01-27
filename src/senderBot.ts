@@ -2,7 +2,8 @@ import { promises as fs } from "node:fs";
 import https from "node:https";
 import { URL, fileURLToPath } from "node:url";
 
-import { ChannelId } from "./config.js";
+import { ChannelId, WatermarkConfig } from "./config.js";
+import { applyWatermarkToBuffer, resolveWatermarkConfig } from "./watermark.js";
 
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30000;
@@ -22,6 +23,7 @@ export class SenderBot {
   translationSecret?: string;
   enableBotRelay?: boolean;
   botRelayToken?: string;
+  watermark?: WatermarkConfig;
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
@@ -34,6 +36,7 @@ export class SenderBot {
     translationSecret?: string;
     enableBotRelay?: boolean;
     botRelayToken?: string;
+    watermark?: WatermarkConfig;
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
@@ -45,6 +48,7 @@ export class SenderBot {
     this.translationSecret = options.translationSecret;
     this.enableBotRelay = options.enableBotRelay || false;
     this.botRelayToken = options.botRelayToken;
+    this.watermark = options.watermark;
   }
 
   private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
@@ -115,8 +119,10 @@ export class SenderBot {
 
   private async downloadUploads(
     uploads: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean }>,
+    watermark?: WatermarkConfig,
   ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
     const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
+    const effectiveWatermark = resolveWatermarkConfig(this.watermark, watermark);
     for (const u of uploads) {
       let buf: Buffer;
       if (u.localPath) {
@@ -130,7 +136,11 @@ export class SenderBot {
       } else {
         continue;
       }
-      results.push({ filename: u.filename, buffer: buf, isImage: u.isImage });
+      const finalBuffer =
+        u.isImage && effectiveWatermark
+          ? await applyWatermarkToBuffer(buf, effectiveWatermark)
+          : buf;
+      results.push({ filename: u.filename, buffer: finalBuffer, isImage: u.isImage });
     }
     return results;
   }
@@ -230,7 +240,7 @@ export class SenderBot {
    * - 中英混合：按占比，中文多则翻译成英文，英文多则翻译成中文
    * - 都很少：不翻译
    */
-  private chooseTranslateTarget(text: string): "zh" | "en" | null {
+  public chooseTranslateTarget(text: string): "zh" | "en" | null {
     const { chineseRatio, englishRatio } = this.languageStats(text);
     if (chineseRatio > 0.5) return null;
     if (englishRatio >= 0.5) return "zh";
@@ -243,7 +253,7 @@ export class SenderBot {
   /**
    * 调用翻译 API 进行翻译（支持多个翻译服务）
    */
-  private async translateText(text: string, target: "zh" | "en" | "zh-en" | "en-zh"): Promise<string | null> {
+  public async translateText(text: string, target: "zh" | "en" | "zh-en" | "en-zh"): Promise<string | null> {
     if (!text || text.length < 2) {
       return null; // 忽略太短的
     }
@@ -601,6 +611,8 @@ export class SenderBot {
     translationDirection?: "auto" | "zh-en" | "en-zh" | "off";
     // 可选：规则级别的替换字典
     ruleReplacementsDictionary?: Record<string, string>;
+    // 可选：规则级别水印配置
+    watermark?: WatermarkConfig;
   }>) {
     if (messagesToSend.length == 0) return;
 
@@ -701,7 +713,7 @@ export class SenderBot {
           
         if (hasUploads) {
           // Build multipart form with files and payload_json
-          const files = await this.downloadUploads(item.uploads!);
+          const files = await this.downloadUploads(item.uploads!, item.watermark);
           const desc = (chunk || "").slice(0, 4096);
           const embed: any = {};
           if (item.useEmbed && desc.trim() !== "") {

@@ -12,12 +12,15 @@ export interface TelegramBridgeMessage {
   video?: string; // URL
   document?: string; // URL
   caption?: string;
+  parse_mode?: string;
+  reply_to_message_id?: string | number;
+  watermark?: any;
 }
 
 export interface SendMessageParams {
   accountId: string;
   accountType: "client" | "bot";
-  chatId: string;
+  chatId: string | number;
   message: TelegramBridgeMessage;
   media?: any;
 }
@@ -36,6 +39,7 @@ export interface HandleDiscordMessageParams {
       username?: string;
       avatarURL?: string;
     };
+    watermark?: any;
     attachments?: Array<{
       url: string;
       contentType?: string;

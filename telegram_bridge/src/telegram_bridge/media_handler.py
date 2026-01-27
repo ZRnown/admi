@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from typing import Dict, Optional, Any, Tuple
 from loguru import logger
+from PIL import Image, ImageDraw, ImageFont
 
 
 class MediaHandler:
@@ -183,7 +184,8 @@ class MediaHandler:
 
     async def process_discord_attachment(
         self,
-        attachment: Dict[str, Any]
+        attachment: Dict[str, Any],
+        watermark: Optional[Dict[str, Any]] = None
     ) -> Optional[Tuple[Path, str]]:
         """
         处理Discord附件
@@ -196,7 +198,8 @@ class MediaHandler:
         """
         try:
             url = attachment.get("url")
-            if not url:
+            local_path = attachment.get("localPath") or attachment.get("path")
+            if not url and not local_path:
                 return None
 
             # 映射Discord媒体类型到Telegram类型
@@ -210,15 +213,165 @@ class MediaHandler:
             else:
                 media_type = "document"
 
+            if attachment.get("isImage"):
+                media_type = "photo"
+            if attachment.get("isVideo"):
+                media_type = "video"
+
             # 下载文件
             filename = attachment.get("filename", f"attachment_{hash(url) % 10000}")
-            file_path = await self.download_media(url, filename)
+            if local_path:
+                file_path = Path(str(local_path))
+            else:
+                file_path = await self.download_media(url, filename)
+
+            if file_path and media_type == "photo":
+                await self._apply_watermark(file_path, watermark)
 
             return (file_path, media_type) if file_path else None
 
         except Exception as e:
             logger.error(f"Failed to process Discord attachment: {e}")
             return None
+
+    def _resolve_watermark_position(
+        self,
+        base_width: int,
+        base_height: int,
+        mark_width: int,
+        mark_height: int,
+        position: Optional[str],
+        margin: int,
+    ) -> Tuple[int, int]:
+        pos = position or "bottom-right"
+        x = margin
+        y = margin
+        if pos == "top-right":
+            x = base_width - mark_width - margin
+            y = margin
+        elif pos == "bottom-left":
+            x = margin
+            y = base_height - mark_height - margin
+        elif pos == "center":
+            x = (base_width - mark_width) // 2
+            y = (base_height - mark_height) // 2
+        else:
+            x = base_width - mark_width - margin
+            y = base_height - mark_height - margin
+        return max(0, x), max(0, y)
+
+    def _parse_hex_color(self, value: Optional[str]) -> Tuple[int, int, int]:
+        if not value:
+            return (255, 255, 255)
+        raw = value.strip().lstrip("#")
+        if len(raw) != 6:
+            return (255, 255, 255)
+        try:
+            r = int(raw[0:2], 16)
+            g = int(raw[2:4], 16)
+            b = int(raw[4:6], 16)
+            return (r, g, b)
+        except Exception:
+            return (255, 255, 255)
+
+    def _load_font(self, size: int) -> ImageFont.ImageFont:
+        try:
+            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=size)
+        except Exception:
+            try:
+                return ImageFont.truetype("DejaVuSans.ttf", size=size)
+            except Exception:
+                return ImageFont.load_default()
+
+    async def _load_watermark_image(self, source: str) -> Optional[Image.Image]:
+        if not source:
+            return None
+        try:
+            if source.startswith("http://") or source.startswith("https://"):
+                filename = f"watermark_{hash(source) % 100000}.png"
+                downloaded = await self.download_media(source, filename)
+                if not downloaded:
+                    return None
+                try:
+                    return Image.open(downloaded).convert("RGBA")
+                finally:
+                    try:
+                        downloaded.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            if source.startswith("file://"):
+                source = source[7:]
+            if not os.path.exists(source):
+                return None
+            return Image.open(source).convert("RGBA")
+        except Exception as e:
+            logger.error(f"Failed to load watermark image: {e}")
+            return None
+
+    async def _apply_watermark(self, file_path: Path, watermark: Optional[Dict[str, Any]]):
+        if not watermark or not isinstance(watermark, dict):
+            return
+        if watermark.get("enabled") is False:
+            return
+        text = str(watermark.get("text") or "").strip()
+        image_url = str(watermark.get("imageUrl") or "").strip()
+        if not text and not image_url:
+            return
+
+        try:
+            base = Image.open(file_path)
+            base_format = (base.format or "PNG").upper()
+            base_image = base.convert("RGBA")
+            overlay = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
+
+            margin = int(watermark.get("margin") or 8)
+            margin = max(0, margin)
+            position = watermark.get("position")
+
+            if image_url:
+                wm_image = await self._load_watermark_image(image_url)
+                if wm_image:
+                    scale = int(watermark.get("imageScale") or 20)
+                    scale = max(1, min(100, scale))
+                    target_width = max(1, int(base_image.width * (scale / 100)))
+                    ratio = target_width / wm_image.width
+                    target_height = max(1, int(wm_image.height * ratio))
+                    wm_image = wm_image.resize((target_width, target_height), Image.LANCZOS)
+                    opacity = int(watermark.get("imageOpacity") or 60)
+                    opacity = max(0, min(100, opacity))
+                    if opacity < 100:
+                        alpha = wm_image.split()[3]
+                        alpha = alpha.point(lambda p: int(p * (opacity / 100)))
+                        wm_image.putalpha(alpha)
+                    x, y = self._resolve_watermark_position(
+                        base_image.width, base_image.height, wm_image.width, wm_image.height, position, margin
+                    )
+                    overlay.paste(wm_image, (x, y), wm_image)
+
+            if text:
+                size = int(watermark.get("textSize") or 16)
+                size = max(8, size)
+                font = self._load_font(size)
+                text_color = self._parse_hex_color(watermark.get("textColor"))
+                opacity = int(watermark.get("textOpacity") or 60)
+                opacity = max(0, min(100, opacity))
+                fill = (*text_color, int(255 * (opacity / 100)))
+                text_box = draw.textbbox((0, 0), text, font=font)
+                text_width = text_box[2] - text_box[0]
+                text_height = text_box[3] - text_box[1]
+                x, y = self._resolve_watermark_position(
+                    base_image.width, base_image.height, text_width, text_height, position, margin
+                )
+                draw.text((x, y), text, font=font, fill=fill)
+
+            merged = Image.alpha_composite(base_image, overlay)
+            if base_format in ["JPEG", "JPG"]:
+                merged = merged.convert("RGB")
+            merged.save(file_path, format=base_format)
+        except Exception as e:
+            logger.error(f"Failed to apply watermark: {e}")
+            return
 
     def cleanup_temp_files(self, max_age_hours: int = 24):
         """清理临时文件"""

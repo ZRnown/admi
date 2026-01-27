@@ -10,6 +10,7 @@ import {
   type FeishuTargetConfig,
   type FrontendTelegramConfig,
   type RuleLevelConfig,
+  type WatermarkConfig,
 } from "@/src/config";
 import { readStatus, triggerFile } from "../_lib/common";
 import { requireAuth } from "@/app/api/_lib/auth";
@@ -151,13 +152,14 @@ interface FrontendMapping {
   ignoreEnglishThreshold?: number;
   ignoreChinese?: boolean;
   ignoreChineseThreshold?: number;
+  watermark?: WatermarkConfig;
 }
 
 interface FrontendAccount {
   id: string;
   name: string;
   type: "bot" | "selfbot";
-  forwardingType?: "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "discord-to-feishu";
+  forwardingType?: "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu";
   token: string;
   proxyUrl: string;
   loginRequested: boolean;
@@ -197,6 +199,7 @@ interface FrontendAccount {
   ignoreEnglishThreshold?: number;
   ignoreChinese?: boolean;
   ignoreChineseThreshold?: number;
+  watermark?: WatermarkConfig;
   // OCR 图片检测相关
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
@@ -230,7 +233,9 @@ interface FrontendPayload {
   loginUser?: string;
   loginPassword?: string;
   telegramAvatarBaseUrl?: string;
-  enabledForwardingTypes?: Array<"discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "discord-to-feishu">;
+  enabledForwardingTypes?: Array<
+    "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu"
+  >;
 }
 
 function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
@@ -284,6 +289,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ignoreEnglishThreshold: undefined,
       ignoreChinese: undefined,
       ignoreChineseThreshold: undefined,
+      watermark: undefined,
     };
   }
   return {
@@ -327,6 +333,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         : typeof raw.ignoreChineseThreshold === "string" && raw.ignoreChineseThreshold.trim() && !isNaN(Number(raw.ignoreChineseThreshold))
           ? Number(raw.ignoreChineseThreshold)
           : undefined,
+    watermark: raw.watermark && typeof raw.watermark === "object" ? raw.watermark : undefined,
   };
 }
 
@@ -432,6 +439,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         ignoreEnglishThreshold: savedRule.ignoreEnglishThreshold,
         ignoreChinese: savedRule.ignoreChinese,
         ignoreChineseThreshold: savedRule.ignoreChineseThreshold,
+        watermark: savedRule.watermark,
       });
     }
   } else {
@@ -453,6 +461,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         ocrBlockedKeywords: [],
         ocrTriggerKeywords: [],
         replacementsDictionary: {},
+        watermark: undefined,
       });
     }
   }
@@ -505,6 +514,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     ignoreEnglishThreshold: account.ignoreEnglishThreshold,
     ignoreChinese: account.ignoreChinese === true,
     ignoreChineseThreshold: account.ignoreChineseThreshold,
+    watermark: account.watermark,
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
     ocrBlockedKeywords: account.ocrBlockedKeywords || [],
     ocrTriggerKeywords: account.ocrTriggerKeywords || [],
@@ -646,10 +656,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         }
 
         // 保存完整的规则配置
-        savedMappings.push({
-          id: mapping.id || randomUUID(),
-          sourceChannelId: key,
-          targetWebhookUrl: String(mapping.targetWebhookUrl),
+      savedMappings.push({
+        id: mapping.id || randomUUID(),
+        sourceChannelId: key,
+        targetWebhookUrl: String(mapping.targetWebhookUrl),
           note: mapping.note,
           translateDirection: mapping.translateDirection,
           longMessage: mapping.longMessage,
@@ -671,6 +681,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           ignoreEnglishThreshold: mapping.ignoreEnglishThreshold,
           ignoreChinese: mapping.ignoreChinese,
           ignoreChineseThreshold: mapping.ignoreChineseThreshold,
+          watermark: mapping.watermark,
         });
       }
     }
@@ -804,6 +815,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       typeof dto.ignoreChineseThreshold === "number"
         ? dto.ignoreChineseThreshold
         : base.ignoreChineseThreshold,
+    watermark: dto.watermark && typeof dto.watermark === "object" ? dto.watermark : base.watermark,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(dto.ocrTriggerKeywords) ? dto.ocrTriggerKeywords : [],

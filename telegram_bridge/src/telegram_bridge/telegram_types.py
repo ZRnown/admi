@@ -55,14 +55,16 @@ class TelegramMapping(BaseModel):
     id: str
     source_channel_id: str = Field(alias="sourceChannelId")
     target_channel_id: str = Field(alias="targetChannelId")
-    type: str  # 'telegram-to-discord' | 'discord-to-telegram'
+    type: str  # 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram'
     note: Optional[str] = None
     translate: bool = False
     translate_direction: str = Field(default="auto", alias="translateDirection")
+    sender_account_type: Optional[str] = Field(default=None, alias="senderAccountType")
     # Discord 账号的 showSourceIdentity 设置
     show_source_identity: bool = Field(default=True, alias="showSourceIdentity")
     # Telegram特有的超长消息处理
     longMessage: Optional[Dict[str, Any]] = None
+    watermark: Optional[Dict[str, Any]] = None
 
 
 class TelegramChannel(BaseModel):

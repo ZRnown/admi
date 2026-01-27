@@ -8,7 +8,7 @@ import {
 } from "discord.js-selfbot-v13";
 import { Client as BotClient } from "discord.js";
 
-import { Config } from "./config.js";
+import { Config, WatermarkConfig } from "./config.js";
 import { formatSize } from "./format.js";
 import { SenderBot } from "./senderBot.js";
 import { FeishuSender } from "./feishuSender.js";
@@ -17,6 +17,7 @@ import { FileLogger } from "./logger.js";
 import { getTelegramBridgeClient } from "./index.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio } from "./languageFilter.js";
+import { resolveWatermarkConfig } from "./watermark.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -462,6 +463,7 @@ export class Bot {
     ignoreEnglishThreshold?: number;
     ignoreChinese?: boolean;
     ignoreChineseThreshold?: number;
+    watermark?: WatermarkConfig;
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
@@ -499,6 +501,7 @@ export class Bot {
         ignoreEnglishThreshold: undefined,
         ignoreChinese: undefined,
         ignoreChineseThreshold: undefined,
+        watermark: undefined,
       };
     }
     return {
@@ -528,6 +531,7 @@ export class Bot {
       ignoreEnglishThreshold: rule.ignoreEnglishThreshold,
       ignoreChinese: rule.ignoreChinese,
       ignoreChineseThreshold: rule.ignoreChineseThreshold,
+      watermark: rule.watermark,
     };
   }
 
@@ -1305,6 +1309,7 @@ export class Bot {
       enableTranslationOverride: enableTranslationForThis,
       translationDirection: translationDirectionForThis as any,
       ruleReplacementsDictionary: ruleConfig.replacementsDictionary,
+      watermark: ruleConfig.watermark,
     }];
 
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
@@ -1390,6 +1395,7 @@ export class Bot {
           avatarUrl: avatarUrl,
           attachments: uploads.map((u) => ({ url: u.url, filename: u.filename, isImage: u.isImage })),
           embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
+          watermark: ruleConfig.watermark,
         });
         const feishuTarget = feishuSenderForThis.target;
         const feishuPreview = formatLogPreview(feishuContent);
@@ -1458,6 +1464,7 @@ export class Bot {
                   name: u.filename,
                 })),
                 embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
+                watermark: resolveWatermarkConfig(this.config.watermark, ruleConfig.watermark),
               },
               // 传递翻译配置给Python端
               translate: mapping.translate || false,

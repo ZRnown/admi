@@ -24,6 +24,7 @@ import { telegramBridgeManager } from "./processManager.js";
 import { TelegramBridgeClient } from "./telegramBridgeClient.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio } from "./languageFilter.js";
+import { resolveWatermarkConfig } from "./watermark.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -47,11 +48,46 @@ const runningAccounts = new Map<string, RunningAccount>();
 let currentConfig: MultiConfig | null = null;
 const statusFile = path.resolve(process.cwd(), ".data", "status.json");
 const ocrClients = new Map<string, { url: string; client: OCRClient }>();
+const translationSenders = new Map<string, { key: string; sender: SenderBot }>();
+const telegramReplyMap = new Map<string, string>();
+const telegramReplyQueue: string[] = [];
+const TELEGRAM_REPLY_CACHE_LIMIT = 10000;
 // 记录已经输出过"未配置 token"错误的账号，避免重复日志
 const loggedNoTokenAccounts = new Set<string>();
 // 记录配置文件的 hash，只在真正变化时才重新读取
 let lastConfigHash: string | null = null;
 let lastConfigMtime: number = 0;
+
+function buildTelegramReplyKey(sourceChatId: string, sourceMessageId: string, targetChatId: string): string {
+  return `${sourceChatId}:${sourceMessageId}:${targetChatId}`;
+}
+
+function recordTelegramReplyMapping(
+  sourceChatId: string,
+  sourceMessageId: string,
+  targetChatId: string,
+  targetMessageId: string,
+) {
+  const key = buildTelegramReplyKey(sourceChatId, sourceMessageId, targetChatId);
+  if (telegramReplyMap.has(key)) return;
+  telegramReplyMap.set(key, targetMessageId);
+  telegramReplyQueue.push(key);
+  if (telegramReplyQueue.length > TELEGRAM_REPLY_CACHE_LIMIT) {
+    const oldest = telegramReplyQueue.shift();
+    if (oldest) {
+      telegramReplyMap.delete(oldest);
+    }
+  }
+}
+
+function resolveTelegramReplyTarget(
+  sourceChatId?: string,
+  replyToMessageId?: string | number,
+  targetChatId?: string,
+): string | undefined {
+  if (!sourceChatId || !replyToMessageId || !targetChatId) return undefined;
+  return telegramReplyMap.get(buildTelegramReplyKey(String(sourceChatId), String(replyToMessageId), String(targetChatId)));
+}
 
 function getPublicBaseUrl(override?: string): string | null {
   const base =
@@ -98,6 +134,31 @@ function getOcrClient(account: AccountConfig): OCRClient | null {
   return client;
 }
 
+function getTranslationSender(account: AccountConfig): SenderBot | null {
+  if (account.enableTranslation !== true) return null;
+  const provider = account.translationProvider || "deepseek";
+  const apiKey = account.translationApiKey || account.deepseekApiKey;
+  if (!apiKey) return null;
+  const proxy = account.proxyUrl || getEnv().PROXY_URL;
+  const cacheKey = `${provider}|${apiKey}|${account.translationSecret || ""}|${proxy || ""}`;
+  const cached = translationSenders.get(account.id);
+  if (cached && cached.key === cacheKey) {
+    return cached.sender;
+  }
+  const httpAgent = proxy ? new ProxyAgent(proxy as any) : undefined;
+  const sender = new SenderBot({
+    webhookUrl: "http://localhost",
+    enableTranslation: true,
+    translationProvider: provider as any,
+    translationApiKey: apiKey,
+    translationSecret: account.translationSecret,
+    deepseekApiKey: account.deepseekApiKey,
+    httpAgent,
+  });
+  translationSenders.set(account.id, { key: cacheKey, sender });
+  return sender;
+}
+
 function formatTimestampFromSeconds(seconds?: number): string {
   const now = seconds ? new Date(seconds * 1000) : new Date();
   const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
@@ -122,6 +183,68 @@ function applyLongMessageConfig(
     return append ? `${trimmed}\n${append}` : trimmed;
   }
   return content;
+}
+
+type TelegramAccountRef = {
+  id: string;
+  type: "bot" | "client";
+  enabled?: boolean;
+};
+
+function collectTelegramAccounts(account: AccountConfig): TelegramAccountRef[] {
+  const results: TelegramAccountRef[] = [];
+  const seen = new Set<string>();
+  const push = (entry: TelegramAccountRef) => {
+    if (!entry.id || seen.has(entry.id)) return;
+    results.push(entry);
+    seen.add(entry.id);
+  };
+
+  const configured = account.telegramConfig?.accounts || [];
+  for (const item of configured) {
+    if (!item?.id) continue;
+    const type = item.type === "bot" ? "bot" : "client";
+    push({ id: item.id, type, enabled: item.enabled !== false });
+  }
+
+  const hasLegacyClient = Boolean(
+    (account.telegramSessionPath || account.telegramSessionString) &&
+      account.telegramApiId &&
+      account.telegramApiHash,
+  );
+  const hasLegacyBot = Boolean(account.telegramBotToken);
+
+  if (hasLegacyClient) {
+    push({ id: account.id, type: "client", enabled: true });
+  }
+  if (hasLegacyBot) {
+    push({ id: `${account.id}_bot`, type: "bot", enabled: true });
+  }
+
+  return results;
+}
+
+function collectTelegramAccountIds(account: AccountConfig): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of collectTelegramAccounts(account)) {
+    if (entry.id) ids.add(entry.id);
+  }
+  return ids;
+}
+
+function selectTelegramSendAccount(
+  account: AccountConfig,
+  preferredType?: "bot" | "client",
+): TelegramAccountRef | null {
+  const candidates = collectTelegramAccounts(account).filter((entry) => entry.enabled !== false);
+  if (candidates.length === 0) return null;
+  if (preferredType) {
+    const match = candidates.find((entry) => entry.type === preferredType);
+    if (match) return match;
+  }
+  if (candidates.length === 1) return candidates[0];
+  const bot = candidates.find((entry) => entry.type === "bot");
+  return bot || candidates[0];
 }
 
 function parseFeishuTarget(raw: any): { mode: "webhook" | "thread"; target: string } | null {
@@ -193,6 +316,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const translationApiKey = account.translationApiKey || account.deepseekApiKey;
   const translationSecret = account.translationSecret;
   const enableBotRelay = account.enableBotRelay || false;
+  const watermark = account.watermark;
   const relayById = new Map((account.botRelays || []).map((r) => [r.id, r]));
   // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
   const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
@@ -222,6 +346,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           translationSecret,
           enableBotRelay: useRelay,
           botRelayToken: relayToken,
+          watermark,
         });
         prepares.push(sb.prepare());
         // 将 SenderBot 添加到数组中
@@ -247,6 +372,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           translationSecret,
           enableBotRelay: useRelay,
           botRelayToken: relayToken,
+          watermark,
         });
         prepares.push(sb.prepare());
         senderBotsBySource.set(channelId, [sb]);
@@ -264,7 +390,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
         httpAgent,
         account.feishuAppId,
         account.feishuAppSecret,
-        { mode: target.mode },
+        { mode: target.mode, watermark },
       );
       feishuSendersBySource.set(channelId, fs);
     }
@@ -308,20 +434,24 @@ function setupTelegramBridgeClient() {
   telegramBridgeClient.on("telegram_message", async (params) => {
     const accounts = currentConfig?.accounts || [];
     for (const account of accounts) {
-      // 检查 forwardingType 是否为 telegram-to-discord
       const currentForwardingType = account.forwardingType || 'discord-to-discord';
-      if (currentForwardingType !== 'telegram-to-discord') continue;
+      if (currentForwardingType !== 'telegram-to-discord' && currentForwardingType !== 'telegram-to-telegram') continue;
 
       if (account.telegramConfig?.enableTelegramForward === false) continue;
-      if (params.accountId && params.accountId !== account.id) continue;
+      const allowedTelegramAccountIds = collectTelegramAccountIds(account);
+      if (params.accountId && allowedTelegramAccountIds.size > 0 && !allowedTelegramAccountIds.has(params.accountId)) {
+        continue;
+      }
       const telegramMappings = account.telegramConfig?.mappings || [];
+      const allowedMappingType = currentForwardingType === 'telegram-to-telegram' ? 'telegram-to-telegram' : 'telegram-to-discord';
       const sourceChatId = params.chat_id?.toString();
       const sourceChatUsername =
         typeof params.chat_username === "string" ? params.chat_username : undefined;
 
       const matchingRules = telegramMappings.filter(
         (m: any) => {
-          if (m.type !== "telegram-to-discord") return false;
+          const mappingType = m.type || "telegram-to-discord";
+          if (mappingType !== allowedMappingType) return false;
           const raw = typeof m.sourceChannelId === "string" ? m.sourceChannelId.trim() : "";
           if (!raw) return false;
           if (sourceChatId && raw === sourceChatId) return true;
@@ -367,19 +497,21 @@ function setupTelegramBridgeClient() {
         sourceLabelParts.push(`id=${sourceChatId}`);
       }
       const sourceLabel = sourceLabelParts.join(" | ") || sourceChatId || "unknown";
+      const sourceMessageId = params.id || params.message_id;
+      const forwardTag = currentForwardingType === "telegram-to-telegram" ? "TG->TG" : "TG->DC";
       const formatGroupLabel = (groups: ReturnType<typeof parseKeywordGroups>) => {
         const label = formatKeywordGroups(groups);
         return label ? label : "未设置";
       };
       const logSkip = (reason: string, extra?: string) => {
         const msg =
-          `[TG->DC] 跳过 | 原因: ${reason} | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+          `[${forwardTag}] 跳过 | 原因: ${reason} | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
           `文本: ${textPreview}${extra ? ` | ${extra}` : ""}`;
         console.log(msg);
         telegramForwardLogger.info(msg);
       };
       const logOcr = (detail: string) => {
-        const msg = `[TG->DC][OCR] ${detail} | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel}`;
+        const msg = `[${forwardTag}][OCR] ${detail} | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel}`;
         console.log(msg);
         telegramForwardLogger.info(msg);
       };
@@ -410,7 +542,7 @@ function setupTelegramBridgeClient() {
             }
           }
         } catch (e: any) {
-          console.error(`[TG->DC] 语言占比过滤异常: ${String(e?.message || e)}`);
+          console.error(`[${forwardTag}] 语言占比过滤异常: ${String(e?.message || e)}`);
         }
       }
 
@@ -434,7 +566,7 @@ function setupTelegramBridgeClient() {
           }
         }
       } catch (e: any) {
-        console.error(`[TG->DC] 文本关键词过滤异常: ${String(e?.message || e)}`);
+        console.error(`[${forwardTag}] 文本关键词过滤异常: ${String(e?.message || e)}`);
       }
 
       try {
@@ -448,7 +580,7 @@ function setupTelegramBridgeClient() {
           }
         }
       } catch (e: any) {
-        console.error(`[TG->DC] 文本屏蔽词过滤异常: ${String(e?.message || e)}`);
+        console.error(`[${forwardTag}] 文本屏蔽词过滤异常: ${String(e?.message || e)}`);
       }
 
       try {
@@ -474,7 +606,7 @@ function setupTelegramBridgeClient() {
           continue;
         }
       } catch (e: any) {
-        console.error(`[TG->DC] 忽略规则检查异常: ${String(e?.message || e)}`);
+        console.error(`[${forwardTag}] 忽略规则检查异常: ${String(e?.message || e)}`);
       }
 
       const imageMediaItems = mediaItems.filter((m: any) => m?.localPath && isImage(m));
@@ -547,7 +679,7 @@ function setupTelegramBridgeClient() {
           }
         }
       } catch (e: any) {
-        console.error(`[TG->DC] OCR过滤异常: ${String(e?.message || e)}`);
+        console.error(`[${forwardTag}] OCR过滤异常: ${String(e?.message || e)}`);
       }
 
       for (const rule of matchingRules) {
@@ -665,49 +797,61 @@ function setupTelegramBridgeClient() {
               contentForRule = contentForRule.replaceAll(from, String(to ?? ""));
             }
           }
-          contentForRule = applyLongMessageConfig(contentForRule, rule.longMessage);
+          const isTelegramToTelegram = rule.type === "telegram-to-telegram";
+          const resolvedLongMessage =
+            isTelegramToTelegram && account.telegramLongMessage && !rule.longMessage
+              ? account.telegramLongMessage
+              : rule.longMessage;
+          contentForRule = applyLongMessageConfig(contentForRule, resolvedLongMessage);
 
-          const tempSender = new SenderBot({
-            webhookUrl: rule.targetChannelId,
-          });
-
-          const forwardStyle = account.feishuStyle === "style2" ? "style2" : "style1";
           const showSourceIdentity = account.showSourceIdentity === true;
-          const avatarUrl = showSourceIdentity
-            ? buildTelegramAvatarUrl(
-                params.from_avatar_file,
-                params.from_avatar_url,
-                account.publicBaseUrl,
-                params.from_username,
-              )
-            : undefined;
-
-          let useEmbed = forwardStyle === "style1";
-          let extraEmbeds: any[] | undefined;
-
           const replyInfo = params.reply_to || params.reply_to_message;
-          if (replyInfo) {
-            const replyUser = replyInfo.from_user || {};
-            const replyName =
-              replyInfo.from_display_name ||
-              replyInfo.from_username ||
-              `${replyUser.firstName || ""} ${replyUser.lastName || ""}`.trim() ||
-              replyUser.username ||
-              "用户";
-            const replyContent = replyInfo.text || "";
 
-            if (forwardStyle === "style1") {
-              const ctaLine = `↳ @${replyName}: ${replyContent || "回复消息"}`;
-              contentForRule = [ctaLine, contentForRule].filter(Boolean).join("\n");
-            } else {
-              useEmbed = false;
-              extraEmbeds = [
-                {
-                  color: 0x0000ff,
-                  description: `**💬 回复 ${replyName}**\n${replyContent}`,
-                  footer: { text: `⏰ ${formatTimestampFromSeconds(params.date)}` }
-                }
-              ];
+          if (isTelegramToTelegram && showSourceIdentity && senderDisplayName) {
+            const prefix = `👤 ${senderDisplayName}`;
+            contentForRule = contentForRule ? `${prefix}\n${contentForRule}` : prefix;
+          }
+
+          let useEmbed = true;
+          let extraEmbeds: any[] | undefined;
+          let avatarUrl: string | undefined;
+          let forwardStyle = "style1";
+
+          if (!isTelegramToTelegram) {
+            forwardStyle = account.feishuStyle === "style2" ? "style2" : "style1";
+            avatarUrl = showSourceIdentity
+              ? buildTelegramAvatarUrl(
+                  params.from_avatar_file,
+                  params.from_avatar_url,
+                  account.publicBaseUrl,
+                  params.from_username,
+                )
+              : undefined;
+            useEmbed = forwardStyle === "style1";
+
+            if (replyInfo) {
+              const replyUser = replyInfo.from_user || {};
+              const replyName =
+                replyInfo.from_display_name ||
+                replyInfo.from_username ||
+                `${replyUser.firstName || ""} ${replyUser.lastName || ""}`.trim() ||
+                replyUser.username ||
+                "用户";
+              const replyContent = replyInfo.text || "";
+
+              if (forwardStyle === "style1") {
+                const ctaLine = `↳ @${replyName}: ${replyContent || "回复消息"}`;
+                contentForRule = [ctaLine, contentForRule].filter(Boolean).join("\n");
+              } else {
+                useEmbed = false;
+                extraEmbeds = [
+                  {
+                    color: 0x0000ff,
+                    description: `**💬 回复 ${replyName}**\n${replyContent}`,
+                    footer: { text: `⏰ ${formatTimestampFromSeconds(params.date)}` }
+                  }
+                ];
+              }
             }
           }
 
@@ -760,24 +904,114 @@ function setupTelegramBridgeClient() {
           const contentPreview = formatLogPreview(contentForRule);
           const senderLabel = senderDisplayName || "Telegram User";
 
-          // 发送消息
-          await tempSender.sendData([{
-            content: contentForRule,
-            username: showSourceIdentity ? senderDisplayName : undefined,
-            avatarUrl,
-            uploads: uploads.length > 0 ? uploads : undefined,
-            useEmbed,
-            extraEmbeds,
-          }]);
+          if (isTelegramToTelegram) {
+            const targetChatId = typeof rule.targetChannelId === "string" ? rule.targetChannelId.trim() : "";
+            if (!targetChatId) {
+              logSkip("未配置目标 Chat ID", `目标: ${rule.targetChannelId || "空"}`);
+              continue;
+            }
 
-          const logMsg =
-            `[TG->DC] 转发成功 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
-            `目标: ${rule.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
-          console.log(logMsg);
-          telegramForwardLogger.info(logMsg);
+            const senderAccount = selectTelegramSendAccount(account, rule.senderAccountType);
+            if (!senderAccount) {
+              logSkip("未找到可用 Telegram 发送账号", `目标: ${targetChatId}`);
+              continue;
+            }
+
+            const replySourceId = params.reply_to_message_id || replyInfo?.id;
+            const replyTargetId = resolveTelegramReplyTarget(sourceChatId, replySourceId, targetChatId);
+            let telegramContent = contentForRule;
+
+            if (account.enableTranslation === true && rule.translateDirection !== "off") {
+              const translator = getTranslationSender(account);
+              const direction = rule.translateDirection || "auto";
+              if (translator && telegramContent.trim()) {
+                const target =
+                  direction !== "auto"
+                    ? (direction as "zh-en" | "en-zh")
+                    : translator.chooseTranslateTarget(telegramContent);
+                if (target) {
+                  const translated = await translator.translateText(telegramContent, target);
+                  if (translated) {
+                    telegramContent = `${telegramContent}\n---\n${translated}`;
+                  }
+                }
+              }
+            }
+
+            const effectiveWatermark = resolveWatermarkConfig(account.watermark, rule.watermark);
+            if (!replyTargetId && replyInfo) {
+              const replyUser = replyInfo.from_user || {};
+              const replyName =
+                replyInfo.from_display_name ||
+                replyInfo.from_username ||
+                `${replyUser.firstName || ""} ${replyUser.lastName || ""}`.trim() ||
+                replyUser.username ||
+                "用户";
+              const replyContent = replyInfo.text || "";
+              const ctaLine = `↳ ${replyName}: ${replyContent || "回复消息"}`;
+              telegramContent = [ctaLine, telegramContent].filter(Boolean).join("\n");
+            }
+
+            const bridge = telegramBridgeClient;
+            if (!bridge) {
+              logSkip("Telegram Bridge 未就绪", `目标: ${targetChatId}`);
+              continue;
+            }
+
+            const sendResult = await bridge.sendMessage({
+              accountId: senderAccount.id,
+              accountType: senderAccount.type,
+              chatId: targetChatId,
+              message: {
+                text: telegramContent,
+                reply_to_message_id: replyTargetId,
+                watermark: effectiveWatermark,
+              },
+              media: uploads.length > 0 ? uploads : undefined,
+            });
+
+            if (sendResult?.messageId && sourceChatId && sourceMessageId) {
+              recordTelegramReplyMapping(sourceChatId, String(sourceMessageId), targetChatId, String(sendResult.messageId));
+            }
+
+            if (sendResult?.success || sendResult?.messageId) {
+              const logMsg =
+                `[${forwardTag}] 转发成功 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+                `目标: ${targetChatId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
+              console.log(logMsg);
+              telegramForwardLogger.info(logMsg);
+            } else {
+              const errorMsg =
+                `[${forwardTag}] 转发失败 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+                `目标: ${targetChatId} | 错误: ${String(sendResult?.error || sendResult?.message || "未知错误")}`;
+              console.error(errorMsg);
+              telegramForwardLogger.error(errorMsg);
+            }
+          } else {
+            const tempSender = new SenderBot({
+              webhookUrl: rule.targetChannelId,
+              watermark: account.watermark,
+            });
+
+            await tempSender.sendData([{
+              content: contentForRule,
+              username: showSourceIdentity ? senderDisplayName : undefined,
+              avatarUrl,
+              uploads: uploads.length > 0 ? uploads : undefined,
+              useEmbed,
+              extraEmbeds,
+              watermark: rule.watermark,
+            }]);
+
+            const logMsg =
+              `[${forwardTag}] 转发成功 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+              `目标: ${rule.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
+            console.log(logMsg);
+            telegramForwardLogger.info(logMsg);
+          }
         } catch (error: any) {
           const errorMsg =
-            `[TG->DC] 转发失败 | 账号: ${account.name} | 来自: ${senderDisplayName || "Telegram User"} | ` +
+            `[${forwardTag}] 转发失败 | 账号: ${account.name} | 来自: ${senderDisplayName || "Telegram User"} | ` +
             `源: ${sourceLabel} | 目标: ${rule.targetChannelId} | 错误: ${String(error?.message || error)}`;
           console.error(errorMsg);
           telegramForwardLogger.error(errorMsg);

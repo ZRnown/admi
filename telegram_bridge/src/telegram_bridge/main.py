@@ -135,6 +135,7 @@ class TelegramBridgeService:
 
                     payload = {
                         "accountId": account_id,
+                        "id": message_data.get("id"),
                         "chat_title": message_data.get("chat_title"),
                         "chat_username": message_data.get("chat_username"),
                         "chat_id": message_data.get("chat_id"),
@@ -143,6 +144,7 @@ class TelegramBridgeService:
                         "from_username": user_info.get("username"),
                         "from_display_name": display_name,
                         "from_avatar_file": message_data.get("from_avatar_file") or user_info.get("avatarFile"),
+                        "reply_to_message_id": message_data.get("reply_to_message_id"),
                         "reply_to": message_data.get("reply_to_message"),
                         "media": message_data.get("media")
                     }
@@ -299,10 +301,36 @@ class TelegramBridgeService:
         message = params.get("message")
         media = params.get("media")
 
+        text = message
+        parse_mode = None
+        reply_to_message_id = None
+        watermark = None
+        if isinstance(message, dict):
+            text = message.get("text") or ""
+            parse_mode = message.get("parse_mode")
+            reply_to_message_id = message.get("reply_to_message_id")
+            watermark = message.get("watermark")
+
         if account_type == "client":
-            return await self.client_manager.send_message(account_id, chat_id, message, media)
+            return await self.client_manager.send_message(
+                account_id,
+                chat_id,
+                text,
+                media,
+                parse_mode,
+                reply_to_message_id,
+                watermark,
+            )
         else:
-            return await self.bot_manager.send_message(account_id, chat_id, message, media)
+            return await self.bot_manager.send_message(
+                account_id,
+                chat_id,
+                text,
+                media,
+                parse_mode,
+                reply_to_message_id,
+                watermark,
+            )
 
     async def _handle_update_config(self, params):
         """处理配置更新"""
@@ -355,7 +383,7 @@ class TelegramBridgeService:
 
         # 2. 填充有规则的监听列表
         for mapping in mappings:
-            if mapping.type != "telegram-to-discord":
+            if mapping.type not in ["telegram-to-discord", "telegram-to-telegram"]:
                 continue
             raw_id = mapping.source_channel_id
             chat_id = None

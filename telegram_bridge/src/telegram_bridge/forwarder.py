@@ -275,6 +275,7 @@ class TelegramSender:
             parse_mode = message_data.get("parse_mode")
             reply_to_message_id = message_data.get("reply_to_message_id")
             attachments = message_data.get("attachments", [])
+            watermark = message_data.get("watermark")
 
             logger.info(f"TelegramSender.send_message: account_id={account_id}, type={account_type}, chat_id={chat_id}")
 
@@ -287,7 +288,7 @@ class TelegramSender:
                         "message": f"Client {account_id} not connected"
                     }
                 return await self.client_manager.send_message(
-                    account_id, chat_id, text, attachments, parse_mode
+                    account_id, chat_id, text, attachments, parse_mode, reply_to_message_id, watermark
                 )
             elif account_type == "bot" and self.bot_manager:
                 if account_id not in self.bot_manager.bots:
@@ -298,7 +299,7 @@ class TelegramSender:
                         "message": f"Bot {account_id} not connected"
                     }
                 return await self.bot_manager.send_message(
-                    account_id, chat_id, text, attachments, parse_mode
+                    account_id, chat_id, text, attachments, parse_mode, reply_to_message_id, watermark
                 )
             else:
                 logger.error(f"Invalid account type or manager not set: type={account_type}, client_manager={self.client_manager is not None}, bot_manager={self.bot_manager is not None}")

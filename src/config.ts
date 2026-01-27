@@ -17,6 +17,7 @@ const FORWARDING_TYPES = [
   "discord-to-discord",
   "discord-to-telegram",
   "telegram-to-discord",
+  "telegram-to-telegram",
   "discord-to-feishu",
 ] as const;
 
@@ -67,10 +68,11 @@ export interface TelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;     // 源频道ID
   targetChannelId: string;     // 目标频道ID
-  type: 'telegram-to-discord' | 'discord-to-telegram';
+  type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
   note?: string;
   translate?: boolean;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
+  senderAccountType?: 'bot' | 'client';
   longMessage?: {
     enabled: boolean;
     threshold?: number;
@@ -98,10 +100,11 @@ export interface FrontendTelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;
   targetChannelId: string;
-  type: 'telegram-to-discord' | 'discord-to-telegram';
+  type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
   note?: string;
   translate?: boolean;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
+  senderAccountType?: 'bot' | 'client';
 }
 
 export interface FrontendTelegramConfig {
@@ -113,6 +116,21 @@ export interface FrontendTelegramConfig {
 export interface ChannelConfig {
   muted: ChannelId[];
   allowed: ChannelId[];
+}
+
+export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
+
+export interface WatermarkConfig {
+  enabled?: boolean;
+  text?: string;
+  textSize?: number;
+  textColor?: string;
+  textOpacity?: number;
+  imageUrl?: string;
+  imageOpacity?: number;
+  imageScale?: number;
+  position?: WatermarkPosition;
+  margin?: number;
 }
 
 // 规则级别的完整配置（适用于所有转发类型）
@@ -155,6 +173,7 @@ export interface RuleLevelConfig {
   ignoreEnglishThreshold?: number;
   ignoreChinese?: boolean;
   ignoreChineseThreshold?: number;
+  watermark?: WatermarkConfig;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -215,6 +234,7 @@ export interface LegacyConfig {
   showMessageDeletions?: boolean;
   showMessageUpdates?: boolean;
   replacementsDictionary?: Record<string, string>;
+  watermark?: WatermarkConfig;
   historyScan?: {
     enabled?: boolean;
     limit?: number;
@@ -317,6 +337,7 @@ export interface AccountConfig extends LegacyConfig {
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
   ocrTriggerKeywords?: string[];
+  watermark?: WatermarkConfig;
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
@@ -457,6 +478,39 @@ function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
   return { mode: "webhook", webhookUrl };
 }
 
+function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const normalizeNumber = (value: any): number | undefined => {
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && value.trim() && !isNaN(Number(value))) {
+      return Number(value);
+    }
+    return undefined;
+  };
+  const normalizeText = (value: any): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  };
+  const normalizePosition = (value: any): WatermarkPosition | undefined => {
+    const allowed: WatermarkPosition[] = ["top-left", "top-right", "bottom-left", "bottom-right", "center"];
+    return allowed.includes(value as WatermarkPosition) ? (value as WatermarkPosition) : undefined;
+  };
+
+  return {
+    enabled: raw.enabled === true,
+    text: normalizeText(raw.text),
+    textSize: normalizeNumber(raw.textSize),
+    textColor: normalizeText(raw.textColor),
+    textOpacity: normalizeNumber(raw.textOpacity),
+    imageUrl: normalizeText(raw.imageUrl),
+    imageOpacity: normalizeNumber(raw.imageOpacity),
+    imageScale: normalizeNumber(raw.imageScale),
+    position: normalizePosition(raw.position),
+    margin: normalizeNumber(raw.margin),
+  };
+}
+
 function normalizeRuleConfig(raw: any): RuleLevelConfig {
   if (!raw || typeof raw !== "object") {
     return {
@@ -479,6 +533,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ignoreEnglishThreshold: undefined,
       ignoreChinese: undefined,
       ignoreChineseThreshold: undefined,
+      watermark: undefined,
     };
   }
   return {
@@ -522,6 +577,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         : typeof raw.ignoreChineseThreshold === "string" && raw.ignoreChineseThreshold.trim() && !isNaN(Number(raw.ignoreChineseThreshold))
           ? Number(raw.ignoreChineseThreshold)
           : undefined,
+    watermark: normalizeWatermarkConfig(raw.watermark),
   };
 }
 
@@ -681,6 +737,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             : typeof m.ignoreChineseThreshold === "string" && m.ignoreChineseThreshold.trim() && !isNaN(Number(m.ignoreChineseThreshold))
               ? Number(m.ignoreChineseThreshold)
               : undefined,
+        watermark: normalizeWatermarkConfig(m.watermark),
       }))
     : [];
 
@@ -705,8 +762,14 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       ? input.telegramConfig.mappings.map((mapping: any) => {
           const rawTarget = typeof mapping.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
           const targetIsWebhook = /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(rawTarget);
-          const rawType = mapping.type === "discord-to-telegram" ? "discord-to-telegram" : "telegram-to-discord";
-          const normalizedType = targetIsWebhook ? "telegram-to-discord" : rawType;
+          const rawType = typeof mapping.type === "string" ? mapping.type : "";
+          let normalizedType: "telegram-to-discord" | "discord-to-telegram" | "telegram-to-telegram" = "telegram-to-discord";
+          if (rawType === "discord-to-telegram" || rawType === "telegram-to-discord" || rawType === "telegram-to-telegram") {
+            normalizedType = rawType;
+          }
+          if (targetIsWebhook && normalizedType !== "telegram-to-telegram") {
+            normalizedType = "telegram-to-discord";
+          }
 
           return {
             id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
@@ -716,6 +779,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             note: typeof mapping.note === "string" ? mapping.note : undefined,
             translate: mapping.translate === true,
             translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(mapping.translateDirection) ? mapping.translateDirection : "auto",
+            senderAccountType: mapping.senderAccountType === "bot" ? "bot" : mapping.senderAccountType === "client" ? "client" : undefined,
             // Telegram特有的超长消息处理（规则级别）
             longMessage: mapping.longMessage && typeof mapping.longMessage === "object" ? {
               enabled: mapping.longMessage.enabled === true,
@@ -749,7 +813,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
                 ? mapping.ignoreChineseThreshold
                 : typeof mapping.ignoreChineseThreshold === "string" && mapping.ignoreChineseThreshold.trim() && !isNaN(Number(mapping.ignoreChineseThreshold))
                   ? Number(mapping.ignoreChineseThreshold)
-                  : undefined
+                  : undefined,
+            watermark: normalizeWatermarkConfig(mapping.watermark),
           };
         })
       : [],
@@ -789,6 +854,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     showMessageDeletions: input?.showMessageDeletions,
     showMessageUpdates: input?.showMessageUpdates,
     replacementsDictionary: replacementsDict,
+    watermark: normalizeWatermarkConfig(input?.watermark),
     historyScan: input?.historyScan,
     mutedGuildsIds: input?.mutedGuildsIds || [],
     allowedGuildsIds: input?.allowedGuildsIds || [],
@@ -962,6 +1028,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       showSourceIdentity: false,
       publicBaseUrl: undefined,
       replacementsDictionary: {},
+      watermark: undefined,
       historyScan: { enabled: true },
       mutedGuildsIds: [],
       allowedGuildsIds: [],
@@ -1020,6 +1087,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     showMessageDeletions: account.showMessageDeletions,
     showMessageUpdates: account.showMessageUpdates,
     replacementsDictionary: account.replacementsDictionary,
+    watermark: account.watermark,
     historyScan: account.historyScan,
     mutedGuildsIds: account.mutedGuildsIds,
     allowedGuildsIds: account.allowedGuildsIds,

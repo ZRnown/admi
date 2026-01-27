@@ -498,12 +498,14 @@ class TelegramClientManager:
         client: TelegramClient,
         chat_id: int,
         attachment: Dict[str, Any],
-        caption: Optional[str] = None
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+        watermark: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """发送媒体附件"""
         try:
             # 处理Discord附件
-            media_result = await self.media_handler.process_discord_attachment(attachment)
+            media_result = await self.media_handler.process_discord_attachment(attachment, watermark)
             if not media_result:
                 return {
                     "success": False,
@@ -515,7 +517,7 @@ class TelegramClientManager:
 
             # 上传到Telegram
             return await self.media_handler.upload_to_telegram(
-                client, chat_id, file_path, media_type, caption or ""
+                client, chat_id, file_path, media_type, caption or "", reply_to_message_id
             )
 
         except Exception as e:
@@ -576,7 +578,16 @@ class TelegramClientManager:
                 "message": str(e)
             }
 
-    async def send_message(self, account_id: str, chat_id: int, message: str, attachments: Optional[List[Dict[str, Any]]] = None, parse_mode: Optional[str] = None) -> Dict[str, Any]:
+    async def send_message(
+        self,
+        account_id: str,
+        chat_id: int,
+        message: str,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        parse_mode: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+        watermark: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """发送消息"""
         try:
             if account_id not in self.clients:
@@ -592,7 +603,7 @@ class TelegramClientManager:
             if attachments:
                 for attachment in attachments:
                     result = await self._send_media_attachment(
-                        client, chat_id, attachment, message if message else None
+                        client, chat_id, attachment, message if message else None, reply_to_message_id, watermark
                     )
                     if result["success"]:
                         return result  # 只发送第一个附件
@@ -603,6 +614,8 @@ class TelegramClientManager:
             kwargs = {}
             if parse_mode:
                 kwargs["parse_mode"] = parse_mode
+            if reply_to_message_id:
+                kwargs["reply_to"] = reply_to_message_id
 
             result = await client.send_message(chat_id, message, **kwargs)
 

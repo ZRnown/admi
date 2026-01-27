@@ -303,7 +303,8 @@ class DiscordToTelegramConverter(MessageConverter):
                 "text": telegram_content,
                 "parse_mode": self._determine_parse_mode(telegram_content),
                 "reply_to_message_id": discord_message.get("replyToMessageId"),
-                "attachments": attachments
+                "attachments": attachments,
+                "watermark": discord_message.get("watermark") or getattr(mapping, "watermark", None),
             }
 
             return telegram_message
