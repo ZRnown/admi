@@ -246,8 +246,16 @@
                 class="w-16 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
               <span class="text-xs text-slate-500">%</span>
             </div>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleStripEnglish" class="h-4 w-4 rounded border-slate-300">
+              剔除英文
+            </label>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleStripChinese" class="h-4 w-4 rounded border-slate-300">
+              剔除中文
+            </label>
           </div>
-          <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；当英文/中文字符占比 ≥ 阈值时忽略，100% 表示完全英文/中文才忽略。</p>
+          <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；忽略会跳过整条消息，剔除会删除对应语言字符。</p>
         </div>
 
         <!-- Telegram 发送账号（Telegram 目标） -->
@@ -1256,8 +1264,16 @@
                   class="w-16 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
                 <span class="text-xs text-slate-500">%</span>
               </div>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" ${acc.stripEnglish ? 'checked' : ''} onchange="updateField('stripEnglish', this.checked)"
+                  class="h-4 w-4 rounded border-slate-300"> 剔除英文
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" ${acc.stripChinese ? 'checked' : ''} onchange="updateField('stripChinese', this.checked)"
+                  class="h-4 w-4 rounded border-slate-300"> 剔除中文
+              </label>
             </div>
-            <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；当英文/中文字符占比 ≥ 阈值时忽略，100% 表示完全英文/中文才忽略。</p>
+            <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；忽略会直接跳过整条消息，剔除会删除对应语言字符。</p>
           </div>
         </div>
 
@@ -2210,6 +2226,8 @@
       ignoreEnglishThreshold: 100,
       ignoreChinese: false,
       ignoreChineseThreshold: 100,
+      stripEnglish: false,
+      stripChinese: false,
       watermarkMode: "inherit",
       watermark: {},
       senderAccountType: "bot"
@@ -2346,6 +2364,8 @@
         ignoreEnglishThreshold: mapping.ignoreEnglishThreshold ?? 100,
         ignoreChinese: mapping.ignoreChinese === true,
         ignoreChineseThreshold: mapping.ignoreChineseThreshold ?? 100,
+        stripEnglish: mapping.stripEnglish === true,
+        stripChinese: mapping.stripChinese === true,
         watermarkMode,
         watermark: hasRuleWatermark ? { ...mapping.watermark } : {},
         senderAccountType: getEffectiveTelegramSenderType(acc, forwardingType, mapping)
@@ -2364,6 +2384,8 @@
       document.getElementById('ruleIgnoreChinese').checked = ruleConfigData.ignoreChinese;
       document.getElementById('ruleIgnoreEnglishThreshold').value = ruleConfigData.ignoreEnglishThreshold ?? 100;
       document.getElementById('ruleIgnoreChineseThreshold').value = ruleConfigData.ignoreChineseThreshold ?? 100;
+      document.getElementById('ruleStripEnglish').checked = ruleConfigData.stripEnglish;
+      document.getElementById('ruleStripChinese').checked = ruleConfigData.stripChinese;
 
       const senderSection = document.getElementById('ruleTelegramSenderSection');
       if (forwardingType === 'telegram-to-telegram' || forwardingType === 'discord-to-telegram') {
@@ -2473,6 +2495,8 @@
       mapping.ignoreDocuments = document.getElementById('ruleIgnoreDocuments').checked || undefined;
       mapping.ignoreEnglish = document.getElementById('ruleIgnoreEnglish').checked || undefined;
       mapping.ignoreChinese = document.getElementById('ruleIgnoreChinese').checked || undefined;
+      mapping.stripEnglish = document.getElementById('ruleStripEnglish').checked || undefined;
+      mapping.stripChinese = document.getElementById('ruleStripChinese').checked || undefined;
       const ruleEnglishThreshold = parseInt(document.getElementById('ruleIgnoreEnglishThreshold').value, 10);
       const ruleChineseThreshold = parseInt(document.getElementById('ruleIgnoreChineseThreshold').value, 10);
       mapping.ignoreEnglishThreshold = Number.isFinite(ruleEnglishThreshold) ? ruleEnglishThreshold : undefined;
@@ -2798,6 +2822,8 @@
         ignoreEnglishThreshold: 100,
         ignoreChinese: false,
         ignoreChineseThreshold: 100,
+        stripEnglish: false,
+        stripChinese: false,
         watermark: { enabled: false },
         ocrServerUrl: 'http://localhost:9003',
         ocrBlockedKeywords: [],

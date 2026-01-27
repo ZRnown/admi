@@ -4,6 +4,7 @@ import { URL, fileURLToPath } from "node:url";
 
 import { ChannelId, WatermarkConfig } from "./config.js";
 import { applyWatermarkToBuffer, resolveWatermarkConfig } from "./watermark.js";
+import { stripLanguages } from "./languageFilter.js";
 
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30000;
@@ -611,6 +612,8 @@ export class SenderBot {
     translationDirection?: "auto" | "zh-en" | "en-zh" | "off";
     // 可选：规则级别的替换字典
     ruleReplacementsDictionary?: Record<string, string>;
+    stripEnglish?: boolean;
+    stripChinese?: boolean;
     // 可选：规则级别水印配置
     watermark?: WatermarkConfig;
   }>) {
@@ -668,6 +671,13 @@ export class SenderBot {
         } else {
             console.log(`[翻译] 翻译失败或跳过: ${targetLang}`);
         }
+      }
+
+      if (item.stripEnglish || item.stripChinese) {
+        text = stripLanguages(text, {
+          stripEnglish: item.stripEnglish,
+          stripChinese: item.stripChinese,
+        });
       }
 
       // Discord limits: content 2000, embed.description 4096

@@ -16,7 +16,7 @@ import { OCRClient } from "./ocrClient.js";
 import { FileLogger } from "./logger.js";
 import { getTelegramBridgeClient } from "./index.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
-import { clampPercent, getLanguageRatio } from "./languageFilter.js";
+import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { resolveWatermarkConfig } from "./watermark.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -94,6 +94,49 @@ function collectMessageTextPieces(message: Message): string[] {
     pieces.push(...collectEmbedText((snapshot as any)?.embeds || []));
   }
   return pieces;
+}
+
+function stripEmbedText(
+  embeds: any[] | undefined,
+  options: { stripEnglish?: boolean; stripChinese?: boolean },
+): any[] | undefined {
+  if (!embeds || embeds.length === 0) return embeds;
+  if (!options.stripEnglish && !options.stripChinese) return embeds;
+  const sanitizeText = (value: unknown) =>
+    typeof value === "string" ? stripLanguages(value, options) : value;
+  return embeds.map((embed) => {
+    if (!embed || typeof embed !== "object") return embed;
+    let raw: any = embed;
+    if (typeof (embed as any).toJSON === "function") {
+      try {
+        raw = (embed as any).toJSON();
+      } catch {}
+    } else if ("data" in embed && (embed as any).data) {
+      raw = (embed as any).data;
+    }
+    if (!raw || typeof raw !== "object") return raw;
+    const next: any = { ...raw };
+    if (typeof next.title === "string") next.title = sanitizeText(next.title);
+    if (typeof next.description === "string") next.description = sanitizeText(next.description);
+    if (next.footer && typeof next.footer === "object") {
+      next.footer = { ...next.footer };
+      if (typeof next.footer.text === "string") next.footer.text = sanitizeText(next.footer.text);
+    }
+    if (next.author && typeof next.author === "object") {
+      next.author = { ...next.author };
+      if (typeof next.author.name === "string") next.author.name = sanitizeText(next.author.name);
+    }
+    if (Array.isArray(next.fields)) {
+      next.fields = next.fields.map((field: any) => {
+        if (!field || typeof field !== "object") return field;
+        const copy = { ...field };
+        if (typeof copy.name === "string") copy.name = sanitizeText(copy.name);
+        if (typeof copy.value === "string") copy.value = sanitizeText(copy.value);
+        return copy;
+      });
+    }
+    return next;
+  });
 }
 
 function hasImageAttachment(attachments: any): boolean {
@@ -463,6 +506,8 @@ export class Bot {
     ignoreEnglishThreshold?: number;
     ignoreChinese?: boolean;
     ignoreChineseThreshold?: number;
+    stripEnglish?: boolean;
+    stripChinese?: boolean;
     watermark?: WatermarkConfig;
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
@@ -501,6 +546,8 @@ export class Bot {
         ignoreEnglishThreshold: undefined,
         ignoreChinese: undefined,
         ignoreChineseThreshold: undefined,
+        stripEnglish: undefined,
+        stripChinese: undefined,
         watermark: undefined,
       };
     }
@@ -531,6 +578,8 @@ export class Bot {
       ignoreEnglishThreshold: rule.ignoreEnglishThreshold,
       ignoreChinese: rule.ignoreChinese,
       ignoreChineseThreshold: rule.ignoreChineseThreshold,
+      stripEnglish: rule.stripEnglish,
+      stripChinese: rule.stripChinese,
       watermark: rule.watermark,
     };
   }
@@ -680,6 +729,9 @@ export class Bot {
     // 获取规则级别配置（提前获取，用于过滤与OCR检查）
     const ruleConfig = this.getRuleLevelConfig(message.channelId);
     const caseInsensitive = this.config.caseInsensitiveKeywords ?? true;
+    const stripEnglish = this.config.stripEnglish === true || ruleConfig.stripEnglish === true;
+    const stripChinese = this.config.stripChinese === true || ruleConfig.stripChinese === true;
+    const stripOptions = { stripEnglish, stripChinese };
 
     // 忽略选项检查（规则级别优先，未设置则使用全局设置）
     try {
@@ -1295,6 +1347,7 @@ export class Bot {
       // 样式1或其他情况：传递原消息的 embeds（这对于 webhook 消息至关重要）
       extraEmbeds = message.embeds;
     }
+    extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
     
     const toSend = [{
       content: `${discordContent}`.trim(),
@@ -1309,6 +1362,8 @@ export class Bot {
       enableTranslationOverride: enableTranslationForThis,
       translationDirection: translationDirectionForThis as any,
       ruleReplacementsDictionary: ruleConfig.replacementsDictionary,
+      stripEnglish,
+      stripChinese,
       watermark: ruleConfig.watermark,
     }];
 
@@ -1385,16 +1440,20 @@ export class Bot {
     }
     if (shouldSendFeishu) {
       try {
-        const feishuContent = applyReplacementDictionary(
-          applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {}),
-          ruleConfig.replacementsDictionary || {},
+        const feishuContent = stripLanguages(
+          applyReplacementDictionary(
+            applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {}),
+            ruleConfig.replacementsDictionary || {},
+          ),
+          stripOptions,
         );
+        const feishuEmbeds = stripEmbedText(message.embeds, stripOptions);
         await feishuSenderForThis.send({
           content: feishuContent,
           username: username,
           avatarUrl: avatarUrl,
           attachments: uploads.map((u) => ({ url: u.url, filename: u.filename, isImage: u.isImage })),
-          embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
+          embeds: feishuEmbeds && feishuEmbeds.length > 0 ? feishuEmbeds : undefined,
           watermark: ruleConfig.watermark,
         });
         const feishuTarget = feishuSenderForThis.target;
@@ -1445,7 +1504,9 @@ export class Bot {
               applyReplacementDictionary(contentForTelegram, this.config.replacementsDictionary || {}),
               (mapping as any).replacementsDictionary || ruleConfig.replacementsDictionary || {},
             );
+            contentForTelegram = stripLanguages(contentForTelegram, stripOptions);
             const contentPreview = formatLogPreview(contentForTelegram);
+            const telegramEmbeds = stripEmbedText(message.embeds, stripOptions);
 
             // 准备消息数据
             const messageData = {
@@ -1463,7 +1524,7 @@ export class Bot {
                   contentType: u.isImage ? 'image' : 'file',
                   name: u.filename,
                 })),
-                embeds: message.embeds && message.embeds.length > 0 ? message.embeds : undefined,
+                embeds: telegramEmbeds && telegramEmbeds.length > 0 ? telegramEmbeds : undefined,
                 watermark: resolveWatermarkConfig(this.config.watermark, ruleConfig.watermark),
               },
               // 传递翻译配置给Python端

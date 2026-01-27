@@ -175,6 +175,9 @@ export interface RuleLevelConfig {
   ignoreEnglishThreshold?: number;
   ignoreChinese?: boolean;
   ignoreChineseThreshold?: number;
+  // 剔除中文/英文字符（规则级别）
+  stripEnglish?: boolean;
+  stripChinese?: boolean;
   watermark?: WatermarkConfig;
 }
 
@@ -274,6 +277,8 @@ export interface LegacyConfig {
   ignoreEnglishThreshold?: number;
   ignoreChinese?: boolean;
   ignoreChineseThreshold?: number;
+  stripEnglish?: boolean;
+  stripChinese?: boolean;
   // Discord -> Discord 转发样式：style1 = 当前内嵌样式；style2 = 纯文本样式（带时间等）
   feishuStyle?: "style1" | "style2";
   // OCR 图片检测服务器URL
@@ -539,6 +544,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ignoreEnglishThreshold: undefined,
       ignoreChinese: undefined,
       ignoreChineseThreshold: undefined,
+      stripEnglish: undefined,
+      stripChinese: undefined,
       watermark: undefined,
     };
   }
@@ -583,6 +590,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         : typeof raw.ignoreChineseThreshold === "string" && raw.ignoreChineseThreshold.trim() && !isNaN(Number(raw.ignoreChineseThreshold))
           ? Number(raw.ignoreChineseThreshold)
           : undefined,
+    stripEnglish: raw.stripEnglish === true ? true : undefined,
+    stripChinese: raw.stripChinese === true ? true : undefined,
     watermark: normalizeWatermarkConfig(raw.watermark),
   };
 }
@@ -743,6 +752,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             : typeof m.ignoreChineseThreshold === "string" && m.ignoreChineseThreshold.trim() && !isNaN(Number(m.ignoreChineseThreshold))
               ? Number(m.ignoreChineseThreshold)
               : undefined,
+        stripEnglish: m.stripEnglish === true ? true : undefined,
+        stripChinese: m.stripChinese === true ? true : undefined,
         watermark: normalizeWatermarkConfig(m.watermark),
       }))
     : [];
@@ -820,6 +831,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
                 : typeof mapping.ignoreChineseThreshold === "string" && mapping.ignoreChineseThreshold.trim() && !isNaN(Number(mapping.ignoreChineseThreshold))
                   ? Number(mapping.ignoreChineseThreshold)
                   : undefined,
+            stripEnglish: mapping.stripEnglish === true ? true : undefined,
+            stripChinese: mapping.stripChinese === true ? true : undefined,
             watermark: normalizeWatermarkConfig(mapping.watermark),
           };
         })
@@ -913,6 +926,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         : typeof input?.ignoreChineseThreshold === "string" && input.ignoreChineseThreshold.trim() && !isNaN(Number(input.ignoreChineseThreshold))
           ? Number(input.ignoreChineseThreshold)
           : undefined,
+    stripEnglish: input?.stripEnglish === true,
+    stripChinese: input?.stripChinese === true,
     ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(input?.ocrTriggerKeywords) ? input.ocrTriggerKeywords : [],
@@ -1079,6 +1094,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       ignoreEnglishThreshold: 100,
       ignoreChinese: false,
       ignoreChineseThreshold: 100,
+      stripEnglish: false,
+      stripChinese: false,
       feishuStyle: "style1",
       channelTranslate: {},
       channelTranslateDirection: {},
@@ -1132,6 +1149,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreEnglishThreshold: account.ignoreEnglishThreshold,
     ignoreChinese: account.ignoreChinese,
     ignoreChineseThreshold: account.ignoreChineseThreshold,
+    stripEnglish: account.stripEnglish,
+    stripChinese: account.stripChinese,
     ocrServerUrl: account.ocrServerUrl,
     ocrBlockedKeywords: account.ocrBlockedKeywords,
     ocrTriggerKeywords: account.ocrTriggerKeywords,

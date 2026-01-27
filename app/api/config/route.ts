@@ -152,6 +152,8 @@ interface FrontendMapping {
   ignoreEnglishThreshold?: number;
   ignoreChinese?: boolean;
   ignoreChineseThreshold?: number;
+  stripEnglish?: boolean;
+  stripChinese?: boolean;
   watermark?: WatermarkConfig;
 }
 
@@ -199,6 +201,8 @@ interface FrontendAccount {
   ignoreEnglishThreshold?: number;
   ignoreChinese?: boolean;
   ignoreChineseThreshold?: number;
+  stripEnglish?: boolean;
+  stripChinese?: boolean;
   watermark?: WatermarkConfig;
   // OCR 图片检测相关
   ocrServerUrl?: string;
@@ -289,6 +293,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       ignoreEnglishThreshold: undefined,
       ignoreChinese: undefined,
       ignoreChineseThreshold: undefined,
+      stripEnglish: undefined,
+      stripChinese: undefined,
       watermark: undefined,
     };
   }
@@ -333,6 +339,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         : typeof raw.ignoreChineseThreshold === "string" && raw.ignoreChineseThreshold.trim() && !isNaN(Number(raw.ignoreChineseThreshold))
           ? Number(raw.ignoreChineseThreshold)
           : undefined,
+    stripEnglish: raw.stripEnglish === true ? true : undefined,
+    stripChinese: raw.stripChinese === true ? true : undefined,
     watermark: raw.watermark && typeof raw.watermark === "object" ? raw.watermark : undefined,
   };
 }
@@ -458,6 +466,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         ignoreEnglishThreshold: savedRule.ignoreEnglishThreshold,
         ignoreChinese: savedRule.ignoreChinese,
         ignoreChineseThreshold: savedRule.ignoreChineseThreshold,
+        stripEnglish: savedRule.stripEnglish,
+        stripChinese: savedRule.stripChinese,
         watermark: savedRule.watermark,
       });
     }
@@ -533,6 +543,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     ignoreEnglishThreshold: account.ignoreEnglishThreshold,
     ignoreChinese: account.ignoreChinese === true,
     ignoreChineseThreshold: account.ignoreChineseThreshold,
+    stripEnglish: account.stripEnglish === true,
+    stripChinese: account.stripChinese === true,
     watermark: account.watermark,
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
     ocrBlockedKeywords: account.ocrBlockedKeywords || [],
@@ -630,6 +642,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       ignoreEnglishThreshold: dto.ignoreEnglishThreshold,
       ignoreChinese: dto.ignoreChinese === true,
       ignoreChineseThreshold: dto.ignoreChineseThreshold,
+      stripEnglish: dto.stripEnglish === true,
+      stripChinese: dto.stripChinese === true,
       feishuStyle: "style1",
     } as AccountConfig);
 
@@ -700,6 +714,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           ignoreEnglishThreshold: mapping.ignoreEnglishThreshold,
           ignoreChinese: mapping.ignoreChinese,
           ignoreChineseThreshold: mapping.ignoreChineseThreshold,
+          stripEnglish: mapping.stripEnglish,
+          stripChinese: mapping.stripChinese,
           watermark: mapping.watermark,
         });
       }
@@ -834,6 +850,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       typeof dto.ignoreChineseThreshold === "number"
         ? dto.ignoreChineseThreshold
         : base.ignoreChineseThreshold,
+    stripEnglish: dto.stripEnglish === true,
+    stripChinese: dto.stripChinese === true,
     watermark: dto.watermark && typeof dto.watermark === "object" ? dto.watermark : base.watermark,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],

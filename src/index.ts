@@ -23,7 +23,7 @@ import { FileLogger } from "./logger.js";
 import { telegramBridgeManager } from "./processManager.js";
 import { TelegramBridgeClient } from "./telegramBridgeClient.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
-import { clampPercent, getLanguageRatio } from "./languageFilter.js";
+import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { resolveWatermarkConfig } from "./watermark.js";
 
 // 全局 Telegram Bridge 客户端
@@ -169,6 +169,49 @@ function formatLogPreview(text?: string, limit = 160): string {
   const normalized = (text || "").replace(/\s+/g, " ").trim();
   if (!normalized) return "(无文本内容)";
   return normalized.length > limit ? normalized.slice(0, limit) + "..." : normalized;
+}
+
+function stripEmbedText(
+  embeds: any[] | undefined,
+  options: { stripEnglish?: boolean; stripChinese?: boolean },
+): any[] | undefined {
+  if (!embeds || embeds.length === 0) return embeds;
+  if (!options.stripEnglish && !options.stripChinese) return embeds;
+  const sanitizeText = (value: unknown) =>
+    typeof value === "string" ? stripLanguages(value, options) : value;
+  return embeds.map((embed) => {
+    if (!embed || typeof embed !== "object") return embed;
+    let raw: any = embed;
+    if (typeof (embed as any).toJSON === "function") {
+      try {
+        raw = (embed as any).toJSON();
+      } catch {}
+    } else if ("data" in embed && (embed as any).data) {
+      raw = (embed as any).data;
+    }
+    if (!raw || typeof raw !== "object") return raw;
+    const next: any = { ...raw };
+    if (typeof next.title === "string") next.title = sanitizeText(next.title);
+    if (typeof next.description === "string") next.description = sanitizeText(next.description);
+    if (next.footer && typeof next.footer === "object") {
+      next.footer = { ...next.footer };
+      if (typeof next.footer.text === "string") next.footer.text = sanitizeText(next.footer.text);
+    }
+    if (next.author && typeof next.author === "object") {
+      next.author = { ...next.author };
+      if (typeof next.author.name === "string") next.author.name = sanitizeText(next.author.name);
+    }
+    if (Array.isArray(next.fields)) {
+      next.fields = next.fields.map((field: any) => {
+        if (!field || typeof field !== "object") return field;
+        const copy = { ...field };
+        if (typeof copy.name === "string") copy.name = sanitizeText(copy.name);
+        if (typeof copy.value === "string") copy.value = sanitizeText(copy.value);
+        return copy;
+      });
+    }
+    return next;
+  });
 }
 
 function applyLongMessageConfig(
@@ -705,6 +748,9 @@ function setupTelegramBridgeClient() {
           params.from_display_name ||
           params.from_username ||
           "Telegram User";
+        const stripEnglish = account.stripEnglish === true || rule.stripEnglish === true;
+        const stripChinese = account.stripChinese === true || rule.stripChinese === true;
+        const stripOptions = { stripEnglish, stripChinese };
         try {
           if (hasText && englishRatio !== null && chineseRatio !== null) {
             const ruleEnglishThreshold = clampPercent(rule.ignoreEnglishThreshold, 100);
@@ -873,6 +919,8 @@ function setupTelegramBridgeClient() {
             }
           }
 
+          extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
+
           // 处理附件
           const uploads: Array<{
             url?: string;
@@ -919,7 +967,7 @@ function setupTelegramBridgeClient() {
             pushUpload({ localPath, url, filename, isImage, isVideo });
           }
 
-          const contentPreview = formatLogPreview(contentForRule);
+          let contentPreview = formatLogPreview(contentForRule);
           const senderLabel = senderDisplayName || "Telegram User";
 
           if (isTelegramToTelegram) {
@@ -972,6 +1020,11 @@ function setupTelegramBridgeClient() {
               telegramContent = [ctaLine, telegramContent].filter(Boolean).join("\n");
             }
 
+            if (stripEnglish || stripChinese) {
+              telegramContent = stripLanguages(telegramContent, stripOptions);
+            }
+            contentPreview = formatLogPreview(telegramContent);
+
             const bridge = telegramBridgeClient;
             if (!bridge) {
               logSkip("Telegram Bridge 未就绪", `目标: ${targetChatId}`);
@@ -1020,6 +1073,8 @@ function setupTelegramBridgeClient() {
               uploads: uploads.length > 0 ? uploads : undefined,
               useEmbed,
               extraEmbeds,
+              stripEnglish,
+              stripChinese,
               watermark: rule.watermark,
             }]);
 

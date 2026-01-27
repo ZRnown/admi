@@ -36,3 +36,21 @@ export function clampPercent(value: unknown, fallback = 100): number {
   if (num > 100) return 100;
   return Math.round(num);
 }
+
+const RE_ENGLISH = /[A-Za-z]/g;
+const RE_CHINESE = /[\u4e00-\u9fff]/g;
+
+export function stripLanguages(
+  text: string,
+  options: { stripEnglish?: boolean; stripChinese?: boolean },
+): string {
+  if (!text) return "";
+  let next = String(text);
+  if (options.stripChinese) {
+    next = next.replace(RE_CHINESE, "");
+  }
+  if (options.stripEnglish) {
+    next = next.replace(RE_ENGLISH, "");
+  }
+  return next;
+}
