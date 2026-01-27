@@ -911,7 +911,9 @@ function setupTelegramBridgeClient() {
               continue;
             }
 
-            const senderAccount = selectTelegramSendAccount(account, rule.senderAccountType);
+            const preferredSenderType =
+              rule.senderAccountType || account.telegramConfig?.defaultSenderAccountType;
+            const senderAccount = selectTelegramSendAccount(account, preferredSenderType);
             if (!senderAccount) {
               logSkip("未找到可用 Telegram 发送账号", `目标: ${targetChatId}`);
               continue;

@@ -257,7 +257,7 @@
             <div>
               <label class="block text-xs text-slate-600 mb-1">发送账号类型</label>
               <select id="ruleTelegramSenderType" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="">自动选择（优先 Bot Token）</option>
+                <option value="">继承全局默认（未设置则优先 Bot Token）</option>
                 <option value="bot">机器人（Bot Token）</option>
                 <option value="client">用户（Session）</option>
               </select>
@@ -1297,6 +1297,15 @@
             ` : forwardingType === 'telegram-to-telegram' ? `
             <!-- Telegram→Telegram 转发规则 -->
             <div class="space-y-3">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-xs text-slate-500">默认发送账号：</span>
+                <select onchange="updateTelegramDefaultSender(this.value)" class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
+                  <option value="" ${!acc.telegramConfig?.defaultSenderAccountType ? 'selected' : ''}>自动（优先 Bot Token）</option>
+                  <option value="bot" ${acc.telegramConfig?.defaultSenderAccountType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
+                  <option value="client" ${acc.telegramConfig?.defaultSenderAccountType === 'client' ? 'selected' : ''}>用户（Session）</option>
+                </select>
+                <span class="text-xs text-slate-400">仅对 Telegram → Telegram 生效</span>
+              </div>
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
                   <input type="checkbox" ${isTelegramForwardEnabled(acc) ? 'checked' : ''} onchange="updateTelegramForwarding(this.checked)" class="h-4 w-4 rounded border-slate-300">
@@ -1580,7 +1589,7 @@
               placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
             ${forwardingType === 'telegram-to-telegram' ? `
             <select onchange="updateMapping(${idx + startIdx}, 'senderAccountType', this.value)" class="w-36 px-2 py-1.5 rounded-lg border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="">发送账号：自动（优先 Bot Token）</option>
+              <option value="">发送账号：继承全局默认</option>
               <option value="bot" ${m.senderAccountType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
               <option value="client" ${m.senderAccountType === 'client' ? 'selected' : ''}>用户（Session）</option>
             </select>
@@ -2000,6 +2009,18 @@
       ensureTelegramConfig(acc);
       acc.telegramConfig.enableTelegramForward = enabled;
       acc.enableForwarding = enabled;
+      saveConfig();
+      render();
+    }
+
+    function updateTelegramDefaultSender(value) {
+      const acc = getActiveAccount();
+      ensureTelegramConfig(acc);
+      if (value === 'bot' || value === 'client') {
+        acc.telegramConfig.defaultSenderAccountType = value;
+      } else if (acc.telegramConfig.defaultSenderAccountType) {
+        delete acc.telegramConfig.defaultSenderAccountType;
+      }
       saveConfig();
       render();
     }
@@ -2700,6 +2721,10 @@
           translate: false,
           translateDirection: 'auto'
         };
+        const defaultSenderType = acc.telegramConfig?.defaultSenderAccountType;
+        if (mappingType === 'telegram-to-telegram' && (defaultSenderType === 'bot' || defaultSenderType === 'client')) {
+          newMapping.senderAccountType = defaultSenderType;
+        }
         console.log('[DEBUG] 添加新 Telegram 规则:', newMapping.id);
 
         acc.telegramConfig.mappings.unshift(newMapping);
@@ -2743,7 +2768,15 @@
         ensureTelegramConfig(acc);
 
         if (acc.telegramConfig.mappings[idx]) {
-          acc.telegramConfig.mappings[idx][field] = value;
+          if (field === 'senderAccountType') {
+            if (value === 'bot' || value === 'client') {
+              acc.telegramConfig.mappings[idx].senderAccountType = value;
+            } else if (acc.telegramConfig.mappings[idx].senderAccountType) {
+              delete acc.telegramConfig.mappings[idx].senderAccountType;
+            }
+          } else {
+            acc.telegramConfig.mappings[idx][field] = value;
+          }
           if (!acc.telegramConfig.mappings[idx].type) {
             acc.telegramConfig.mappings[idx].type = forwardingType === 'telegram-to-telegram'
               ? 'telegram-to-telegram'
