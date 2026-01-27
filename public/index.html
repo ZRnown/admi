@@ -257,9 +257,9 @@
             <div>
               <label class="block text-xs text-slate-600 mb-1">发送账号类型</label>
               <select id="ruleTelegramSenderType" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="">自动选择（优先机器人）</option>
-                <option value="bot">机器人</option>
-                <option value="client">用户</option>
+                <option value="">自动选择（优先 Bot Token）</option>
+                <option value="bot">机器人（Bot Token）</option>
+                <option value="client">用户（Session）</option>
               </select>
             </div>
           </div>
@@ -1207,69 +1207,6 @@
           </div>
         </div>
 
-        <!-- 水印设置 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100">
-            <h2 class="font-semibold text-slate-800">水印设置</h2>
-            <p class="text-xs text-slate-500 mt-1">仅对图片生效，文字/图片水印可同时使用</p>
-          </div>
-          <div class="p-6 space-y-4">
-            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" ${(acc.watermark && acc.watermark.enabled) ? 'checked' : ''} onchange="updateWatermarkField('enabled', this.checked)"
-                class="h-4 w-4 rounded border-slate-300"> 启用水印
-            </label>
-            <div class="grid gap-3 md:grid-cols-2">
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
-                <input type="text" value="${(acc.watermark && acc.watermark.text) || ''}" onchange="updateWatermarkField('text', this.value)"
-                  placeholder="例如：转发狗" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">文字大小（px）</label>
-                <input type="number" min="8" value="${(acc.watermark && acc.watermark.textSize) || ''}" onchange="updateWatermarkField('textSize', Number(this.value))"
-                  placeholder="16" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
-                <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.textOpacity) || ''}" onchange="updateWatermarkField('textOpacity', Number(this.value))"
-                  placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">图片水印地址</label>
-                <input type="text" value="${(acc.watermark && acc.watermark.imageUrl) || ''}" onchange="updateWatermarkField('imageUrl', this.value)"
-                  placeholder="https://example.com/watermark.png 或 /path/to/file.png" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">图片缩放（%）</label>
-                <input type="number" min="1" max="100" value="${(acc.watermark && acc.watermark.imageScale) || ''}" onchange="updateWatermarkField('imageScale', Number(this.value))"
-                  placeholder="20" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">图片透明度（0-100）</label>
-                <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.imageOpacity) || ''}" onchange="updateWatermarkField('imageOpacity', Number(this.value))"
-                  placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">水印位置</label>
-                <select onchange="updateWatermarkField('position', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                  <option value="" ${(acc.watermark && acc.watermark.position) ? '' : 'selected'}>默认（右下）</option>
-                  <option value="top-left" ${(acc.watermark && acc.watermark.position) === 'top-left' ? 'selected' : ''}>左上</option>
-                  <option value="top-right" ${(acc.watermark && acc.watermark.position) === 'top-right' ? 'selected' : ''}>右上</option>
-                  <option value="bottom-left" ${(acc.watermark && acc.watermark.position) === 'bottom-left' ? 'selected' : ''}>左下</option>
-                  <option value="bottom-right" ${(acc.watermark && acc.watermark.position) === 'bottom-right' ? 'selected' : ''}>右下</option>
-                  <option value="center" ${(acc.watermark && acc.watermark.position) === 'center' ? 'selected' : ''}>居中</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">边距（px）</label>
-                <input type="number" min="0" value="${(acc.watermark && acc.watermark.margin) || ''}" onchange="updateWatermarkField('margin', Number(this.value))"
-                  placeholder="8" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              </div>
-            </div>
-            <p class="text-xs text-slate-500">图片水印支持 URL 或本地路径；透明度越大越清晰。</p>
-          </div>
-        </div>
-
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">关键词设置</h2>
@@ -1501,6 +1438,69 @@
             ${renderReplacements(acc.replacements || [])}
           </div>
         </div>
+
+        <!-- 水印设置 -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">水印设置</h2>
+            <p class="text-xs text-slate-500 mt-1">仅对图片生效，文字/图片水印可同时使用</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${(acc.watermark && acc.watermark.enabled) ? 'checked' : ''} onchange="updateWatermarkField('enabled', this.checked)"
+                class="h-4 w-4 rounded border-slate-300"> 启用水印
+            </label>
+            <div class="grid gap-3 md:grid-cols-2">
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
+                <input type="text" value="${(acc.watermark && acc.watermark.text) || ''}" onchange="updateWatermarkField('text', this.value)"
+                  placeholder="例如：转发狗" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">文字大小（px）</label>
+                <input type="number" min="8" value="${(acc.watermark && acc.watermark.textSize) || ''}" onchange="updateWatermarkField('textSize', Number(this.value))"
+                  placeholder="16" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
+                <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.textOpacity) || ''}" onchange="updateWatermarkField('textOpacity', Number(this.value))"
+                  placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">图片水印地址</label>
+                <input type="text" value="${(acc.watermark && acc.watermark.imageUrl) || ''}" onchange="updateWatermarkField('imageUrl', this.value)"
+                  placeholder="https://example.com/watermark.png 或 /path/to/file.png" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">图片缩放（%）</label>
+                <input type="number" min="1" max="100" value="${(acc.watermark && acc.watermark.imageScale) || ''}" onchange="updateWatermarkField('imageScale', Number(this.value))"
+                  placeholder="20" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">图片透明度（0-100）</label>
+                <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.imageOpacity) || ''}" onchange="updateWatermarkField('imageOpacity', Number(this.value))"
+                  placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">水印位置</label>
+                <select onchange="updateWatermarkField('position', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="" ${(acc.watermark && acc.watermark.position) ? '' : 'selected'}>默认（右下）</option>
+                  <option value="top-left" ${(acc.watermark && acc.watermark.position) === 'top-left' ? 'selected' : ''}>左上</option>
+                  <option value="top-right" ${(acc.watermark && acc.watermark.position) === 'top-right' ? 'selected' : ''}>右上</option>
+                  <option value="bottom-left" ${(acc.watermark && acc.watermark.position) === 'bottom-left' ? 'selected' : ''}>左下</option>
+                  <option value="bottom-right" ${(acc.watermark && acc.watermark.position) === 'bottom-right' ? 'selected' : ''}>右下</option>
+                  <option value="center" ${(acc.watermark && acc.watermark.position) === 'center' ? 'selected' : ''}>居中</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">边距（px）</label>
+                <input type="number" min="0" value="${(acc.watermark && acc.watermark.margin) || ''}" onchange="updateWatermarkField('margin', Number(this.value))"
+                  placeholder="8" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+            </div>
+            <p class="text-xs text-slate-500">图片水印支持 URL 或本地路径；透明度越大越清晰。</p>
+          </div>
+        </div>
       `;
     }
 
@@ -1578,6 +1578,13 @@
             <span class="text-slate-300">${arrowIcon}</span>
             <input type="text" value="${m.targetChannelId || m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, '${forwardingType === 'discord-to-discord' ? 'targetWebhookUrl' : forwardingType === 'discord-to-feishu' ? 'targetChannelId' : 'targetChannelId'}', this.value)"
               placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            ${forwardingType === 'telegram-to-telegram' ? `
+            <select onchange="updateMapping(${idx + startIdx}, 'senderAccountType', this.value)" class="w-36 px-2 py-1.5 rounded-lg border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none">
+              <option value="">发送账号：自动（优先 Bot Token）</option>
+              <option value="bot" ${m.senderAccountType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
+              <option value="client" ${m.senderAccountType === 'client' ? 'selected' : ''}>用户（Session）</option>
+            </select>
+            ` : ''}
             ${forwardingType === 'discord-to-discord' ? `
             <select onchange="updateMappingRelay(${idx + startIdx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="">Webhook 默认</option>
