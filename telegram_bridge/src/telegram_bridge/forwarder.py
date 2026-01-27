@@ -440,10 +440,18 @@ class TelegramForwarder:
 
                     logger.debug(f"Looking for Telegram account, available: {[getattr(acc, 'id', 'unknown') for acc in self.account_configs]}")
 
+                    preferred_type = getattr(mapping, "sender_account_type", None)
+
+                    if preferred_type in ("bot", "client"):
+                        for acc in self.account_configs:
+                            if getattr(acc, "enabled", True) and str(getattr(acc, "type", "")) == preferred_type:
+                                telegram_account = acc
+                                break
+
                     # 策略：如果只有一个账号，直接使用它
-                    if len(self.account_configs) == 1:
+                    if not telegram_account and len(self.account_configs) == 1:
                         telegram_account = self.account_configs[0]
-                    elif len(self.account_configs) > 1:
+                    elif not telegram_account and len(self.account_configs) > 1:
                         # 如果有多个账号，优先寻找启用的 Bot 账号
                         for acc in self.account_configs:
                             if getattr(acc, "enabled", True) and getattr(acc, "type", "") == "bot":

@@ -250,20 +250,20 @@
           <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；当英文/中文字符占比 ≥ 阈值时忽略，100% 表示完全英文/中文才忽略。</p>
         </div>
 
-        <!-- Telegram 发送账号（仅 TG→TG） -->
+        <!-- Telegram 发送账号（Telegram 目标） -->
         <div id="ruleTelegramSenderSection" class="hidden border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-3">Telegram 发送账号</h3>
           <div class="grid gap-3 md:grid-cols-2">
             <div>
               <label class="block text-xs text-slate-600 mb-1">发送账号类型</label>
               <select id="ruleTelegramSenderType" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="">继承全局默认（未设置则优先 Bot Token）</option>
+                <option value="">自动（优先 Bot Token）</option>
                 <option value="bot">机器人（Bot Token）</option>
                 <option value="client">用户（Session）</option>
               </select>
             </div>
           </div>
-          <p class="text-xs text-slate-500 mt-2">仅对 Telegram → Telegram 转发生效。</p>
+          <p class="text-xs text-slate-500 mt-2">对 Discord → Telegram / Telegram → Telegram 转发生效。</p>
         </div>
 
         <!-- 水印设置（规则级别） -->
@@ -922,6 +922,22 @@
               </select>
             </div>
             </div>
+
+            ${forwardingType === 'telegram-to-telegram' ? `
+            <!-- Telegram→Telegram 默认发送账号 -->
+            <div class="border-t pt-4 border-slate-200">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">默认发送账号类型</label>
+                <select onchange="updateTelegramDefaultSender(this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="" ${!acc.telegramConfig?.defaultSenderAccountType ? 'selected' : ''}>自动（优先 Bot Token）</option>
+                  <option value="bot" ${acc.telegramConfig?.defaultSenderAccountType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
+                  <option value="client" ${acc.telegramConfig?.defaultSenderAccountType === 'client' ? 'selected' : ''}>用户（Session）</option>
+                </select>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">仅对 Telegram → Telegram 生效；规则未单独指定发送账号类型时，会使用这里的默认设置。</p>
+            </div>
+            ` : ''}
 
             ${forwardingType === 'discord-to-discord' ? `
             <!-- Discord→Discord 账号类型选择 -->
@@ -1587,9 +1603,9 @@
             <span class="text-slate-300">${arrowIcon}</span>
             <input type="text" value="${m.targetChannelId || m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, '${forwardingType === 'discord-to-discord' ? 'targetWebhookUrl' : forwardingType === 'discord-to-feishu' ? 'targetChannelId' : 'targetChannelId'}', this.value)"
               placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
-            ${forwardingType === 'telegram-to-telegram' ? `
+            ${(forwardingType === 'telegram-to-telegram' || forwardingType === 'discord-to-telegram') ? `
             <select onchange="updateMapping(${idx + startIdx}, 'senderAccountType', this.value)" class="w-36 px-2 py-1.5 rounded-lg border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="">发送账号：继承全局默认</option>
+              <option value="">${forwardingType === 'telegram-to-telegram' ? '发送账号：继承全局默认' : '发送账号：自动（优先 Bot Token）'}</option>
               <option value="bot" ${m.senderAccountType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
               <option value="client" ${m.senderAccountType === 'client' ? 'selected' : ''}>用户（Session）</option>
             </select>
@@ -2018,8 +2034,8 @@
       ensureTelegramConfig(acc);
       if (value === 'bot' || value === 'client') {
         acc.telegramConfig.defaultSenderAccountType = value;
-      } else if (acc.telegramConfig.defaultSenderAccountType) {
-        delete acc.telegramConfig.defaultSenderAccountType;
+      } else {
+        acc.telegramConfig.defaultSenderAccountType = '';
       }
       saveConfig();
       render();
@@ -2293,9 +2309,14 @@
       document.getElementById('ruleIgnoreChineseThreshold').value = ruleConfigData.ignoreChineseThreshold ?? 100;
 
       const senderSection = document.getElementById('ruleTelegramSenderSection');
-      if (forwardingType === 'telegram-to-telegram') {
+      const senderTypeSelect = document.getElementById('ruleTelegramSenderType');
+      if (forwardingType === 'telegram-to-telegram' || forwardingType === 'discord-to-telegram') {
         senderSection.classList.remove('hidden');
-        document.getElementById('ruleTelegramSenderType').value = ruleConfigData.senderAccountType || '';
+        senderTypeSelect.options[0].text =
+          forwardingType === 'telegram-to-telegram'
+            ? '继承全局默认（未设置则优先 Bot Token）'
+            : '自动（优先 Bot Token）';
+        senderTypeSelect.value = ruleConfigData.senderAccountType || '';
       } else {
         senderSection.classList.add('hidden');
       }
@@ -2405,7 +2426,7 @@
       mapping.ignoreEnglishThreshold = Number.isFinite(ruleEnglishThreshold) ? ruleEnglishThreshold : undefined;
       mapping.ignoreChineseThreshold = Number.isFinite(ruleChineseThreshold) ? ruleChineseThreshold : undefined;
 
-      if (currentRuleConfigType === 'telegram-to-telegram') {
+      if (currentRuleConfigType === 'telegram-to-telegram' || currentRuleConfigType === 'discord-to-telegram') {
         const senderType = document.getElementById('ruleTelegramSenderType').value;
         mapping.senderAccountType = senderType === 'bot' || senderType === 'client' ? senderType : undefined;
       } else if (mapping.senderAccountType) {

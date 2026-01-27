@@ -387,6 +387,15 @@ function mergeTelegramConfig(
     }
   }
 
+  const hasIncomingDefaultSender = Object.prototype.hasOwnProperty.call(incoming, "defaultSenderAccountType");
+  const normalizedDefaultSender = hasIncomingDefaultSender
+    ? incoming.defaultSenderAccountType === "bot"
+      ? "bot"
+      : incoming.defaultSenderAccountType === "client"
+        ? "client"
+        : undefined
+    : fallback.defaultSenderAccountType;
+
   return {
     ...fallback,
     ...incoming,
@@ -396,6 +405,7 @@ function mergeTelegramConfig(
       typeof incoming.enableTelegramForward === "boolean"
         ? incoming.enableTelegramForward
         : fallback.enableTelegramForward,
+    defaultSenderAccountType: normalizedDefaultSender,
   };
 }
 
