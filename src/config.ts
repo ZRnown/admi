@@ -112,6 +112,7 @@ export interface FrontendTelegramConfig {
   mappings: FrontendTelegramMapping[];
   enableTelegramForward?: boolean;
   defaultSenderAccountType?: "bot" | "client";
+  listenerAccountType?: "bot" | "client";
 }
 
 export interface ChannelConfig {
@@ -297,6 +298,7 @@ export interface LegacyConfig {
     mappings: TelegramMapping[];
     enableTelegramForward?: boolean;
     defaultSenderAccountType?: "bot" | "client";
+    listenerAccountType?: "bot" | "client";
   };
   // Telegram 长消息处理配置（全局默认）
   telegramLongMessage?: {
@@ -354,6 +356,7 @@ export interface AccountConfig extends LegacyConfig {
     mappings: TelegramMapping[];
     enableTelegramForward?: boolean;
     defaultSenderAccountType?: "bot" | "client";
+    listenerAccountType?: "bot" | "client";
   };
   // Telegram 长消息处理配置（全局默认）
   telegramLongMessage?: {
@@ -826,6 +829,12 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       input.telegramConfig.defaultSenderAccountType === "bot"
         ? "bot"
         : input.telegramConfig.defaultSenderAccountType === "client"
+          ? "client"
+          : undefined,
+    listenerAccountType:
+      input.telegramConfig.listenerAccountType === "bot"
+        ? "bot"
+        : input.telegramConfig.listenerAccountType === "client"
           ? "client"
           : undefined,
   } : undefined;

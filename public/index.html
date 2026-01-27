@@ -257,7 +257,6 @@
             <div>
               <label class="block text-xs text-slate-600 mb-1">发送账号类型</label>
               <select id="ruleTelegramSenderType" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="">自动（优先 Bot Token）</option>
                 <option value="bot">机器人（Bot Token）</option>
                 <option value="client">用户（Session）</option>
               </select>
@@ -895,6 +894,36 @@
     function renderAccountForm(acc, forwardingType) {
       const isPending = acc.loginState === 'pending';
       const isOnline = acc.loginState === 'online';
+      const inferredTelegramType = inferTelegramTypeFromCredentials(acc);
+      const tgListenerType =
+        acc.telegramConfig?.listenerAccountType === 'bot' || acc.telegramConfig?.listenerAccountType === 'client'
+          ? acc.telegramConfig.listenerAccountType
+          : inferredTelegramType;
+      const tgSenderType =
+        acc.telegramConfig?.defaultSenderAccountType === 'bot' || acc.telegramConfig?.defaultSenderAccountType === 'client'
+          ? acc.telegramConfig.defaultSenderAccountType
+          : inferredTelegramType;
+      const discordToTelegramMappings = (acc.telegramConfig?.mappings || []).filter((m) => m.type === 'discord-to-telegram');
+      const discordToTelegramUsesBot = discordToTelegramMappings.some(
+        (m) => getEffectiveTelegramSenderType(acc, 'discord-to-telegram', m) === 'bot',
+      );
+      const discordToTelegramUsesClient = discordToTelegramMappings.some(
+        (m) => getEffectiveTelegramSenderType(acc, 'discord-to-telegram', m) === 'client',
+      );
+      const needsTelegramBot =
+        forwardingType === 'discord-to-telegram'
+          ? (discordToTelegramMappings.length === 0 ? true : discordToTelegramUsesBot)
+          : forwardingType === 'telegram-to-telegram'
+            ? (tgListenerType === 'bot' || tgSenderType === 'bot')
+            : false;
+      const needsTelegramClient =
+        forwardingType === 'telegram-to-discord'
+          ? true
+          : forwardingType === 'discord-to-telegram'
+            ? discordToTelegramUsesClient
+            : forwardingType === 'telegram-to-telegram'
+              ? (tgListenerType === 'client' || tgSenderType === 'client')
+              : false;
       
       return `
         <!-- 基础设置 -->
@@ -924,18 +953,27 @@
             </div>
 
             ${forwardingType === 'telegram-to-telegram' ? `
-            <!-- Telegram→Telegram 默认发送账号 -->
+            <!-- Telegram→Telegram 账号选择 -->
             <div class="border-t pt-4 border-slate-200">
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">默认发送账号类型</label>
-                <select onchange="updateTelegramDefaultSender(this.value)"
-                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                  <option value="" ${!acc.telegramConfig?.defaultSenderAccountType ? 'selected' : ''}>自动（优先 Bot Token）</option>
-                  <option value="bot" ${acc.telegramConfig?.defaultSenderAccountType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
-                  <option value="client" ${acc.telegramConfig?.defaultSenderAccountType === 'client' ? 'selected' : ''}>用户（Session）</option>
-                </select>
+              <div class="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">监听账号类型</label>
+                  <select onchange="updateTelegramListenerType(this.value)"
+                    class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                    <option value="bot" ${tgListenerType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
+                    <option value="client" ${tgListenerType === 'client' ? 'selected' : ''}>用户（Session）</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">发送账号类型</label>
+                  <select onchange="updateTelegramDefaultSender(this.value)"
+                    class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                    <option value="bot" ${tgSenderType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
+                    <option value="client" ${tgSenderType === 'client' ? 'selected' : ''}>用户（Session）</option>
+                  </select>
+                </div>
               </div>
-              <p class="text-xs text-slate-500 mt-2">仅对 Telegram → Telegram 生效；规则未单独指定发送账号类型时，会使用这里的默认设置。</p>
+              <p class="text-xs text-slate-500 mt-2">仅对 Telegram → Telegram 生效；发送账号可被规则中的“发送账号类型”覆盖。</p>
             </div>
             ` : ''}
 
@@ -978,7 +1016,7 @@
             </div>
             ` : ''}
 
-            ${(forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') ? `
+            ${needsTelegramBot ? `
             <!-- Discord→Telegram Bot配置 -->
             <div class="border-t pt-4 border-slate-200">
               <h3 class="text-sm font-medium text-slate-800 mb-3">Telegram Bot 配置</h3>
@@ -1005,7 +1043,7 @@
             </div>
             ` : ''}
 
-            ${(forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') ? `
+            ${needsTelegramClient ? `
             <!-- Telegram→Discord Client配置 -->
             <div class="border-t pt-4 border-slate-200">
               <h3 class="text-sm font-medium text-slate-800 mb-3">Telegram Client 配置</h3>
@@ -1313,15 +1351,6 @@
             ` : forwardingType === 'telegram-to-telegram' ? `
             <!-- Telegram→Telegram 转发规则 -->
             <div class="space-y-3">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-xs text-slate-500">默认发送账号：</span>
-                <select onchange="updateTelegramDefaultSender(this.value)" class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
-                  <option value="" ${!acc.telegramConfig?.defaultSenderAccountType ? 'selected' : ''}>自动（优先 Bot Token）</option>
-                  <option value="bot" ${acc.telegramConfig?.defaultSenderAccountType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
-                  <option value="client" ${acc.telegramConfig?.defaultSenderAccountType === 'client' ? 'selected' : ''}>用户（Session）</option>
-                </select>
-                <span class="text-xs text-slate-400">仅对 Telegram → Telegram 生效</span>
-              </div>
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
                   <input type="checkbox" ${isTelegramForwardEnabled(acc) ? 'checked' : ''} onchange="updateTelegramForwarding(this.checked)" class="h-4 w-4 rounded border-slate-300">
@@ -1535,6 +1564,26 @@
       saveConfig();
     }
 
+    function inferTelegramTypeFromCredentials(acc) {
+      const hasBotToken = typeof acc.telegramBotToken === 'string' && acc.telegramBotToken.trim().length > 0;
+      const hasClientSession = Boolean((acc.telegramSessionPath || acc.telegramSessionString) && acc.telegramApiId && acc.telegramApiHash);
+      if (hasBotToken) return 'bot';
+      if (hasClientSession) return 'client';
+      return 'bot';
+    }
+
+    function getEffectiveTelegramSenderType(acc, forwardingType, mapping) {
+      const explicit = mapping && (mapping.senderAccountType === 'bot' || mapping.senderAccountType === 'client')
+        ? mapping.senderAccountType
+        : undefined;
+      if (explicit) return explicit;
+      if (forwardingType === 'telegram-to-telegram') {
+        const def = acc.telegramConfig?.defaultSenderAccountType;
+        if (def === 'bot' || def === 'client') return def;
+      }
+      return inferTelegramTypeFromCredentials(acc);
+    }
+
     function renderMappings(acc, forwardingType) {
       // 根据转发类型决定读取哪个数组，并过滤出对应类型的 mappings
       let allMappings;
@@ -1572,6 +1621,7 @@
         let sourcePlaceholder = '来源频道 ID';
         let targetPlaceholder = '目标频道 ID';
         let arrowIcon = '→';
+        const senderType = getEffectiveTelegramSenderType(acc, forwardingType, m);
 
         if (forwardingType === 'discord-to-discord') {
           sourcePlaceholder = 'Discord 频道/子区 ID';
@@ -1605,9 +1655,8 @@
               placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
             ${(forwardingType === 'telegram-to-telegram' || forwardingType === 'discord-to-telegram') ? `
             <select onchange="updateMapping(${idx + startIdx}, 'senderAccountType', this.value)" class="w-36 px-2 py-1.5 rounded-lg border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="">${forwardingType === 'telegram-to-telegram' ? '发送账号：继承全局默认' : '发送账号：自动（优先 Bot Token）'}</option>
-              <option value="bot" ${m.senderAccountType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
-              <option value="client" ${m.senderAccountType === 'client' ? 'selected' : ''}>用户（Session）</option>
+              <option value="bot" ${senderType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
+              <option value="client" ${senderType === 'client' ? 'selected' : ''}>用户（Session）</option>
             </select>
             ` : ''}
             ${forwardingType === 'discord-to-discord' ? `
@@ -2034,8 +2083,16 @@
       ensureTelegramConfig(acc);
       if (value === 'bot' || value === 'client') {
         acc.telegramConfig.defaultSenderAccountType = value;
-      } else {
-        acc.telegramConfig.defaultSenderAccountType = '';
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateTelegramListenerType(value) {
+      const acc = getActiveAccount();
+      ensureTelegramConfig(acc);
+      if (value === 'bot' || value === 'client') {
+        acc.telegramConfig.listenerAccountType = value;
       }
       saveConfig();
       render();
@@ -2155,7 +2212,7 @@
       ignoreChineseThreshold: 100,
       watermarkMode: "inherit",
       watermark: {},
-      senderAccountType: ""
+      senderAccountType: "bot"
     };
 
     // 渲染规则配置标签
@@ -2291,7 +2348,7 @@
         ignoreChineseThreshold: mapping.ignoreChineseThreshold ?? 100,
         watermarkMode,
         watermark: hasRuleWatermark ? { ...mapping.watermark } : {},
-        senderAccountType: mapping.senderAccountType || ""
+        senderAccountType: getEffectiveTelegramSenderType(acc, forwardingType, mapping)
       };
 
       // 设置显示源用户选项
@@ -2309,14 +2366,9 @@
       document.getElementById('ruleIgnoreChineseThreshold').value = ruleConfigData.ignoreChineseThreshold ?? 100;
 
       const senderSection = document.getElementById('ruleTelegramSenderSection');
-      const senderTypeSelect = document.getElementById('ruleTelegramSenderType');
       if (forwardingType === 'telegram-to-telegram' || forwardingType === 'discord-to-telegram') {
         senderSection.classList.remove('hidden');
-        senderTypeSelect.options[0].text =
-          forwardingType === 'telegram-to-telegram'
-            ? '继承全局默认（未设置则优先 Bot Token）'
-            : '自动（优先 Bot Token）';
-        senderTypeSelect.value = ruleConfigData.senderAccountType || '';
+        document.getElementById('ruleTelegramSenderType').value = ruleConfigData.senderAccountType;
       } else {
         senderSection.classList.add('hidden');
       }
@@ -2574,13 +2626,55 @@
       const previousType = currentForwardingType;
       currentForwardingType = forwardingType; // 更新全局变量
 
+      const hasBotToken = typeof acc.telegramBotToken === 'string' && acc.telegramBotToken.trim().length > 0;
+      const hasClientSession = Boolean((acc.telegramSessionPath || acc.telegramSessionString) && acc.telegramApiId && acc.telegramApiHash);
+      const inferredTelegramType = hasBotToken ? 'bot' : hasClientSession ? 'client' : 'bot';
+      const listenerType =
+        acc.telegramConfig?.listenerAccountType === 'bot' || acc.telegramConfig?.listenerAccountType === 'client'
+          ? acc.telegramConfig.listenerAccountType
+          : inferredTelegramType;
+      const senderType =
+        acc.telegramConfig?.defaultSenderAccountType === 'bot' || acc.telegramConfig?.defaultSenderAccountType === 'client'
+          ? acc.telegramConfig.defaultSenderAccountType
+          : inferredTelegramType;
+      const discordToTelegramMappings = (acc.telegramConfig?.mappings || []).filter((m) => m.type === 'discord-to-telegram');
+      const discordToTelegramUsesBot = discordToTelegramMappings.some(
+        (m) => getEffectiveTelegramSenderType(acc, 'discord-to-telegram', m) === 'bot',
+      );
+      const discordToTelegramUsesClient = discordToTelegramMappings.some(
+        (m) => getEffectiveTelegramSenderType(acc, 'discord-to-telegram', m) === 'client',
+      );
+      const prevNeedsBot =
+        previousType === 'discord-to-telegram'
+          ? (discordToTelegramMappings.length === 0 ? true : discordToTelegramUsesBot)
+          : previousType === 'telegram-to-telegram'
+            ? (listenerType === 'bot' || senderType === 'bot')
+            : false;
+      const prevNeedsClient =
+        previousType === 'telegram-to-discord'
+          ? true
+          : previousType === 'discord-to-telegram'
+            ? discordToTelegramUsesClient
+            : previousType === 'telegram-to-telegram'
+              ? (listenerType === 'client' || senderType === 'client')
+              : false;
+      const needsBot =
+        forwardingType === 'discord-to-telegram'
+          ? (discordToTelegramMappings.length === 0 ? true : discordToTelegramUsesBot)
+          : forwardingType === 'telegram-to-telegram'
+            ? (listenerType === 'bot' || senderType === 'bot')
+            : false;
+      const needsClient =
+        forwardingType === 'telegram-to-discord'
+          ? true
+          : forwardingType === 'discord-to-telegram'
+            ? discordToTelegramUsesClient
+            : forwardingType === 'telegram-to-telegram'
+              ? (listenerType === 'client' || senderType === 'client')
+              : false;
+
       // 当转发类型改变时，断开其他类型的连接
       if (previousType && previousType !== forwardingType) {
-        const prevNeedsBot = previousType === 'discord-to-telegram' || previousType === 'telegram-to-telegram';
-        const prevNeedsClient = previousType === 'telegram-to-discord' || previousType === 'telegram-to-telegram';
-        const needsBot = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram';
-        const needsClient = forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram';
-
         if (prevNeedsBot && !needsBot && acc.telegramBotState === 'online') {
           disconnectTelegramBot();
         }
@@ -2613,6 +2707,15 @@
         if (!acc.telegramApiHash) acc.telegramApiHash = '';
         if (!acc.telegramClientState) acc.telegramClientState = 'idle';
         ensureTelegramConfig(acc);
+      }
+      if (forwardingType === 'telegram-to-telegram') {
+        ensureTelegramConfig(acc);
+        if (acc.telegramConfig.listenerAccountType !== 'bot' && acc.telegramConfig.listenerAccountType !== 'client') {
+          acc.telegramConfig.listenerAccountType = listenerType;
+        }
+        if (acc.telegramConfig.defaultSenderAccountType !== 'bot' && acc.telegramConfig.defaultSenderAccountType !== 'client') {
+          acc.telegramConfig.defaultSenderAccountType = senderType;
+        }
       }
       if (forwardingType === 'discord-to-feishu') {
         if (!acc.token) acc.token = '';
@@ -2742,8 +2845,9 @@
           translate: false,
           translateDirection: 'auto'
         };
-        const defaultSenderType = acc.telegramConfig?.defaultSenderAccountType;
-        if (mappingType === 'telegram-to-telegram' && (defaultSenderType === 'bot' || defaultSenderType === 'client')) {
+        const defaultSenderType = getEffectiveTelegramSenderType(acc, forwardingType);
+        if ((mappingType === 'telegram-to-telegram' || mappingType === 'discord-to-telegram') &&
+            (defaultSenderType === 'bot' || defaultSenderType === 'client')) {
           newMapping.senderAccountType = defaultSenderType;
         }
         console.log('[DEBUG] 添加新 Telegram 规则:', newMapping.id);

@@ -232,6 +232,16 @@ function collectTelegramAccountIds(account: AccountConfig): Set<string> {
   return ids;
 }
 
+function collectTelegramAccountTypeMap(account: AccountConfig): Map<string, "bot" | "client"> {
+  const result = new Map<string, "bot" | "client">();
+  for (const entry of collectTelegramAccounts(account)) {
+    if (entry.id) {
+      result.set(entry.id, entry.type);
+    }
+  }
+  return result;
+}
+
 function selectTelegramSendAccount(
   account: AccountConfig,
   preferredType?: "bot" | "client",
@@ -439,6 +449,8 @@ function setupTelegramBridgeClient() {
 
       if (account.telegramConfig?.enableTelegramForward === false) continue;
       const allowedTelegramAccountIds = collectTelegramAccountIds(account);
+      const telegramAccountTypeMap = collectTelegramAccountTypeMap(account);
+      const incomingAccountType = params.accountId ? telegramAccountTypeMap.get(params.accountId) : undefined;
       if (params.accountId && allowedTelegramAccountIds.size > 0 && !allowedTelegramAccountIds.has(params.accountId)) {
         continue;
       }
@@ -463,7 +475,13 @@ function setupTelegramBridgeClient() {
         },
       );
 
-      if (matchingRules.length === 0) {
+      const listenerType = account.telegramConfig?.listenerAccountType;
+      const filteredRules =
+        allowedMappingType === "telegram-to-telegram" && (listenerType === "bot" || listenerType === "client")
+          ? matchingRules.filter(() => listenerType === incomingAccountType)
+          : matchingRules;
+
+      if (filteredRules.length === 0) {
         continue;
       }
 
@@ -682,7 +700,7 @@ function setupTelegramBridgeClient() {
         console.error(`[${forwardTag}] OCR过滤异常: ${String(e?.message || e)}`);
       }
 
-      for (const rule of matchingRules) {
+      for (const rule of filteredRules) {
         const senderDisplayName =
           params.from_display_name ||
           params.from_username ||

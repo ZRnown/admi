@@ -444,7 +444,7 @@ class TelegramForwarder:
 
                     if preferred_type in ("bot", "client"):
                         for acc in self.account_configs:
-                            if getattr(acc, "enabled", True) and str(getattr(acc, "type", "")) == preferred_type:
+                            if getattr(acc, "enabled", True) and getattr(acc, "type", "") == preferred_type:
                                 telegram_account = acc
                                 break
 
