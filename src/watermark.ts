@@ -204,7 +204,7 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
       textImage.print(font, 0, 0, effective.text);
       if (effective.textColor) {
         try {
-          textImage.color([{ apply: "mix", params: [effective.textColor, 100] }]);
+          (textImage as any).color([{ apply: "mix", params: [effective.textColor, 100] }]);
         } catch {}
       }
       const opacity = clampPercent(
