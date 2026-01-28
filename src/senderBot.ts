@@ -3,7 +3,7 @@ import https from "node:https";
 import { URL, fileURLToPath } from "node:url";
 
 import { ChannelId, WatermarkConfig } from "./config.js";
-import { applyWatermarkToBuffer, resolveWatermarkConfig } from "./watermark.js";
+import { applyWatermarksToBuffer, resolveWatermarkConfigs } from "./watermark.js";
 import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
 
@@ -65,6 +65,7 @@ export class SenderBot {
   enableBotRelay?: boolean;
   botRelayToken?: string;
   watermark?: WatermarkConfig;
+  watermarkSecondary?: WatermarkConfig;
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
@@ -78,6 +79,7 @@ export class SenderBot {
     enableBotRelay?: boolean;
     botRelayToken?: string;
     watermark?: WatermarkConfig;
+    watermarkSecondary?: WatermarkConfig;
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
@@ -90,6 +92,7 @@ export class SenderBot {
     this.enableBotRelay = options.enableBotRelay || false;
     this.botRelayToken = options.botRelayToken;
     this.watermark = options.watermark;
+    this.watermarkSecondary = options.watermarkSecondary;
   }
 
   private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
@@ -161,9 +164,15 @@ export class SenderBot {
   private async downloadUploads(
     uploads: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean }>,
     watermark?: WatermarkConfig,
+    watermarkSecondary?: WatermarkConfig,
   ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
     const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
-    const effectiveWatermark = resolveWatermarkConfig(this.watermark, watermark);
+    const effectiveWatermarks = resolveWatermarkConfigs(
+      this.watermark,
+      watermark,
+      this.watermarkSecondary,
+      watermarkSecondary,
+    );
     for (const u of uploads) {
       let buf: Buffer;
       if (u.localPath) {
@@ -177,10 +186,10 @@ export class SenderBot {
       } else {
         continue;
       }
-      const shouldWatermark = !!effectiveWatermark && (u.isImage || looksLikeImage(buf));
+      const shouldWatermark = effectiveWatermarks.length > 0 && (u.isImage || looksLikeImage(buf));
       let finalBuffer = buf;
       if (shouldWatermark) {
-        finalBuffer = await applyWatermarkToBuffer(buf, effectiveWatermark);
+        finalBuffer = await applyWatermarksToBuffer(buf, effectiveWatermarks);
         if (finalBuffer !== buf) {
           console.log(
             `[水印] 已处理图片: ${u.filename} (${formatSize(buf.length)} -> ${formatSize(finalBuffer.length)})`,
@@ -664,6 +673,7 @@ export class SenderBot {
     stripChinese?: boolean;
     // 可选：规则级别水印配置
     watermark?: WatermarkConfig;
+    watermarkSecondary?: WatermarkConfig;
   }>) {
     if (messagesToSend.length == 0) return;
 
@@ -771,7 +781,7 @@ export class SenderBot {
           
         if (hasUploads) {
           // Build multipart form with files and payload_json
-          const files = await this.downloadUploads(item.uploads!, item.watermark);
+          const files = await this.downloadUploads(item.uploads!, item.watermark, item.watermarkSecondary);
           const desc = (chunk || "").slice(0, 4096);
           const embed: any = {};
           if (item.useEmbed && desc.trim() !== "") {

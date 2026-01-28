@@ -298,13 +298,36 @@ class DiscordToTelegramConverter(MessageConverter):
                 chat_id = int(numbers[0]) if numbers else 0
 
             # 构建Telegram消息
+            watermark_payload = discord_message.get("watermarks")
+            if watermark_payload is None:
+                primary = discord_message.get("watermark") or getattr(mapping, "watermark", None)
+                secondary = discord_message.get("watermarkSecondary") or getattr(mapping, "watermark_secondary", None)
+                if secondary is not None:
+                    merged = []
+                    if isinstance(primary, list):
+                        merged.extend([w for w in primary if isinstance(w, dict)])
+                    elif isinstance(primary, dict):
+                        merged.append(primary)
+                    if isinstance(secondary, list):
+                        merged.extend([w for w in secondary if isinstance(w, dict)])
+                    elif isinstance(secondary, dict):
+                        merged.append(secondary)
+                    if len(merged) == 1:
+                        watermark_payload = merged[0]
+                    elif len(merged) > 1:
+                        watermark_payload = merged
+                    else:
+                        watermark_payload = primary
+                else:
+                    watermark_payload = primary
+
             telegram_message = {
                 "chat_id": chat_id,
                 "text": telegram_content,
                 "parse_mode": self._determine_parse_mode(telegram_content),
                 "reply_to_message_id": discord_message.get("replyToMessageId"),
                 "attachments": attachments,
-                "watermark": discord_message.get("watermark") or getattr(mapping, "watermark", None),
+                "watermark": watermark_payload,
             }
 
             return telegram_message

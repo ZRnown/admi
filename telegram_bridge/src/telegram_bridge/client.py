@@ -673,7 +673,7 @@ class TelegramClientManager:
         attachment: Dict[str, Any],
         caption: Optional[str] = None,
         reply_to_message_id: Optional[int] = None,
-        watermark: Optional[Dict[str, Any]] = None,
+        watermark: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """发送媒体附件"""
         try:
@@ -759,7 +759,7 @@ class TelegramClientManager:
         attachments: Optional[List[Dict[str, Any]]] = None,
         parse_mode: Optional[str] = None,
         reply_to_message_id: Optional[int] = None,
-        watermark: Optional[Dict[str, Any]] = None,
+        watermark: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """发送消息"""
         try:

@@ -1,7 +1,7 @@
 import https from "node:https";
 import { URL } from "node:url";
 import { getEnv } from "./env";
-import { applyWatermarkToBuffer, resolveWatermarkConfig } from "./watermark";
+import { applyWatermarksToBuffer, resolveWatermarkConfigs } from "./watermark";
 import type { WatermarkConfig } from "./config";
 
 const MASKED_SECRET = "********";
@@ -21,6 +21,7 @@ export interface FeishuSendPayload {
   attachments?: Array<{ url: string; filename: string; isImage?: boolean }>;
   embeds?: any[];
   watermark?: WatermarkConfig;
+  watermarkSecondary?: WatermarkConfig;
 }
 
 export class FeishuSender {
@@ -31,6 +32,7 @@ export class FeishuSender {
   private appSecret?: string;
   private mode?: "webhook" | "thread";
   private watermark?: WatermarkConfig;
+  private watermarkSecondary?: WatermarkConfig;
 
   // 缓存 tenant_access_token，避免每次都请求
   private static token: string = "";
@@ -41,7 +43,7 @@ export class FeishuSender {
     httpAgent?: any,
     appId?: string,
     appSecret?: string,
-    options?: { mode?: "webhook" | "thread"; watermark?: WatermarkConfig },
+    options?: { mode?: "webhook" | "thread"; watermark?: WatermarkConfig; watermarkSecondary?: WatermarkConfig },
   ) {
     const env = getEnv();
     this.target = target;
@@ -52,6 +54,7 @@ export class FeishuSender {
     this.appSecret = resolvedAppSecret || env.FEISHU_APP_SECRET || "";
     this.mode = options?.mode;
     this.watermark = options?.watermark;
+    this.watermarkSecondary = options?.watermarkSecondary;
   }
 
   // 1. 获取飞书 tenant_access_token（内部应用）
@@ -87,15 +90,21 @@ export class FeishuSender {
     imgUrl: string,
     token: string,
     watermark?: WatermarkConfig,
+    watermarkSecondary?: WatermarkConfig,
   ): Promise<string | null> {
     try {
       // 2.1 下载图片 Buffer
       console.log(`[FeishuSender] 开始下载图片: ${imgUrl.substring(0, 80)}...`);
       const imgBuffer = await this.download(imgUrl);
       console.log(`[FeishuSender] 图片下载完成，大小: ${imgBuffer.length} bytes`);
-      const effectiveWatermark = resolveWatermarkConfig(this.watermark, watermark);
-      const finalBuffer = effectiveWatermark
-        ? await applyWatermarkToBuffer(imgBuffer, effectiveWatermark)
+      const effectiveWatermarks = resolveWatermarkConfigs(
+        this.watermark,
+        watermark,
+        this.watermarkSecondary,
+        watermarkSecondary,
+      );
+      const finalBuffer = effectiveWatermarks.length > 0
+        ? await applyWatermarksToBuffer(imgBuffer, effectiveWatermarks)
         : imgBuffer;
 
       // 2.2 构造 multipart/form-data 上传到飞书
@@ -211,6 +220,7 @@ export class FeishuSender {
     data: FeishuSendPayload,
     token: string,
     watermark?: WatermarkConfig,
+    watermarkSecondary?: WatermarkConfig,
   ): Promise<string[]> {
     const imageKeys: string[] = [];
     if (!data.attachments || data.attachments.length === 0) return imageKeys;
@@ -223,7 +233,7 @@ export class FeishuSender {
       if (isImage) {
         console.log(`[FeishuSender] 识别为图片，开始上传: ${att.filename || "unknown"} (${att.url.substring(0, 50)}...)`);
         try {
-          const key = await this.uploadImage(att.url, token, watermark);
+          const key = await this.uploadImage(att.url, token, watermark, watermarkSecondary);
           if (key) {
             imageKeys.push(key);
             console.log(`[FeishuSender] 图片上传成功: ${att.filename || att.url} -> image_key: ${key.substring(0, 20)}...`);
@@ -244,7 +254,7 @@ export class FeishuSender {
   private async sendViaAPI(data: FeishuSendPayload) {
     const token = await this.getToken();
     const elements = this.buildBaseElements(data);
-    const imageKeys = await this.collectImageKeys(data, token, data.watermark);
+    const imageKeys = await this.collectImageKeys(data, token, data.watermark, data.watermarkSecondary);
     for (const imgKey of imageKeys) {
       elements.push({ tag: "img", image_key: imgKey });
     }
@@ -269,7 +279,7 @@ export class FeishuSender {
 
     const token = await this.getToken();
     const elements = this.buildBaseElements(data);
-    const imageKeys = await this.collectImageKeys(data, token, data.watermark);
+    const imageKeys = await this.collectImageKeys(data, token, data.watermark, data.watermarkSecondary);
     for (const imgKey of imageKeys) {
       elements.push({ tag: "img", image_key: imgKey });
     }
@@ -297,7 +307,7 @@ export class FeishuSender {
       if (canUploadImages) {
         try {
           const token = await this.getToken();
-          const imageKeys = await this.collectImageKeys(data, token, data.watermark);
+          const imageKeys = await this.collectImageKeys(data, token, data.watermark, data.watermarkSecondary);
           for (const imgKey of imageKeys) {
             elements.push({ tag: "img", image_key: imgKey });
           }

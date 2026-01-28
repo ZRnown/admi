@@ -17,7 +17,7 @@ import { FileLogger } from "./logger.js";
 import { getTelegramBridgeClient } from "./index.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
-import { resolveWatermarkConfig } from "./watermark.js";
+import { resolveWatermarkConfigs } from "./watermark.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -612,6 +612,7 @@ export class Bot {
     stripEnglish?: boolean;
     stripChinese?: boolean;
     watermark?: WatermarkConfig;
+    watermarkSecondary?: WatermarkConfig;
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
@@ -652,6 +653,7 @@ export class Bot {
         stripEnglish: undefined,
         stripChinese: undefined,
         watermark: undefined,
+        watermarkSecondary: undefined,
       };
     }
     return {
@@ -684,6 +686,7 @@ export class Bot {
       stripEnglish: rule.stripEnglish,
       stripChinese: rule.stripChinese,
       watermark: rule.watermark,
+      watermarkSecondary: rule.watermarkSecondary,
     };
   }
 
@@ -835,7 +838,12 @@ export class Bot {
     const stripEnglish = this.config.stripEnglish === true || ruleConfig.stripEnglish === true;
     const stripChinese = this.config.stripChinese === true || ruleConfig.stripChinese === true;
     const stripOptions = { stripEnglish, stripChinese };
-    const effectiveWatermark = resolveWatermarkConfig(this.config.watermark, ruleConfig.watermark);
+    const effectiveWatermarks = resolveWatermarkConfigs(
+      this.config.watermark,
+      ruleConfig.watermark,
+      this.config.watermarkSecondary,
+      ruleConfig.watermarkSecondary,
+    );
 
     // 忽略选项检查（规则级别优先，未设置则使用全局设置）
     try {
@@ -1431,7 +1439,7 @@ export class Bot {
           if (normalized) imageUrlToFilename.set(normalized, filename);
         }
       }
-      if (effectiveWatermark && !skipImages) {
+      if (effectiveWatermarks.length > 0 && !skipImages) {
         const embedUrls = collectEmbedImageUrls(message.embeds || []);
         for (const url of embedUrls) {
           if (!url) continue;
@@ -1489,7 +1497,7 @@ export class Bot {
       extraEmbeds = message.embeds;
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
-    if (effectiveWatermark) {
+    if (effectiveWatermarks.length > 0) {
       extraEmbeds = replaceEmbedImageUrls(extraEmbeds, imageUrlToFilename);
     }
     const toSend = [{
@@ -1507,7 +1515,8 @@ export class Bot {
       ruleReplacementsDictionary: ruleConfig.replacementsDictionary,
       stripEnglish,
       stripChinese,
-      watermark: effectiveWatermark,
+      watermark: effectiveWatermarks[0],
+      watermarkSecondary: effectiveWatermarks[1],
     }];
 
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
@@ -1597,7 +1606,8 @@ export class Bot {
           avatarUrl: avatarUrl,
           attachments: uploads.map((u) => ({ url: u.url, filename: u.filename, isImage: u.isImage })),
           embeds: feishuEmbeds && feishuEmbeds.length > 0 ? feishuEmbeds : undefined,
-          watermark: effectiveWatermark,
+          watermark: effectiveWatermarks[0],
+          watermarkSecondary: effectiveWatermarks[1],
         });
         const feishuTarget = feishuSenderForThis.target;
         const feishuPreview = formatLogPreview(feishuContent);
@@ -1670,7 +1680,9 @@ export class Bot {
                   contentType: u.isImage ? "image/jpeg" : u.isVideo ? "video/mp4" : "application/octet-stream",
                 })),
                 embeds: telegramEmbeds && telegramEmbeds.length > 0 ? telegramEmbeds : undefined,
-                watermark: resolveWatermarkConfig(this.config.watermark, ruleConfig.watermark),
+                watermark: effectiveWatermarks[0],
+                watermarkSecondary: effectiveWatermarks[1],
+                watermarks: effectiveWatermarks,
               },
               // 传递翻译配置给Python端
               translate: mapping.translate || false,

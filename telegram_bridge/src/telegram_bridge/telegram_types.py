@@ -66,7 +66,8 @@ class TelegramMapping(BaseModel):
     show_source_identity: bool = Field(default=True, alias="showSourceIdentity")
     # Telegram特有的超长消息处理
     longMessage: Optional[Dict[str, Any]] = None
-    watermark: Optional[Dict[str, Any]] = None
+    watermark: Optional[Any] = None
+    watermark_secondary: Optional[Any] = Field(default=None, alias="watermarkSecondary")
 
 
 class TelegramChannel(BaseModel):

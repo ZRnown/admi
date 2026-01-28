@@ -15,6 +15,8 @@ export interface TelegramBridgeMessage {
   parse_mode?: string;
   reply_to_message_id?: string | number;
   watermark?: any;
+  watermarkSecondary?: any;
+  watermarks?: any;
 }
 
 export interface SendMessageParams {
@@ -40,6 +42,8 @@ export interface HandleDiscordMessageParams {
       avatarURL?: string;
     };
     watermark?: any;
+    watermarkSecondary?: any;
+    watermarks?: any;
     attachments?: Array<{
       url: string;
       contentType?: string;

@@ -185,7 +185,7 @@ class MediaHandler:
     async def process_discord_attachment(
         self,
         attachment: Dict[str, Any],
-        watermark: Optional[Dict[str, Any]] = None
+        watermark: Optional[Any] = None
     ) -> Optional[Tuple[Path, str]]:
         """
         处理Discord附件
@@ -308,8 +308,14 @@ class MediaHandler:
             logger.error(f"Failed to load watermark image: {e}")
             return None
 
-    async def _apply_watermark(self, file_path: Path, watermark: Optional[Dict[str, Any]]):
-        if not watermark or not isinstance(watermark, dict):
+    async def _apply_watermark(self, file_path: Path, watermark: Optional[Any]):
+        if not watermark:
+            return
+        if isinstance(watermark, list):
+            for item in watermark:
+                await self._apply_watermark(file_path, item)
+            return
+        if not isinstance(watermark, dict):
             return
         if watermark.get("enabled") is False:
             return

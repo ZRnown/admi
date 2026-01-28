@@ -219,7 +219,7 @@ async function renderTextWatermarkImage(
     fontFamily?: string;
     fontPath?: string;
   },
-): Promise<Jimp | null> {
+): Promise<any | null> {
   try {
     const canvasModule = await canvasModuleLoader();
     if (!canvasModule?.createCanvas) {
@@ -302,7 +302,7 @@ async function downloadBuffer(url: string): Promise<Buffer> {
   });
 }
 
-async function loadWatermarkImage(source: string): Promise<Jimp | null> {
+async function loadWatermarkImage(source: string): Promise<any | null> {
   try {
     if (/^https?:\/\//i.test(source)) {
       console.log(`[Watermark] 下载图片水印: ${source}`);
@@ -347,6 +347,37 @@ export function resolveWatermarkConfig(
   const hasImage = Boolean(merged.imageUrl);
   if ((allowText && !hasText) || (allowImage && !hasImage)) return undefined;
   return { ...merged, enabled: true, mode };
+}
+
+export function resolveWatermarkConfigs(
+  globalPrimary?: WatermarkConfig,
+  rulePrimary?: WatermarkConfig,
+  globalSecondary?: WatermarkConfig,
+  ruleSecondary?: WatermarkConfig,
+): WatermarkConfig[] {
+  const primary = resolveWatermarkConfig(globalPrimary, rulePrimary);
+  const secondary = resolveWatermarkConfig(globalSecondary, ruleSecondary);
+  const mode = primary?.mode || secondary?.mode;
+  const resolved: WatermarkConfig[] = [];
+  if (primary && (!mode || primary.mode === mode)) {
+    resolved.push(primary);
+  }
+  if (secondary && (!mode || secondary.mode === mode)) {
+    resolved.push(secondary);
+  }
+  return resolved;
+}
+
+export async function applyWatermarksToBuffer(
+  buffer: Buffer,
+  configs?: WatermarkConfig[],
+): Promise<Buffer> {
+  if (!configs || configs.length === 0) return buffer;
+  let result = buffer;
+  for (const config of configs) {
+    result = await applyWatermarkToBuffer(result, config);
+  }
+  return result;
 }
 
 export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkConfig): Promise<Buffer> {
@@ -425,7 +456,7 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
       );
       const textAngle = Number.isFinite(effective.textAngle) ? (effective.textAngle as number) : 0;
       const color = effective.textColor || (isDarkColor(effective.textColor) ? "#000000" : "#ffffff");
-      let textImage: Jimp | null = null;
+      let textImage: any | null = null;
       const useCanvas = hasNonAsciiText(effective.text) || Boolean(effective.fontPath || effective.fontFamily);
       if (useCanvas) {
         console.log(`[Watermark] 使用 Canvas 渲染文字水印`);

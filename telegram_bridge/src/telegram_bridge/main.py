@@ -309,7 +309,30 @@ class TelegramBridgeService:
             text = message.get("text") or ""
             parse_mode = message.get("parse_mode")
             reply_to_message_id = message.get("reply_to_message_id")
-            watermark = message.get("watermark")
+            watermarks = message.get("watermarks")
+            if watermarks is not None:
+                watermark = watermarks
+            else:
+                primary = message.get("watermark")
+                secondary = message.get("watermarkSecondary")
+                if secondary is not None:
+                    merged = []
+                    if isinstance(primary, list):
+                        merged.extend([w for w in primary if isinstance(w, dict)])
+                    elif isinstance(primary, dict):
+                        merged.append(primary)
+                    if isinstance(secondary, list):
+                        merged.extend([w for w in secondary if isinstance(w, dict)])
+                    elif isinstance(secondary, dict):
+                        merged.append(secondary)
+                    if len(merged) == 1:
+                        watermark = merged[0]
+                    elif len(merged) > 1:
+                        watermark = merged
+                    else:
+                        watermark = primary
+                else:
+                    watermark = primary
 
         if account_type == "client":
             return await self.client_manager.send_message(

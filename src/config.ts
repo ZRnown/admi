@@ -189,6 +189,7 @@ export interface RuleLevelConfig {
   stripEnglish?: boolean;
   stripChinese?: boolean;
   watermark?: WatermarkConfig;
+  watermarkSecondary?: WatermarkConfig;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -250,6 +251,7 @@ export interface LegacyConfig {
   showMessageUpdates?: boolean;
   replacementsDictionary?: Record<string, string>;
   watermark?: WatermarkConfig;
+  watermarkSecondary?: WatermarkConfig;
   historyScan?: {
     enabled?: boolean;
     limit?: number;
@@ -357,6 +359,7 @@ export interface AccountConfig extends LegacyConfig {
   ocrBlockedKeywords?: string[];
   ocrTriggerKeywords?: string[];
   watermark?: WatermarkConfig;
+  watermarkSecondary?: WatermarkConfig;
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
@@ -578,6 +581,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       stripEnglish: undefined,
       stripChinese: undefined,
       watermark: undefined,
+      watermarkSecondary: undefined,
     };
   }
   return {
@@ -624,6 +628,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     stripEnglish: raw.stripEnglish === true ? true : undefined,
     stripChinese: raw.stripChinese === true ? true : undefined,
     watermark: normalizeWatermarkConfig(raw.watermark),
+    watermarkSecondary: normalizeWatermarkConfig(raw.watermarkSecondary),
   };
 }
 
@@ -919,6 +924,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     showMessageUpdates: input?.showMessageUpdates,
     replacementsDictionary: replacementsDict,
     watermark: normalizeWatermarkConfig(input?.watermark),
+    watermarkSecondary: normalizeWatermarkConfig(input?.watermarkSecondary),
     historyScan: input?.historyScan,
     mutedGuildsIds: input?.mutedGuildsIds || [],
     allowedGuildsIds: input?.allowedGuildsIds || [],
@@ -1095,6 +1101,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       publicBaseUrl: undefined,
       replacementsDictionary: {},
       watermark: undefined,
+      watermarkSecondary: undefined,
       historyScan: { enabled: true },
       mutedGuildsIds: [],
       allowedGuildsIds: [],
@@ -1156,6 +1163,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     showMessageUpdates: account.showMessageUpdates,
     replacementsDictionary: account.replacementsDictionary,
     watermark: account.watermark,
+    watermarkSecondary: account.watermarkSecondary,
     historyScan: account.historyScan,
     mutedGuildsIds: account.mutedGuildsIds,
     allowedGuildsIds: account.allowedGuildsIds,

@@ -174,6 +174,7 @@ interface FrontendMapping {
   stripEnglish?: boolean;
   stripChinese?: boolean;
   watermark?: WatermarkConfig;
+  watermarkSecondary?: WatermarkConfig;
 }
 
 interface FrontendAccount {
@@ -223,6 +224,7 @@ interface FrontendAccount {
   stripEnglish?: boolean;
   stripChinese?: boolean;
   watermark?: WatermarkConfig;
+  watermarkSecondary?: WatermarkConfig;
   // OCR 图片检测相关
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
@@ -489,6 +491,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         stripEnglish: savedRule.stripEnglish,
         stripChinese: savedRule.stripChinese,
         watermark: savedRule.watermark,
+        watermarkSecondary: savedRule.watermarkSecondary,
       });
     }
   } else {
@@ -511,6 +514,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         ocrTriggerKeywords: [],
         replacementsDictionary: {},
         watermark: undefined,
+        watermarkSecondary: undefined,
       });
     }
   }
@@ -566,6 +570,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     stripEnglish: account.stripEnglish === true,
     stripChinese: account.stripChinese === true,
     watermark: account.watermark,
+    watermarkSecondary: account.watermarkSecondary,
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
     ocrBlockedKeywords: account.ocrBlockedKeywords || [],
     ocrTriggerKeywords: account.ocrTriggerKeywords || [],
@@ -737,6 +742,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           stripEnglish: mapping.stripEnglish,
           stripChinese: mapping.stripChinese,
           watermark: mapping.watermark,
+          watermarkSecondary: mapping.watermarkSecondary,
         });
       }
     }
@@ -873,6 +879,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     stripEnglish: dto.stripEnglish === true,
     stripChinese: dto.stripChinese === true,
     watermark: dto.watermark && typeof dto.watermark === "object" ? dto.watermark : base.watermark,
+    watermarkSecondary:
+      dto.watermarkSecondary && typeof dto.watermarkSecondary === "object"
+        ? dto.watermarkSecondary
+        : base.watermarkSecondary,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(dto.ocrTriggerKeywords) ? dto.ocrTriggerKeywords : [],

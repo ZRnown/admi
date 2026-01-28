@@ -24,7 +24,7 @@ import { telegramBridgeManager } from "./processManager.js";
 import { TelegramBridgeClient } from "./telegramBridgeClient.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
-import { resolveWatermarkConfig } from "./watermark.js";
+import { resolveWatermarkConfigs } from "./watermark.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -425,6 +425,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const translationSecret = account.translationSecret;
   const enableBotRelay = account.enableBotRelay || false;
   const watermark = account.watermark;
+  const watermarkSecondary = account.watermarkSecondary;
   const relayById = new Map((account.botRelays || []).map((r) => [r.id, r]));
   // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
   const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
@@ -455,6 +456,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           enableBotRelay: useRelay,
           botRelayToken: relayToken,
           watermark,
+          watermarkSecondary,
         });
         prepares.push(sb.prepare());
         // 将 SenderBot 添加到数组中
@@ -481,6 +483,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           enableBotRelay: useRelay,
           botRelayToken: relayToken,
           watermark,
+          watermarkSecondary,
         });
         prepares.push(sb.prepare());
         senderBotsBySource.set(channelId, [sb]);
@@ -498,7 +501,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
         httpAgent,
         account.feishuAppId,
         account.feishuAppSecret,
-        { mode: target.mode, watermark },
+        { mode: target.mode, watermark, watermarkSecondary },
       );
       feishuSendersBySource.set(channelId, fs);
     }
@@ -1067,7 +1070,12 @@ function setupTelegramBridgeClient() {
               }
             }
 
-            const effectiveWatermark = resolveWatermarkConfig(account.watermark, rule.watermark);
+            const effectiveWatermarks = resolveWatermarkConfigs(
+              account.watermark,
+              rule.watermark,
+              account.watermarkSecondary,
+              rule.watermarkSecondary,
+            );
             if (!replyTargetId && replyInfo) {
               const replyUser = replyInfo.from_user || {};
               const replyName =
@@ -1099,7 +1107,9 @@ function setupTelegramBridgeClient() {
               message: {
                 text: telegramContent,
                 reply_to_message_id: replyTargetId,
-                watermark: effectiveWatermark,
+                watermark: effectiveWatermarks[0],
+                watermarkSecondary: effectiveWatermarks[1],
+                watermarks: effectiveWatermarks,
               },
               media: uploads.length > 0 ? uploads : undefined,
             });
@@ -1125,6 +1135,7 @@ function setupTelegramBridgeClient() {
             const tempSender = new SenderBot({
               webhookUrl: rule.targetChannelId,
               watermark: account.watermark,
+              watermarkSecondary: account.watermarkSecondary,
             });
 
             await tempSender.sendData([{
@@ -1137,6 +1148,7 @@ function setupTelegramBridgeClient() {
               stripEnglish,
               stripChinese,
               watermark: rule.watermark,
+              watermarkSecondary: rule.watermarkSecondary,
             }]);
 
             const logMsg =
@@ -1894,7 +1906,8 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       account.ignoreChinese !== oldAccount.ignoreChinese ||
       account.ignoreChineseThreshold !== oldAccount.ignoreChineseThreshold;
     const watermarkChanged =
-      JSON.stringify(account.watermark || {}) !== JSON.stringify(oldAccount.watermark || {});
+      JSON.stringify(account.watermark || {}) !== JSON.stringify(oldAccount.watermark || {}) ||
+      JSON.stringify(account.watermarkSecondary || {}) !== JSON.stringify(oldAccount.watermarkSecondary || {});
     // 检测用户过滤配置变化
     const userFilterChanged =
       JSON.stringify(account.allowedUsersIds || []) !== JSON.stringify(oldAccount.allowedUsersIds || []) ||

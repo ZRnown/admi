@@ -275,7 +275,28 @@ class TelegramSender:
             parse_mode = message_data.get("parse_mode")
             reply_to_message_id = message_data.get("reply_to_message_id")
             attachments = message_data.get("attachments", [])
-            watermark = message_data.get("watermark")
+            watermark = message_data.get("watermarks")
+            if watermark is None:
+                primary = message_data.get("watermark")
+                secondary = message_data.get("watermarkSecondary")
+                if secondary is not None:
+                    merged = []
+                    if isinstance(primary, list):
+                        merged.extend([w for w in primary if isinstance(w, dict)])
+                    elif isinstance(primary, dict):
+                        merged.append(primary)
+                    if isinstance(secondary, list):
+                        merged.extend([w for w in secondary if isinstance(w, dict)])
+                    elif isinstance(secondary, dict):
+                        merged.append(secondary)
+                    if len(merged) == 1:
+                        watermark = merged[0]
+                    elif len(merged) > 1:
+                        watermark = merged
+                    else:
+                        watermark = primary
+                else:
+                    watermark = primary
 
             logger.info(f"TelegramSender.send_message: account_id={account_id}, type={account_type}, chat_id={chat_id}")
 
