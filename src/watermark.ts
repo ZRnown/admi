@@ -104,7 +104,9 @@ const canvasModuleLoader = (() => {
         const loader = new Function("moduleName", "return import(moduleName)");
         return await loader("@napi-rs/canvas");
       } catch (err) {
-        console.warn(`[Watermark] Canvas 依赖不可用，跳过高级文字渲染: ${String(err)}`);
+        console.warn(
+          `[Watermark] Canvas 依赖不可用，中文可能显示为方块（可安装 @napi-rs/canvas）: ${String(err)}`,
+        );
         return null;
       }
     })();

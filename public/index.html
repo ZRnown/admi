@@ -480,24 +480,38 @@
       return escapeHtml(parts.join('&'));
     }
 
-    function clampPreviewSize(value) {
+    function clampPreviewSize(value, maxSize) {
       if (!Number.isFinite(value)) return 180;
-      return Math.min(640, Math.max(140, value));
+      const max = Number.isFinite(maxSize) ? maxSize : 1200;
+      return Math.min(max, Math.max(140, value));
+    }
+
+    function getWatermarkPreviewMax(accountId) {
+      const wrap = document.getElementById(`watermarkPreviewWrap-${accountId}`);
+      const container = wrap ? wrap.parentElement : null;
+      const width = container ? container.clientWidth : 0;
+      if (width && width > 0) {
+        return Math.max(140, width);
+      }
+      const fallback = Math.max(140, window.innerWidth - 160);
+      return fallback;
     }
 
     function getWatermarkPreviewSize(accountId) {
       const raw = watermarkPreviewSizes[accountId];
+      const maxSize = getWatermarkPreviewMax(accountId);
       if (raw && typeof raw === 'object') {
-        const width = clampPreviewSize(Number(raw.width));
-        const height = clampPreviewSize(Number(raw.height));
+        const width = clampPreviewSize(Number(raw.width), maxSize);
+        const height = clampPreviewSize(Number(raw.height), maxSize);
         return { width, height };
       }
-      const value = clampPreviewSize(Number(raw));
+      const value = clampPreviewSize(Number(raw), maxSize);
       return { width: value, height: value };
     }
 
     function updateWatermarkPreviewSize(accountId, field, value) {
-      const size = clampPreviewSize(Number(value));
+      const maxSize = getWatermarkPreviewMax(accountId);
+      const size = clampPreviewSize(Number(value), maxSize);
       const current = getWatermarkPreviewSize(accountId);
       const next = {
         width: field === 'width' ? size : current.width,
@@ -515,6 +529,10 @@
       if (inputH) inputH.value = String(next.height);
       if (rangeW) rangeW.value = String(next.width);
       if (rangeH) rangeH.value = String(next.height);
+      if (rangeW) rangeW.max = String(maxSize);
+      if (rangeH) rangeH.max = String(maxSize);
+      if (inputW) inputW.max = String(maxSize);
+      if (inputH) inputH.max = String(maxSize);
       if (wrap && acc) {
         scheduleWatermarkPreviewRender(accountId);
       } else {
@@ -1726,20 +1744,15 @@
                 <label class="block text-xs text-slate-600 mb-1">文字角度（-180° ~ 180°）</label>
                 <div class="flex items-center gap-2">
                   <input type="range" min="-180" max="180" value="${Number.isFinite(Number(acc.watermark?.textAngle)) ? Number(acc.watermark.textAngle) : 0}"
-                    oninput="updateWatermarkField('textAngle', Number(this.value))" class="flex-1">
-                  <span class="text-xs text-slate-500 w-12 text-right">${Number.isFinite(Number(acc.watermark?.textAngle)) ? Number(acc.watermark.textAngle) : 0}°</span>
+                    oninput="updateWatermarkAnglePreview('${acc.id}', this.value)" onchange="updateWatermarkField('textAngle', Number(this.value))" class="flex-1">
+                  <span class="text-xs text-slate-500 w-12 text-right" id="watermarkAngleValue-${acc.id}">${Number.isFinite(Number(acc.watermark?.textAngle)) ? Number(acc.watermark.textAngle) : 0}°</span>
                 </div>
               </div>
               <div>
                 <label class="block text-xs text-slate-600 mb-1">字体名称（可选）</label>
                 <input type="text" value="${(acc.watermark && acc.watermark.fontFamily) || ''}" onchange="updateWatermarkField('fontFamily', this.value)"
                   placeholder="例如：Noto Sans CJK SC" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <p class="text-[11px] text-slate-400 mt-1">未填写会自动尝试系统字体；中文显示为方块时请填写字体名称或路径</p>
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">字体文件路径（可选）</label>
-                <input type="text" value="${(acc.watermark && acc.watermark.fontPath) || ''}" onchange="updateWatermarkField('fontPath', this.value)"
-                  placeholder="/usr/share/fonts/xxx.ttf 或 https://example.com/font.otf" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <p class="text-[11px] text-slate-400 mt-1">未填写会自动下载字体到 .data/watermark_fonts；中文仍为方块时需安装 @napi-rs/canvas</p>
               </div>
             </div>
             ` : ''}
@@ -1794,17 +1807,17 @@
               <div class="flex flex-col gap-2 mb-2">
                 <div class="flex items-center gap-3">
                   <span class="text-xs text-slate-500">预览宽度</span>
-                  <input type="range" min="140" max="640" value="${getWatermarkPreviewSize(acc.id).width}"
+                  <input type="range" min="140" max="${getWatermarkPreviewMax(acc.id)}" value="${getWatermarkPreviewSize(acc.id).width}"
                     id="watermarkPreviewSizeWidthRange-${acc.id}" oninput="updateWatermarkPreviewSize('${acc.id}', 'width', this.value)" class="flex-1">
-                  <input type="number" min="140" max="640" value="${getWatermarkPreviewSize(acc.id).width}"
+                  <input type="number" min="140" max="${getWatermarkPreviewMax(acc.id)}" value="${getWatermarkPreviewSize(acc.id).width}"
                     id="watermarkPreviewSizeWidthInput-${acc.id}" onchange="updateWatermarkPreviewSize('${acc.id}', 'width', this.value)"
                     class="w-20 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 text-right">
                 </div>
                 <div class="flex items-center gap-3">
                   <span class="text-xs text-slate-500">预览高度</span>
-                  <input type="range" min="140" max="640" value="${getWatermarkPreviewSize(acc.id).height}"
+                  <input type="range" min="140" max="${getWatermarkPreviewMax(acc.id)}" value="${getWatermarkPreviewSize(acc.id).height}"
                     id="watermarkPreviewSizeHeightRange-${acc.id}" oninput="updateWatermarkPreviewSize('${acc.id}', 'height', this.value)" class="flex-1">
-                  <input type="number" min="140" max="640" value="${getWatermarkPreviewSize(acc.id).height}"
+                  <input type="number" min="140" max="${getWatermarkPreviewMax(acc.id)}" value="${getWatermarkPreviewSize(acc.id).height}"
                     id="watermarkPreviewSizeHeightInput-${acc.id}" onchange="updateWatermarkPreviewSize('${acc.id}', 'height', this.value)"
                     class="w-20 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 text-right">
                 </div>
@@ -2504,6 +2517,16 @@
       render();
     }
 
+    function updateWatermarkAnglePreview(accountId, value) {
+      const acc = getActiveAccount();
+      ensureWatermarkConfig(acc);
+      const numeric = Number(value);
+      acc.watermark.textAngle = Number.isFinite(numeric) ? numeric : 0;
+      const label = document.getElementById(`watermarkAngleValue-${accountId}`);
+      if (label) label.textContent = `${Number.isFinite(numeric) ? numeric : 0}°`;
+      scheduleWatermarkPreviewRender(accountId);
+    }
+
     function isPreviewableUrl(value) {
       return typeof value === 'string' && /^https?:\/\//i.test(value.trim());
     }
@@ -2604,13 +2627,18 @@
           const stepY = rotated.height + tileGap;
           const cols = Math.max(1, Math.ceil(previewWidth / stepX));
           const rows = Math.max(1, Math.ceil(previewHeight / stepY));
-          const rotateStyle = textAngle ? `transform: rotate(${textAngle}deg); transform-origin: 0 0;` : '';
+          const rotateStyle = textAngle ? `transform: translate(-50%, -50%) rotate(${textAngle}deg);` : 'transform: translate(-50%, -50%);';
           let tiles = '';
           for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
               const left = Math.round(col * stepX);
               const top = Math.round(row * stepY);
-              tiles += `<div style="position:absolute;left:${left}px;top:${top}px;${rotateStyle}">${escapeHtml(text)}</div>`;
+              tiles += `
+                <div style="position:absolute;left:${left}px;top:${top}px;width:${rotated.width}px;height:${rotated.height}px;">
+                  <div style="position:absolute;left:50%;top:50%;transform-origin:center;white-space:nowrap;${rotateStyle}">
+                    ${escapeHtml(text)}
+                  </div>
+                </div>`;
             }
           }
           overlayItems.push(`<div class="absolute inset-0" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(fontFamily)};">${tiles}</div>`);
