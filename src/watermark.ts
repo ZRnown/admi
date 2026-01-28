@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import { createHash } from "node:crypto";
+import path from "node:path";
 import { URL, fileURLToPath } from "node:url";
 import Jimp from "jimp";
 
@@ -12,6 +14,12 @@ const DEFAULT_IMAGE_OPACITY = 60;
 const DEFAULT_IMAGE_SCALE = 20;
 const DEFAULT_TEXT_SIZE = 16;
 const DEFAULT_TILE_GAP = 40;
+const AUTO_FONT_DOWNLOAD = process.env.WATERMARK_AUTO_FONT_DOWNLOAD !== "0";
+const DEFAULT_CJK_FONT_URL =
+  process.env.WATERMARK_CJK_FONT_URL ||
+  "https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf";
+const FONT_CACHE_DIR = path.join(process.cwd(), ".data", "watermark_fonts");
+const fontDownloadCache = new Map<string, string | null>();
 
 function clampPercent(value: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
@@ -104,24 +112,64 @@ const canvasModuleLoader = (() => {
   };
 })();
 
-async function resolveDefaultFontPath(): Promise<string | undefined> {
-  const candidates = [
+async function resolveDefaultFontPath(preferCjk: boolean): Promise<string | undefined> {
+  const cjkCandidates = [
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.otf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+  ];
+  const latinCandidates = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
   ];
+  const candidates = preferCjk ? cjkCandidates : [...cjkCandidates, ...latinCandidates];
   for (const candidate of candidates) {
     try {
       await fs.access(candidate);
       return candidate;
     } catch {}
   }
+  if (preferCjk && AUTO_FONT_DOWNLOAD) {
+    const downloaded = await resolveRemoteFontPath(DEFAULT_CJK_FONT_URL);
+    if (downloaded) {
+      return downloaded;
+    }
+  }
+  if (preferCjk) {
+    console.warn("[Watermark] 未检测到系统中文字体，可在水印设置中填写字体路径");
+  }
   return undefined;
+}
+
+async function resolveRemoteFontPath(url: string): Promise<string | undefined> {
+  if (!AUTO_FONT_DOWNLOAD || !url) return undefined;
+  const cached = fontDownloadCache.get(url);
+  if (cached !== undefined) return cached || undefined;
+  try {
+    await fs.mkdir(FONT_CACHE_DIR, { recursive: true });
+    const urlInfo = new URL(url);
+    const ext = path.extname(urlInfo.pathname) || ".otf";
+    const hash = createHash("sha1").update(url).digest("hex").slice(0, 16);
+    const filename = `${hash}${ext}`;
+    const target = path.join(FONT_CACHE_DIR, filename);
+    try {
+      await fs.access(target);
+      fontDownloadCache.set(url, target);
+      return target;
+    } catch {}
+    const buffer = await downloadBuffer(url);
+    await fs.writeFile(target, buffer);
+    fontDownloadCache.set(url, target);
+    console.log(`[Watermark] 已下载字体: ${url} -> ${target}`);
+    return target;
+  } catch (err) {
+    console.warn(`[Watermark] 下载字体失败: ${url} err=${String(err)}`);
+    fontDownloadCache.set(url, null);
+    return undefined;
+  }
 }
 
 async function renderTextWatermarkImage(
@@ -142,8 +190,13 @@ async function renderTextWatermarkImage(
     const { createCanvas, registerFont } = canvasModule;
     let fontFamily = options.fontFamily || "Noto Sans CJK SC, Noto Sans, Microsoft YaHei, PingFang SC, sans-serif";
     let fontPath = options.fontPath;
-    if (!fontPath) {
-      fontPath = await resolveDefaultFontPath();
+    if (fontPath && /^https?:\/\//i.test(fontPath)) {
+      fontPath = await resolveRemoteFontPath(fontPath);
+    } else if (fontPath && /^file:\/\//i.test(fontPath)) {
+      fontPath = fileURLToPath(fontPath);
+    }
+    if (!fontPath && !options.fontFamily) {
+      fontPath = await resolveDefaultFontPath(hasNonAsciiText(text));
       if (fontPath) {
         console.log(`[Watermark] 使用默认字体文件: ${fontPath}`);
       }
@@ -325,6 +378,7 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
         typeof effective.textOpacity === "number" ? effective.textOpacity : DEFAULT_TEXT_OPACITY,
         DEFAULT_TEXT_OPACITY,
       );
+      const textAngle = Number.isFinite(effective.textAngle) ? (effective.textAngle as number) : 0;
       const color = effective.textColor || (isDarkColor(effective.textColor) ? "#000000" : "#ffffff");
       let textImage: Jimp | null = null;
       const useCanvas = hasNonAsciiText(effective.text) || Boolean(effective.fontPath || effective.fontFamily);
@@ -358,6 +412,12 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
           } catch {}
         }
         textImage.opacity(opacity / 100);
+      }
+      if (textImage && textAngle) {
+        try {
+          textImage.rotate(textAngle, true);
+          console.log(`[Watermark] 文字水印旋转角度: ${textAngle}°`);
+        } catch {}
       }
       if (!textImage) {
         console.warn("[Watermark] 文字水印渲染失败，跳过文字水印");

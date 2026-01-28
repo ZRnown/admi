@@ -135,6 +135,7 @@ export interface WatermarkConfig {
   textSize?: number;
   textColor?: string;
   textOpacity?: number;
+  textAngle?: number;
   fontFamily?: string;
   fontPath?: string;
   imageUrl?: string;
@@ -534,6 +535,7 @@ function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
     textSize: normalizeNumber(raw.textSize),
     textColor: normalizeText(raw.textColor),
     textOpacity: normalizeNumber(raw.textOpacity),
+    textAngle: normalizeNumber(raw.textAngle),
     fontFamily: normalizeText(raw.fontFamily),
     fontPath: normalizeText(raw.fontPath),
     imageUrl: normalizeText(raw.imageUrl),

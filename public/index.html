@@ -480,22 +480,51 @@
       return escapeHtml(parts.join('&'));
     }
 
-    function getWatermarkPreviewSize(accountId) {
-      const value = Number(watermarkPreviewSizes[accountId]);
-      if (Number.isFinite(value) && value > 60) return Math.min(480, Math.max(120, value));
-      return 144;
+    function clampPreviewSize(value) {
+      if (!Number.isFinite(value)) return 180;
+      return Math.min(640, Math.max(140, value));
     }
 
-    function updateWatermarkPreviewSize(accountId, value) {
-      const size = Number(value);
-      if (!Number.isFinite(size)) return;
-      watermarkPreviewSizes[accountId] = Math.min(480, Math.max(120, size));
+    function getWatermarkPreviewSize(accountId) {
+      const raw = watermarkPreviewSizes[accountId];
+      if (raw && typeof raw === 'object') {
+        const width = clampPreviewSize(Number(raw.width));
+        const height = clampPreviewSize(Number(raw.height));
+        return { width, height };
+      }
+      const value = clampPreviewSize(Number(raw));
+      return { width: value, height: value };
+    }
+
+    function updateWatermarkPreviewSize(accountId, field, value) {
+      const size = clampPreviewSize(Number(value));
+      const current = getWatermarkPreviewSize(accountId);
+      const next = {
+        width: field === 'width' ? size : current.width,
+        height: field === 'height' ? size : current.height,
+      };
+      watermarkPreviewSizes[accountId] = next;
       localStorage.setItem('watermarkPreviewSizes', JSON.stringify(watermarkPreviewSizes));
-      render();
+      const acc = state.accounts.find((a) => a.id === accountId);
+      const wrap = document.getElementById(`watermarkPreviewWrap-${accountId}`);
+      const inputW = document.getElementById(`watermarkPreviewSizeWidthInput-${accountId}`);
+      const inputH = document.getElementById(`watermarkPreviewSizeHeightInput-${accountId}`);
+      const rangeW = document.getElementById(`watermarkPreviewSizeWidthRange-${accountId}`);
+      const rangeH = document.getElementById(`watermarkPreviewSizeHeightRange-${accountId}`);
+      if (inputW) inputW.value = String(next.width);
+      if (inputH) inputH.value = String(next.height);
+      if (rangeW) rangeW.value = String(next.width);
+      if (rangeH) rangeH.value = String(next.height);
+      if (wrap && acc) {
+        scheduleWatermarkPreviewRender(accountId);
+      } else {
+        render();
+      }
     }
 
     let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
     const watermarkPreviewCache = new Map();
+    const watermarkPreviewRaf = new Map();
     const watermarkPreviewSizes = (() => {
       try {
         return JSON.parse(localStorage.getItem('watermarkPreviewSizes') || '{}');
@@ -1694,15 +1723,23 @@
                   placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
               <div>
+                <label class="block text-xs text-slate-600 mb-1">文字角度（-180° ~ 180°）</label>
+                <div class="flex items-center gap-2">
+                  <input type="range" min="-180" max="180" value="${Number.isFinite(Number(acc.watermark?.textAngle)) ? Number(acc.watermark.textAngle) : 0}"
+                    oninput="updateWatermarkField('textAngle', Number(this.value))" class="flex-1">
+                  <span class="text-xs text-slate-500 w-12 text-right">${Number.isFinite(Number(acc.watermark?.textAngle)) ? Number(acc.watermark.textAngle) : 0}°</span>
+                </div>
+              </div>
+              <div>
                 <label class="block text-xs text-slate-600 mb-1">字体名称（可选）</label>
                 <input type="text" value="${(acc.watermark && acc.watermark.fontFamily) || ''}" onchange="updateWatermarkField('fontFamily', this.value)"
                   placeholder="例如：Noto Sans CJK SC" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <p class="text-[11px] text-slate-400 mt-1">中文显示为? 时，请指定字体名称或路径</p>
+                <p class="text-[11px] text-slate-400 mt-1">未填写会自动尝试系统字体；中文显示为方块时请填写字体名称或路径</p>
               </div>
               <div>
                 <label class="block text-xs text-slate-600 mb-1">字体文件路径（可选）</label>
                 <input type="text" value="${(acc.watermark && acc.watermark.fontPath) || ''}" onchange="updateWatermarkField('fontPath', this.value)"
-                  placeholder="/usr/share/fonts/xxx.ttf" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  placeholder="/usr/share/fonts/xxx.ttf 或 https://example.com/font.otf" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
             </div>
             ` : ''}
@@ -1754,13 +1791,27 @@
 
             <div>
               <label class="block text-xs text-slate-600 mb-2">水印预览</label>
-              <div class="flex items-center gap-3 mb-2">
-                <span class="text-xs text-slate-500">预览大小</span>
-                <input type="range" min="120" max="480" value="${getWatermarkPreviewSize(acc.id)}"
-                  oninput="updateWatermarkPreviewSize('${acc.id}', this.value)" class="flex-1">
-                <span class="text-xs text-slate-500">${getWatermarkPreviewSize(acc.id)}px</span>
+              <div class="flex flex-col gap-2 mb-2">
+                <div class="flex items-center gap-3">
+                  <span class="text-xs text-slate-500">预览宽度</span>
+                  <input type="range" min="140" max="640" value="${getWatermarkPreviewSize(acc.id).width}"
+                    id="watermarkPreviewSizeWidthRange-${acc.id}" oninput="updateWatermarkPreviewSize('${acc.id}', 'width', this.value)" class="flex-1">
+                  <input type="number" min="140" max="640" value="${getWatermarkPreviewSize(acc.id).width}"
+                    id="watermarkPreviewSizeWidthInput-${acc.id}" onchange="updateWatermarkPreviewSize('${acc.id}', 'width', this.value)"
+                    class="w-20 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 text-right">
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="text-xs text-slate-500">预览高度</span>
+                  <input type="range" min="140" max="640" value="${getWatermarkPreviewSize(acc.id).height}"
+                    id="watermarkPreviewSizeHeightRange-${acc.id}" oninput="updateWatermarkPreviewSize('${acc.id}', 'height', this.value)" class="flex-1">
+                  <input type="number" min="140" max="640" value="${getWatermarkPreviewSize(acc.id).height}"
+                    id="watermarkPreviewSizeHeightInput-${acc.id}" onchange="updateWatermarkPreviewSize('${acc.id}', 'height', this.value)"
+                    class="w-20 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 text-right">
+                </div>
               </div>
-              ${renderWatermarkPreview(acc)}
+              <div id="watermarkPreviewWrap-${acc.id}">
+                ${renderWatermarkPreview(acc)}
+              </div>
             </div>
           </div>
         </div>
@@ -2457,6 +2508,45 @@
       return typeof value === 'string' && /^https?:\/\//i.test(value.trim());
     }
 
+    const watermarkMeasureCanvas = document.createElement('canvas');
+    const watermarkMeasureCtx = watermarkMeasureCanvas.getContext('2d');
+
+    function measureWatermarkText(text, fontSize, fontFamily) {
+      if (!watermarkMeasureCtx) {
+        return { width: Math.ceil(text.length * fontSize * 0.6), height: Math.ceil(fontSize * 1.2) };
+      }
+      watermarkMeasureCtx.font = `${fontSize}px ${fontFamily || 'sans-serif'}`;
+      const metrics = watermarkMeasureCtx.measureText(text);
+      const width = Math.ceil(metrics.width);
+      const height = Math.ceil(
+        (metrics.actualBoundingBoxAscent || fontSize) + (metrics.actualBoundingBoxDescent || 0),
+      );
+      return { width, height };
+    }
+
+    function applyRotationBounds(width, height, angle) {
+      if (!angle) return { width, height };
+      const radians = Math.abs(angle) * Math.PI / 180;
+      const sin = Math.sin(radians);
+      const cos = Math.cos(radians);
+      const rotatedWidth = Math.ceil(width * cos + height * sin);
+      const rotatedHeight = Math.ceil(width * sin + height * cos);
+      return { width: Math.max(1, rotatedWidth), height: Math.max(1, rotatedHeight) };
+    }
+
+    function scheduleWatermarkPreviewRender(accountId) {
+      if (watermarkPreviewRaf.has(accountId)) return;
+      const rafId = (window.requestAnimationFrame || ((cb) => setTimeout(cb, 16)))(() => {
+        watermarkPreviewRaf.delete(accountId);
+        const acc = state.accounts.find((a) => a.id === accountId);
+        const wrap = document.getElementById(`watermarkPreviewWrap-${accountId}`);
+        if (wrap && acc) {
+          wrap.innerHTML = renderWatermarkPreview(acc);
+        }
+      });
+      watermarkPreviewRaf.set(accountId, rafId);
+    }
+
     function renderWatermarkPreview(acc) {
       const watermark = acc.watermark || {};
       if (!watermark.enabled) {
@@ -2470,12 +2560,16 @@
       const textSize = typeof watermark.textSize === 'number' ? watermark.textSize : 16;
       const textColor = watermark.textColor || '#ffffff';
       const textOpacity = typeof watermark.textOpacity === 'number' ? watermark.textOpacity : 60;
+      const textAngle = Number.isFinite(Number(watermark.textAngle)) ? Number(watermark.textAngle) : 0;
       const imageScale = typeof watermark.imageScale === 'number' ? watermark.imageScale : 20;
       const imageOpacity = typeof watermark.imageOpacity === 'number' ? watermark.imageOpacity : 60;
       const tileGap = typeof watermark.tileGap === 'number' ? watermark.tileGap : 40;
+      const fontFamily = watermark.fontFamily || 'sans-serif';
       const previewImage = watermarkPreviewCache.get(acc.id) || (isPreviewableUrl(watermark.imageUrl) ? watermark.imageUrl : '');
       const previewSize = getWatermarkPreviewSize(acc.id);
-      const maxImageWidth = Math.max(60, Math.round(previewSize * 0.45));
+      const previewWidth = previewSize.width;
+      const previewHeight = previewSize.height;
+      const maxImageWidth = Math.max(60, Math.round(previewWidth * 0.45));
       const showText = mode !== 'image' && text;
       const showImage = mode !== 'text' && previewImage;
       const position = watermark.position || 'bottom-right';
@@ -2494,24 +2588,53 @@
       const overlayItems = [];
       if (pattern === 'single') {
         if (showText) {
-          overlayItems.push(`<div class="absolute ${posClass}" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(watermark.fontFamily || 'sans-serif')};">${escapeHtml(text)}</div>`);
+          const rotateStyle = textAngle ? `transform: rotate(${textAngle}deg); transform-origin: 0 0;` : '';
+          overlayItems.push(`<div class="absolute ${posClass}" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(fontFamily)};${rotateStyle}">${escapeHtml(text)}</div>`);
         }
         if (showImage) {
           overlayItems.push(`<img src="${previewImage}" class="absolute ${posClass}" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;max-width:${maxImageWidth}px;">`);
         }
       } else {
         if (showText) {
-          const tiles = Array.from({ length: 9 }).map(() => `<div>${escapeHtml(text)}</div>`).join('');
-          overlayItems.push(`<div class="absolute inset-0 grid grid-cols-3 place-items-center" style="gap:${tileGap}px;color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(watermark.fontFamily || 'sans-serif')};">${tiles}</div>`);
+          const measured = measureWatermarkText(text, textSize, fontFamily);
+          const paddedWidth = Math.max(textSize, measured.width + 10);
+          const paddedHeight = Math.max(textSize, measured.height + 10);
+          const rotated = applyRotationBounds(paddedWidth, paddedHeight, textAngle);
+          const stepX = rotated.width + tileGap;
+          const stepY = rotated.height + tileGap;
+          const cols = Math.max(1, Math.ceil(previewWidth / stepX));
+          const rows = Math.max(1, Math.ceil(previewHeight / stepY));
+          const rotateStyle = textAngle ? `transform: rotate(${textAngle}deg); transform-origin: 0 0;` : '';
+          let tiles = '';
+          for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+              const left = Math.round(col * stepX);
+              const top = Math.round(row * stepY);
+              tiles += `<div style="position:absolute;left:${left}px;top:${top}px;${rotateStyle}">${escapeHtml(text)}</div>`;
+            }
+          }
+          overlayItems.push(`<div class="absolute inset-0" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(fontFamily)};">${tiles}</div>`);
         }
         if (showImage) {
-          const tiles = Array.from({ length: 9 }).map(() => `<img src="${previewImage}" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;max-width:${maxImageWidth}px;">`).join('');
-          overlayItems.push(`<div class="absolute inset-0 grid grid-cols-3 place-items-center" style="gap:${tileGap}px;">${tiles}</div>`);
+          const imageWidth = Math.max(24, Math.round((previewWidth * imageScale) / 100));
+          const stepX = imageWidth + tileGap;
+          const stepY = imageWidth + tileGap;
+          const cols = Math.max(1, Math.ceil(previewWidth / stepX));
+          const rows = Math.max(1, Math.ceil(previewHeight / stepY));
+          let tiles = '';
+          for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+              const left = Math.round(col * stepX);
+              const top = Math.round(row * stepY);
+              tiles += `<img src="${previewImage}" style="position:absolute;left:${left}px;top:${top}px;opacity:${imageOpacity / 100};width:${imageWidth}px;">`;
+            }
+          }
+          overlayItems.push(`<div class="absolute inset-0">${tiles}</div>`);
         }
       }
 
       return `
-        <div class="relative w-full overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100" style="height:${previewSize}px;">
+        <div class="relative overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100" style="width:${previewWidth}px;height:${previewHeight}px;max-width:100%;">
           ${overlayItems.join('')}
         </div>
       `;
