@@ -1382,6 +1382,7 @@ export class Bot {
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
     
+    const effectiveWatermark = resolveWatermarkConfig(this.config.watermark, ruleConfig.watermark);
     const toSend = [{
       content: `${discordContent}`.trim(),
       sourceMessageId: message.id,
@@ -1397,7 +1398,7 @@ export class Bot {
       ruleReplacementsDictionary: ruleConfig.replacementsDictionary,
       stripEnglish,
       stripChinese,
-      watermark: ruleConfig.watermark,
+      watermark: effectiveWatermark,
     }];
 
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
@@ -1487,7 +1488,7 @@ export class Bot {
           avatarUrl: avatarUrl,
           attachments: uploads.map((u) => ({ url: u.url, filename: u.filename, isImage: u.isImage })),
           embeds: feishuEmbeds && feishuEmbeds.length > 0 ? feishuEmbeds : undefined,
-          watermark: ruleConfig.watermark,
+          watermark: effectiveWatermark,
         });
         const feishuTarget = feishuSenderForThis.target;
         const feishuPreview = formatLogPreview(feishuContent);
