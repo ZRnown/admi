@@ -225,7 +225,7 @@ async function renderTextWatermarkImage(
     if (!canvasModule?.createCanvas) {
       return null;
     }
-    const { createCanvas, registerFont } = canvasModule;
+    const { createCanvas, registerFont, GlobalFonts } = canvasModule;
     let fontFamily = options.fontFamily || "Noto Sans CJK SC, Noto Sans, Microsoft YaHei, PingFang SC, sans-serif";
     let fontPath = options.fontPath;
     if (fontPath && /^https?:\/\//i.test(fontPath)) {
@@ -239,12 +239,18 @@ async function renderTextWatermarkImage(
         console.log(`[Watermark] 使用默认字体文件: ${fontPath}`);
       }
     }
-    if (fontPath && typeof registerFont === "function") {
+    if (fontPath) {
       const familyName = options.fontFamily || "WatermarkFont";
       try {
-        registerFont(fontPath, { family: familyName });
-        fontFamily = familyName;
-        console.log(`[Watermark] 字体注册成功: ${fontFamily}`);
+        if (GlobalFonts && typeof GlobalFonts.registerFromPath === "function") {
+          GlobalFonts.registerFromPath(fontPath, familyName);
+          fontFamily = familyName;
+          console.log(`[Watermark] 字体注册成功(GlobalFonts): ${fontFamily}`);
+        } else if (typeof registerFont === "function") {
+          registerFont(fontPath, { family: familyName });
+          fontFamily = familyName;
+          console.log(`[Watermark] 字体注册成功(registerFont): ${fontFamily}`);
+        }
       } catch (err) {
         console.warn(`[Watermark] 注册字体失败: ${fontPath} err=${String(err)}`);
       }
