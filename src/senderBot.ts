@@ -4,6 +4,7 @@ import { URL, fileURLToPath } from "node:url";
 
 import { ChannelId, WatermarkConfig } from "./config.js";
 import { applyWatermarkToBuffer, resolveWatermarkConfig } from "./watermark.js";
+import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
 
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
@@ -163,9 +164,6 @@ export class SenderBot {
   ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
     const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
     const effectiveWatermark = resolveWatermarkConfig(this.watermark, watermark);
-    if (!effectiveWatermark && uploads.some((u) => u.isImage)) {
-      console.log("[水印] 未启用或配置无效，跳过图片水印处理");
-    }
     for (const u of uploads) {
       let buf: Buffer;
       if (u.localPath) {
@@ -180,9 +178,16 @@ export class SenderBot {
         continue;
       }
       const shouldWatermark = !!effectiveWatermark && (u.isImage || looksLikeImage(buf));
-      const finalBuffer = shouldWatermark ? await applyWatermarkToBuffer(buf, effectiveWatermark) : buf;
+      let finalBuffer = buf;
       if (shouldWatermark) {
-        console.log(`[水印] 已处理图片: ${u.filename}`);
+        finalBuffer = await applyWatermarkToBuffer(buf, effectiveWatermark);
+        if (finalBuffer !== buf) {
+          console.log(
+            `[水印] 已处理图片: ${u.filename} (${formatSize(buf.length)} -> ${formatSize(finalBuffer.length)})`,
+          );
+        } else {
+          console.log(`[水印] 图片未发生变化: ${u.filename}`);
+        }
       }
       results.push({ filename: u.filename, buffer: finalBuffer, isImage: u.isImage || shouldWatermark });
     }

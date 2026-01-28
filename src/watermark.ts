@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import { URL } from "node:url";
+import { URL, fileURLToPath } from "node:url";
 import Jimp from "jimp";
 
 import type { WatermarkConfig, WatermarkPosition } from "./config";
@@ -105,13 +105,21 @@ async function downloadBuffer(url: string): Promise<Buffer> {
 async function loadWatermarkImage(source: string): Promise<Jimp | null> {
   try {
     if (/^https?:\/\//i.test(source)) {
+      console.log(`[Watermark] 下载图片水印: ${source}`);
       const buf = await downloadBuffer(source);
       return await Jimp.read(buf);
     }
+    if (/^file:\/\//i.test(source)) {
+      const filePath = fileURLToPath(source);
+      console.log(`[Watermark] 读取图片水印: ${filePath}`);
+      const file = await fs.readFile(filePath);
+      return await Jimp.read(file);
+    }
+    console.log(`[Watermark] 读取图片水印: ${source}`);
     const file = await fs.readFile(source);
     return await Jimp.read(file);
   } catch (err) {
-    console.error(`[Watermark] 加载水印图片失败: ${String((err as Error)?.message || err)}`);
+    console.error(`[Watermark] 加载水印图片失败 (${source}): ${String((err as Error)?.message || err)}`);
     return null;
   }
 }
@@ -147,6 +155,9 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
 
   try {
     const image = await Jimp.read(buffer);
+    console.log(
+      `[Watermark] 开始处理图片 (${image.bitmap.width}x${image.bitmap.height}) mode=${effective.mode || "auto"}`,
+    );
     const margin = Number.isFinite(effective.margin)
       ? Math.max(0, Math.round(effective.margin as number))
       : DEFAULT_MARGIN;
@@ -158,7 +169,10 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
       ? Math.max(0, Math.round(effective.tileGap as number))
       : DEFAULT_TILE_GAP;
 
+    let applied = false;
+
     if (effective.imageUrl && allowImage) {
+      console.log(`[Watermark] 尝试应用图片水印: ${effective.imageUrl}`);
       const watermarkImage = await loadWatermarkImage(effective.imageUrl);
       if (watermarkImage) {
         const scale = clampPercent(
@@ -172,6 +186,9 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
           DEFAULT_IMAGE_OPACITY,
         );
         watermarkImage.opacity(opacity / 100);
+        console.log(
+          `[Watermark] 图片水印尺寸=${watermarkImage.bitmap.width}x${watermarkImage.bitmap.height} scale=${scale}% opacity=${opacity}% pattern=${pattern}`,
+        );
         if (pattern === "tile") {
           const stepX = Math.max(1, watermarkImage.bitmap.width + gap);
           const stepY = Math.max(1, watermarkImage.bitmap.height + gap);
@@ -180,6 +197,7 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
               image.composite(watermarkImage, x, y);
             }
           }
+          console.log(`[Watermark] 图片水印平铺完成 stepX=${stepX} stepY=${stepY}`);
         } else {
           const position = resolvePosition(
             effective.position,
@@ -190,18 +208,33 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
             margin,
           );
           image.composite(watermarkImage, position.x, position.y);
+          console.log(`[Watermark] 图片水印位置 x=${position.x} y=${position.y}`);
         }
+        applied = true;
+        console.log(`[Watermark] 图片水印应用完成`);
+      } else {
+        console.warn(`[Watermark] 图片水印加载失败，跳过: ${effective.imageUrl}`);
       }
     }
 
     if (effective.text && allowText) {
       const fontSize = pickFontSize(effective.textSize);
       const fontColor = isDarkColor(effective.textColor) ? "BLACK" : "WHITE";
-      const font = await Jimp.loadFont((Jimp as any)[`FONT_SANS_${fontSize}_${fontColor}`]);
+      const fontName = `FONT_SANS_${fontSize}_${fontColor}`;
+      const fontPath = (Jimp as any)[fontName];
+      if (!fontPath) {
+        console.warn(`[Watermark] 字体未找到: ${fontName}，使用默认字体`);
+      }
+      const font = await Jimp.loadFont(fontPath || Jimp.FONT_SANS_16_WHITE);
       const textWidth = Jimp.measureText(font, effective.text);
       const textHeight = Jimp.measureTextHeight(font, effective.text, image.bitmap.width);
-      const textImage = await new Jimp(textWidth || 1, textHeight || fontSize, 0x00000000);
+      const safeWidth = Math.max(1, textWidth + 10);
+      const safeHeight = Math.max(1, textHeight + 10);
+      const textImage = await new Jimp(safeWidth, safeHeight, 0x00000000);
       textImage.print(font, 0, 0, effective.text);
+      console.log(
+        `[Watermark] 文字水印 size=${fontSize} color=${effective.textColor || "auto"} pattern=${pattern}`,
+      );
       if (effective.textColor) {
         try {
           (textImage as any).color([{ apply: "mix", params: [effective.textColor, 100] }]);
@@ -220,6 +253,7 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
             image.composite(textImage, x, y);
           }
         }
+        console.log(`[Watermark] 文字水印平铺完成 stepX=${stepX} stepY=${stepY}`);
       } else {
         const position = resolvePosition(
           effective.position,
@@ -230,11 +264,21 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
           margin,
         );
         image.composite(textImage, position.x, position.y);
+        console.log(`[Watermark] 文字水印位置 x=${position.x} y=${position.y}`);
       }
+      applied = true;
+      console.log(`[Watermark] 文字水印应用完成`);
+    }
+
+    if (!applied) {
+      console.log("[Watermark] 未应用任何水印（配置为空或资源加载失败）");
+      return buffer;
     }
 
     const mime = image.getMIME();
-    return await image.getBufferAsync(mime);
+    const result = await image.getBufferAsync(mime);
+    console.log(`[Watermark] 处理完成 size=${result.length} mime=${mime}`);
+    return result;
   } catch (err) {
     console.error(`[Watermark] 处理失败: ${String((err as Error)?.message || err)}`);
     return buffer;
