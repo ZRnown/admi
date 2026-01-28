@@ -9,6 +9,45 @@ import { stripLanguages } from "./languageFilter.js";
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30000;
 
+function looksLikeImage(buffer: Buffer): boolean {
+  if (!buffer || buffer.length < 12) return false;
+  // PNG
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return true;
+  }
+  // JPEG
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return true;
+  }
+  // GIF
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+    return true;
+  }
+  // BMP
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) {
+    return true;
+  }
+  // WebP (RIFF....WEBP)
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export class SenderBot {
   replacementsDictionary: Record<string, string> = {};
 
@@ -124,6 +163,9 @@ export class SenderBot {
   ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
     const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
     const effectiveWatermark = resolveWatermarkConfig(this.watermark, watermark);
+    if (!effectiveWatermark && uploads.some((u) => u.isImage)) {
+      console.log("[水印] 未启用或配置无效，跳过图片水印处理");
+    }
     for (const u of uploads) {
       let buf: Buffer;
       if (u.localPath) {
@@ -137,11 +179,12 @@ export class SenderBot {
       } else {
         continue;
       }
-      const finalBuffer =
-        u.isImage && effectiveWatermark
-          ? await applyWatermarkToBuffer(buf, effectiveWatermark)
-          : buf;
-      results.push({ filename: u.filename, buffer: finalBuffer, isImage: u.isImage });
+      const shouldWatermark = !!effectiveWatermark && (u.isImage || looksLikeImage(buf));
+      const finalBuffer = shouldWatermark ? await applyWatermarkToBuffer(buf, effectiveWatermark) : buf;
+      if (shouldWatermark) {
+        console.log(`[水印] 已处理图片: ${u.filename}`);
+      }
+      results.push({ filename: u.filename, buffer: finalBuffer, isImage: u.isImage || shouldWatermark });
     }
     return results;
   }
