@@ -1893,6 +1893,8 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       account.ignoreEnglishThreshold !== oldAccount.ignoreEnglishThreshold ||
       account.ignoreChinese !== oldAccount.ignoreChinese ||
       account.ignoreChineseThreshold !== oldAccount.ignoreChineseThreshold;
+    const watermarkChanged =
+      JSON.stringify(account.watermark || {}) !== JSON.stringify(oldAccount.watermark || {});
     // 检测用户过滤配置变化
     const userFilterChanged =
       JSON.stringify(account.allowedUsersIds || []) !== JSON.stringify(oldAccount.allowedUsersIds || []) ||
@@ -1927,6 +1929,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         ignoreSettingsChanged ||
         userFilterChanged ||
         relayChanged ||
+        watermarkChanged ||
         forwardingTypeChanged
       ) {
         let senderBotsBySource = existing.senderBotsBySource;
@@ -1934,7 +1937,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         let feishuSendersBySource = (existing as any).feishuSendersBySource;
         // 如果映射或翻译配置变化，需要重新构建 SenderBot
         // 注意：ruleConfigChanged 包含 mappings 数组的变化，支持相同源ID多个webhook
-        if (mappingsChanged || ruleConfigChanged || translationChanged || relayChanged) {
+        if (mappingsChanged || ruleConfigChanged || translationChanged || relayChanged || watermarkChanged) {
           try {
             const built = await buildSenderBots(account, logger);
             senderBotsBySource = built.senderBotsBySource;
@@ -1984,6 +1987,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       !ignoreSettingsChanged &&
       !userFilterChanged &&
       !relayChanged &&
+      !watermarkChanged &&
       !restartRequested &&
       !loginRequestedBecameTrue &&
       !forwardingTypeChanged
