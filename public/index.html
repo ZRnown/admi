@@ -480,8 +480,29 @@
       return escapeHtml(parts.join('&'));
     }
 
+    function getWatermarkPreviewSize(accountId) {
+      const value = Number(watermarkPreviewSizes[accountId]);
+      if (Number.isFinite(value) && value > 60) return Math.min(480, Math.max(120, value));
+      return 144;
+    }
+
+    function updateWatermarkPreviewSize(accountId, value) {
+      const size = Number(value);
+      if (!Number.isFinite(size)) return;
+      watermarkPreviewSizes[accountId] = Math.min(480, Math.max(120, size));
+      localStorage.setItem('watermarkPreviewSizes', JSON.stringify(watermarkPreviewSizes));
+      render();
+    }
+
     let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
     const watermarkPreviewCache = new Map();
+    const watermarkPreviewSizes = (() => {
+      try {
+        return JSON.parse(localStorage.getItem('watermarkPreviewSizes') || '{}');
+      } catch (e) {
+        return {};
+      }
+    })();
     let saveTimer = null;
     let isLoggedIn = false;
     let pagination = { discordPage: 1, feishuPage: 1, botRelayPage: 1, pageSize: 10 };
@@ -1672,6 +1693,17 @@
                 <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.textOpacity) || ''}" onchange="updateWatermarkField('textOpacity', Number(this.value))"
                   placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">字体名称（可选）</label>
+                <input type="text" value="${(acc.watermark && acc.watermark.fontFamily) || ''}" onchange="updateWatermarkField('fontFamily', this.value)"
+                  placeholder="例如：Noto Sans CJK SC" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <p class="text-[11px] text-slate-400 mt-1">中文显示为? 时，请指定字体名称或路径</p>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">字体文件路径（可选）</label>
+                <input type="text" value="${(acc.watermark && acc.watermark.fontPath) || ''}" onchange="updateWatermarkField('fontPath', this.value)"
+                  placeholder="/usr/share/fonts/xxx.ttf" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
             </div>
             ` : ''}
 
@@ -1722,6 +1754,12 @@
 
             <div>
               <label class="block text-xs text-slate-600 mb-2">水印预览</label>
+              <div class="flex items-center gap-3 mb-2">
+                <span class="text-xs text-slate-500">预览大小</span>
+                <input type="range" min="120" max="480" value="${getWatermarkPreviewSize(acc.id)}"
+                  oninput="updateWatermarkPreviewSize('${acc.id}', this.value)" class="flex-1">
+                <span class="text-xs text-slate-500">${getWatermarkPreviewSize(acc.id)}px</span>
+              </div>
               ${renderWatermarkPreview(acc)}
             </div>
           </div>
@@ -2436,6 +2474,8 @@
       const imageOpacity = typeof watermark.imageOpacity === 'number' ? watermark.imageOpacity : 60;
       const tileGap = typeof watermark.tileGap === 'number' ? watermark.tileGap : 40;
       const previewImage = watermarkPreviewCache.get(acc.id) || (isPreviewableUrl(watermark.imageUrl) ? watermark.imageUrl : '');
+      const previewSize = getWatermarkPreviewSize(acc.id);
+      const maxImageWidth = Math.max(60, Math.round(previewSize * 0.45));
       const showText = mode !== 'image' && text;
       const showImage = mode !== 'text' && previewImage;
       const position = watermark.position || 'bottom-right';
@@ -2454,24 +2494,24 @@
       const overlayItems = [];
       if (pattern === 'single') {
         if (showText) {
-          overlayItems.push(`<div class="absolute ${posClass}" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;">${escapeHtml(text)}</div>`);
+          overlayItems.push(`<div class="absolute ${posClass}" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(watermark.fontFamily || 'sans-serif')};">${escapeHtml(text)}</div>`);
         }
         if (showImage) {
-          overlayItems.push(`<img src="${previewImage}" class="absolute ${posClass} max-w-[120px]" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;">`);
+          overlayItems.push(`<img src="${previewImage}" class="absolute ${posClass}" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;max-width:${maxImageWidth}px;">`);
         }
       } else {
         if (showText) {
           const tiles = Array.from({ length: 9 }).map(() => `<div>${escapeHtml(text)}</div>`).join('');
-          overlayItems.push(`<div class="absolute inset-0 grid grid-cols-3 place-items-center" style="gap:${tileGap}px;color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;">${tiles}</div>`);
+          overlayItems.push(`<div class="absolute inset-0 grid grid-cols-3 place-items-center" style="gap:${tileGap}px;color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(watermark.fontFamily || 'sans-serif')};">${tiles}</div>`);
         }
         if (showImage) {
-          const tiles = Array.from({ length: 9 }).map(() => `<img src="${previewImage}" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;">`).join('');
+          const tiles = Array.from({ length: 9 }).map(() => `<img src="${previewImage}" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;max-width:${maxImageWidth}px;">`).join('');
           overlayItems.push(`<div class="absolute inset-0 grid grid-cols-3 place-items-center" style="gap:${tileGap}px;">${tiles}</div>`);
         }
       }
 
       return `
-        <div class="relative h-36 w-full overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100">
+        <div class="relative w-full overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100" style="height:${previewSize}px;">
           ${overlayItems.join('')}
         </div>
       `;

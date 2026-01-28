@@ -83,6 +83,60 @@ function isDarkColor(value?: string): boolean {
   return brightness < 128;
 }
 
+function hasNonAsciiText(text: string): boolean {
+  return /[^\u0000-\u007f]/.test(text);
+}
+
+async function renderTextWatermarkImage(
+  text: string,
+  options: {
+    fontSize: number;
+    color: string;
+    opacity: number;
+    fontFamily?: string;
+    fontPath?: string;
+  },
+): Promise<Jimp | null> {
+  try {
+    const { createCanvas, registerFont } = await import("@napi-rs/canvas");
+    let fontFamily = options.fontFamily || "Noto Sans CJK SC, Noto Sans, Microsoft YaHei, PingFang SC, sans-serif";
+    if (options.fontPath) {
+      const familyName = options.fontFamily || "WatermarkFont";
+      try {
+        registerFont(options.fontPath, { family: familyName });
+        fontFamily = familyName;
+      } catch (err) {
+        console.warn(`[Watermark] 注册字体失败: ${options.fontPath} err=${String(err)}`);
+      }
+    }
+
+    const padding = 10;
+    const probeCanvas = createCanvas(1, 1);
+    const probeCtx = probeCanvas.getContext("2d");
+    probeCtx.font = `${options.fontSize}px "${fontFamily}"`;
+    const metrics = probeCtx.measureText(text);
+    const width = Math.max(1, Math.ceil(metrics.width));
+    const height = Math.max(
+      options.fontSize,
+      Math.ceil((metrics.actualBoundingBoxAscent || options.fontSize) + (metrics.actualBoundingBoxDescent || 0)),
+    );
+
+    const canvas = createCanvas(width + padding, height + padding);
+    const ctx = canvas.getContext("2d");
+    ctx.font = `${options.fontSize}px "${fontFamily}"`;
+    ctx.textBaseline = "top";
+    ctx.fillStyle = options.color;
+    ctx.globalAlpha = Math.max(0, Math.min(1, options.opacity / 100));
+    ctx.fillText(text, 0, 0);
+
+    const buffer = canvas.toBuffer("image/png");
+    return await Jimp.read(buffer);
+  } catch (err) {
+    console.warn(`[Watermark] Canvas 渲染失败: ${String(err)}`);
+    return null;
+  }
+}
+
 async function downloadBuffer(url: string): Promise<Buffer> {
   return await new Promise((resolve, reject) => {
     const client = url.startsWith("https") ? https : http;
@@ -219,55 +273,80 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
 
     if (effective.text && allowText) {
       const fontSize = pickFontSize(effective.textSize);
-      const fontColor = isDarkColor(effective.textColor) ? "BLACK" : "WHITE";
-      const fontName = `FONT_SANS_${fontSize}_${fontColor}`;
-      const fontPath = (Jimp as any)[fontName];
-      if (!fontPath) {
-        console.warn(`[Watermark] 字体未找到: ${fontName}，使用默认字体`);
-      }
-      const font = await Jimp.loadFont(fontPath || Jimp.FONT_SANS_16_WHITE);
-      const textWidth = Jimp.measureText(font, effective.text);
-      const textHeight = Jimp.measureTextHeight(font, effective.text, image.bitmap.width);
-      const safeWidth = Math.max(1, textWidth + 10);
-      const safeHeight = Math.max(1, textHeight + 10);
-      const textImage = await new Jimp(safeWidth, safeHeight, 0x00000000);
-      textImage.print(font, 0, 0, effective.text);
-      console.log(
-        `[Watermark] 文字水印 size=${fontSize} color=${effective.textColor || "auto"} pattern=${pattern}`,
-      );
-      if (effective.textColor) {
-        try {
-          (textImage as any).color([{ apply: "mix", params: [effective.textColor, 100] }]);
-        } catch {}
-      }
       const opacity = clampPercent(
         typeof effective.textOpacity === "number" ? effective.textOpacity : DEFAULT_TEXT_OPACITY,
         DEFAULT_TEXT_OPACITY,
       );
-      textImage.opacity(opacity / 100);
-      if (pattern === "tile") {
-        const stepX = Math.max(1, textImage.bitmap.width + gap);
-        const stepY = Math.max(1, textImage.bitmap.height + gap);
-        for (let y = 0; y < image.bitmap.height; y += stepY) {
-          for (let x = 0; x < image.bitmap.width; x += stepX) {
-            image.composite(textImage, x, y);
-          }
-        }
-        console.log(`[Watermark] 文字水印平铺完成 stepX=${stepX} stepY=${stepY}`);
-      } else {
-        const position = resolvePosition(
-          effective.position,
-          image.bitmap.width,
-          image.bitmap.height,
-          textImage.bitmap.width,
-          textImage.bitmap.height,
-          margin,
-        );
-        image.composite(textImage, position.x, position.y);
-        console.log(`[Watermark] 文字水印位置 x=${position.x} y=${position.y}`);
+      const color = effective.textColor || (isDarkColor(effective.textColor) ? "#000000" : "#ffffff");
+      let textImage: Jimp | null = null;
+      const useCanvas = hasNonAsciiText(effective.text) || Boolean(effective.fontPath || effective.fontFamily);
+      if (useCanvas) {
+        console.log(`[Watermark] 使用 Canvas 渲染文字水印`);
+        textImage = await renderTextWatermarkImage(effective.text, {
+          fontSize,
+          color,
+          opacity,
+          fontFamily: effective.fontFamily,
+          fontPath: effective.fontPath,
+        });
       }
-      applied = true;
-      console.log(`[Watermark] 文字水印应用完成`);
+      if (!textImage) {
+        const fontColor = isDarkColor(effective.textColor) ? "BLACK" : "WHITE";
+        const fontName = `FONT_SANS_${fontSize}_${fontColor}`;
+        const fontPath = (Jimp as any)[fontName];
+        if (!fontPath) {
+          console.warn(`[Watermark] 字体未找到: ${fontName}，使用默认字体`);
+        }
+        const font = await Jimp.loadFont(fontPath || Jimp.FONT_SANS_16_WHITE);
+        const textWidth = Jimp.measureText(font, effective.text);
+        const textHeight = Jimp.measureTextHeight(font, effective.text, image.bitmap.width);
+        const safeWidth = Math.max(1, textWidth + 10);
+        const safeHeight = Math.max(1, textHeight + 10);
+        textImage = await new Jimp(safeWidth, safeHeight, 0x00000000);
+        textImage.print(font, 0, 0, effective.text);
+        if (effective.textColor) {
+          try {
+            (textImage as any).color([{ apply: "mix", params: [effective.textColor, 100] }]);
+          } catch {}
+        }
+        textImage.opacity(opacity / 100);
+      }
+      if (!textImage) {
+        console.warn("[Watermark] 文字水印渲染失败，跳过文字水印");
+      } else {
+        console.log(
+          `[Watermark] 文字水印 size=${fontSize} color=${effective.textColor || "auto"} pattern=${pattern}`,
+        );
+      }
+      if (pattern === "tile") {
+        if (textImage) {
+          const stepX = Math.max(1, textImage.bitmap.width + gap);
+          const stepY = Math.max(1, textImage.bitmap.height + gap);
+          for (let y = 0; y < image.bitmap.height; y += stepY) {
+            for (let x = 0; x < image.bitmap.width; x += stepX) {
+              image.composite(textImage, x, y);
+            }
+          }
+          console.log(`[Watermark] 文字水印平铺完成 stepX=${stepX} stepY=${stepY}`);
+        }
+      } else {
+        if (textImage) {
+          const position = resolvePosition(
+            effective.position,
+            image.bitmap.width,
+            image.bitmap.height,
+            textImage.bitmap.width,
+            textImage.bitmap.height,
+            margin,
+          );
+          image.composite(textImage, position.x, position.y);
+          console.log(`[Watermark] 文字水印位置 x=${position.x} y=${position.y}`);
+        }
+      }
+      if (textImage) {
+        applied = true;
+        console.log(`[Watermark] 文字水印应用完成`);
+      }
     }
 
     if (!applied) {
