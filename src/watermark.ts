@@ -178,6 +178,11 @@ async function resolveRemoteFontPath(url: string): Promise<string | undefined> {
       return target;
     } catch {}
     const buffer = await downloadBuffer(url);
+    if (!isFontBuffer(buffer)) {
+      console.warn(`[Watermark] 下载的字体无效，跳过: ${url}`);
+      fontDownloadCache.set(url, null);
+      return undefined;
+    }
     await fs.writeFile(target, buffer);
     fontDownloadCache.set(url, target);
     console.log(`[Watermark] 已下载字体: ${url} -> ${target}`);
@@ -187,6 +192,22 @@ async function resolveRemoteFontPath(url: string): Promise<string | undefined> {
     fontDownloadCache.set(url, null);
     return undefined;
   }
+}
+
+function isFontBuffer(buffer: Buffer): boolean {
+  if (!buffer || buffer.length < 1024) return false;
+  const magic = buffer.subarray(0, 4).toString("latin1");
+  if (magic === "OTTO" || magic === "ttcf" || magic === "true" || magic === "typ1") return true;
+  // TrueType sfnt version 0x00010000
+  if (buffer[0] === 0x00 && buffer[1] === 0x01 && buffer[2] === 0x00 && buffer[3] === 0x00) {
+    return true;
+  }
+  // HTML or text response
+  const head = buffer.subarray(0, 32).toString("utf8").toLowerCase();
+  if (head.includes("<html") || head.includes("<!doctype")) {
+    return false;
+  }
+  return false;
 }
 
 async function renderTextWatermarkImage(
@@ -223,6 +244,7 @@ async function renderTextWatermarkImage(
       try {
         registerFont(fontPath, { family: familyName });
         fontFamily = familyName;
+        console.log(`[Watermark] 字体注册成功: ${fontFamily}`);
       } catch (err) {
         console.warn(`[Watermark] 注册字体失败: ${fontPath} err=${String(err)}`);
       }

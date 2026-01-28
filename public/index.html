@@ -1749,10 +1749,15 @@
                 </div>
               </div>
               <div>
-                <label class="block text-xs text-slate-600 mb-1">字体名称（可选）</label>
-                <input type="text" value="${(acc.watermark && acc.watermark.fontFamily) || ''}" onchange="updateWatermarkField('fontFamily', this.value)"
-                  placeholder="例如：Noto Sans CJK SC" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <p class="text-[11px] text-slate-400 mt-1">未填写会自动下载字体到 .data/watermark_fonts；中文仍为方块时需安装 @napi-rs/canvas</p>
+                <label class="block text-xs text-slate-600 mb-1">中文字体（自动下载）</label>
+                <select onchange="updateWatermarkFontPreset('${acc.id}', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="" ${getWatermarkFontPresetKey(acc) === '' ? 'selected' : ''}>自动选择（默认）</option>
+                  ${watermarkFontPresets.map((preset) => `
+                    <option value="${preset.key}" ${getWatermarkFontPresetKey(acc) === preset.key ? 'selected' : ''}>${preset.label}</option>
+                  `).join('')}
+                  ${getWatermarkFontPresetKey(acc) === 'custom' ? '<option value="custom" selected>自定义字体（已设置）</option>' : ''}
+                </select>
+                <p class="text-[11px] text-slate-400 mt-1">无需手动设置路径，字体会自动下载到 .data/watermark_fonts</p>
               </div>
             </div>
             ` : ''}
@@ -2538,6 +2543,101 @@
 
     const watermarkMeasureCanvas = document.createElement('canvas');
     const watermarkMeasureCtx = watermarkMeasureCanvas.getContext('2d');
+    const watermarkFontPresets = [
+      {
+        key: 'msyh',
+        label: '微软雅黑',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91.ttf',
+        family: 'Microsoft YaHei'
+      },
+      {
+        key: 'msyh-bold',
+        label: '微软雅黑粗体',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91%E7%B2%97%E4%BD%93.ttf',
+        family: 'Microsoft YaHei'
+      },
+      {
+        key: 'hwzh',
+        label: '华文细黑',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E7%BB%86%E9%BB%91.ttf',
+        family: '华文细黑'
+      },
+      {
+        key: 'hwzs',
+        label: '华文中宋',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E4%B8%AD%E5%AE%8B.ttf',
+        family: '华文中宋'
+      },
+      {
+        key: 'hwkt',
+        label: '华文楷体',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E6%A5%B7%E4%BD%93.ttf',
+        family: '华文楷体'
+      },
+      {
+        key: 'hwfs',
+        label: '华文仿宋',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E4%BB%BF%E5%AE%8B.ttf',
+        family: '华文仿宋'
+      },
+      {
+        key: 'hwcy',
+        label: '华文彩云',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E5%BD%A9%E4%BA%91.ttf',
+        family: '华文彩云'
+      },
+      {
+        key: 'hwxw',
+        label: '华文新魏',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E6%96%B0%E9%AD%8F.ttf',
+        family: '华文新魏'
+      },
+      {
+        key: 'hwhp',
+        label: '华文琥珀',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E7%90%A5%E7%8F%80.ttf',
+        family: '华文琥珀'
+      },
+      {
+        key: 'hwxk',
+        label: '华文行楷',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E8%A1%8C%E6%A5%B7.ttf',
+        family: '华文行楷'
+      },
+      {
+        key: 'hwlt',
+        label: '华文隶体',
+        url: 'https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E9%9A%B6%E4%BD%93.TTF',
+        family: '华文隶体'
+      }
+    ];
+
+    function getWatermarkFontPresetKey(acc) {
+      const fontPath = acc?.watermark?.fontPath;
+      if (!fontPath) return '';
+      const preset = watermarkFontPresets.find((item) => item.url === fontPath);
+      if (preset) return preset.key;
+      return 'custom';
+    }
+
+    function updateWatermarkFontPreset(accountId, value) {
+      const acc = getActiveAccount();
+      ensureWatermarkConfig(acc);
+      if (!value) {
+        acc.watermark.fontPath = undefined;
+        acc.watermark.fontFamily = undefined;
+      } else if (value === 'custom') {
+        // 保留现有设置
+      } else {
+        const preset = watermarkFontPresets.find((item) => item.key === value);
+        if (preset) {
+          acc.watermark.fontPath = preset.url;
+          acc.watermark.fontFamily = preset.family || preset.label;
+        }
+      }
+      saveConfig();
+      render();
+    }
 
     function measureWatermarkText(text, fontSize, fontFamily) {
       if (!watermarkMeasureCtx) {
