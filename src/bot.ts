@@ -178,6 +178,58 @@ function hasImageInEmbeds(embeds: any[]): boolean {
   return collectEmbedImageUrls(embeds).length > 0;
 }
 
+function guessImageExtension(url: string): string {
+  try {
+    const ext = path.extname(new URL(url).pathname);
+    if (ext && ext.length <= 8) return ext.toLowerCase();
+  } catch {}
+  const match = url.match(/\.(png|jpe?g|gif|webp|bmp|svg)/i);
+  if (match) return `.${match[1].toLowerCase()}`;
+  return ".jpg";
+}
+
+function buildImageFilename(url: string, index: number, base?: string): string {
+  const ext = guessImageExtension(url);
+  const safeBase = (base || `image_${index}`).replace(/[^a-zA-Z0-9_.-]/g, "_");
+  if (path.extname(safeBase)) return safeBase;
+  return `${safeBase}${ext}`;
+}
+
+function replaceEmbedImageUrls(
+  embeds: any[] | undefined,
+  urlMap: Map<string, string>,
+): any[] | undefined {
+  if (!embeds || embeds.length === 0 || urlMap.size === 0) return embeds;
+  const resolveAttachment = (url?: string) => {
+    if (!url) return url;
+    const mapped = urlMap.get(url);
+    return mapped ? `attachment://${mapped}` : url;
+  };
+  return embeds.map((embed) => {
+    if (!embed || typeof embed !== "object") return embed;
+    let raw: any = embed;
+    if (typeof (embed as any).toJSON === "function") {
+      try {
+        raw = (embed as any).toJSON();
+      } catch {}
+    } else if ("data" in embed && (embed as any).data) {
+      raw = (embed as any).data;
+    }
+    if (!raw || typeof raw !== "object") return raw;
+    const next: any = { ...raw };
+    if (next.image && typeof next.image === "object") {
+      next.image = { ...next.image, url: resolveAttachment(next.image.url) };
+    }
+    if (next.thumbnail && typeof next.thumbnail === "object") {
+      next.thumbnail = { ...next.thumbnail, url: resolveAttachment(next.thumbnail.url) };
+    }
+    if (next.type === "image" || (typeof next.url === "string" && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(next.url))) {
+      next.url = resolveAttachment(next.url);
+    }
+    return next;
+  });
+}
+
 function isForwardReference(message: Message): boolean {
   const refType = message.reference?.type;
   if (refType === undefined || refType === null) return false;
@@ -765,6 +817,7 @@ export class Bot {
     const stripEnglish = this.config.stripEnglish === true || ruleConfig.stripEnglish === true;
     const stripChinese = this.config.stripChinese === true || ruleConfig.stripChinese === true;
     const stripOptions = { stripEnglish, stripChinese };
+    const effectiveWatermark = resolveWatermarkConfig(this.config.watermark, ruleConfig.watermark);
 
     // 忽略选项检查（规则级别优先，未设置则使用全局设置）
     try {
@@ -1282,6 +1335,8 @@ export class Bot {
     // 根据忽略设置过滤附件
     const uploads: Array<{ url: string; filename: string; isImage?: boolean; isVideo?: boolean }> = [];
     let hasCurrentImage = false;
+    const imageUrlToFilename = new Map<string, string>();
+    let imageIndex = 0;
     try {
       // 获取忽略设置（全局 + 规则级别）
       const uploadRuleConfig = this.getRuleLevelConfig(message.channelId);
@@ -1326,19 +1381,38 @@ export class Bot {
 
         if (isImage) hasCurrentImage = true;
         uploads.push({ url, filename, isImage, isVideo });
+        if (isImage) {
+          imageUrlToFilename.set(url, filename);
+        }
       }
 
       const extraImages = collectImageAssets(message);
+      const seenUploads = new Set(uploads.map((item) => item.url));
       if (extraImages.length > 0) {
-        const seenUploads = new Set(uploads.map((item) => item.url));
         for (const asset of extraImages) {
           if (!asset.url || seenUploads.has(asset.url)) continue;
           seenUploads.add(asset.url);
+          const filename = buildImageFilename(asset.url, ++imageIndex, asset.name);
           uploads.push({
             url: asset.url,
-            filename: asset.name || "image",
+            filename,
             isImage: true,
           });
+          imageUrlToFilename.set(asset.url, filename);
+        }
+      }
+      if (effectiveWatermark && !skipImages) {
+        const embedUrls = collectEmbedImageUrls(message.embeds || []);
+        for (const url of embedUrls) {
+          if (!url || seenUploads.has(url)) continue;
+          seenUploads.add(url);
+          const filename = buildImageFilename(url, ++imageIndex, "embed");
+          uploads.push({
+            url,
+            filename,
+            isImage: true,
+          });
+          imageUrlToFilename.set(url, filename);
         }
       }
     } catch {}
@@ -1381,8 +1455,9 @@ export class Bot {
       extraEmbeds = message.embeds;
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
-    
-    const effectiveWatermark = resolveWatermarkConfig(this.config.watermark, ruleConfig.watermark);
+    if (effectiveWatermark) {
+      extraEmbeds = replaceEmbedImageUrls(extraEmbeds, imageUrlToFilename);
+    }
     const toSend = [{
       content: `${discordContent}`.trim(),
       sourceMessageId: message.id,
