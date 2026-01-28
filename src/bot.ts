@@ -1554,8 +1554,10 @@ export class Bot {
                 },
                 attachments: uploads.map((u) => ({
                   url: u.url,
-                  contentType: u.isImage ? 'image' : 'file',
-                  name: u.filename,
+                  filename: u.filename,
+                  isImage: u.isImage,
+                  isVideo: u.isVideo,
+                  contentType: u.isImage ? "image/jpeg" : u.isVideo ? "video/mp4" : "application/octet-stream",
                 })),
                 embeds: telegramEmbeds && telegramEmbeds.length > 0 ? telegramEmbeds : undefined,
                 watermark: resolveWatermarkConfig(this.config.watermark, ruleConfig.watermark),
