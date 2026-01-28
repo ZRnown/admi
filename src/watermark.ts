@@ -15,9 +15,22 @@ const DEFAULT_IMAGE_SCALE = 20;
 const DEFAULT_TEXT_SIZE = 16;
 const DEFAULT_TILE_GAP = 40;
 const AUTO_FONT_DOWNLOAD = process.env.WATERMARK_AUTO_FONT_DOWNLOAD !== "0";
-const DEFAULT_CJK_FONT_URL =
-  process.env.WATERMARK_CJK_FONT_URL ||
-  "https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf";
+const DEFAULT_CJK_FONT_URLS = (() => {
+  const env = process.env.WATERMARK_CJK_FONT_URL;
+  if (env && env.trim()) {
+    return env
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91.ttf",
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91%E7%B2%97%E4%BD%93.ttf",
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E7%BB%86%E9%BB%91.ttf",
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E4%B8%AD%E5%AE%8B.ttf",
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E6%A5%B7%E4%BD%93.ttf",
+  ];
+})();
 const FONT_CACHE_DIR = path.join(process.cwd(), ".data", "watermark_fonts");
 const fontDownloadCache = new Map<string, string | null>();
 
@@ -135,9 +148,11 @@ async function resolveDefaultFontPath(preferCjk: boolean): Promise<string | unde
     } catch {}
   }
   if (preferCjk && AUTO_FONT_DOWNLOAD) {
-    const downloaded = await resolveRemoteFontPath(DEFAULT_CJK_FONT_URL);
-    if (downloaded) {
-      return downloaded;
+    for (const url of DEFAULT_CJK_FONT_URLS) {
+      const downloaded = await resolveRemoteFontPath(url);
+      if (downloaded) {
+        return downloaded;
+      }
     }
   }
   if (preferCjk) {

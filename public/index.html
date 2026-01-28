@@ -2524,7 +2524,12 @@
       acc.watermark.textAngle = Number.isFinite(numeric) ? numeric : 0;
       const label = document.getElementById(`watermarkAngleValue-${accountId}`);
       if (label) label.textContent = `${Number.isFinite(numeric) ? numeric : 0}°`;
-      scheduleWatermarkPreviewRender(accountId);
+      const box = document.getElementById(`watermarkPreviewBox-${accountId}`);
+      if (box) {
+        box.style.setProperty("--wm-angle", `${Number.isFinite(numeric) ? numeric : 0}deg`);
+      } else {
+        scheduleWatermarkPreviewRender(accountId);
+      }
     }
 
     function isPreviewableUrl(value) {
@@ -2611,7 +2616,7 @@
       const overlayItems = [];
       if (pattern === 'single') {
         if (showText) {
-          const rotateStyle = textAngle ? `transform: rotate(${textAngle}deg); transform-origin: 0 0;` : '';
+          const rotateStyle = 'transform: rotate(var(--wm-angle)); transform-origin: 0 0;';
           overlayItems.push(`<div class="absolute ${posClass}" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(fontFamily)};${rotateStyle}">${escapeHtml(text)}</div>`);
         }
         if (showImage) {
@@ -2627,7 +2632,7 @@
           const stepY = rotated.height + tileGap;
           const cols = Math.max(1, Math.ceil(previewWidth / stepX));
           const rows = Math.max(1, Math.ceil(previewHeight / stepY));
-          const rotateStyle = textAngle ? `transform: translate(-50%, -50%) rotate(${textAngle}deg);` : 'transform: translate(-50%, -50%);';
+          const rotateStyle = 'transform: translate(-50%, -50%) rotate(var(--wm-angle));';
           let tiles = '';
           for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
@@ -2662,7 +2667,7 @@
       }
 
       return `
-        <div class="relative overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100" style="width:${previewWidth}px;height:${previewHeight}px;max-width:100%;">
+        <div id="watermarkPreviewBox-${acc.id}" class="relative overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100" style="width:${previewWidth}px;height:${previewHeight}px;max-width:100%;--wm-angle:${textAngle}deg;">
           ${overlayItems.join('')}
         </div>
       `;
