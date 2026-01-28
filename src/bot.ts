@@ -208,7 +208,8 @@ function replaceEmbedImageUrls(
   if (!embeds || embeds.length === 0 || urlMap.size === 0) return embeds;
   const resolveAttachment = (url?: string) => {
     if (!url) return url;
-    const mapped = urlMap.get(url);
+    const normalized = normalizeImageUrl(url);
+    const mapped = urlMap.get(url) || (normalized ? urlMap.get(normalized) : undefined);
     return mapped ? `attachment://${mapped}` : url;
   };
   return embeds.map((embed) => {
@@ -234,6 +235,16 @@ function replaceEmbedImageUrls(
     }
     return next;
   });
+}
+
+function normalizeImageUrl(url?: string): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split(/[?#]/)[0] || url;
+  }
 }
 
 function isForwardReference(message: Message): boolean {
@@ -1391,15 +1402,25 @@ export class Bot {
         uploads.push({ url, filename, isImage, isVideo });
         if (isImage) {
           imageUrlToFilename.set(url, filename);
+          const normalized = normalizeImageUrl(url);
+          if (normalized) imageUrlToFilename.set(normalized, filename);
         }
       }
 
       const extraImages = collectImageAssets(message);
-      const seenUploads = new Set(uploads.map((item) => item.url));
+      const seenUploads = new Set<string>();
+      for (const item of uploads) {
+        seenUploads.add(item.url);
+        const normalized = normalizeImageUrl(item.url);
+        if (normalized) seenUploads.add(normalized);
+      }
       if (extraImages.length > 0) {
         for (const asset of extraImages) {
-          if (!asset.url || seenUploads.has(asset.url)) continue;
+          if (!asset.url) continue;
+          const normalized = normalizeImageUrl(asset.url);
+          if (seenUploads.has(asset.url) || (normalized && seenUploads.has(normalized))) continue;
           seenUploads.add(asset.url);
+          if (normalized) seenUploads.add(normalized);
           const filename = buildImageFilename(asset.url, ++imageIndex, asset.name);
           uploads.push({
             url: asset.url,
@@ -1407,13 +1428,17 @@ export class Bot {
             isImage: true,
           });
           imageUrlToFilename.set(asset.url, filename);
+          if (normalized) imageUrlToFilename.set(normalized, filename);
         }
       }
       if (effectiveWatermark && !skipImages) {
         const embedUrls = collectEmbedImageUrls(message.embeds || []);
         for (const url of embedUrls) {
-          if (!url || seenUploads.has(url)) continue;
+          if (!url) continue;
+          const normalized = normalizeImageUrl(url);
+          if (seenUploads.has(url) || (normalized && seenUploads.has(normalized))) continue;
           seenUploads.add(url);
+          if (normalized) seenUploads.add(normalized);
           const filename = buildImageFilename(url, ++imageIndex, "embed");
           uploads.push({
             url,
@@ -1421,6 +1446,7 @@ export class Bot {
             isImage: true,
           });
           imageUrlToFilename.set(url, filename);
+          if (normalized) imageUrlToFilename.set(normalized, filename);
         }
       }
     } catch {}
