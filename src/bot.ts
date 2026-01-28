@@ -25,6 +25,11 @@ interface RenderOutput {
   content: string;
 }
 
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i;
+const VIDEO_EXT_RE = /\.(mp4|mov|webm|mkv|avi|flv)(?:$|[?#])/i;
+const AUDIO_EXT_RE = /\.(mp3|wav|ogg|flac|m4a|aac)(?:$|[?#])/i;
+const DOCUMENT_EXT_RE = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(?:$|[?#])/i;
+
 export type Client<Ready extends boolean = boolean> =
   | SelfBotClient<Ready>
   | BotClient<Ready>;
@@ -145,7 +150,8 @@ function hasImageAttachment(attachments: any): boolean {
   for (const att of values) {
     const contentType = String(att?.contentType || "").toLowerCase();
     const url = String(att?.url || att?.proxyURL || "").toLowerCase();
-    if (contentType.startsWith("image/") || (url && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url))) {
+    const name = String(att?.name || "");
+    if (contentType.startsWith("image/") || (url && IMAGE_EXT_RE.test(url)) || IMAGE_EXT_RE.test(name)) {
       return true;
     }
   }
@@ -164,10 +170,10 @@ function collectEmbedImageUrls(embeds: any[]): string[] {
       if (rawUrl) urls.push(rawUrl);
       continue;
     }
-    if (imageUrl && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(imageUrl)) {
+    if (imageUrl && IMAGE_EXT_RE.test(imageUrl)) {
       urls.push(imageUrl);
     }
-    if (rawUrl && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(rawUrl)) {
+    if (rawUrl && IMAGE_EXT_RE.test(rawUrl)) {
       urls.push(rawUrl);
     }
   }
@@ -183,7 +189,7 @@ function guessImageExtension(url: string): string {
     const ext = path.extname(new URL(url).pathname);
     if (ext && ext.length <= 8) return ext.toLowerCase();
   } catch {}
-  const match = url.match(/\.(png|jpe?g|gif|webp|bmp|svg)/i);
+  const match = url.match(IMAGE_EXT_RE);
   if (match) return `.${match[1].toLowerCase()}`;
   return ".jpg";
 }
@@ -223,7 +229,7 @@ function replaceEmbedImageUrls(
     if (next.thumbnail && typeof next.thumbnail === "object") {
       next.thumbnail = { ...next.thumbnail, url: resolveAttachment(next.thumbnail.url) };
     }
-    if (next.type === "image" || (typeof next.url === "string" && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(next.url))) {
+    if (next.type === "image" || (typeof next.url === "string" && IMAGE_EXT_RE.test(next.url))) {
       next.url = resolveAttachment(next.url);
     }
     return next;
@@ -267,8 +273,9 @@ function collectImageAssets(message: Message): ImageAsset[] {
     for (const att of values) {
       const contentType = String(att?.contentType || "").toLowerCase();
       const url = String(att?.url || att?.proxyURL || "");
+      const name = String(att?.name || "");
       if (!url) continue;
-      if (contentType.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url)) {
+      if (contentType.startsWith("image/") || IMAGE_EXT_RE.test(url) || IMAGE_EXT_RE.test(name)) {
         addAsset(url, contentType, att?.name);
       }
     }
@@ -868,13 +875,13 @@ export class Bot {
           const url = (att.url || "").toLowerCase();
 
           // 忽略音频
-          if (shouldIgnoreAudio && (ct.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(url))) {
+          if (shouldIgnoreAudio && (ct.startsWith("audio/") || AUDIO_EXT_RE.test(url))) {
             this.logger.info(`${logPrefix} [SKIP] Ignoring audio attachment (ignoreAudio=true, rule=${ruleConfig.ignoreAudio})`);
             return;
           }
 
           // 忽略视频
-          if (shouldIgnoreVideo && (ct.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi|flv)$/i.test(url))) {
+          if (shouldIgnoreVideo && (ct.startsWith("video/") || VIDEO_EXT_RE.test(url))) {
             this.logger.info(`${logPrefix} [SKIP] Ignoring video attachment (ignoreVideo=true)`);
             return;
           }
@@ -884,7 +891,7 @@ export class Bot {
             ct.includes("application/pdf") ||
             ct.includes("application/msword") ||
             ct.includes("application/vnd.openxmlformats") ||
-            /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)$/i.test(url)
+            DOCUMENT_EXT_RE.test(url)
           )) {
             this.logger.info(`${logPrefix} [SKIP] Ignoring document attachment (ignoreDocuments=true)`);
             return;
@@ -1353,13 +1360,14 @@ export class Bot {
         const url = att.url;
         const filename = att.name || "file";
         const ct = (att.contentType || "").toLowerCase();
-        const isImage = ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url);
-        const isVideo = ct.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi)$/i.test(url);
-        const isAudio = ct.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(url);
+        const isImage = ct.startsWith("image/") || IMAGE_EXT_RE.test(url) || IMAGE_EXT_RE.test(filename);
+        const isVideo = ct.startsWith("video/") || VIDEO_EXT_RE.test(url) || VIDEO_EXT_RE.test(filename);
+        const isAudio = ct.startsWith("audio/") || AUDIO_EXT_RE.test(url) || AUDIO_EXT_RE.test(filename);
         const isDocument = ct.includes("application/pdf") ||
           ct.includes("application/msword") ||
           ct.includes("application/vnd.openxmlformats") ||
-          /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)$/i.test(url);
+          DOCUMENT_EXT_RE.test(url) ||
+          DOCUMENT_EXT_RE.test(filename);
 
         // 根据忽略设置跳过特定类型的附件
         if (skipImages && isImage) {
