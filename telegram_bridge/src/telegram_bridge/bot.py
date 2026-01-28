@@ -8,7 +8,7 @@ import os
 import time
 import aiohttp
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from telethon import TelegramClient, events
 from telethon.tl.types import User, Chat, Channel
 from loguru import logger
@@ -31,6 +31,12 @@ class TelegramBotManager:
         self._keepalive_tasks: Dict[str, asyncio.Task] = {}
         self._entity_cache: Dict[str, Dict[int, float]] = {}
         self._account_configs: Dict[str, TelegramAccount] = {}  # 保存账号配置用于重连
+        self._shared_clients: Dict[str, TelegramClient] = {}
+        self._shared_account_ids: Dict[str, set] = {}
+        self._shared_by_account: Dict[str, str] = {}
+        self._shared_primary: Dict[str, str] = {}
+        self._shared_user_info: Dict[str, dict] = {}
+        self._event_handlers: Dict[str, Any] = {}
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
         self.avatar_dir = Path(avatar_root)
@@ -72,20 +78,89 @@ class TelegramBotManager:
             return chat_username.lstrip("@").lower() in watched
         return False
 
-    def _get_connect_lock(self, account_id: str) -> asyncio.Lock:
-        lock = self._connect_locks.get(account_id)
+    def _get_connect_lock(self, lock_id: str) -> asyncio.Lock:
+        lock = self._connect_locks.get(lock_id)
         if not lock:
             lock = asyncio.Lock()
-            self._connect_locks[account_id] = lock
+            self._connect_locks[lock_id] = lock
         return lock
 
+    def _get_task_key(self, account_id: str) -> str:
+        return self._shared_by_account.get(account_id) or account_id
+
+    def _build_shared_key(self, account: TelegramAccount) -> Optional[str]:
+        token = account.token or ""
+        if not token:
+            return None
+        return f"bot:{token}"
+
+    def _get_keepalive_chat_ids(self, task_key: str) -> List[Union[int, str]]:
+        if task_key in self._shared_account_ids:
+            combined: set = set()
+            for acc_id in self._shared_account_ids.get(task_key, set()):
+                combined.update(self._watched_chats.get(acc_id, set()))
+            return list(combined)
+        return list(self._watched_chats.get(task_key, set()))
+
+    async def _attach_shared_bot(
+        self,
+        account_id: str,
+        account: TelegramAccount,
+        shared_key: str,
+        client: TelegramClient,
+    ) -> Dict[str, Any]:
+        self.bots[account_id] = client
+        self.bot_tokens[account_id] = account.token or ""
+        self._account_configs[account_id] = account
+        self._shared_by_account[account_id] = shared_key
+        self._shared_account_ids.setdefault(shared_key, set()).add(account_id)
+
+        if account_id not in self._event_handlers:
+            async def message_handler(event, acc_id=account_id):
+                asyncio.create_task(self._handle_message(event, acc_id))
+            client.add_event_handler(message_handler, events.NewMessage)
+            self._event_handlers[account_id] = message_handler
+
+        if shared_key not in self._shared_primary:
+            self._shared_primary[shared_key] = account_id
+            self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
+
+        user_info = self._shared_user_info.get(shared_key)
+        if not user_info:
+            try:
+                me = await client.get_me()
+                if me:
+                    user_info = {
+                        "id": me.id,
+                        "firstName": me.first_name,
+                        "lastName": getattr(me, "last_name", None),
+                        "username": me.username
+                    }
+                    self._shared_user_info[shared_key] = user_info
+            except Exception as e:
+                logger.debug(f"Failed to fetch shared bot user info: {e}")
+        if user_info:
+            self.connection_manager.update_state(
+                account_id,
+                ConnectionStatus.CONNECTED,
+                user_info=user_info
+            )
+        else:
+            self.connection_manager.update_state(account_id, ConnectionStatus.CONNECTED)
+        return {
+            "success": True,
+            "userInfo": user_info
+        }
+
     def _start_update_task(self, account_id: str, client: TelegramClient):
-        if account_id in self._update_tasks:
+        task_key = self._get_task_key(account_id)
+        if task_key in self._update_tasks:
             return
-        self._update_tasks[account_id] = asyncio.create_task(self._run_update_loop(account_id, client))
+        self._update_tasks[task_key] = asyncio.create_task(self._run_update_loop(task_key, client))
 
     async def _stop_update_task(self, account_id: str):
-        task = self._update_tasks.pop(account_id, None)
+        task_key = self._get_task_key(account_id)
+        task = self._update_tasks.pop(task_key, None)
         if not task:
             return
         task.cancel()
@@ -103,14 +178,16 @@ class TelegramBotManager:
             logger.error(f"Bot update loop crashed for account {account_id}: {e}")
 
     def _start_keepalive_task(self, account_id: str, client: TelegramClient):
-        if account_id in self._keepalive_tasks:
+        task_key = self._get_task_key(account_id)
+        if task_key in self._keepalive_tasks:
             return
-        self._keepalive_tasks[account_id] = asyncio.create_task(
-            self._keepalive_loop(account_id, client)
+        self._keepalive_tasks[task_key] = asyncio.create_task(
+            self._keepalive_loop(task_key, client)
         )
 
     async def _stop_keepalive_task(self, account_id: str):
-        task = self._keepalive_tasks.pop(account_id, None)
+        task_key = self._get_task_key(account_id)
+        task = self._keepalive_tasks.pop(task_key, None)
         if not task:
             return
         task.cancel()
@@ -158,7 +235,8 @@ class TelegramBotManager:
                 raw_account_id = account.get("id")
                 account = TelegramAccount(**account)
             account_id = account.id
-            lock = self._get_connect_lock(account_id)
+            shared_key = self._build_shared_key(account)
+            lock = self._get_connect_lock(shared_key or account_id)
             if lock.locked():
                 return {
                     "success": False,
@@ -167,6 +245,20 @@ class TelegramBotManager:
                 }
 
             async with lock:
+                if shared_key:
+                    shared_bot = self._shared_clients.get(shared_key)
+                    if shared_bot and shared_bot.is_connected():
+                        return await self._attach_shared_bot(account_id, account, shared_key, shared_bot)
+                    if shared_bot:
+                        try:
+                            await shared_bot.disconnect()
+                        except Exception:
+                            pass
+                        self._shared_clients.pop(shared_key, None)
+                        self._shared_account_ids.pop(shared_key, None)
+                        self._shared_primary.pop(shared_key, None)
+                        self._shared_user_info.pop(shared_key, None)
+
                 # 如果 Bot 已存在且已连接，直接返回成功（修复：避免不必要的断开重连）
                 if account_id in self.bots:
                     existing_bot = self.bots[account_id]
@@ -189,7 +281,7 @@ class TelegramBotManager:
                                 logger.info(f"Telegram bot already connected for account {account_id}")
                                 return {
                                     "success": True,
-                                    "user_info": user_info
+                                    "userInfo": user_info
                                 }
                         except Exception as e:
                             logger.warning(f"Existing bot check failed, will reconnect: {e}")
@@ -200,7 +292,8 @@ class TelegramBotManager:
                     await asyncio.sleep(0.5)
 
                 # 注册状态回调
-                self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
+                if not shared_key or shared_key not in self._shared_primary:
+                    self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
 
                 # 更新连接状态
                 self.connection_manager.update_state(account_id, ConnectionStatus.CONNECTING)
@@ -263,31 +356,41 @@ class TelegramBotManager:
                     "username": me.username
                 }
 
-                # 保存机器人和账号配置（用于重连）
-                self.bots[account_id] = client
-                self.bot_tokens[account_id] = account.token  # 保存 token 用于 Bot API
-                self._account_configs[account_id] = account
+                if shared_key:
+                    self._shared_clients[shared_key] = client
+                    self._shared_user_info[shared_key] = user_info
+                    result = await self._attach_shared_bot(account_id, account, shared_key, client)
+                else:
+                    # 保存机器人和账号配置（用于重连）
+                    self.bots[account_id] = client
+                    self.bot_tokens[account_id] = account.token  # 保存 token 用于 Bot API
+                    self._account_configs[account_id] = account
 
-                # 更新连接状态
-                self.connection_manager.update_state(
-                    account_id,
-                    ConnectionStatus.CONNECTED,
-                    user_info=user_info
-                )
+                    # 更新连接状态
+                    self.connection_manager.update_state(
+                        account_id,
+                        ConnectionStatus.CONNECTED,
+                        user_info=user_info
+                    )
 
-                # 设置消息处理器 - 使用闭包捕获account_id
-                async def message_handler(event):
-                    asyncio.create_task(self._handle_message(event, account_id))
+                    # 设置消息处理器 - 使用闭包捕获account_id
+                    if account_id not in self._event_handlers:
+                        async def message_handler(event, acc_id=account_id):
+                            asyncio.create_task(self._handle_message(event, acc_id))
 
-                client.add_event_handler(message_handler, events.NewMessage)
+                        client.add_event_handler(message_handler, events.NewMessage)
+                        self._event_handlers[account_id] = message_handler
+
+                    result = {
+                        "success": True,
+                        "userInfo": user_info
+                    }
+
                 self._start_update_task(account_id, client)
                 self._start_keepalive_task(account_id, client)
 
                 logger.info(f"Telegram bot connected for account {account_id}: @{me.username}")
-                return {
-                    "success": True,
-                    "userInfo": user_info
-                }
+                return result
 
         except Exception as e:
             # 修复：安全获取 account_id，兼容对象和字典
@@ -311,13 +414,29 @@ class TelegramBotManager:
     async def disconnect(self, account_id: str) -> Dict[str, Any]:
         """断开Telegram机器人连接"""
         try:
+            lock_key = self._shared_by_account.get(account_id) or account_id
+            lock = self._get_connect_lock(lock_key)
+            async with lock:
+                return await self._disconnect_inner(account_id)
+        except Exception as e:
+            logger.error(f"Failed to disconnect Telegram bot for account {account_id}: {e}")
+            return {
+                "success": False,
+                "error": "DISCONNECT_FAILED",
+                "message": str(e)
+            }
+
+    async def _disconnect_inner(self, account_id: str) -> Dict[str, Any]:
+        """断开Telegram机器人连接（内部方法，不处理锁）"""
+        try:
+            shared_key = self._shared_by_account.get(account_id)
+            bot = self.bots.get(account_id)
+
             # 先取消注册状态回调，避免断开时触发自动重连导致闪烁
             self.connection_manager.unregister_status_callback(account_id)
 
             # 停止重连
             await self.connection_manager.stop_reconnect(account_id)
-            await self._stop_update_task(account_id)
-            await self._stop_keepalive_task(account_id)
 
             # 清除所有缓存，防止自动重连使用旧配置
             if account_id in self._account_configs:
@@ -329,13 +448,58 @@ class TelegramBotManager:
             if account_id in self._entity_cache:
                 del self._entity_cache[account_id]
 
+            handler = self._event_handlers.pop(account_id, None)
+            if handler and bot:
+                try:
+                    bot.remove_event_handler(handler, events.NewMessage)
+                except Exception:
+                    pass
+
             if account_id in self.bots:
-                bot = self.bots[account_id]
+                del self.bots[account_id]
+
+            if shared_key:
+                account_ids = self._shared_account_ids.get(shared_key, set())
+                if account_id in account_ids:
+                    account_ids.remove(account_id)
+                if account_ids:
+                    if self._shared_primary.get(shared_key) == account_id:
+                        new_primary = next(iter(account_ids))
+                        self._shared_primary[shared_key] = new_primary
+                        self.connection_manager.register_status_callback(
+                            new_primary, self._on_connection_state_changed
+                        )
+                    self._shared_by_account.pop(account_id, None)
+                    self.connection_manager.update_state(account_id, ConnectionStatus.DISCONNECTED)
+                    logger.info(f"Telegram bot detached for account {account_id} (shared)")
+                    return {"success": True}
+
+                self._shared_by_account.pop(account_id, None)
+                self._shared_account_ids.pop(shared_key, None)
+                self._shared_primary.pop(shared_key, None)
+                self._shared_user_info.pop(shared_key, None)
+                await self._stop_update_task(shared_key)
+                await self._stop_keepalive_task(shared_key)
+                shared_bot = self._shared_clients.pop(shared_key, None)
+                if shared_bot:
+                    try:
+                        await shared_bot.disconnect()
+                    except Exception:
+                        pass
+
+                # 更新连接状态（不会触发回调，因为已取消注册）
+                self.connection_manager.update_state(account_id, ConnectionStatus.DISCONNECTED)
+
+                logger.info(f"Telegram bot disconnected for account {account_id}")
+                return {"success": True}
+
+            await self._stop_update_task(account_id)
+            await self._stop_keepalive_task(account_id)
+            if bot:
                 try:
                     await bot.disconnect()
                 except Exception:
                     pass  # 忽略断开时的错误
-                del self.bots[account_id]
 
             # 更新连接状态（不会触发回调，因为已取消注册）
             self.connection_manager.update_state(account_id, ConnectionStatus.DISCONNECTED)
@@ -363,6 +527,19 @@ class TelegramBotManager:
     def _on_connection_state_changed(self, account_id: str, state: ConnectionState):
         """连接状态变更回调"""
         logger.info(f"Bot connection state changed for {account_id}: {state.status}")
+        shared_key = self._shared_by_account.get(account_id)
+        if shared_key:
+            for acc_id in self._shared_account_ids.get(shared_key, set()):
+                if acc_id == account_id:
+                    continue
+                self.connection_manager.update_state(
+                    acc_id,
+                    state.status,
+                    state.error_message,
+                    state.user_info,
+                )
+            if self._shared_primary.get(shared_key) != account_id:
+                return
 
         # 如果连接断开，启动自动重连
         if state.status in [ConnectionStatus.DISCONNECTED, ConnectionStatus.ERROR]:

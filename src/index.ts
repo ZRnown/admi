@@ -42,9 +42,15 @@ interface RunningAccount {
   lastReconnectTime: number; // 上次重连时间
   isLoggingIn?: boolean; // 是否正在登录中，用于防止重复登录
   loginTimeout?: NodeJS.Timeout; // 登录超时定时器
+  sharedKey?: string;
+  sharedPrimary?: boolean;
 }
 
 const runningAccounts = new Map<string, RunningAccount>();
+const sharedDiscordClients = new Map<
+  string,
+  { key: string; token: string; type: "bot" | "selfbot"; client: Client; accountIds: Set<string> }
+>();
 let currentConfig: MultiConfig | null = null;
 const statusFile = path.resolve(process.cwd(), ".data", "status.json");
 const ocrClients = new Map<string, { url: string; client: OCRClient }>();
@@ -231,6 +237,7 @@ function applyLongMessageConfig(
 type TelegramAccountRef = {
   id: string;
   type: "bot" | "client";
+  role?: "listener" | "sender";
   enabled?: boolean;
 };
 
@@ -247,7 +254,8 @@ function collectTelegramAccounts(account: AccountConfig): TelegramAccountRef[] {
   for (const item of configured) {
     if (!item?.id) continue;
     const type = item.type === "bot" ? "bot" : "client";
-    push({ id: item.id, type, enabled: item.enabled !== false });
+    const role = item.role === "listener" || item.role === "sender" ? item.role : undefined;
+    push({ id: item.id, type, role, enabled: item.enabled !== false });
   }
 
   const hasLegacyClient = Boolean(
@@ -285,12 +293,37 @@ function collectTelegramAccountTypeMap(account: AccountConfig): Map<string, "bot
   return result;
 }
 
+function collectTelegramAccountRoleMap(account: AccountConfig): Map<string, "listener" | "sender"> {
+  const result = new Map<string, "listener" | "sender">();
+  for (const entry of collectTelegramAccounts(account)) {
+    if (entry.id && (entry.role === "listener" || entry.role === "sender")) {
+      result.set(entry.id, entry.role);
+    }
+  }
+  return result;
+}
+
+function hasTelegramRoleAccount(account: AccountConfig, role: "listener" | "sender"): boolean {
+  return collectTelegramAccounts(account).some((entry) => entry.role === role);
+}
+
 function selectTelegramSendAccount(
   account: AccountConfig,
   preferredType?: "bot" | "client",
+  preferredRole?: "listener" | "sender",
 ): TelegramAccountRef | null {
   const candidates = collectTelegramAccounts(account).filter((entry) => entry.enabled !== false);
   if (candidates.length === 0) return null;
+  if (preferredRole) {
+    const roleMatches = candidates.filter((entry) => entry.role === preferredRole);
+    if (roleMatches.length > 0) {
+      if (preferredType) {
+        const match = roleMatches.find((entry) => entry.type === preferredType);
+        if (match) return match;
+      }
+      return roleMatches[0];
+    }
+  }
   if (preferredType) {
     const match = candidates.find((entry) => entry.type === preferredType);
     if (match) return match;
@@ -329,6 +362,28 @@ async function writeStatus(accountId: string, state: string, message?: string) {
     obj[accountId] = { loginState: state, loginMessage: message || "" };
     await fs.writeFile(statusFile, JSON.stringify(obj, null, 2));
   } catch {}
+}
+
+function buildDiscordShareKey(account: AccountConfig): string | null {
+  if (!account.token) return null;
+  return `${account.type}:${account.token}`;
+}
+
+function getSharedClientByAccountId(accountId: string) {
+  const running = runningAccounts.get(accountId);
+  if (!running?.sharedKey) return null;
+  return sharedDiscordClients.get(running.sharedKey) || null;
+}
+
+async function writeStatusForAccount(accountId: string, state: string, message?: string) {
+  const shared = getSharedClientByAccountId(accountId);
+  if (shared) {
+    await Promise.all(
+      Array.from(shared.accountIds).map((id) => writeStatus(id, state, message)),
+    );
+    return;
+  }
+  await writeStatus(accountId, state, message);
 }
 
 function formatDiscordUserLabel(user: any): string {
@@ -493,7 +548,9 @@ function setupTelegramBridgeClient() {
       if (account.telegramConfig?.enableTelegramForward === false) continue;
       const allowedTelegramAccountIds = collectTelegramAccountIds(account);
       const telegramAccountTypeMap = collectTelegramAccountTypeMap(account);
+      const telegramAccountRoleMap = collectTelegramAccountRoleMap(account);
       const incomingAccountType = params.accountId ? telegramAccountTypeMap.get(params.accountId) : undefined;
+      const incomingAccountRole = params.accountId ? telegramAccountRoleMap.get(params.accountId) : undefined;
       if (params.accountId && allowedTelegramAccountIds.size > 0 && !allowedTelegramAccountIds.has(params.accountId)) {
         continue;
       }
@@ -519,9 +576,13 @@ function setupTelegramBridgeClient() {
       );
 
       const listenerType = account.telegramConfig?.listenerAccountType;
+      const hasListenerRole = hasTelegramRoleAccount(account, "listener");
       const filteredRules =
         allowedMappingType === "telegram-to-telegram" && (listenerType === "bot" || listenerType === "client")
-          ? matchingRules.filter(() => listenerType === incomingAccountType)
+          ? matchingRules.filter(() => {
+              if (hasListenerRole && incomingAccountRole !== "listener") return false;
+              return listenerType === incomingAccountType;
+            })
           : matchingRules;
 
       if (filteredRules.length === 0) {
@@ -979,7 +1040,7 @@ function setupTelegramBridgeClient() {
 
             const preferredSenderType =
               rule.senderAccountType || account.telegramConfig?.defaultSenderAccountType;
-            const senderAccount = selectTelegramSendAccount(account, preferredSenderType);
+            const senderAccount = selectTelegramSendAccount(account, preferredSenderType, "sender");
             if (!senderAccount) {
               logSkip("未找到可用 Telegram 发送账号", `目标: ${targetChatId}`);
               continue;
@@ -1107,12 +1168,12 @@ function setupTelegramBridgeClient() {
 
 async function startAccount(account: AccountConfig, logger: FileLogger) {
   if (!account.loginRequested) {
-    await writeStatus(account.id, "idle", "未请求登录");
+    await writeStatusForAccount(account.id, "idle", "未请求登录");
     return;
   }
 
   // 立即设置 pending 状态，表示正在登录
-  await writeStatus(account.id, "pending", "正在登录...");
+  await writeStatusForAccount(account.id, "pending", "正在登录...");
 
   if (!account.token) {
     // 这个错误应该在 reconcileAccounts 中已经处理过了，这里只更新状态
@@ -1120,7 +1181,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       await logger.error(`账号 "${account.name}" 未配置 token，已跳过登录`);
       loggedNoTokenAccounts.add(account.id);
     }
-    await writeStatus(account.id, "error", "未配置 Token");
+    await writeStatusForAccount(account.id, "error", "未配置 Token");
     return;
   }
 
@@ -1132,7 +1193,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
 
   if (Object.keys(webhooks).length === 0 && Object.keys(feishuWebhooks).length === 0 && !hasTelegramForward) {
     await logger.error(`账号 "${account.name}" 未配置任何转发规则（Discord、飞书或 Telegram），无法启动`);
-    await writeStatus(account.id, "error", "未配置转发规则");
+    await writeStatusForAccount(account.id, "error", "未配置转发规则");
     return;
   }
 
@@ -1158,7 +1219,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
       
       if (isAlreadyLoggedIn) {
-        await writeStatus(
+        await writeStatusForAccount(
           account.id,
           "online",
           buildDiscordLoginMessage((existing.client as any)?.user, "登录成功"),
@@ -1170,6 +1231,44 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     // 如果账号存在但没有登录，先停止它
     await logger.info(`账号 "${account.name}" 存在但未登录，先停止旧实例`);
     await stopAccount(account.id, logger, false);
+  }
+
+  const shareKey = buildDiscordShareKey(account);
+  const sharedClientEntry = shareKey ? sharedDiscordClients.get(shareKey) : null;
+  if (sharedClientEntry) {
+    const { senderBotsBySource, defaultSenderBot, feishuSendersBySource } = await buildSenderBots(account, logger);
+    const legacyConfig = accountToLegacyConfig(account);
+    const bot = new Bot(
+      sharedClientEntry.client,
+      legacyConfig,
+      defaultSenderBot,
+      senderBotsBySource,
+      feishuSendersBySource,
+      { sharedClient: true },
+    );
+    sharedClientEntry.accountIds.add(account.id);
+    const runningInfo: RunningAccount = {
+      account,
+      client: sharedClientEntry.client,
+      bot,
+      senderBotsBySource,
+      defaultSenderBot,
+      feishuSendersBySource,
+      isManuallyStopped: false,
+      reconnectCount: 0,
+      lastReconnectTime: 0,
+      isLoggingIn: false,
+      sharedKey: shareKey || undefined,
+      sharedPrimary: false,
+    };
+    runningAccounts.set(account.id, runningInfo);
+
+    if ((sharedClientEntry.client as any)?.user) {
+      await writeStatusForAccount(account.id, "online", buildDiscordLoginMessage((sharedClientEntry.client as any)?.user, "登录成功"));
+    } else {
+      await writeStatusForAccount(account.id, "pending", "共享账号登录中...");
+    }
+    return;
   }
 
   try {
@@ -1212,6 +1311,23 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
 
     const bot = new Bot(client, legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
 
+    if (shareKey) {
+      let entry = sharedDiscordClients.get(shareKey);
+      if (!entry) {
+        entry = {
+          key: shareKey,
+          token: account.token,
+          type: account.type,
+          client,
+          accountIds: new Set(),
+        };
+        sharedDiscordClients.set(shareKey, entry);
+      } else {
+        entry.client = client;
+      }
+      entry.accountIds.add(account.id);
+    }
+
     const runningInfo: RunningAccount = {
       account,
       client,
@@ -1222,7 +1338,9 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       isManuallyStopped: false,
       reconnectCount: 0,
       lastReconnectTime: 0,
-    isLoggingIn: true,
+      isLoggingIn: true,
+      sharedKey: shareKey || undefined,
+      sharedPrimary: Boolean(shareKey),
     };
     runningAccounts.set(account.id, runningInfo);
 
@@ -1258,7 +1376,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
         }
         // 现在才注册重连处理器，避免登录过程中的临时断开事件
         setupReconnectHandlers(account.id, logger);
-        await writeStatus(
+        await writeStatusForAccount(
           account.id,
           "online",
           buildDiscordLoginMessage((bot.client as any)?.user, "登录成功"),
@@ -1274,7 +1392,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       const currentRunning = runningAccounts.get(account.id);
       if (currentRunning && currentRunning.isLoggingIn) {
         logger.warn(`账号 "${account.name}" 登录超时 (30秒)，可能是网络问题或账号被风控`);
-        writeStatus(account.id, "error", "登录超时，可能是网络问题或需要登录").catch(() => {});
+        writeStatusForAccount(account.id, "error", "登录超时，可能是网络问题或需要登录").catch(() => {});
       }
     }, 30000);
 
@@ -1298,7 +1416,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
             currentRunning.loginTimeout = undefined;
           }
           setupReconnectHandlers(account.id, logger);
-          await writeStatus(
+          await writeStatusForAccount(
             account.id,
             "online",
             buildDiscordLoginMessage((bot.client as any)?.user, "登录成功"),
@@ -1318,7 +1436,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
                             msg.includes("Token 无效") ||
                             (e?.code === "TokenInvalid");
       
-      await writeStatus(account.id, "error", isTokenInvalid ? "Token 无效" : msg);
+      await writeStatusForAccount(account.id, "error", isTokenInvalid ? "Token 无效" : msg);
       runningInfo.isLoggingIn = false;
       // 清除登录超时定时器
       if (runningInfo.loginTimeout) {
@@ -1335,7 +1453,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
     }
   } catch (e: any) {
     await logger.error(`启动账号 "${account.name}" 失败: ${String(e?.message || e)}`);
-    await writeStatus(account.id, "error", String(e?.message || e));
+    await writeStatusForAccount(account.id, "error", String(e?.message || e));
   }
 }
 
@@ -1355,12 +1473,30 @@ async function stopAccount(accountId: string, logger: FileLogger, manual: boolea
     running.reconnectTimer = undefined;
   }
   
+  const sharedKey = running.sharedKey;
+  const sharedEntry = sharedKey ? sharedDiscordClients.get(sharedKey) : null;
+
   try {
     // 清理 Bot 资源（包括定时器等）
     if (running.bot && typeof (running.bot as any).cleanup === "function") {
       await (running.bot as any).cleanup();
     }
-    if ((running.client as any).destroy) {
+    if (sharedEntry) {
+      sharedEntry.accountIds.delete(accountId);
+      if (sharedEntry.accountIds.size === 0) {
+        if ((running.client as any).destroy) {
+          await (running.client as any).destroy();
+        }
+        sharedDiscordClients.delete(sharedKey as string);
+      } else {
+        const nextPrimaryId = Array.from(sharedEntry.accountIds)[0];
+        const nextRunning = runningAccounts.get(nextPrimaryId);
+        if (nextRunning) {
+          nextRunning.sharedPrimary = true;
+          setupReconnectHandlers(nextPrimaryId, logger);
+        }
+      }
+    } else if ((running.client as any).destroy) {
       await (running.client as any).destroy();
     }
   } catch (e: any) {
@@ -1394,7 +1530,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
     // WebSocket 状态：0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
     if (wsState === 1) {
       await logger.info(`账号 "${running.account.name}" 已经连接（readyState=${wsState}），跳过重连`);
-      await writeStatus(
+      await writeStatusForAccount(
         accountId,
         "online",
         buildDiscordLoginMessage((client as any)?.user, "已连接"),
@@ -1418,7 +1554,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
   }
   if (running.reconnectCount >= 10) {
     await logger.error(`账号 "${running.account.name}" 重连次数过多（${running.reconnectCount}次），停止自动重连`);
-    await writeStatus(accountId, "error", "重连次数过多，请检查网络或 Token");
+    await writeStatusForAccount(accountId, "error", "重连次数过多，请检查网络或 Token");
     await stopAccount(accountId, logger, false);
     return;
   }
@@ -1434,7 +1570,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
   running.reconnectCount++;
   running.lastReconnectTime = now;
   await logger.info(`账号 "${running.account.name}" 将在 ${delay / 1000} 秒后尝试重连... (第 ${running.reconnectCount} 次)`);
-  await writeStatus(accountId, "pending", `连接断开，${delay / 1000} 秒后重连... (${running.reconnectCount}/10)`);
+  await writeStatusForAccount(accountId, "pending", `连接断开，${delay / 1000} 秒后重连... (${running.reconnectCount}/10)`);
   
   running.reconnectTimer = setTimeout(async () => {
     // 清除定时器引用
@@ -1515,7 +1651,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
           }
           // 现在才注册重连处理器
           setupReconnectHandlers(accountId, logger);
-          await writeStatus(
+          await writeStatusForAccount(
             accountId,
             "online",
             buildDiscordLoginMessage((currentRunningAfterReady.client as any)?.user, "重连成功"),
@@ -1533,7 +1669,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
         const timeoutRunning = runningAccounts.get(accountId);
         if (timeoutRunning && timeoutRunning.isLoggingIn) {
           logger.warn(`账号 "${timeoutRunning.account.name}" 重连登录超时 (30秒)，可能是网络问题或账号被风控`);
-          writeStatus(accountId, "error", "重连登录超时，可能是网络问题或需要登录").catch(() => {});
+          writeStatusForAccount(accountId, "error", "重连登录超时，可能是网络问题或需要登录").catch(() => {});
         }
       }, 30000);
       
@@ -1544,7 +1680,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       } catch (e: any) {
         const msg = String(e?.message || e);
         await logger.error(`账号 "${currentRunning.account.name}" 重连失败: ${msg}`);
-        await writeStatus(accountId, "error", `重连失败: ${msg}`);
+        await writeStatusForAccount(accountId, "error", `重连失败: ${msg}`);
         currentRunning.isLoggingIn = false;
         // 清除登录超时定时器
         if (currentRunning.loginTimeout) {
@@ -1560,7 +1696,7 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
         
         if (isTokenInvalid) {
           await logger.error(`账号 "${currentRunning.account.name}" Token 无效，停止重连`);
-          await writeStatus(accountId, "error", "Token 无效，请检查 Token 配置");
+          await writeStatusForAccount(accountId, "error", "Token 无效，请检查 Token 配置");
           await stopAccount(accountId, logger, false);
           return;
         }
@@ -1604,6 +1740,9 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
 function setupReconnectHandlers(accountId: string, logger: FileLogger) {
   const running = runningAccounts.get(accountId);
   if (!running) return;
+  if (running.sharedKey && !running.sharedPrimary) {
+    return;
+  }
   
   const client = running.client;
   
@@ -1627,7 +1766,7 @@ function setupReconnectHandlers(accountId: string, logger: FileLogger) {
     }
     
     await logger.warn(`账号 "${currentRunning.account.name}" 连接断开`);
-    await writeStatus(accountId, "error", "连接断开，正在重连...");
+    await writeStatusForAccount(accountId, "error", "连接断开，正在重连...");
     await reconnectAccount(accountId, logger, 5000);
   };
   
@@ -1666,7 +1805,7 @@ function setupReconnectHandlers(accountId: string, logger: FileLogger) {
     const currentRunning = runningAccounts.get(accountId);
     if (currentRunning) {
       await logger.info(`账号 "${currentRunning.account.name}" 连接已恢复`);
-      await writeStatus(
+      await writeStatusForAccount(
         accountId,
         "online",
         buildDiscordLoginMessage((currentRunning.client as any)?.user, "连接已恢复"),
@@ -2114,7 +2253,11 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           // 对于 bot 类型，优先使用最新的 telegramBotToken（如果存在）
           // 这样当用户更新 token 后，不会使用缓存的旧 token
           let tokenToUse = tgAccount.token;
-          if (tgAccount.type === "bot" && account.telegramBotToken) {
+          const shouldOverrideLegacyBot =
+            tgAccount.type === "bot" &&
+            account.telegramBotToken &&
+            (!tgAccount.role || tgAccount.id === `${account.id}_bot`);
+          if (shouldOverrideLegacyBot) {
             tokenToUse = account.telegramBotToken;
           }
           pushTelegramAccount({
@@ -2124,9 +2267,11 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
             token: tokenToUse,
             sessionPath: tgAccount.sessionPath,
             sessionString: tgAccount.sessionString,
+            sessionType: tgAccount.sessionType,
             apiId: tgAccount.apiId,
             apiHash: tgAccount.apiHash,
             proxyUrl: tgAccount.proxyUrl,
+            role: tgAccount.role,
             enabled: tgAccount.enabled !== false
           });
         }
@@ -2157,6 +2302,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           name: `${account.name || "Telegram"} Bot`,
           type: "bot",
           token: account.telegramBotToken,
+          sessionType: account.sessionType,
           apiId: account.telegramApiId,
           apiHash: account.telegramApiHash,
           proxyUrl: account.proxyUrl,
@@ -2178,6 +2324,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           token: account.telegramApiHash || "",
           sessionPath: account.telegramSessionPath,
           sessionString: account.telegramSessionString,
+          sessionType: account.sessionType,
           apiId: account.telegramApiId,
           apiHash: account.telegramApiHash,
           proxyUrl: account.proxyUrl,

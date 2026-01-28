@@ -11,6 +11,7 @@ const DEFAULT_TEXT_OPACITY = 60;
 const DEFAULT_IMAGE_OPACITY = 60;
 const DEFAULT_IMAGE_SCALE = 20;
 const DEFAULT_TEXT_SIZE = 16;
+const DEFAULT_TILE_GAP = 40;
 
 function clampPercent(value: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
@@ -131,7 +132,12 @@ export function resolveWatermarkConfig(
     (ruleConfig && ruleConfig.enabled === true) ||
     (globalConfig && globalConfig.enabled === true);
   if (!enabled) return undefined;
-  if (!merged.text && !merged.imageUrl) return undefined;
+  const mode = merged.mode;
+  const allowText = mode !== "image";
+  const allowImage = mode !== "text";
+  const hasText = Boolean(merged.text);
+  const hasImage = Boolean(merged.imageUrl);
+  if ((!allowText || !hasText) && (!allowImage || !hasImage)) return undefined;
   return { ...merged, enabled: true };
 }
 
@@ -144,8 +150,15 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
     const margin = Number.isFinite(effective.margin)
       ? Math.max(0, Math.round(effective.margin as number))
       : DEFAULT_MARGIN;
+    const mode = effective.mode;
+    const allowText = mode !== "image";
+    const allowImage = mode !== "text";
+    const pattern = effective.pattern === "tile" ? "tile" : "single";
+    const gap = Number.isFinite(effective.tileGap)
+      ? Math.max(0, Math.round(effective.tileGap as number))
+      : DEFAULT_TILE_GAP;
 
-    if (effective.imageUrl) {
+    if (effective.imageUrl && allowImage) {
       const watermarkImage = await loadWatermarkImage(effective.imageUrl);
       if (watermarkImage) {
         const scale = clampPercent(
@@ -159,19 +172,29 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
           DEFAULT_IMAGE_OPACITY,
         );
         watermarkImage.opacity(opacity / 100);
-        const position = resolvePosition(
-          effective.position,
-          image.bitmap.width,
-          image.bitmap.height,
-          watermarkImage.bitmap.width,
-          watermarkImage.bitmap.height,
-          margin,
-        );
-        image.composite(watermarkImage, position.x, position.y);
+        if (pattern === "tile") {
+          const stepX = Math.max(1, watermarkImage.bitmap.width + gap);
+          const stepY = Math.max(1, watermarkImage.bitmap.height + gap);
+          for (let y = 0; y < image.bitmap.height; y += stepY) {
+            for (let x = 0; x < image.bitmap.width; x += stepX) {
+              image.composite(watermarkImage, x, y);
+            }
+          }
+        } else {
+          const position = resolvePosition(
+            effective.position,
+            image.bitmap.width,
+            image.bitmap.height,
+            watermarkImage.bitmap.width,
+            watermarkImage.bitmap.height,
+            margin,
+          );
+          image.composite(watermarkImage, position.x, position.y);
+        }
       }
     }
 
-    if (effective.text) {
+    if (effective.text && allowText) {
       const fontSize = pickFontSize(effective.textSize);
       const fontColor = isDarkColor(effective.textColor) ? "BLACK" : "WHITE";
       const font = await Jimp.loadFont((Jimp as any)[`FONT_SANS_${fontSize}_${fontColor}`]);
@@ -179,20 +202,35 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
       const textHeight = Jimp.measureTextHeight(font, effective.text, image.bitmap.width);
       const textImage = await new Jimp(textWidth || 1, textHeight || fontSize, 0x00000000);
       textImage.print(font, 0, 0, effective.text);
+      if (effective.textColor) {
+        try {
+          textImage.color([{ apply: "mix", params: [effective.textColor, 100] }]);
+        } catch {}
+      }
       const opacity = clampPercent(
         typeof effective.textOpacity === "number" ? effective.textOpacity : DEFAULT_TEXT_OPACITY,
         DEFAULT_TEXT_OPACITY,
       );
       textImage.opacity(opacity / 100);
-      const position = resolvePosition(
-        effective.position,
-        image.bitmap.width,
-        image.bitmap.height,
-        textImage.bitmap.width,
-        textImage.bitmap.height,
-        margin,
-      );
-      image.composite(textImage, position.x, position.y);
+      if (pattern === "tile") {
+        const stepX = Math.max(1, textImage.bitmap.width + gap);
+        const stepY = Math.max(1, textImage.bitmap.height + gap);
+        for (let y = 0; y < image.bitmap.height; y += stepY) {
+          for (let x = 0; x < image.bitmap.width; x += stepX) {
+            image.composite(textImage, x, y);
+          }
+        }
+      } else {
+        const position = resolvePosition(
+          effective.position,
+          image.bitmap.width,
+          image.bitmap.height,
+          textImage.bitmap.width,
+          textImage.bitmap.height,
+          margin,
+        );
+        image.composite(textImage, position.x, position.y);
+      }
     }
 
     const mime = image.getMIME();

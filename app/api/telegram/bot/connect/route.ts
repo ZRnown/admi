@@ -64,6 +64,8 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const accountId = body?.accountId as string | undefined;
+    const telegramAccountId = body?.telegramAccountId as string | undefined;
+    const role = body?.role === "listener" || body?.role === "sender" ? body.role : undefined;
 
     if (!accountId) {
       return NextResponse.json({ error: "缺少 accountId" }, { status: 400 });
@@ -76,8 +78,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "账号不存在" }, { status: 404 });
     }
 
+    const botStatusId = telegramAccountId || `${accountId}_bot`;
+    const configuredBot = account.telegramConfig?.accounts?.find((acc) => acc.id === botStatusId);
+    const tokenToUse = configuredBot?.token || account.telegramBotToken || "";
+
     // 检查是否配置了 Telegram Bot Token
-    if (!account.telegramBotToken || account.telegramBotToken.trim() === '') {
+    if (!tokenToUse || tokenToUse.trim() === '') {
       return NextResponse.json({
         state: 'error',
         message: '未配置 Telegram Bot Token',
@@ -85,11 +91,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 验证 Token
-    const result = await verifyTelegramBotToken(account.telegramBotToken);
+    const result = await verifyTelegramBotToken(tokenToUse);
 
     if (result.success) {
       // 保存 enabled: true 到配置
-      const botStatusId = `${accountId}_bot`;
       if (!account.telegramConfig) {
         account.telegramConfig = { accounts: [], mappings: [], enableTelegramForward: false };
       }
@@ -103,14 +108,18 @@ export async function POST(req: NextRequest) {
           id: botStatusId,
           name: result.userInfo?.username || 'Telegram Bot',
           type: 'bot' as const,
-          token: account.telegramBotToken || '',
+          token: tokenToUse,
+          role,
           enabled: true
         };
         account.telegramConfig.accounts.push(botAccount);
       } else {
         // 更新 token 和名称（修复缓存问题）
-        botAccount.token = account.telegramBotToken || '';
+        botAccount.token = tokenToUse;
         botAccount.name = result.userInfo?.username || 'Telegram Bot';
+        if (role) {
+          botAccount.role = role;
+        }
         botAccount.enabled = true;
       }
       await saveMultiConfig(multi);

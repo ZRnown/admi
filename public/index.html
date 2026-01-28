@@ -286,6 +286,26 @@
               </select>
             </div>
             <div>
+              <label class="block text-xs text-slate-600 mb-1">水印类型</label>
+              <select id="ruleWatermarkType" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="text">文字水印</option>
+                <option value="image">图片水印</option>
+                <option value="both">文字 + 图片</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">铺设方式</label>
+              <select id="ruleWatermarkPattern" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="single">单个</option>
+                <option value="tile">平铺</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">平铺间距（px）</label>
+              <input type="number" min="0" id="ruleWatermarkTileGap" placeholder="40"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
               <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
               <input type="text" id="ruleWatermarkText" placeholder="例如：转发狗"
                 class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
@@ -299,6 +319,11 @@
               <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
               <input type="number" min="0" max="100" id="ruleWatermarkTextOpacity" placeholder="60"
                 class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">文字颜色</label>
+              <input type="color" id="ruleWatermarkTextColor" value="#ffffff"
+                class="h-10 w-full rounded border border-slate-200 px-2">
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">图片水印地址</label>
@@ -456,6 +481,7 @@
     }
 
     let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
+    const watermarkPreviewCache = new Map();
     let saveTimer = null;
     let isLoggedIn = false;
     let pagination = { discordPage: 1, feishuPage: 1, botRelayPage: 1, pageSize: 10 };
@@ -929,52 +955,107 @@
           : !isTelegramToTelegram && forwardingType === 'discord-to-telegram'
             ? discordToTelegramUsesClient
             : false;
+      const watermarkConfig = acc.watermark || {};
+      const watermarkMode =
+        watermarkConfig.mode
+        || (watermarkConfig.text && watermarkConfig.imageUrl ? 'both' : watermarkConfig.imageUrl ? 'image' : 'text');
+      const watermarkPattern = watermarkConfig.pattern === 'tile' ? 'tile' : 'single';
+      const showWatermarkText = watermarkMode === 'text' || watermarkMode === 'both';
+      const showWatermarkImage = watermarkMode === 'image' || watermarkMode === 'both';
+      if (isTelegramToTelegram) {
+        ensureTelegramConfig(acc);
+        if (tgListenerType === 'bot' || tgListenerType === 'client') {
+          ensureTelegramRoleAccount(acc, 'listener', tgListenerType);
+        }
+        if (tgSenderType === 'bot' || tgSenderType === 'client') {
+          ensureTelegramRoleAccount(acc, 'sender', tgSenderType);
+        }
+      }
 
-      const renderTelegramSharedNotice = (title, note) => `
-        <div class="border-t pt-4 border-slate-200">
-          <h3 class="text-sm font-medium text-slate-800 mb-2">${title}</h3>
-          <p class="text-xs text-slate-500">${note}</p>
-        </div>
-      `;
+      const renderTelegramBotConfig = (title, note, options = {}) => {
+        const role = options.role;
+        const accountId = role ? getTelegramRoleAccountId(acc, role, 'bot') : '';
+        const accountEntry = role ? getTelegramRoleAccount(acc, role, 'bot') : null;
+        const tokenValue = role ? (accountEntry?.token || '') : (acc.telegramBotToken || '');
+        const status = role
+          ? getTelegramAccountStatus(acc, accountId, acc.telegramBotState, acc.telegramBotMessage)
+          : { state: acc.telegramBotState, message: acc.telegramBotMessage };
+        const state = status?.state || 'idle';
+        const message = status?.message || '';
+        const updateHandler = role
+          ? `updateTelegramRoleField('${role}', 'bot', 'token', this.value)`
+          : `updateField('telegramBotToken', this.value)`;
+        const connectHandler = role ? `connectTelegramBot('${role}')` : 'connectTelegramBot()';
+        const disconnectHandler = role ? `disconnectTelegramBot('${role}')` : 'disconnectTelegramBot()';
 
-      const renderTelegramBotConfig = (title, note) => `
+        return `
         <div class="border-t pt-4 border-slate-200">
           <h3 class="text-sm font-medium text-slate-800 mb-3">${title}</h3>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1">Bot Token</label>
             <div class="flex gap-2">
-              <input type="password" value="${acc.telegramBotToken || ''}" onchange="updateField('telegramBotToken', this.value)"
+              <input type="password" value="${tokenValue}" onchange="${updateHandler}"
                 placeholder="从 @BotFather 获取的Token" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
-              <button id="btn-tg-bot-connect" onclick="connectTelegramBot()" ${acc.telegramBotState === 'connecting' || acc.telegramBotState === 'online' ? 'disabled' : ''}
-                class="px-3 py-1.5 text-xs font-medium rounded-md ${acc.telegramBotState === 'connecting' || acc.telegramBotState === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                ${acc.telegramBotState === 'connecting' ? '连接中...' : acc.telegramBotState === 'online' ? '已连接' : '连接'}
+              <button onclick="${connectHandler}" ${state === 'connecting' || state === 'online' ? 'disabled' : ''}
+                class="px-3 py-1.5 text-xs font-medium rounded-md ${state === 'connecting' || state === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                ${state === 'connecting' ? '连接中...' : state === 'online' ? '已连接' : '连接'}
               </button>
-              <button id="btn-tg-bot-disconnect" onclick="disconnectTelegramBot()" ${acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error' && acc.telegramBotState !== 'connecting' ? 'disabled' : ''}
-                class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error' && acc.telegramBotState !== 'connecting' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                ${acc.telegramBotState === 'connecting' ? '中断' : '断开'}
+              <button onclick="${disconnectHandler}" ${state !== 'online' && state !== 'error' && state !== 'connecting' ? 'disabled' : ''}
+                class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${state !== 'online' && state !== 'error' && state !== 'connecting' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                ${state === 'connecting' ? '中断' : '断开'}
               </button>
             </div>
             <div class="text-xs text-slate-500 mt-1">
-              状态: <span id="status-tg-bot-badge" class="px-2 py-0.5 rounded-full ${acc.telegramBotState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.telegramBotState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.telegramBotState || 'idle'}</span>
-              <span id="status-tg-bot-msg" class="ml-2">${acc.telegramBotMessage || ''}</span>
+              状态: <span class="px-2 py-0.5 rounded-full ${state === 'online' ? 'bg-emerald-50 text-emerald-700' : state === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${state}</span>
+              <span class="ml-2">${message}</span>
             </div>
             <p class="text-xs text-slate-500 mt-1">${note || '从Telegram的@BotFather获取Bot Token，用于发送消息到Telegram频道'}</p>
           </div>
         </div>
       `;
+      };
 
-      const renderTelegramClientConfig = (title, note) => `
+      const renderTelegramClientConfig = (title, note, options = {}) => {
+        const role = options.role;
+        const accountId = role ? getTelegramRoleAccountId(acc, role, 'client') : '';
+        const accountEntry = role ? getTelegramRoleAccount(acc, role, 'client') : null;
+        const sessionType = role ? (accountEntry?.sessionType || 'file') : (acc.sessionType || 'file');
+        const apiIdValue = role ? (accountEntry?.apiId || '') : (acc.telegramApiId || '');
+        const apiHashValue = role ? (accountEntry?.apiHash || '') : (acc.telegramApiHash || '');
+        const sessionPathValue = role ? (accountEntry?.sessionPath || '') : (acc.telegramSessionPath || '');
+        const sessionStringValue = role ? (accountEntry?.sessionString || '') : (acc.telegramSessionString || '');
+        const status = role
+          ? getTelegramAccountStatus(acc, accountId, acc.telegramClientState, acc.telegramClientMessage)
+          : { state: acc.telegramClientState, message: acc.telegramClientMessage };
+        const state = status?.state || 'idle';
+        const message = status?.message || '';
+        const updateApiIdHandler = role
+          ? `updateTelegramRoleField('${role}', 'client', 'apiId', this.value)`
+          : `updateField('telegramApiId', this.value)`;
+        const updateApiHashHandler = role
+          ? `updateTelegramRoleField('${role}', 'client', 'apiHash', this.value)`
+          : `updateField('telegramApiHash', this.value)`;
+        const updateSessionHandler = role
+          ? `updateTelegramRoleField('${role}', 'client', 'sessionString', this.value)`
+          : `updateField('telegramSessionString', this.value)`;
+        const switchFileHandler = role ? `switchSessionType('file', '${role}', 'client')` : `switchSessionType('file')`;
+        const switchStringHandler = role ? `switchSessionType('string', '${role}', 'client')` : `switchSessionType('string')`;
+        const loadSessionHandler = role ? `loadSessionFile(this, '${role}', 'client')` : `loadSessionFile(this)`;
+        const connectHandler = role ? `connectTelegramClient('${role}')` : 'connectTelegramClient()';
+        const disconnectHandler = role ? `disconnectTelegramClient('${role}')` : 'disconnectTelegramClient()';
+
+        return `
         <div class="border-t pt-4 border-slate-200">
           <h3 class="text-sm font-medium text-slate-800 mb-3">${title}</h3>
           <div class="grid gap-3 md:grid-cols-2">
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">API ID</label>
-              <input type="number" value="${acc.telegramApiId || ''}" onchange="updateField('telegramApiId', this.value)"
+              <input type="number" value="${apiIdValue}" onchange="${updateApiIdHandler}"
                 placeholder="从 https://my.telegram.org 获取" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">API Hash</label>
-              <input type="text" value="${acc.telegramApiHash || ''}" onchange="updateField('telegramApiHash', this.value)"
+              <input type="text" value="${apiHashValue}" onchange="${updateApiHashHandler}"
                 placeholder="从 https://my.telegram.org 获取" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
             </div>
           </div>
@@ -1009,44 +1090,45 @@
               <label class="block text-sm font-medium text-slate-700 mb-2">Session认证</label>
             <div class="border border-slate-200 rounded-lg overflow-hidden">
               <div class="flex bg-slate-50 border-b border-slate-200">
-                <button onclick="switchSessionType('file')" id="sessionFileTab" class="flex-1 py-2 px-3 text-sm font-medium text-center ${acc.sessionType !== 'string' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700'}">
+                <button onclick="${switchFileHandler}" class="flex-1 py-2 px-3 text-sm font-medium text-center ${sessionType !== 'string' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700'}">
                   Session文件
                 </button>
-                <button onclick="switchSessionType('string')" id="sessionStringTab" class="flex-1 py-2 px-3 text-sm font-medium text-center ${acc.sessionType === 'string' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700'}">
+                <button onclick="${switchStringHandler}" class="flex-1 py-2 px-3 text-sm font-medium text-center ${sessionType === 'string' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700'}">
                   Session字符串
                 </button>
               </div>
               <div class="p-3">
-                <div id="sessionFileContent" class="${acc.sessionType === 'string' ? 'hidden' : ''}">
-                  <input type="file" accept=".session" onchange="loadSessionFile(this)" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                <div class="${sessionType === 'string' ? 'hidden' : ''}">
+                  <input type="file" accept=".session" onchange="${loadSessionHandler}" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                   <p class="text-xs text-slate-500 mt-2">选择本地的.session文件进行认证</p>
-                  ${acc.telegramSessionPath ? `<p class="text-xs text-emerald-600 mt-2">已上传: ${String(acc.telegramSessionPath).split(/[/\\\\]/).pop()}</p>` : ''}
+                  ${sessionPathValue ? `<p class="text-xs text-emerald-600 mt-2">已上传: ${String(sessionPathValue).split(/[/\\\\]/).pop()}</p>` : ''}
                 </div>
-                <div id="sessionStringContent" class="${acc.sessionType !== 'string' ? 'hidden' : ''}">
-                  <textarea onchange="updateField('telegramSessionString', this.value)" rows="3"
-                    placeholder="粘贴telethon格式的session字符串..." class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">${acc.telegramSessionString || ''}</textarea>
+                <div class="${sessionType !== 'string' ? 'hidden' : ''}">
+                  <textarea onchange="${updateSessionHandler}" rows="3"
+                    placeholder="粘贴telethon格式的session字符串..." class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">${sessionStringValue || ''}</textarea>
                   <p class="text-xs text-slate-500 mt-2">粘贴从telethon导出的session字符串</p>
                 </div>
               </div>
             </div>
             <div class="flex gap-2 mt-3">
-              <button id="btn-tg-client-connect" onclick="connectTelegramClient()" ${acc.telegramClientState === 'connecting' || acc.telegramClientState === 'online' ? 'disabled' : ''}
-                class="flex-1 px-3 py-2 text-sm font-medium rounded-md ${acc.telegramClientState === 'connecting' || acc.telegramClientState === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                ${acc.telegramClientState === 'connecting' ? '连接中...' : acc.telegramClientState === 'online' ? '已连接' : '连接'}
+              <button onclick="${connectHandler}" ${state === 'connecting' || state === 'online' ? 'disabled' : ''}
+                class="flex-1 px-3 py-2 text-sm font-medium rounded-md ${state === 'connecting' || state === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                ${state === 'connecting' ? '连接中...' : state === 'online' ? '已连接' : '连接'}
               </button>
-              <button id="btn-tg-client-disconnect" onclick="disconnectTelegramClient()" ${acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error' && acc.telegramClientState !== 'connecting' ? 'disabled' : ''}
-                class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-slate-200 ${acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error' && acc.telegramClientState !== 'connecting' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                ${acc.telegramClientState === 'connecting' ? '中断' : '断开'}
+              <button onclick="${disconnectHandler}" ${state !== 'online' && state !== 'error' && state !== 'connecting' ? 'disabled' : ''}
+                class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-slate-200 ${state !== 'online' && state !== 'error' && state !== 'connecting' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                ${state === 'connecting' ? '中断' : '断开'}
               </button>
             </div>
             <div class="text-xs text-slate-500 mt-2">
-              状态: <span id="status-tg-client-badge" class="px-2 py-0.5 rounded-full ${acc.telegramClientState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.telegramClientState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.telegramClientState || 'idle'}</span>
-              <span id="status-tg-client-msg" class="ml-2">${acc.telegramClientMessage || ''}</span>
+              状态: <span class="px-2 py-0.5 rounded-full ${state === 'online' ? 'bg-emerald-50 text-emerald-700' : state === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${state}</span>
+              <span class="ml-2">${message}</span>
             </div>
           </div>
           ${note ? `<p class="text-xs text-slate-500 mt-2">${note}</p>` : ''}
         </div>
       `;
+      };
       
       return `
         <!-- 基础设置 -->
@@ -1116,13 +1198,19 @@
 
             ${isTelegramToTelegram ? `
             ${tgListenerType === 'bot'
-              ? renderTelegramBotConfig('Telegram 监听账号配置', '监听账号选择 Bot 时填写')
-              : renderTelegramClientConfig('Telegram 监听账号配置', '监听账号选择 Session 时填写')}
-            ${tgSenderType === tgListenerType
-              ? renderTelegramSharedNotice('Telegram 发送账号配置', '发送账号类型与监听账号相同，使用同一套凭据，无需重复填写。')
-              : tgSenderType === 'bot'
-                ? renderTelegramBotConfig('Telegram 发送账号配置', '发送账号选择 Bot 时填写')
-                : renderTelegramClientConfig('Telegram 发送账号配置', '发送账号选择 Session 时填写')}
+              ? renderTelegramBotConfig('Telegram 监听账号配置', '监听账号选择 Bot 时填写', { role: 'listener' })
+              : renderTelegramClientConfig('Telegram 监听账号配置', '监听账号选择 Session 时填写', { role: 'listener' })}
+            ${tgSenderType === 'bot'
+              ? renderTelegramBotConfig(
+                  'Telegram 发送账号配置',
+                  tgSenderType === tgListenerType ? '发送账号与监听账号共用同一套凭据' : '发送账号选择 Bot 时填写',
+                  { role: 'sender' },
+                )
+              : renderTelegramClientConfig(
+                  'Telegram 发送账号配置',
+                  tgSenderType === tgListenerType ? '发送账号与监听账号共用同一套凭据' : '发送账号选择 Session 时填写',
+                  { role: 'sender' },
+                )}
             ` : ''}
 
             <!-- Discord Token (所有Discord相关类型都需要) -->
@@ -1530,13 +1618,39 @@
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">水印设置</h2>
-            <p class="text-xs text-slate-500 mt-1">仅对图片生效，文字/图片水印可同时使用</p>
+            <p class="text-xs text-slate-500 mt-1">仅对图片生效，可选择文字或图片水印</p>
           </div>
           <div class="p-6 space-y-4">
-            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" ${(acc.watermark && acc.watermark.enabled) ? 'checked' : ''} onchange="updateWatermarkField('enabled', this.checked)"
-                class="h-4 w-4 rounded border-slate-300"> 启用水印
-            </label>
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" ${(acc.watermark && acc.watermark.enabled) ? 'checked' : ''} onchange="updateWatermarkField('enabled', this.checked)"
+                  class="h-4 w-4 rounded border-slate-300"> 启用水印
+              </label>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">水印类型</label>
+                <select onchange="updateWatermarkField('mode', this.value)" class="w-40 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="text" ${watermarkMode === 'text' ? 'selected' : ''}>文字水印</option>
+                  <option value="image" ${watermarkMode === 'image' ? 'selected' : ''}>图片水印</option>
+                  <option value="both" ${watermarkMode === 'both' ? 'selected' : ''}>文字 + 图片</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">铺设方式</label>
+                <select onchange="updateWatermarkField('pattern', this.value)" class="w-32 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="single" ${watermarkPattern === 'single' ? 'selected' : ''}>单个</option>
+                  <option value="tile" ${watermarkPattern === 'tile' ? 'selected' : ''}>平铺</option>
+                </select>
+              </div>
+              ${watermarkPattern === 'tile' ? `
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">平铺间距（px）</label>
+                <input type="number" min="0" value="${(acc.watermark && acc.watermark.tileGap) ?? ''}" onchange="updateWatermarkField('tileGap', Number(this.value))"
+                  placeholder="40" class="w-28 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+              ` : ''}
+            </div>
+
+            ${showWatermarkText ? `
             <div class="grid gap-3 md:grid-cols-2">
               <div>
                 <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
@@ -1549,12 +1663,28 @@
                   placeholder="16" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
               <div>
+                <label class="block text-xs text-slate-600 mb-1">文字颜色</label>
+                <input type="color" value="${(acc.watermark && acc.watermark.textColor) || '#ffffff'}" onchange="updateWatermarkField('textColor', this.value)"
+                  class="h-10 w-full rounded border border-slate-200 px-2">
+              </div>
+              <div>
                 <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
                 <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.textOpacity) || ''}" onchange="updateWatermarkField('textOpacity', Number(this.value))"
                   placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
+            </div>
+            ` : ''}
+
+            ${showWatermarkImage ? `
+            <div class="grid gap-3 md:grid-cols-2">
               <div>
-                <label class="block text-xs text-slate-600 mb-1">图片水印地址</label>
+                <label class="block text-xs text-slate-600 mb-1">上传水印图片</label>
+                <input type="file" accept="image/*" onchange="uploadWatermarkImage(this)"
+                  class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                <p class="text-xs text-slate-500 mt-2">上传后会保存到本地并自动应用</p>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">图片水印地址（URL 或本地路径）</label>
                 <input type="text" value="${(acc.watermark && acc.watermark.imageUrl) || ''}" onchange="updateWatermarkField('imageUrl', this.value)"
                   placeholder="https://example.com/watermark.png 或 /path/to/file.png" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
@@ -1568,8 +1698,12 @@
                 <input type="number" min="0" max="100" value="${(acc.watermark && acc.watermark.imageOpacity) || ''}" onchange="updateWatermarkField('imageOpacity', Number(this.value))"
                   placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
+            </div>
+            ` : ''}
+
+            <div class="grid gap-3 md:grid-cols-2">
               <div>
-                <label class="block text-xs text-slate-600 mb-1">水印位置</label>
+                <label class="block text-xs text-slate-600 mb-1">水印位置（单个模式）</label>
                 <select onchange="updateWatermarkField('position', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   <option value="" ${(acc.watermark && acc.watermark.position) ? '' : 'selected'}>默认（右下）</option>
                   <option value="top-left" ${(acc.watermark && acc.watermark.position) === 'top-left' ? 'selected' : ''}>左上</option>
@@ -1585,7 +1719,11 @@
                   placeholder="8" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
             </div>
-            <p class="text-xs text-slate-500">图片水印支持 URL 或本地路径；透明度越大越清晰。</p>
+
+            <div>
+              <label class="block text-xs text-slate-600 mb-2">水印预览</label>
+              ${renderWatermarkPreview(acc)}
+            </div>
           </div>
         </div>
       `;
@@ -2094,6 +2232,78 @@
       }
     }
 
+    function getTelegramRoleAccountId(acc, role, type) {
+      return `${acc.id}_tg_${role}_${type}`;
+    }
+
+    function getTelegramRoleAccount(acc, role, type) {
+      if (!acc.telegramConfig || !Array.isArray(acc.telegramConfig.accounts)) return null;
+      const accountId = getTelegramRoleAccountId(acc, role, type);
+      return acc.telegramConfig.accounts.find(entry => entry.id === accountId) || null;
+    }
+
+    function ensureTelegramRoleAccount(acc, role, type) {
+      ensureTelegramConfig(acc);
+      const accountId = getTelegramRoleAccountId(acc, role, type);
+      let entry = acc.telegramConfig.accounts.find(item => item.id === accountId);
+      if (!entry) {
+        entry = {
+          id: accountId,
+          name: role === 'listener' ? 'Telegram 监听账号' : 'Telegram 发送账号',
+          type,
+          token: '',
+          enabled: true,
+          role
+        };
+        acc.telegramConfig.accounts.push(entry);
+      }
+      entry.role = role;
+      entry.type = type;
+      entry.enabled = true;
+      if (!entry.sessionType) {
+        entry.sessionType = acc.sessionType || 'file';
+      }
+      if (type === 'bot') {
+        if (!entry.token && typeof acc.telegramBotToken === 'string' && acc.telegramBotToken.trim()) {
+          entry.token = acc.telegramBotToken.trim();
+        }
+      } else {
+        if (!entry.apiId && acc.telegramApiId) {
+          const value = Number(acc.telegramApiId);
+          if (Number.isFinite(value)) entry.apiId = value;
+        }
+        if (!entry.apiHash && acc.telegramApiHash) {
+          entry.apiHash = acc.telegramApiHash;
+        }
+        if (!entry.sessionPath && acc.telegramSessionPath) {
+          entry.sessionPath = acc.telegramSessionPath;
+        }
+        if (!entry.sessionString && acc.telegramSessionString) {
+          entry.sessionString = acc.telegramSessionString;
+        }
+      }
+      return entry;
+    }
+
+    function disableTelegramRoleAccounts(acc, role, keepType) {
+      if (!acc.telegramConfig || !Array.isArray(acc.telegramConfig.accounts)) return;
+      acc.telegramConfig.accounts.forEach((entry) => {
+        if (entry.role !== role) return;
+        if (entry.type === keepType) return;
+        entry.enabled = false;
+      });
+    }
+
+    function getTelegramAccountStatus(acc, accountId, fallbackState, fallbackMessage) {
+      if (accountId && acc.telegramAccountStates && acc.telegramAccountStates[accountId]) {
+        return acc.telegramAccountStates[accountId];
+      }
+      return {
+        state: fallbackState || 'idle',
+        message: fallbackMessage || ''
+      };
+    }
+
     function isTelegramForwardEnabled(acc) {
       if (!acc.telegramConfig) return acc.enableForwarding !== false;
       if (acc.telegramConfig.enableTelegramForward === undefined) {
@@ -2116,6 +2326,8 @@
       ensureTelegramConfig(acc);
       if (value === 'bot' || value === 'client') {
         acc.telegramConfig.defaultSenderAccountType = value;
+        disableTelegramRoleAccounts(acc, 'sender', value);
+        ensureTelegramRoleAccount(acc, 'sender', value);
       }
       saveConfig();
       render();
@@ -2126,6 +2338,8 @@
       ensureTelegramConfig(acc);
       if (value === 'bot' || value === 'client') {
         acc.telegramConfig.listenerAccountType = value;
+        disableTelegramRoleAccounts(acc, 'listener', value);
+        ensureTelegramRoleAccount(acc, 'listener', value);
       }
       saveConfig();
       render();
@@ -2145,6 +2359,36 @@
           });
         }
       }
+      saveConfig();
+      render();
+    }
+
+    function updateTelegramRoleField(role, type, field, value) {
+      const acc = getActiveAccount();
+      if (role !== 'listener' && role !== 'sender') return;
+      if (type !== 'bot' && type !== 'client') return;
+      const entry = ensureTelegramRoleAccount(acc, role, type);
+      if (!entry) return;
+
+      if (field === 'token') {
+        entry.token = value || '';
+      } else if (field === 'apiId') {
+        const numeric = Number(value);
+        entry.apiId = Number.isFinite(numeric) ? numeric : undefined;
+      } else if (field === 'apiHash') {
+        entry.apiHash = value || '';
+      } else if (field === 'sessionString') {
+        entry.sessionString = value || '';
+        if (entry.sessionString) {
+          entry.sessionPath = undefined;
+          entry.sessionType = 'string';
+        }
+      } else if (field === 'sessionType') {
+        entry.sessionType = value === 'string' ? 'string' : 'file';
+      } else {
+        entry[field] = value;
+      }
+
       saveConfig();
       render();
     }
@@ -2169,6 +2413,111 @@
       }
       saveConfig();
       render();
+    }
+
+    function isPreviewableUrl(value) {
+      return typeof value === 'string' && /^https?:\/\//i.test(value.trim());
+    }
+
+    function renderWatermarkPreview(acc) {
+      const watermark = acc.watermark || {};
+      if (!watermark.enabled) {
+        return '<div class="text-xs text-slate-400">未启用水印</div>';
+      }
+      const mode =
+        watermark.mode
+        || (watermark.text && watermark.imageUrl ? 'both' : watermark.imageUrl ? 'image' : 'text');
+      const pattern = watermark.pattern === 'tile' ? 'tile' : 'single';
+      const text = watermark.text || '水印';
+      const textSize = typeof watermark.textSize === 'number' ? watermark.textSize : 16;
+      const textColor = watermark.textColor || '#ffffff';
+      const textOpacity = typeof watermark.textOpacity === 'number' ? watermark.textOpacity : 60;
+      const imageScale = typeof watermark.imageScale === 'number' ? watermark.imageScale : 20;
+      const imageOpacity = typeof watermark.imageOpacity === 'number' ? watermark.imageOpacity : 60;
+      const tileGap = typeof watermark.tileGap === 'number' ? watermark.tileGap : 40;
+      const previewImage = watermarkPreviewCache.get(acc.id) || (isPreviewableUrl(watermark.imageUrl) ? watermark.imageUrl : '');
+      const showText = mode !== 'image' && text;
+      const showImage = mode !== 'text' && previewImage;
+      const position = watermark.position || 'bottom-right';
+      const posClass = {
+        'top-left': 'top-2 left-2',
+        'top-right': 'top-2 right-2',
+        'bottom-left': 'bottom-2 left-2',
+        'bottom-right': 'bottom-2 right-2',
+        center: 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2'
+      }[position] || 'bottom-2 right-2';
+
+      if (!showText && !showImage) {
+        return '<div class="text-xs text-slate-400">未设置水印内容</div>';
+      }
+
+      const overlayItems = [];
+      if (pattern === 'single') {
+        if (showText) {
+          overlayItems.push(`<div class="absolute ${posClass}" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;">${escapeHtml(text)}</div>`);
+        }
+        if (showImage) {
+          overlayItems.push(`<img src="${previewImage}" class="absolute ${posClass} max-w-[120px]" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;">`);
+        }
+      } else {
+        if (showText) {
+          const tiles = Array.from({ length: 9 }).map(() => `<div>${escapeHtml(text)}</div>`).join('');
+          overlayItems.push(`<div class="absolute inset-0 grid grid-cols-3 place-items-center" style="gap:${tileGap}px;color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;">${tiles}</div>`);
+        }
+        if (showImage) {
+          const tiles = Array.from({ length: 9 }).map(() => `<img src="${previewImage}" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;">`).join('');
+          overlayItems.push(`<div class="absolute inset-0 grid grid-cols-3 place-items-center" style="gap:${tileGap}px;">${tiles}</div>`);
+        }
+      }
+
+      return `
+        <div class="relative h-36 w-full overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100">
+          ${overlayItems.join('')}
+        </div>
+      `;
+    }
+
+    async function uploadWatermarkImage(input) {
+      const file = input.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        alert("图片过大，请选择 5MB 以内的图片");
+        return;
+      }
+      const acc = getActiveAccount();
+      try {
+        const reader = new FileReader();
+        reader.onload = () => {
+          watermarkPreviewCache.set(acc.id, reader.result);
+          render();
+        };
+        reader.readAsDataURL(file);
+
+        const form = new FormData();
+        form.append('accountId', acc.id);
+        form.append('file', file, file.name);
+        const res = await fetch('/api/watermark/upload', {
+          method: 'POST',
+          body: form
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || data?.message || `上传失败(${res.status})`);
+        }
+        ensureWatermarkConfig(acc);
+        acc.watermark.imageUrl = data.imageUrl || '';
+        if (!acc.watermark.mode || acc.watermark.mode === 'text') {
+          acc.watermark.mode = 'image';
+        }
+        if (acc.watermark.enabled !== true) {
+          acc.watermark.enabled = true;
+        }
+        saveConfig();
+        render();
+        alert("水印图片已上传");
+      } catch (e) {
+        alert("水印图片上传失败: " + (e?.message || e));
+      }
     }
 
     function updateTelegramLongMessage(field, value) {
@@ -2413,9 +2762,13 @@
       }
 
       document.getElementById('ruleWatermarkMode').value = ruleConfigData.watermarkMode;
+      document.getElementById('ruleWatermarkType').value = ruleConfigData.watermark.mode || 'text';
+      document.getElementById('ruleWatermarkPattern').value = ruleConfigData.watermark.pattern || 'single';
+      document.getElementById('ruleWatermarkTileGap').value = ruleConfigData.watermark.tileGap ?? '';
       document.getElementById('ruleWatermarkText').value = ruleConfigData.watermark.text || '';
       document.getElementById('ruleWatermarkTextSize').value = ruleConfigData.watermark.textSize || '';
       document.getElementById('ruleWatermarkTextOpacity').value = ruleConfigData.watermark.textOpacity || '';
+      document.getElementById('ruleWatermarkTextColor').value = ruleConfigData.watermark.textColor || '#ffffff';
       document.getElementById('ruleWatermarkImageUrl').value = ruleConfigData.watermark.imageUrl || '';
       document.getElementById('ruleWatermarkImageScale').value = ruleConfigData.watermark.imageScale || '';
       document.getElementById('ruleWatermarkImageOpacity').value = ruleConfigData.watermark.imageOpacity || '';
@@ -2532,15 +2885,22 @@
       } else if (watermarkMode === 'disable') {
         mapping.watermark = { enabled: false };
       } else {
+        const watermarkType = document.getElementById('ruleWatermarkType').value;
+        const watermarkPattern = document.getElementById('ruleWatermarkPattern').value;
         const textSize = parseInt(document.getElementById('ruleWatermarkTextSize').value, 10);
         const textOpacity = parseInt(document.getElementById('ruleWatermarkTextOpacity').value, 10);
         const imageScale = parseInt(document.getElementById('ruleWatermarkImageScale').value, 10);
         const imageOpacity = parseInt(document.getElementById('ruleWatermarkImageOpacity').value, 10);
         const margin = parseInt(document.getElementById('ruleWatermarkMargin').value, 10);
+        const tileGap = parseInt(document.getElementById('ruleWatermarkTileGap').value, 10);
         mapping.watermark = {
           enabled: true,
+          mode: watermarkType === 'text' || watermarkType === 'image' || watermarkType === 'both' ? watermarkType : undefined,
+          pattern: watermarkPattern === 'tile' ? 'tile' : 'single',
+          tileGap: Number.isFinite(tileGap) ? tileGap : undefined,
           text: document.getElementById('ruleWatermarkText').value.trim() || undefined,
           textSize: Number.isFinite(textSize) ? textSize : undefined,
+          textColor: document.getElementById('ruleWatermarkTextColor').value || undefined,
           textOpacity: Number.isFinite(textOpacity) ? textOpacity : undefined,
           imageUrl: document.getElementById('ruleWatermarkImageUrl').value.trim() || undefined,
           imageScale: Number.isFinite(imageScale) ? imageScale : undefined,
@@ -2756,6 +3116,18 @@
         }
         if (acc.telegramConfig.defaultSenderAccountType !== 'bot' && acc.telegramConfig.defaultSenderAccountType !== 'client') {
           acc.telegramConfig.defaultSenderAccountType = senderType;
+        }
+        if (listenerType === 'bot' || listenerType === 'client') {
+          disableTelegramRoleAccounts(acc, 'listener', listenerType);
+        }
+        if (senderType === 'bot' || senderType === 'client') {
+          disableTelegramRoleAccounts(acc, 'sender', senderType);
+        }
+        if (listenerType === 'bot' || listenerType === 'client') {
+          ensureTelegramRoleAccount(acc, 'listener', listenerType);
+        }
+        if (senderType === 'bot' || senderType === 'client') {
+          ensureTelegramRoleAccount(acc, 'sender', senderType);
         }
       }
       if (forwardingType === 'discord-to-feishu') {
@@ -3317,7 +3689,7 @@
       }
     }
 
-    async function loadSessionFile(input) {
+    async function loadSessionFile(input, role, accountType) {
       const file = input.files[0];
       if (!file) return;
 
@@ -3328,10 +3700,17 @@
       }
 
       const acc = getActiveAccount();
+      const useRole = role === 'listener' || role === 'sender';
+      const targetType = 'client';
+      const telegramAccountId = useRole ? getTelegramRoleAccountId(acc, role, targetType) : '';
 
       try {
         const form = new FormData();
         form.append('accountId', acc.id);
+        if (useRole && telegramAccountId) {
+          form.append('telegramAccountId', telegramAccountId);
+          form.append('role', role);
+        }
         form.append('file', file, file.name);
 
         const res = await fetch('/api/telegram/client/session-file', {
@@ -3343,9 +3722,16 @@
           throw new Error(data?.error || data?.message || `上传失败(${res.status})`);
         }
 
-        acc.telegramSessionPath = data.sessionPath || '';
-        acc.telegramSessionString = '';
-        acc.sessionType = 'file';
+        if (useRole) {
+          const entry = ensureTelegramRoleAccount(acc, role, targetType);
+          entry.sessionPath = data.sessionPath || '';
+          entry.sessionString = '';
+          entry.sessionType = 'file';
+        } else {
+          acc.telegramSessionPath = data.sessionPath || '';
+          acc.telegramSessionString = '';
+          acc.sessionType = 'file';
+        }
         saveConfig();
         render();
         alert("Session 文件已上传并保存。");
@@ -3354,28 +3740,12 @@
       }
     }
 
-    function switchSessionType(type) {
-      const acc = getActiveAccount();
-      acc.sessionType = type;
-      updateField('sessionType', type);
-
-      // 更新tab样式
-      const fileTab = document.getElementById('sessionFileTab');
-      const stringTab = document.getElementById('sessionStringTab');
-      const fileContent = document.getElementById('sessionFileContent');
-      const stringContent = document.getElementById('sessionStringContent');
-
-      if (type === 'file') {
-        fileTab.className = 'flex-1 py-2 px-3 text-sm font-medium text-center bg-white text-indigo-600 border-b-2 border-indigo-600';
-        stringTab.className = 'flex-1 py-2 px-3 text-sm font-medium text-center text-slate-500 hover:text-slate-700';
-        fileContent.classList.remove('hidden');
-        stringContent.classList.add('hidden');
-      } else {
-        stringTab.className = 'flex-1 py-2 px-3 text-sm font-medium text-center bg-white text-indigo-600 border-b-2 border-indigo-600';
-        fileTab.className = 'flex-1 py-2 px-3 text-sm font-medium text-center text-slate-500 hover:text-slate-700';
-        stringContent.classList.remove('hidden');
-        fileContent.classList.add('hidden');
+    function switchSessionType(type, role, accountType) {
+      if (role === 'listener' || role === 'sender') {
+        updateTelegramRoleField(role, accountType || 'client', 'sessionType', type);
+        return;
       }
+      updateField('sessionType', type);
     }
 
     function removeOCRKeyword(field, idx) {
@@ -3708,9 +4078,16 @@
     }
 
     // Telegram Bot 连接函数
-    async function connectTelegramBot() {
+    async function connectTelegramBot(role) {
       const acc = getActiveAccount();
-      if (acc.telegramBotState === 'online' || acc.telegramBotState === 'connecting') return;
+      const useRole = role === 'listener' || role === 'sender';
+      const accountId = useRole ? getTelegramRoleAccountId(acc, role, 'bot') : acc.id;
+      const accountEntry = useRole ? getTelegramRoleAccount(acc, role, 'bot') : null;
+      const tokenValue = useRole ? (accountEntry?.token || '') : (acc.telegramBotToken || '');
+      const currentState = useRole
+        ? acc.telegramAccountStates?.[accountId]?.state
+        : acc.telegramBotState;
+      if (currentState === 'online' || currentState === 'connecting') return;
 
       // 验证是否配置了转发规则
       const telegramMappings = acc.telegramConfig?.mappings || [];
@@ -3719,58 +4096,112 @@
       );
 
       if (!hasDiscordToTelegramMapping) {
-        acc.telegramBotState = 'error';
-        acc.telegramBotMessage = '未配置需要 Bot 的 Telegram 转发规则，无法启动';
+        if (useRole) {
+          if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+          acc.telegramAccountStates[accountId] = { state: 'error', message: '未配置需要 Bot 的 Telegram 转发规则' };
+        } else {
+          acc.telegramBotState = 'error';
+          acc.telegramBotMessage = '未配置需要 Bot 的 Telegram 转发规则，无法启动';
+        }
         render();
         return;
       }
 
-      acc.telegramBotState = 'connecting';
-      acc.telegramBotMessage = '正在连接Telegram Bot...';
+      if (!tokenValue) {
+        if (useRole) {
+          if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+          acc.telegramAccountStates[accountId] = { state: 'error', message: '缺少 Bot Token' };
+        } else {
+          acc.telegramBotState = 'error';
+          acc.telegramBotMessage = '缺少 Bot Token';
+        }
+        render();
+        return;
+      }
+
+      if (useRole) {
+        if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+        acc.telegramAccountStates[accountId] = { state: 'connecting', message: '正在连接...' };
+      } else {
+        acc.telegramBotState = 'connecting';
+        acc.telegramBotMessage = '正在连接Telegram Bot...';
+      }
       render();
 
       try {
         const res = await fetch('/api/telegram/bot/connect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: acc.id })
+          body: JSON.stringify({ accountId: acc.id, telegramAccountId: useRole ? accountId : undefined, role: useRole ? role : undefined })
         });
         const data = await res.json();
         if (res.ok) {
-          acc.telegramBotState = data.state || 'online';
-          acc.telegramBotMessage = data.message || '连接成功';
+          if (useRole) {
+            if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+            acc.telegramAccountStates[accountId] = {
+              state: data.state || 'online',
+              message: data.message || '连接成功',
+              userInfo: data.userInfo
+            };
+          } else {
+            acc.telegramBotState = data.state || 'online';
+            acc.telegramBotMessage = data.message || '连接成功';
+          }
         } else {
-          acc.telegramBotState = 'error';
-          acc.telegramBotMessage = data.message || '连接失败';
+          if (useRole) {
+            if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+            acc.telegramAccountStates[accountId] = { state: 'error', message: data.message || '连接失败' };
+          } else {
+            acc.telegramBotState = 'error';
+            acc.telegramBotMessage = data.message || '连接失败';
+          }
         }
       } catch (e) {
-        acc.telegramBotState = 'error';
-        acc.telegramBotMessage = '连接请求失败';
+        if (useRole) {
+          if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+          acc.telegramAccountStates[accountId] = { state: 'error', message: '连接请求失败' };
+        } else {
+          acc.telegramBotState = 'error';
+          acc.telegramBotMessage = '连接请求失败';
+        }
       }
       render();
     }
 
     // Telegram Bot 断开函数
-    async function disconnectTelegramBot() {
+    async function disconnectTelegramBot(role) {
       const acc = getActiveAccount();
-      if (acc.telegramBotState !== 'online' && acc.telegramBotState !== 'error' && acc.telegramBotState !== 'connecting') return;
+      const useRole = role === 'listener' || role === 'sender';
+      const accountId = useRole ? getTelegramRoleAccountId(acc, role, 'bot') : acc.id;
+      const currentState = useRole
+        ? acc.telegramAccountStates?.[accountId]?.state
+        : acc.telegramBotState;
+      if (currentState !== 'online' && currentState !== 'error' && currentState !== 'connecting') return;
 
-      const holdKey = `tg-bot:${acc.id}`;
+      const holdKey = useRole ? `tg-bot:${accountId}` : `tg-bot:${acc.id}`;
       setDisconnectHold(holdKey);
-      acc.telegramBotState = 'disconnecting';
-      acc.telegramBotMessage = '正在断开...';
+      if (useRole) {
+        if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+        acc.telegramAccountStates[accountId] = { state: 'disconnecting', message: '正在断开...' };
+      } else {
+        acc.telegramBotState = 'disconnecting';
+        acc.telegramBotMessage = '正在断开...';
+      }
       render();
 
       try {
         const res = await fetch('/api/telegram/bot/disconnect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: acc.id })
+          body: JSON.stringify({ accountId: acc.id, telegramAccountId: useRole ? accountId : undefined })
         });
         const data = await res.json();
         if (res.ok) {
           const nextState = data.state || 'idle';
-          if (nextState !== 'idle') {
+          if (useRole) {
+            if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+            acc.telegramAccountStates[accountId] = { state: nextState, message: data.message || '已断开' };
+          } else if (nextState !== 'idle') {
             acc.telegramBotState = nextState;
             acc.telegramBotMessage = data.message || '已断开';
           } else {
@@ -3779,80 +4210,142 @@
         }
       } catch (e) {
         clearDisconnectHold(holdKey);
-        acc.telegramBotState = 'error';
-        acc.telegramBotMessage = '断开请求失败';
+        if (useRole) {
+          if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+          acc.telegramAccountStates[accountId] = { state: 'error', message: '断开请求失败' };
+        } else {
+          acc.telegramBotState = 'error';
+          acc.telegramBotMessage = '断开请求失败';
+        }
       }
       render();
     }
 
     // Telegram Client 连接函数
-    async function connectTelegramClient() {
+    async function connectTelegramClient(role) {
       const acc = getActiveAccount();
-      if (acc.telegramClientState === 'online' || acc.telegramClientState === 'connecting') return;
+      const useRole = role === 'listener' || role === 'sender';
+      const accountId = useRole ? getTelegramRoleAccountId(acc, role, 'client') : acc.id;
+      const accountEntry = useRole ? getTelegramRoleAccount(acc, role, 'client') : null;
+      const currentState = useRole
+        ? acc.telegramAccountStates?.[accountId]?.state
+        : acc.telegramClientState;
+      if (currentState === 'online' || currentState === 'connecting') return;
 
-      const hasApiId = acc.telegramApiId !== undefined && String(acc.telegramApiId).trim() !== '';
-      const hasApiHash = acc.telegramApiHash && String(acc.telegramApiHash).trim();
-      const hasSession = (acc.telegramSessionString && acc.telegramSessionString.trim())
-        || (acc.telegramSessionPath && acc.telegramSessionPath.trim());
+      const apiIdValue = useRole ? accountEntry?.apiId : acc.telegramApiId;
+      const apiHashValue = useRole ? accountEntry?.apiHash : acc.telegramApiHash;
+      const sessionStringValue = useRole ? accountEntry?.sessionString : acc.telegramSessionString;
+      const sessionPathValue = useRole ? accountEntry?.sessionPath : acc.telegramSessionPath;
+      const hasApiId = apiIdValue !== undefined && String(apiIdValue).trim() !== '';
+      const hasApiHash = apiHashValue && String(apiHashValue).trim();
+      const hasSession = (sessionStringValue && String(sessionStringValue).trim())
+        || (sessionPathValue && String(sessionPathValue).trim());
       if (!hasApiId || !hasApiHash) {
-        acc.telegramClientState = 'error';
-        acc.telegramClientMessage = '缺少 Telegram API ID 或 API Hash';
+        if (useRole) {
+          if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+          acc.telegramAccountStates[accountId] = { state: 'error', message: '缺少 Telegram API ID 或 API Hash' };
+        } else {
+          acc.telegramClientState = 'error';
+          acc.telegramClientMessage = '缺少 Telegram API ID 或 API Hash';
+        }
         render();
         return;
       }
       if (!hasSession) {
-        acc.telegramClientState = 'error';
-        acc.telegramClientMessage = '缺少 Telegram Session（文件或字符串）';
+        if (useRole) {
+          if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+          acc.telegramAccountStates[accountId] = { state: 'error', message: '缺少 Telegram Session（文件或字符串）' };
+        } else {
+          acc.telegramClientState = 'error';
+          acc.telegramClientMessage = '缺少 Telegram Session（文件或字符串）';
+        }
         render();
         return;
       }
 
-      acc.telegramClientState = 'connecting';
-      acc.telegramClientMessage = '正在连接Telegram Client...';
+      if (useRole) {
+        if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+        acc.telegramAccountStates[accountId] = { state: 'connecting', message: '正在连接...' };
+      } else {
+        acc.telegramClientState = 'connecting';
+        acc.telegramClientMessage = '正在连接Telegram Client...';
+      }
       render();
 
       try {
         const res = await fetch('/api/telegram/client/connect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: acc.id })
+          body: JSON.stringify({ accountId: acc.id, telegramAccountId: useRole ? accountId : undefined, role: useRole ? role : undefined })
         });
         const data = await res.json();
         if (res.ok) {
-          acc.telegramClientState = data.state || 'online';
-          acc.telegramClientMessage = data.message || '连接成功';
+          if (useRole) {
+            if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+            acc.telegramAccountStates[accountId] = {
+              state: data.state || 'online',
+              message: data.message || '连接成功',
+              userInfo: data.userInfo
+            };
+          } else {
+            acc.telegramClientState = data.state || 'online';
+            acc.telegramClientMessage = data.message || '连接成功';
+          }
         } else {
-          acc.telegramClientState = 'error';
-          acc.telegramClientMessage = data.message || '连接失败';
+          if (useRole) {
+            if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+            acc.telegramAccountStates[accountId] = { state: 'error', message: data.message || '连接失败' };
+          } else {
+            acc.telegramClientState = 'error';
+            acc.telegramClientMessage = data.message || '连接失败';
+          }
         }
       } catch (e) {
-        acc.telegramClientState = 'error';
-        acc.telegramClientMessage = '连接请求失败';
+        if (useRole) {
+          if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+          acc.telegramAccountStates[accountId] = { state: 'error', message: '连接请求失败' };
+        } else {
+          acc.telegramClientState = 'error';
+          acc.telegramClientMessage = '连接请求失败';
+        }
       }
       render();
     }
 
     // Telegram Client 断开函数
-    async function disconnectTelegramClient() {
+    async function disconnectTelegramClient(role) {
       const acc = getActiveAccount();
-      if (acc.telegramClientState !== 'online' && acc.telegramClientState !== 'error' && acc.telegramClientState !== 'connecting') return;
+      const useRole = role === 'listener' || role === 'sender';
+      const accountId = useRole ? getTelegramRoleAccountId(acc, role, 'client') : acc.id;
+      const currentState = useRole
+        ? acc.telegramAccountStates?.[accountId]?.state
+        : acc.telegramClientState;
+      if (currentState !== 'online' && currentState !== 'error' && currentState !== 'connecting') return;
 
-      const holdKey = `tg-client:${acc.id}`;
+      const holdKey = useRole ? `tg-client:${accountId}` : `tg-client:${acc.id}`;
       setDisconnectHold(holdKey);
-      acc.telegramClientState = 'disconnecting';
-      acc.telegramClientMessage = '正在断开...';
+      if (useRole) {
+        if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+        acc.telegramAccountStates[accountId] = { state: 'disconnecting', message: '正在断开...' };
+      } else {
+        acc.telegramClientState = 'disconnecting';
+        acc.telegramClientMessage = '正在断开...';
+      }
       render();
 
       try {
         const res = await fetch('/api/telegram/client/disconnect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: acc.id })
+          body: JSON.stringify({ accountId: acc.id, telegramAccountId: useRole ? accountId : undefined })
         });
         const data = await res.json();
         if (res.ok) {
           const nextState = data.state || 'idle';
-          if (nextState !== 'idle') {
+          if (useRole) {
+            if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+            acc.telegramAccountStates[accountId] = { state: nextState, message: data.message || '已断开' };
+          } else if (nextState !== 'idle') {
             acc.telegramClientState = nextState;
             acc.telegramClientMessage = data.message || '已断开';
           } else {
@@ -3861,8 +4354,13 @@
         }
       } catch (e) {
         clearDisconnectHold(holdKey);
-        acc.telegramClientState = 'error';
-        acc.telegramClientMessage = '断开请求失败';
+        if (useRole) {
+          if (!acc.telegramAccountStates) acc.telegramAccountStates = {};
+          acc.telegramAccountStates[accountId] = { state: 'error', message: '断开请求失败' };
+        } else {
+          acc.telegramClientState = 'error';
+          acc.telegramClientMessage = '断开请求失败';
+        }
       }
       render();
     }

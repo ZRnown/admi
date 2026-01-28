@@ -313,9 +313,15 @@ class MediaHandler:
             return
         if watermark.get("enabled") is False:
             return
+        mode = str(watermark.get("mode") or "").strip().lower()
+        pattern = str(watermark.get("pattern") or "").strip().lower()
+        tile_gap = int(watermark.get("tileGap") or 40)
+        tile_gap = max(0, tile_gap)
+        allow_text = mode != "image"
+        allow_image = mode != "text"
         text = str(watermark.get("text") or "").strip()
         image_url = str(watermark.get("imageUrl") or "").strip()
-        if not text and not image_url:
+        if (not allow_text or not text) and (not allow_image or not image_url):
             return
 
         try:
@@ -329,7 +335,7 @@ class MediaHandler:
             margin = max(0, margin)
             position = watermark.get("position")
 
-            if image_url:
+            if image_url and allow_image:
                 wm_image = await self._load_watermark_image(image_url)
                 if wm_image:
                     scale = int(watermark.get("imageScale") or 20)
@@ -344,12 +350,19 @@ class MediaHandler:
                         alpha = wm_image.split()[3]
                         alpha = alpha.point(lambda p: int(p * (opacity / 100)))
                         wm_image.putalpha(alpha)
-                    x, y = self._resolve_watermark_position(
-                        base_image.width, base_image.height, wm_image.width, wm_image.height, position, margin
-                    )
-                    overlay.paste(wm_image, (x, y), wm_image)
+                    if pattern == "tile":
+                        step_x = max(1, wm_image.width + tile_gap)
+                        step_y = max(1, wm_image.height + tile_gap)
+                        for y in range(0, base_image.height, step_y):
+                            for x in range(0, base_image.width, step_x):
+                                overlay.paste(wm_image, (x, y), wm_image)
+                    else:
+                        x, y = self._resolve_watermark_position(
+                            base_image.width, base_image.height, wm_image.width, wm_image.height, position, margin
+                        )
+                        overlay.paste(wm_image, (x, y), wm_image)
 
-            if text:
+            if text and allow_text:
                 size = int(watermark.get("textSize") or 16)
                 size = max(8, size)
                 font = self._load_font(size)
@@ -360,10 +373,17 @@ class MediaHandler:
                 text_box = draw.textbbox((0, 0), text, font=font)
                 text_width = text_box[2] - text_box[0]
                 text_height = text_box[3] - text_box[1]
-                x, y = self._resolve_watermark_position(
-                    base_image.width, base_image.height, text_width, text_height, position, margin
-                )
-                draw.text((x, y), text, font=font, fill=fill)
+                if pattern == "tile":
+                    step_x = max(1, text_width + tile_gap)
+                    step_y = max(1, text_height + tile_gap)
+                    for y in range(0, base_image.height, step_y):
+                        for x in range(0, base_image.width, step_x):
+                            draw.text((x, y), text, font=font, fill=fill)
+                else:
+                    x, y = self._resolve_watermark_position(
+                        base_image.width, base_image.height, text_width, text_height, position, margin
+                    )
+                    draw.text((x, y), text, font=font, fill=fill)
 
             merged = Image.alpha_composite(base_image, overlay)
             if base_format in ["JPEG", "JPG"]:

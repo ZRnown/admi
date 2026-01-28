@@ -45,6 +45,8 @@ class TelegramAccount(BaseModel):
     api_id: Optional[int] = Field(default=None, alias="apiId")  # API ID (仅client)
     api_hash: Optional[str] = Field(default=None, alias="apiHash")  # API Hash (仅client)
     proxy_url: Optional[str] = Field(default=None, alias="proxyUrl")
+    role: Optional[str] = None
+    session_type: Optional[str] = Field(default=None, alias="sessionType")
     enabled: bool = True
 
 

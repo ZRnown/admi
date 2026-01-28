@@ -444,6 +444,11 @@ class TelegramForwarder:
 
                     if preferred_type in ("bot", "client"):
                         for acc in self.account_configs:
+                            if getattr(acc, "enabled", True) and getattr(acc, "type", "") == preferred_type and getattr(acc, "role", None) == "sender":
+                                telegram_account = acc
+                                break
+                    if preferred_type in ("bot", "client") and not telegram_account:
+                        for acc in self.account_configs:
                             if getattr(acc, "enabled", True) and getattr(acc, "type", "") == preferred_type:
                                 telegram_account = acc
                                 break
@@ -452,11 +457,18 @@ class TelegramForwarder:
                     if not telegram_account and len(self.account_configs) == 1:
                         telegram_account = self.account_configs[0]
                     elif not telegram_account and len(self.account_configs) > 1:
-                        # 如果有多个账号，优先寻找启用的 Bot 账号
+                        # 如果有 sender 角色账号，优先使用它
                         for acc in self.account_configs:
-                            if getattr(acc, "enabled", True) and getattr(acc, "type", "") == "bot":
+                            if getattr(acc, "enabled", True) and getattr(acc, "role", None) == "sender":
                                 telegram_account = acc
                                 break
+
+                        # 如果有多个账号，优先寻找启用的 Bot 账号
+                        if not telegram_account:
+                            for acc in self.account_configs:
+                                if getattr(acc, "enabled", True) and getattr(acc, "type", "") == "bot":
+                                    telegram_account = acc
+                                    break
 
                         # 如果没有找到 Bot，尝试找任意启用的账号
                         if not telegram_account:

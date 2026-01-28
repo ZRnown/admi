@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const accountId = body?.accountId as string | undefined;
+    const telegramAccountId = body?.telegramAccountId as string | undefined;
 
     if (!accountId) {
       return NextResponse.json({ error: "缺少 accountId" }, { status: 400 });
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 保存 enabled: false 到配置
-    const botStatusId = `${accountId}_bot`;
+    const botStatusId = telegramAccountId || `${accountId}_bot`;
     if (account.telegramConfig?.accounts) {
       const target = account.telegramConfig.accounts.find(a => a.id === botStatusId);
       if (target) {

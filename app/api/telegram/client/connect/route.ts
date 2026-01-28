@@ -11,12 +11,9 @@ const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status
 const triggerFile = path.resolve(process.cwd(), ".data", "trigger_reload");
 
 function resolveClientAccountId(account: AccountConfig, telegramAccountId?: string) {
+  if (telegramAccountId) return telegramAccountId;
   const candidates = account.telegramConfig?.accounts || [];
-  const target =
-    (telegramAccountId
-      ? candidates.find((acc) => acc.id === telegramAccountId)
-      : candidates.find((acc) => acc.type === "client" && acc.enabled === true)) || null;
-
+  const target = candidates.find((acc) => acc.type === "client" && acc.enabled === true) || null;
   return target?.id || account.id;
 }
 
@@ -56,6 +53,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const accountId = body?.accountId as string | undefined;
     const telegramAccountId = body?.telegramAccountId as string | undefined;
+    const role = body?.role === "listener" || body?.role === "sender" ? body.role : undefined;
 
     if (!accountId) {
       return NextResponse.json({ error: "缺少 accountId" }, { status: 400 });
@@ -82,23 +80,24 @@ export async function POST(req: NextRequest) {
     let targetAccount = candidates.find((acc) => acc.id === clientAccountId);
 
     if (!targetAccount) {
-      // Legacy 模式：创建一个显式条目以保存 enabled 状态
-      if (clientAccountId === account.id) {
-        targetAccount = {
-          id: account.id,
-          name: "Telegram Client",
-          type: "client" as const,
-          token: "",
-          apiId: account.telegramApiId,
-          apiHash: account.telegramApiHash,
-          sessionPath: account.telegramSessionPath,
-          sessionString: account.telegramSessionString,
-          enabled: true
-        };
-        account.telegramConfig.accounts.push(targetAccount);
-      }
+      targetAccount = {
+        id: clientAccountId,
+        name: role === "listener" ? "Telegram Listener" : role === "sender" ? "Telegram Sender" : "Telegram Client",
+        type: "client" as const,
+        token: "",
+        apiId: account.telegramApiId,
+        apiHash: account.telegramApiHash,
+        sessionPath: account.telegramSessionPath,
+        sessionString: account.telegramSessionString,
+        enabled: true,
+        role,
+      };
+      account.telegramConfig.accounts.push(targetAccount);
     } else {
       targetAccount.enabled = true;
+      if (role) {
+        targetAccount.role = role;
+      }
     }
 
     // 保存配置到磁盘（确保下次重启自动登录）
@@ -111,6 +110,18 @@ export async function POST(req: NextRequest) {
       sessionPath: account.telegramSessionPath,
       sessionString: account.telegramSessionString,
     };
+    if (!clientAccount.apiId && account.telegramApiId) {
+      clientAccount.apiId = account.telegramApiId;
+    }
+    if (!clientAccount.apiHash && account.telegramApiHash) {
+      clientAccount.apiHash = account.telegramApiHash;
+    }
+    if (!clientAccount.sessionPath && account.telegramSessionPath) {
+      clientAccount.sessionPath = account.telegramSessionPath;
+    }
+    if (!clientAccount.sessionString && account.telegramSessionString) {
+      clientAccount.sessionString = account.telegramSessionString;
+    }
 
     if (!clientAccount.apiId || !clientAccount.apiHash) {
       return NextResponse.json(

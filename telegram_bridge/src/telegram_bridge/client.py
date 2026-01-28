@@ -4,6 +4,7 @@ Telegram客户端管理器
 """
 
 import asyncio
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -32,6 +33,12 @@ class TelegramClientManager:
         self._keepalive_tasks: Dict[str, asyncio.Task] = {}
         self._entity_cache: Dict[str, Dict[int, float]] = {}
         self._account_configs: Dict[str, TelegramAccount] = {}  # 保存账号配置用于重连
+        self._shared_clients: Dict[str, TelegramClient] = {}
+        self._shared_account_ids: Dict[str, set] = {}
+        self._shared_by_account: Dict[str, str] = {}
+        self._shared_primary: Dict[str, str] = {}
+        self._shared_user_info: Dict[str, dict] = {}
+        self._event_handlers: Dict[str, Any] = {}
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
         media_root = os.getenv("TELEGRAM_MEDIA_DIR") or str(base_dir / ".data" / "telegram_media")
@@ -49,23 +56,103 @@ class TelegramClientManager:
         # 为所有可能的账号设置回调
         pass  # 动态注册在connect时处理
 
-    def _get_connect_lock(self, account_id: str) -> asyncio.Lock:
-        lock = self._connect_locks.get(account_id)
+    def _get_connect_lock(self, lock_id: str) -> asyncio.Lock:
+        lock = self._connect_locks.get(lock_id)
         if not lock:
             lock = asyncio.Lock()
-            self._connect_locks[account_id] = lock
+            self._connect_locks[lock_id] = lock
         return lock
+
+    def _hash_payload(self, payload: bytes) -> str:
+        return hashlib.sha256(payload).hexdigest()
+
+    def _build_shared_key(self, account: TelegramAccount) -> Optional[str]:
+        session_key = None
+        if account.session_string:
+            session_key = self._hash_payload(account.session_string.encode("utf-8"))
+        elif account.session_path:
+            try:
+                with open(account.session_path, "rb") as f:
+                    session_key = self._hash_payload(f.read())
+            except Exception as e:
+                logger.debug(f"Failed to read session file for shared key: {e}")
+        if not session_key:
+            return None
+        api_id = account.api_id or ""
+        api_hash = account.api_hash or ""
+        return f"client:{session_key}:{api_id}:{api_hash}"
+
+    def _get_task_key(self, account_id: str) -> str:
+        return self._shared_by_account.get(account_id) or account_id
+
+    def _get_keepalive_chat_ids(self, task_key: str) -> List[Union[int, str]]:
+        if task_key in self._shared_account_ids:
+            combined: set = set()
+            for acc_id in self._shared_account_ids.get(task_key, set()):
+                combined.update(self._get_watched_chat_ids(acc_id))
+            return list(combined)
+        return self._get_watched_chat_ids(task_key)
+
+    async def _attach_shared_client(
+        self,
+        account_id: str,
+        account: TelegramAccount,
+        shared_key: str,
+        client: TelegramClient,
+    ) -> Dict[str, Any]:
+        self.clients[account_id] = client
+        self._account_configs[account_id] = account
+        self._shared_by_account[account_id] = shared_key
+        self._shared_account_ids.setdefault(shared_key, set()).add(account_id)
+
+        if account_id not in self._event_handlers:
+            async def message_handler(event, acc_id=account_id):
+                asyncio.create_task(self._handle_message(event, acc_id))
+            client.add_event_handler(message_handler, events.NewMessage)
+            self._event_handlers[account_id] = message_handler
+
+        if shared_key not in self._shared_primary:
+            self._shared_primary[shared_key] = account_id
+            self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
+
+        user_info = self._shared_user_info.get(shared_key)
+        if not user_info:
+            try:
+                me = await client.get_me()
+                if me:
+                    user_info = {
+                        "id": me.id,
+                        "firstName": me.first_name,
+                        "lastName": me.last_name,
+                        "username": me.username
+                    }
+                    self._shared_user_info[shared_key] = user_info
+            except Exception as e:
+                logger.debug(f"Failed to fetch shared client user info: {e}")
+        if user_info:
+            self.connection_manager.update_state(
+                account_id,
+                ConnectionStatus.CONNECTED,
+                user_info=user_info
+            )
+        else:
+            self.connection_manager.update_state(account_id, ConnectionStatus.CONNECTED)
+        return {
+            "success": True,
+            "userInfo": user_info
+        }
 
     async def _disconnect_client(self, account_id: str) -> Dict[str, Any]:
         """断开Telegram客户端连接（内部方法，不处理锁）"""
         try:
+            shared_key = self._shared_by_account.get(account_id)
+            client = self.clients.get(account_id)
+
             # 先取消注册状态回调，避免断开时触发自动重连导致闪烁
             self.connection_manager.unregister_status_callback(account_id)
 
             # 停止重连
             await self.connection_manager.stop_reconnect(account_id)
-            await self._stop_update_task(account_id)
-            await self._stop_keepalive_task(account_id)
 
             # 清除所有缓存
             if account_id in self._account_configs:
@@ -75,13 +162,56 @@ class TelegramClientManager:
             if account_id in self._entity_cache:
                 del self._entity_cache[account_id]
 
+            handler = self._event_handlers.pop(account_id, None)
+            if handler and client:
+                try:
+                    client.remove_event_handler(handler, events.NewMessage)
+                except Exception:
+                    pass
+
             if account_id in self.clients:
-                client = self.clients[account_id]
+                del self.clients[account_id]
+
+            if shared_key:
+                account_ids = self._shared_account_ids.get(shared_key, set())
+                if account_id in account_ids:
+                    account_ids.remove(account_id)
+                if account_ids:
+                    if self._shared_primary.get(shared_key) == account_id:
+                        new_primary = next(iter(account_ids))
+                        self._shared_primary[shared_key] = new_primary
+                        self.connection_manager.register_status_callback(
+                            new_primary, self._on_connection_state_changed
+                        )
+                    self._shared_by_account.pop(account_id, None)
+                    self.connection_manager.update_state(account_id, ConnectionStatus.DISCONNECTED)
+                    logger.info(f"Telegram client detached for account {account_id} (shared)")
+                    return {"success": True}
+
+                self._shared_by_account.pop(account_id, None)
+                self._shared_account_ids.pop(shared_key, None)
+                self._shared_primary.pop(shared_key, None)
+                self._shared_user_info.pop(shared_key, None)
+                await self._stop_update_task(shared_key)
+                await self._stop_keepalive_task(shared_key)
+                shared_client = self._shared_clients.pop(shared_key, None)
+                if shared_client:
+                    try:
+                        await shared_client.disconnect()
+                    except Exception:
+                        pass
+
+                self.connection_manager.update_state(account_id, ConnectionStatus.DISCONNECTED)
+                logger.info(f"Telegram client disconnected for account {account_id}")
+                return {"success": True}
+
+            await self._stop_update_task(account_id)
+            await self._stop_keepalive_task(account_id)
+            if client:
                 try:
                     await client.disconnect()
                 except Exception:
                     pass  # 忽略断开时的错误
-                del self.clients[account_id]
 
             # 更新连接状态（不会触发回调，因为已取消注册）
             self.connection_manager.update_state(account_id, ConnectionStatus.DISCONNECTED)
@@ -98,12 +228,14 @@ class TelegramClientManager:
             }
 
     def _start_update_task(self, account_id: str, client: TelegramClient):
-        if account_id in self._update_tasks:
+        task_key = self._get_task_key(account_id)
+        if task_key in self._update_tasks:
             return
-        self._update_tasks[account_id] = asyncio.create_task(self._run_update_loop(account_id, client))
+        self._update_tasks[task_key] = asyncio.create_task(self._run_update_loop(task_key, client))
 
     async def _stop_update_task(self, account_id: str):
-        task = self._update_tasks.pop(account_id, None)
+        task_key = self._get_task_key(account_id)
+        task = self._update_tasks.pop(task_key, None)
         if not task:
             return
         task.cancel()
@@ -121,14 +253,16 @@ class TelegramClientManager:
             logger.error(f"Update loop crashed for account {account_id}: {e}")
 
     def _start_keepalive_task(self, account_id: str, client: TelegramClient):
-        if account_id in self._keepalive_tasks:
+        task_key = self._get_task_key(account_id)
+        if task_key in self._keepalive_tasks:
             return
-        self._keepalive_tasks[account_id] = asyncio.create_task(
-            self._keepalive_loop(account_id, client)
+        self._keepalive_tasks[task_key] = asyncio.create_task(
+            self._keepalive_loop(task_key, client)
         )
 
     async def _stop_keepalive_task(self, account_id: str):
-        task = self._keepalive_tasks.pop(account_id, None)
+        task_key = self._get_task_key(account_id)
+        task = self._keepalive_tasks.pop(task_key, None)
         if not task:
             return
         task.cancel()
@@ -149,7 +283,7 @@ class TelegramClientManager:
                     await asyncio.sleep(30)
                     continue
 
-                watched_chat_ids = self._get_watched_chat_ids(account_id)
+                watched_chat_ids = self._get_keepalive_chat_ids(account_id)
                 if not watched_chat_ids:
                     await asyncio.sleep(60)
                     continue
@@ -254,7 +388,8 @@ class TelegramClientManager:
                 raw_account_id = account.get("id")
                 account = TelegramAccount(**account)
             account_id = account.id
-            lock = self._get_connect_lock(account_id)
+            shared_key = self._build_shared_key(account)
+            lock = self._get_connect_lock(shared_key or account_id)
             if lock.locked():
                 return {
                     "success": False,
@@ -269,6 +404,20 @@ class TelegramClientManager:
                         "success": True,
                         "userInfo": state.user_info
                     }
+
+                if shared_key:
+                    shared_client = self._shared_clients.get(shared_key)
+                    if shared_client and shared_client.is_connected():
+                        return await self._attach_shared_client(account_id, account, shared_key, shared_client)
+                    if shared_client:
+                        try:
+                            await shared_client.disconnect()
+                        except Exception:
+                            pass
+                        self._shared_clients.pop(shared_key, None)
+                        self._shared_account_ids.pop(shared_key, None)
+                        self._shared_primary.pop(shared_key, None)
+                        self._shared_user_info.pop(shared_key, None)
 
                 # 如果客户端已存在且已连接，直接返回成功（修复：避免不必要的断开重连）
                 if account_id in self.clients:
@@ -303,7 +452,8 @@ class TelegramClientManager:
                     await asyncio.sleep(0.5)
 
                 # 注册状态回调
-                self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
+                if not shared_key or shared_key not in self._shared_primary:
+                    self.connection_manager.register_status_callback(account_id, self._on_connection_state_changed)
 
                 # 更新连接状态
                 self.connection_manager.update_state(account_id, ConnectionStatus.CONNECTING)
@@ -380,30 +530,39 @@ class TelegramClientManager:
                     "username": me.username
                 }
 
-                # 保存客户端和账号配置（用于重连）
-                self.clients[account_id] = client
-                self._account_configs[account_id] = account
+                if shared_key:
+                    self._shared_clients[shared_key] = client
+                    self._shared_user_info[shared_key] = user_info
+                    result = await self._attach_shared_client(account_id, account, shared_key, client)
+                else:
+                    # 保存客户端和账号配置（用于重连）
+                    self.clients[account_id] = client
+                    self._account_configs[account_id] = account
 
-                # 设置消息处理器
-                async def message_handler(event):
-                    asyncio.create_task(self._handle_message(event, account_id))
+                    # 设置消息处理器
+                    if account_id not in self._event_handlers:
+                        async def message_handler(event, acc_id=account_id):
+                            asyncio.create_task(self._handle_message(event, acc_id))
 
-                client.add_event_handler(message_handler, events.NewMessage)
+                        client.add_event_handler(message_handler, events.NewMessage)
+                        self._event_handlers[account_id] = message_handler
+
+                    # 更新连接状态
+                    self.connection_manager.update_state(
+                        account_id,
+                        ConnectionStatus.CONNECTED,
+                        user_info=user_info
+                    )
+                    result = {
+                        "success": True,
+                        "userInfo": user_info
+                    }
+
                 self._start_update_task(account_id, client)
                 self._start_keepalive_task(account_id, client)
 
-                # 更新连接状态
-                self.connection_manager.update_state(
-                    account_id,
-                    ConnectionStatus.CONNECTED,
-                    user_info=user_info
-                )
-
                 logger.info(f"Telegram client connected for account {account_id}")
-                return {
-                    "success": True,
-                    "userInfo": user_info
-                }
+                return result
 
         except SessionPasswordNeededError:
             account_id = raw_account_id or (getattr(account, "id", None) if account is not None else None)
@@ -461,7 +620,8 @@ class TelegramClientManager:
 
     async def disconnect(self, account_id: str) -> Dict[str, Any]:
         """断开Telegram客户端连接"""
-        lock = self._get_connect_lock(account_id)
+        lock_key = self._shared_by_account.get(account_id) or account_id
+        lock = self._get_connect_lock(lock_key)
         async with lock:
             return await self._disconnect_client(account_id)
 
@@ -477,6 +637,19 @@ class TelegramClientManager:
     def _on_connection_state_changed(self, account_id: str, state: ConnectionState):
         """连接状态变更回调"""
         logger.info(f"Connection state changed for {account_id}: {state.status}")
+        shared_key = self._shared_by_account.get(account_id)
+        if shared_key:
+            for acc_id in self._shared_account_ids.get(shared_key, set()):
+                if acc_id == account_id:
+                    continue
+                self.connection_manager.update_state(
+                    acc_id,
+                    state.status,
+                    state.error_message,
+                    state.user_info,
+                )
+            if self._shared_primary.get(shared_key) != account_id:
+                return
 
         # 如果连接断开，启动自动重连
         if state.status in [ConnectionStatus.DISCONNECTED, ConnectionStatus.ERROR]:

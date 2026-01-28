@@ -100,6 +100,25 @@ function resolveTelegramAccountStatuses(
   };
 }
 
+function buildTelegramAccountStates(
+  account: AccountConfig,
+  telegramStatus: Record<string, TelegramStatusEntry>,
+) {
+  const result: Record<string, { state?: string; message?: string; userInfo?: any }> = {};
+  const accounts = account.telegramConfig?.accounts || [];
+  for (const item of accounts) {
+    if (!item?.id) continue;
+    const status = telegramStatus[item.id];
+    const normalizedState = normalizeTelegramState(status?.state);
+    result[item.id] = {
+      state: normalizedState,
+      message: normalizeTelegramMessage(normalizedState, status?.message),
+      userInfo: status?.userInfo,
+    };
+  }
+  return result;
+}
+
 function normalizeTelegramState(state?: string): string {
   const value = String(state || "").toLowerCase();
   if (value === "connected" || value === "online") return "online";
@@ -222,6 +241,7 @@ interface FrontendAccount {
   telegramBotMessage?: string;
   telegramClientState?: string;
   telegramClientMessage?: string;
+  telegramAccountStates?: Record<string, { state?: string; message?: string; userInfo?: any }>;
   // Telegram 超长消息处理配置
   enableTelegramOverflow?: boolean; // 是否启用Telegram超长消息处理
   telegramOverflowThreshold?: number; // 全局字数阈值
@@ -913,6 +933,7 @@ export async function GET(req: NextRequest) {
           telegramBotMessage: normalizeTelegramMessage(botState, botStatus?.message),
           telegramClientState: clientState,
           telegramClientMessage: normalizeTelegramMessage(clientState, clientStatus?.message),
+          telegramAccountStates: buildTelegramAccountStates(acc, telegramStatus),
         };
         return includeSecrets ? frontend : maskFrontendAccount(frontend);
       }),

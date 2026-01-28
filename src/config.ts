@@ -57,6 +57,8 @@ export interface TelegramAccountConfig {
   apiId?: number;          // API ID (仅client)
   apiHash?: string;        // API Hash (仅client)
   proxyUrl?: string;
+  role?: "listener" | "sender";
+  sessionType?: "file" | "string";
   loginRequested?: boolean;
   loginNonce?: number;
   loginState?: string;
@@ -89,6 +91,8 @@ export interface FrontendTelegramAccount {
   sessionString?: string;
   apiId?: number;
   apiHash?: string;
+  role?: "listener" | "sender";
+  sessionType?: "file" | "string";
   loginRequested?: boolean;
   loginNonce?: number;
   loginState?: string;
@@ -124,6 +128,9 @@ export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bott
 
 export interface WatermarkConfig {
   enabled?: boolean;
+  mode?: "text" | "image" | "both";
+  pattern?: "single" | "tile";
+  tileGap?: number;
   text?: string;
   textSize?: number;
   textColor?: string;
@@ -507,9 +514,20 @@ function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
     const allowed: WatermarkPosition[] = ["top-left", "top-right", "bottom-left", "bottom-right", "center"];
     return allowed.includes(value as WatermarkPosition) ? (value as WatermarkPosition) : undefined;
   };
+  const normalizeMode = (value: any): "text" | "image" | "both" | undefined => {
+    if (value === "text" || value === "image" || value === "both") return value;
+    return undefined;
+  };
+  const normalizePattern = (value: any): "single" | "tile" | undefined => {
+    if (value === "single" || value === "tile") return value;
+    return undefined;
+  };
 
   return {
     enabled: raw.enabled === true,
+    mode: normalizeMode(raw.mode),
+    pattern: normalizePattern(raw.pattern),
+    tileGap: normalizeNumber(raw.tileGap),
     text: normalizeText(raw.text),
     textSize: normalizeNumber(raw.textSize),
     textColor: normalizeText(raw.textColor),
@@ -769,6 +787,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       sessionString: typeof acc.sessionString === "string" ? acc.sessionString : undefined,
       apiId: typeof acc.apiId === "number" ? acc.apiId : undefined,
       apiHash: typeof acc.apiHash === "string" ? acc.apiHash : undefined,
+      role: acc.role === "listener" || acc.role === "sender" ? acc.role : undefined,
+      sessionType: acc.sessionType === "string" ? "string" : acc.sessionType === "file" ? "file" : undefined,
       loginRequested: acc.loginRequested === true,
       loginNonce: typeof acc.loginNonce === "number" ? acc.loginNonce : undefined,
       loginState: typeof acc.loginState === "string" ? acc.loginState : "idle",

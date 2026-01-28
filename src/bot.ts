@@ -306,6 +306,13 @@ export class Bot {
   private readonly MAX_MAP_SIZE = 10000;
   // 定期保存定时器
   private saveMappingTimer?: NodeJS.Timeout;
+  private attachedListeners?: {
+    readyHandler: (clientArg: Client<true>) => void;
+    errorHandler: (err: any) => void;
+    shardErrorHandler: (err: any) => void;
+    warnHandler: (info: any) => void;
+    messageHandler: (message: Message) => void;
+  };
   // 标记数据是否变动，减少 I/O
   private isMappingDirty = false;
   // 记录process监听器，便于清理
@@ -323,6 +330,7 @@ export class Bot {
     senderBot: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot[]>,
     feishuSendersBySource?: Map<string, FeishuSender>,
+    options?: { sharedClient?: boolean },
   ) {
     this.config = config;
     this.senderBot = senderBot;
@@ -344,12 +352,15 @@ export class Bot {
       }
     }
 
-    // 移除所有旧的事件监听器，避免重复注册
-    (this.client as any).removeAllListeners("ready");
-    (this.client as any).removeAllListeners("error");
-    (this.client as any).removeAllListeners("shardError");
-    (this.client as any).removeAllListeners("warn");
-    (this.client as any).removeAllListeners("messageCreate");
+    const shouldResetListeners = options?.sharedClient !== true;
+    if (shouldResetListeners) {
+      // 移除所有旧的事件监听器，避免重复注册
+      (this.client as any).removeAllListeners("ready");
+      (this.client as any).removeAllListeners("error");
+      (this.client as any).removeAllListeners("shardError");
+      (this.client as any).removeAllListeners("warn");
+      (this.client as any).removeAllListeners("messageCreate");
+    }
 
     // 使用 clientReady 替代 ready（Discord.js v15 兼容）
     const readyHandler = (clientArg: Client<true>) => {
@@ -362,20 +373,32 @@ export class Bot {
     (this.client as any).on("ready", readyHandler);
 
     // 监听客户端错误，避免 ECONNRESET 直接导致进程崩溃
-    (this.client as any).on("error", (err: any) => {
+    const errorHandler = (err: any) => {
       this.logger.error(`client error: ${String(err?.stack || err)}`);
-    });
-    (this.client as any).on?.("shardError", (err: any) => {
+    };
+    const shardErrorHandler = (err: any) => {
       this.logger.error(`shard error: ${String(err?.stack || err)}`);
-    });
-    (this.client as any).on("warn", (info: any) => {
+    };
+    const warnHandler = (info: any) => {
       this.logger.debug(`client warn: ${String(info)}`);
-    });
+    };
+    (this.client as any).on("error", errorHandler);
+    (this.client as any).on?.("shardError", shardErrorHandler);
+    (this.client as any).on("warn", warnHandler);
 
-    (this.client as any).on("messageCreate", async (message: Message) => {
+    const messageHandler = async (message: Message) => {
       // 简化监听器：所有处理逻辑都在 processAndSend 中
       await this.processAndSend(message);
-    });
+    };
+    (this.client as any).on("messageCreate", messageHandler);
+
+    this.attachedListeners = {
+      readyHandler,
+      errorHandler,
+      shardErrorHandler,
+      warnHandler,
+      messageHandler,
+    };
 
     // 定期保存映射（每 5 分钟保存一次，只在数据变动时保存）
     this.saveMappingTimer = setInterval(() => {
@@ -401,6 +424,16 @@ export class Bot {
     if (this.saveMappingTimer) {
       clearInterval(this.saveMappingTimer);
       this.saveMappingTimer = undefined;
+    }
+    if (this.attachedListeners) {
+      const target: any = this.client as any;
+      target.off?.("clientReady", this.attachedListeners.readyHandler);
+      target.off?.("ready", this.attachedListeners.readyHandler);
+      target.off?.("error", this.attachedListeners.errorHandler);
+      target.off?.("shardError", this.attachedListeners.shardErrorHandler);
+      target.off?.("warn", this.attachedListeners.warnHandler);
+      target.off?.("messageCreate", this.attachedListeners.messageHandler);
+      this.attachedListeners = undefined;
     }
     // 注意：process 监听器是全局的，不应该在这里移除（因为可能被其他实例使用）
     // 只在数据变动时保存映射
