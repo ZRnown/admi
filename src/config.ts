@@ -128,7 +128,7 @@ export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bott
 
 export interface WatermarkConfig {
   enabled?: boolean;
-  mode?: "text" | "image" | "both";
+  mode?: "text" | "image";
   pattern?: "single" | "tile";
   tileGap?: number;
   text?: string;
@@ -517,8 +517,11 @@ function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
     const allowed: WatermarkPosition[] = ["top-left", "top-right", "bottom-left", "bottom-right", "center"];
     return allowed.includes(value as WatermarkPosition) ? (value as WatermarkPosition) : undefined;
   };
-  const normalizeMode = (value: any): "text" | "image" | "both" | undefined => {
-    if (value === "text" || value === "image" || value === "both") return value;
+  const normalizeMode = (value: any): "text" | "image" | undefined => {
+    if (value === "text" || value === "image") return value;
+    if (value === "both") {
+      return normalizeText(raw.imageUrl) ? "image" : "text";
+    }
     return undefined;
   };
   const normalizePattern = (value: any): "single" | "tile" | undefined => {
@@ -526,19 +529,23 @@ function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
     return undefined;
   };
 
+  const normalizedText = normalizeText(raw.text);
+  const normalizedImageUrl = normalizeText(raw.imageUrl);
+  const normalizedMode = normalizeMode(raw.mode) ?? (normalizedImageUrl ? "image" : normalizedText ? "text" : undefined);
+
   return {
     enabled: raw.enabled === true,
-    mode: normalizeMode(raw.mode),
+    mode: normalizedMode,
     pattern: normalizePattern(raw.pattern),
     tileGap: normalizeNumber(raw.tileGap),
-    text: normalizeText(raw.text),
+    text: normalizedText,
     textSize: normalizeNumber(raw.textSize),
     textColor: normalizeText(raw.textColor),
     textOpacity: normalizeNumber(raw.textOpacity),
     textAngle: normalizeNumber(raw.textAngle),
     fontFamily: normalizeText(raw.fontFamily),
     fontPath: normalizeText(raw.fontPath),
-    imageUrl: normalizeText(raw.imageUrl),
+    imageUrl: normalizedImageUrl,
     imageOpacity: normalizeNumber(raw.imageOpacity),
     imageScale: normalizeNumber(raw.imageScale),
     position: normalizePosition(raw.position),

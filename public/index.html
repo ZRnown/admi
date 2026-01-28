@@ -290,7 +290,6 @@
               <select id="ruleWatermarkType" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                 <option value="text">文字水印</option>
                 <option value="image">图片水印</option>
-                <option value="both">文字 + 图片</option>
               </select>
             </div>
             <div>
@@ -1024,12 +1023,12 @@
             ? discordToTelegramUsesClient
             : false;
       const watermarkConfig = acc.watermark || {};
-      const watermarkMode =
-        watermarkConfig.mode
-        || (watermarkConfig.text && watermarkConfig.imageUrl ? 'both' : watermarkConfig.imageUrl ? 'image' : 'text');
+      const watermarkMode = watermarkConfig.mode === 'image' || watermarkConfig.mode === 'text'
+        ? watermarkConfig.mode
+        : (watermarkConfig.imageUrl ? 'image' : 'text');
       const watermarkPattern = watermarkConfig.pattern === 'tile' ? 'tile' : 'single';
-      const showWatermarkText = watermarkMode === 'text' || watermarkMode === 'both';
-      const showWatermarkImage = watermarkMode === 'image' || watermarkMode === 'both';
+      const showWatermarkText = watermarkMode === 'text';
+      const showWatermarkImage = watermarkMode === 'image';
       if (isTelegramToTelegram) {
         ensureTelegramConfig(acc);
         if (tgListenerType === 'bot' || tgListenerType === 'client') {
@@ -1699,7 +1698,6 @@
                 <select onchange="updateWatermarkField('mode', this.value)" class="w-40 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   <option value="text" ${watermarkMode === 'text' ? 'selected' : ''}>文字水印</option>
                   <option value="image" ${watermarkMode === 'image' ? 'selected' : ''}>图片水印</option>
-                  <option value="both" ${watermarkMode === 'both' ? 'selected' : ''}>文字 + 图片</option>
                 </select>
               </div>
               <div>
@@ -2680,9 +2678,9 @@
       if (!watermark.enabled) {
         return '<div class="text-xs text-slate-400">未启用水印</div>';
       }
-      const mode =
-        watermark.mode
-        || (watermark.text && watermark.imageUrl ? 'both' : watermark.imageUrl ? 'image' : 'text');
+      const mode = watermark.mode === 'image' || watermark.mode === 'text'
+        ? watermark.mode
+        : (watermark.imageUrl ? 'image' : 'text');
       const pattern = watermark.pattern === 'tile' ? 'tile' : 'single';
       const text = watermark.text || '水印';
       const textSize = typeof watermark.textSize === 'number' ? watermark.textSize : 16;
@@ -3058,7 +3056,7 @@
       }
 
       document.getElementById('ruleWatermarkMode').value = ruleConfigData.watermarkMode;
-      document.getElementById('ruleWatermarkType').value = ruleConfigData.watermark.mode || 'text';
+      document.getElementById('ruleWatermarkType').value = ruleConfigData.watermark.mode === 'image' ? 'image' : 'text';
       document.getElementById('ruleWatermarkPattern').value = ruleConfigData.watermark.pattern || 'single';
       document.getElementById('ruleWatermarkTileGap').value = ruleConfigData.watermark.tileGap ?? '';
       document.getElementById('ruleWatermarkText').value = ruleConfigData.watermark.text || '';
@@ -3189,9 +3187,10 @@
         const imageOpacity = parseInt(document.getElementById('ruleWatermarkImageOpacity').value, 10);
         const margin = parseInt(document.getElementById('ruleWatermarkMargin').value, 10);
         const tileGap = parseInt(document.getElementById('ruleWatermarkTileGap').value, 10);
+        const normalizedType = watermarkType === 'image' ? 'image' : 'text';
         mapping.watermark = {
           enabled: true,
-          mode: watermarkType === 'text' || watermarkType === 'image' || watermarkType === 'both' ? watermarkType : undefined,
+          mode: normalizedType,
           pattern: watermarkPattern === 'tile' ? 'tile' : 'single',
           tileGap: Number.isFinite(tileGap) ? tileGap : undefined,
           text: document.getElementById('ruleWatermarkText').value.trim() || undefined,

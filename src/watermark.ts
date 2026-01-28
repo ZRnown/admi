@@ -340,13 +340,13 @@ export function resolveWatermarkConfig(
     (ruleConfig && ruleConfig.enabled === true) ||
     (globalConfig && globalConfig.enabled === true);
   if (!enabled) return undefined;
-  const mode = merged.mode;
-  const allowText = mode !== "image";
-  const allowImage = mode !== "text";
+  const mode = merged.mode === "image" || merged.mode === "text" ? merged.mode : merged.imageUrl ? "image" : "text";
+  const allowText = mode === "text";
+  const allowImage = mode === "image";
   const hasText = Boolean(merged.text);
   const hasImage = Boolean(merged.imageUrl);
-  if ((!allowText || !hasText) && (!allowImage || !hasImage)) return undefined;
-  return { ...merged, enabled: true };
+  if ((allowText && !hasText) || (allowImage && !hasImage)) return undefined;
+  return { ...merged, enabled: true, mode };
 }
 
 export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkConfig): Promise<Buffer> {
@@ -361,9 +361,9 @@ export async function applyWatermarkToBuffer(buffer: Buffer, config?: WatermarkC
     const margin = Number.isFinite(effective.margin)
       ? Math.max(0, Math.round(effective.margin as number))
       : DEFAULT_MARGIN;
-    const mode = effective.mode;
-    const allowText = mode !== "image";
-    const allowImage = mode !== "text";
+    const mode = effective.mode === "image" || effective.mode === "text" ? effective.mode : effective.imageUrl ? "image" : "text";
+    const allowText = mode === "text";
+    const allowImage = mode === "image";
     const pattern = effective.pattern === "tile" ? "tile" : "single";
     const gap = Number.isFinite(effective.tileGap)
       ? Math.max(0, Math.round(effective.tileGap as number))
