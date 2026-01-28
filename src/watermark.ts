@@ -87,6 +87,43 @@ function hasNonAsciiText(text: string): boolean {
   return /[^\u0000-\u007f]/.test(text);
 }
 
+const canvasModuleLoader = (() => {
+  let cached: Promise<any | null> | null = null;
+  return async () => {
+    if (cached) return cached;
+    cached = (async () => {
+      try {
+        const loader = new Function("moduleName", "return import(moduleName)");
+        return await loader("@napi-rs/canvas");
+      } catch (err) {
+        console.warn(`[Watermark] Canvas 依赖不可用，跳过高级文字渲染: ${String(err)}`);
+        return null;
+      }
+    })();
+    return cached;
+  };
+})();
+
+async function resolveDefaultFontPath(): Promise<string | undefined> {
+  const candidates = [
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.otf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+  ];
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {}
+  }
+  return undefined;
+}
+
 async function renderTextWatermarkImage(
   text: string,
   options: {
@@ -98,15 +135,26 @@ async function renderTextWatermarkImage(
   },
 ): Promise<Jimp | null> {
   try {
-    const { createCanvas, registerFont } = await import("@napi-rs/canvas");
+    const canvasModule = await canvasModuleLoader();
+    if (!canvasModule?.createCanvas) {
+      return null;
+    }
+    const { createCanvas, registerFont } = canvasModule;
     let fontFamily = options.fontFamily || "Noto Sans CJK SC, Noto Sans, Microsoft YaHei, PingFang SC, sans-serif";
-    if (options.fontPath) {
+    let fontPath = options.fontPath;
+    if (!fontPath) {
+      fontPath = await resolveDefaultFontPath();
+      if (fontPath) {
+        console.log(`[Watermark] 使用默认字体文件: ${fontPath}`);
+      }
+    }
+    if (fontPath && typeof registerFont === "function") {
       const familyName = options.fontFamily || "WatermarkFont";
       try {
-        registerFont(options.fontPath, { family: familyName });
+        registerFont(fontPath, { family: familyName });
         fontFamily = familyName;
       } catch (err) {
-        console.warn(`[Watermark] 注册字体失败: ${options.fontPath} err=${String(err)}`);
+        console.warn(`[Watermark] 注册字体失败: ${fontPath} err=${String(err)}`);
       }
     }
 
