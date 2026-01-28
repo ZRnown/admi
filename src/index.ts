@@ -2252,13 +2252,13 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
         for (const tgAccount of account.telegramConfig.accounts) {
           // 对于 bot 类型，优先使用最新的 telegramBotToken（如果存在）
           // 这样当用户更新 token 后，不会使用缓存的旧 token
-          let tokenToUse = tgAccount.token;
+          let tokenToUse = tgAccount.token || "";
           const shouldOverrideLegacyBot =
             tgAccount.type === "bot" &&
             account.telegramBotToken &&
             (!tgAccount.role || tgAccount.id === `${account.id}_bot`);
           if (shouldOverrideLegacyBot) {
-            tokenToUse = account.telegramBotToken;
+            tokenToUse = account.telegramBotToken || "";
           }
           pushTelegramAccount({
             id: tgAccount.id,
