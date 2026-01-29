@@ -147,6 +147,25 @@ export interface WatermarkConfig {
 
 export type WatermarkList = WatermarkConfig[];
 
+export type ScheduledMediaType = "image" | "video";
+export type ScheduledMediaSource = "local" | "url";
+
+export interface ScheduledContentItem {
+  id: string;
+  name?: string;
+  text?: string;
+  mediaType?: ScheduledMediaType;
+  mediaSource?: ScheduledMediaSource;
+  mediaValue?: string;
+  enabled?: boolean;
+}
+
+export interface ScheduledBroadcastConfig {
+  enabled?: boolean;
+  intervalMinutes?: number;
+  contentIds?: string[];
+}
+
 // 规则级别的完整配置（适用于所有转发类型）
 export interface RuleLevelConfig {
   // 用户过滤
@@ -193,6 +212,7 @@ export interface RuleLevelConfig {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
+  scheduledBroadcast?: ScheduledBroadcastConfig;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -256,6 +276,8 @@ export interface LegacyConfig {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
+  scheduledContents?: ScheduledContentItem[];
+  scheduledBroadcast?: ScheduledBroadcastConfig;
   historyScan?: {
     enabled?: boolean;
     limit?: number;
@@ -450,6 +472,8 @@ function createDefaultAccount(): AccountConfig {
     feishuStyle: "style1",
     channelTranslate: {},
     channelTranslateDirection: {},
+    scheduledContents: [],
+    scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
   };
 }
 
@@ -582,6 +606,59 @@ function mergeLegacyWatermarks(
   return legacy.length > 0 ? legacy : undefined;
 }
 
+function normalizeScheduledContentItem(raw: any): ScheduledContentItem | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const id =
+    typeof raw.id === "string" && raw.id.trim().length > 0 ? raw.id.trim() : randomUUID();
+  const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : undefined;
+  const text = typeof raw.text === "string" ? raw.text : undefined;
+  const mediaType: ScheduledMediaType | undefined =
+    raw.mediaType === "image" || raw.mediaType === "video" ? raw.mediaType : undefined;
+  const mediaSource: ScheduledMediaSource | undefined =
+    raw.mediaSource === "local" || raw.mediaSource === "url" ? raw.mediaSource : undefined;
+  const mediaValue =
+    typeof raw.mediaValue === "string" && raw.mediaValue.trim() ? raw.mediaValue.trim() : undefined;
+  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : undefined;
+  return {
+    id,
+    name,
+    text,
+    mediaType,
+    mediaSource,
+    mediaValue,
+    enabled,
+  };
+}
+
+function normalizeScheduledContentList(raw: any): ScheduledContentItem[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const list = raw
+    .map((item) => normalizeScheduledContentItem(item))
+    .filter((item): item is ScheduledContentItem => !!item);
+  return list.length > 0 ? list : [];
+}
+
+function normalizeScheduledBroadcastConfig(raw: any): ScheduledBroadcastConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const normalizeNumber = (value: any): number | undefined => {
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && value.trim() && !isNaN(Number(value))) {
+      return Number(value);
+    }
+    return undefined;
+  };
+  const intervalMinutes = normalizeNumber(raw.intervalMinutes);
+  const contentIds = Array.isArray(raw.contentIds) ? raw.contentIds.map(String).filter(Boolean) : undefined;
+  const hasContent = (contentIds?.length || 0) > 0;
+  const enabled =
+    raw.enabled === true ? true : raw.enabled === false ? false : hasContent && !!intervalMinutes;
+  return {
+    enabled,
+    intervalMinutes,
+    contentIds,
+  };
+}
+
 function normalizeRuleConfig(raw: any): RuleLevelConfig {
   if (!raw || typeof raw !== "object") {
     return {
@@ -609,11 +686,13 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermark: undefined,
       watermarkSecondary: undefined,
       watermarks: undefined,
+      scheduledBroadcast: undefined,
     };
   }
   const watermark = normalizeWatermarkConfig(raw.watermark);
   const watermarkSecondary = normalizeWatermarkConfig(raw.watermarkSecondary);
   const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(raw.watermarks), watermark, watermarkSecondary);
+  const scheduledBroadcast = normalizeScheduledBroadcastConfig(raw.scheduledBroadcast);
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
     mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
@@ -660,6 +739,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermark,
     watermarkSecondary,
     watermarks,
+    scheduledBroadcast,
   };
 }
 
@@ -779,6 +859,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     accountWatermark,
     accountWatermarkSecondary,
   );
+  const scheduledContents = normalizeScheduledContentList(input?.scheduledContents);
+  const scheduledBroadcast = normalizeScheduledBroadcastConfig(input?.scheduledBroadcast);
 
   // 处理 Discord->Discord mappings（保留规则级别配置）
   const mappings: DiscordMappingRule[] = Array.isArray(input?.mappings)
@@ -835,6 +917,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           watermark,
           watermarkSecondary,
           watermarks,
+          scheduledBroadcast: normalizeScheduledBroadcastConfig(m.scheduledBroadcast),
         };
       })
     : [];
@@ -878,6 +961,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             watermark,
             watermarkSecondary,
           );
+          const scheduledBroadcast = normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast);
           return {
             id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
             sourceChannelId: typeof mapping.sourceChannelId === "string" ? mapping.sourceChannelId : "",
@@ -926,6 +1010,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             watermark,
             watermarkSecondary,
             watermarks,
+            scheduledBroadcast,
           };
         })
       : [],
@@ -980,6 +1065,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     watermark: accountWatermark,
     watermarkSecondary: accountWatermarkSecondary,
     watermarks: accountWatermarks,
+    scheduledContents,
+    scheduledBroadcast,
     historyScan: input?.historyScan,
     mutedGuildsIds: input?.mutedGuildsIds || [],
     allowedGuildsIds: input?.allowedGuildsIds || [],
@@ -1158,6 +1245,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       watermark: undefined,
       watermarkSecondary: undefined,
       watermarks: undefined,
+      scheduledContents: [],
+      scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
       historyScan: { enabled: true },
       mutedGuildsIds: [],
       allowedGuildsIds: [],
@@ -1221,6 +1310,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
     watermarks: account.watermarks,
+    scheduledContents: account.scheduledContents,
+    scheduledBroadcast: account.scheduledBroadcast,
     historyScan: account.historyScan,
     mutedGuildsIds: account.mutedGuildsIds,
     allowedGuildsIds: account.allowedGuildsIds,

@@ -270,7 +270,7 @@
               </select>
             </div>
           </div>
-          <p class="text-xs text-slate-500 mt-2">对 Discord → Telegram / Telegram → Telegram 转发生效。</p>
+          <p class="text-xs text-slate-500 mt-2">仅对 Discord → Telegram 转发生效。</p>
         </div>
 
         <!-- 水印设置（规则级别） -->
@@ -296,6 +296,31 @@
             <div id="ruleWatermarkList" class="grid gap-4 md:grid-cols-2"></div>
           </div>
           <p class="text-xs text-slate-500 mt-2">策略为“强制启用”时才会使用此处的水印设置。</p>
+        </div>
+
+        <!-- 定时发送（规则级别） -->
+        <div class="border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-3">定时发送（规则级别）</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">规则定时策略</label>
+              <select id="ruleScheduleMode" onchange="updateRuleScheduleMode(this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="inherit">继承全局</option>
+                <option value="enable">强制启用</option>
+                <option value="disable">强制关闭</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">发送间隔（分钟）</label>
+              <input type="number" id="ruleScheduleInterval" min="1" value="60"
+                onchange="updateRuleScheduleInterval(this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+          <div id="ruleScheduleConfigWrap" class="mt-4 space-y-3">
+            <div id="ruleScheduleContentList" class="flex flex-wrap gap-3"></div>
+          </div>
+          <p class="text-xs text-slate-500 mt-2">“继承全局”时会使用全局定时内容与间隔设置。</p>
         </div>
 
         <!-- 用户过滤 -->
@@ -976,6 +1001,8 @@
           ensureTelegramRoleAccount(acc, 'sender', tgSenderType);
         }
       }
+      const scheduledContents = ensureScheduledContents(acc);
+      const scheduledBroadcast = ensureScheduledBroadcast(acc);
       const watermarkList = getWatermarkList(acc);
 
       const renderTelegramBotConfig = (title, note, options = {}) => {
@@ -1620,6 +1647,117 @@
           </div>
         </div>
 
+        <!-- 定时内容库 -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">定时内容库</h2>
+            <p class="text-xs text-slate-500 mt-1">可创建文字/图片/视频内容，用于定时发送</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <p class="text-xs text-slate-500">内容可单独启用/禁用，支持本地文件或 URL</p>
+              <button onclick="addScheduledContent()" class="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">
+                + 添加内容
+              </button>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              ${scheduledContents.length > 0 ? scheduledContents.map((item) => {
+                const contentType = getScheduledContentType(item);
+                const mediaSource = item.mediaSource === 'url' ? 'url' : 'local';
+                return `
+                  <div class="border border-slate-200 rounded-lg p-4 space-y-3">
+                    <div class="flex items-center justify-between">
+                      <input type="text" value="${item.name || ''}" onchange="updateScheduledContentField('${item.id}', 'name', this.value)"
+                        placeholder="内容名称" class="flex-1 mr-3 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                      <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" ${item.enabled === false ? '' : 'checked'} onchange="updateScheduledContentField('${item.id}', 'enabled', this.checked)"
+                          class="h-4 w-4 rounded border-slate-300"> 启用
+                      </label>
+                      <button onclick="removeScheduledContent('${item.id}')" class="ml-3 text-xs text-slate-500 hover:text-red-500">删除</button>
+                    </div>
+                    <div class="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <label class="block text-xs text-slate-600 mb-1">内容类型</label>
+                        <select onchange="updateScheduledContentType('${item.id}', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                          <option value="text" ${contentType === 'text' ? 'selected' : ''}>文字</option>
+                          <option value="image" ${contentType === 'image' ? 'selected' : ''}>图片</option>
+                          <option value="video" ${contentType === 'video' ? 'selected' : ''}>视频</option>
+                        </select>
+                      </div>
+                      ${contentType !== 'text' ? `
+                      <div>
+                        <label class="block text-xs text-slate-600 mb-1">媒体来源</label>
+                        <select onchange="updateScheduledContentSource('${item.id}', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                          <option value="local" ${mediaSource === 'local' ? 'selected' : ''}>本地文件</option>
+                          <option value="url" ${mediaSource === 'url' ? 'selected' : ''}>URL</option>
+                        </select>
+                      </div>
+                      ` : ''}
+                    </div>
+                    <div>
+                      <label class="block text-xs text-slate-600 mb-1">文字内容（可选，作为说明/字幕）</label>
+                      <textarea rows="2" onchange="updateScheduledContentField('${item.id}', 'text', this.value)"
+                        placeholder="要发送的文字内容" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none resize-none">${item.text || ''}</textarea>
+                    </div>
+                    ${contentType !== 'text' ? `
+                    <div class="space-y-2">
+                      ${mediaSource === 'local' ? `
+                      <div>
+                        <label class="block text-xs text-slate-600 mb-1">上传本地文件</label>
+                        <input type="file" ${contentType === 'video' ? 'accept="video/*"' : 'accept="image/*"'} onchange="uploadScheduledContentMedia(this, '${item.id}')"
+                          class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                      </div>
+                      <div>
+                        <label class="block text-xs text-slate-600 mb-1">本地路径</label>
+                        <input type="text" value="${item.mediaValue || ''}" onchange="updateScheduledContentField('${item.id}', 'mediaValue', this.value)"
+                          placeholder="/path/to/file.${contentType === 'video' ? 'mp4' : 'png'}" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                      </div>
+                      ` : `
+                      <div>
+                        <label class="block text-xs text-slate-600 mb-1">媒体 URL</label>
+                        <input type="text" value="${item.mediaValue || ''}" onchange="updateScheduledContentField('${item.id}', 'mediaValue', this.value)"
+                          placeholder="https://example.com/media.${contentType === 'video' ? 'mp4' : 'png'}" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                      </div>
+                      `}
+                    </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('') : `
+                <div class="text-xs text-slate-400">暂无定时内容，请点击“添加内容”</div>
+              `}
+            </div>
+          </div>
+        </div>
+
+        <!-- 定时发送（全局） -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">定时发送（全局）</h2>
+            <p class="text-xs text-slate-500 mt-1">对所有规则生效（规则可单独覆盖）</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${scheduledBroadcast.enabled ? 'checked' : ''} onchange="updateScheduledBroadcastField('enabled', this.checked)"
+                class="h-4 w-4 rounded border-slate-300">
+              启用全局定时发送
+            </label>
+            <div class="grid gap-3 md:grid-cols-2">
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">发送间隔（分钟）</label>
+                <input type="number" min="1" value="${scheduledBroadcast.intervalMinutes || 60}" onchange="updateScheduledBroadcastField('intervalMinutes', this.value)"
+                  class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-2">选择要发送的内容</label>
+              <div class="flex flex-wrap gap-3">
+                ${renderScheduledContentChecklist(scheduledContents, scheduledBroadcast.contentIds || [], 'toggleScheduledBroadcastContent')}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 水印设置 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
@@ -1684,7 +1822,8 @@
     }
 
     function getEffectiveTelegramSenderType(acc, forwardingType, mapping) {
-      const explicit = mapping && (mapping.senderAccountType === 'bot' || mapping.senderAccountType === 'client')
+      const allowRuleSender = forwardingType !== 'telegram-to-telegram';
+      const explicit = allowRuleSender && mapping && (mapping.senderAccountType === 'bot' || mapping.senderAccountType === 'client')
         ? mapping.senderAccountType
         : undefined;
       if (explicit) return explicit;
@@ -1764,7 +1903,7 @@
             <span class="text-slate-300">${arrowIcon}</span>
             <input type="text" value="${m.targetChannelId || m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, '${forwardingType === 'discord-to-discord' ? 'targetWebhookUrl' : forwardingType === 'discord-to-feishu' ? 'targetChannelId' : 'targetChannelId'}', this.value)"
               placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
-            ${(forwardingType === 'telegram-to-telegram' || forwardingType === 'discord-to-telegram') ? `
+            ${(forwardingType === 'discord-to-telegram') ? `
             <select onchange="updateMapping(${idx + startIdx}, 'senderAccountType', this.value)" class="w-36 px-2 py-1.5 rounded-lg border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none">
               <option value="bot" ${senderType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
               <option value="client" ${senderType === 'client' ? 'selected' : ''}>用户（Session）</option>
@@ -2962,6 +3101,46 @@
         : '<div class="text-xs text-slate-400">暂无水印，请点击“添加水印”</div>';
     }
 
+    function updateRuleScheduleMode(value) {
+      ruleConfigData.scheduledBroadcastMode = value;
+      const wrap = document.getElementById('ruleScheduleConfigWrap');
+      if (wrap) {
+        if (value === 'inherit') {
+          wrap.classList.add('hidden');
+        } else {
+          wrap.classList.remove('hidden');
+        }
+      }
+      renderRuleScheduleContentList();
+    }
+
+    function updateRuleScheduleInterval(value) {
+      const numeric = Number(value);
+      ruleConfigData.scheduledIntervalMinutes = Number.isFinite(numeric) ? Math.max(1, Math.round(numeric)) : 60;
+    }
+
+    function toggleRuleScheduleContent(id, checked) {
+      const set = new Set((ruleConfigData.scheduledContentIds || []).map(String));
+      if (checked) {
+        set.add(id);
+      } else {
+        set.delete(id);
+      }
+      ruleConfigData.scheduledContentIds = Array.from(set);
+    }
+
+    function renderRuleScheduleContentList() {
+      const container = document.getElementById('ruleScheduleContentList');
+      if (!container) return;
+      if (ruleConfigData.scheduledBroadcastMode === 'inherit') {
+        container.innerHTML = '<div class="text-xs text-slate-400">已继承全局定时发送配置</div>';
+        return;
+      }
+      const acc = getActiveAccount();
+      const items = ensureScheduledContents(acc);
+      container.innerHTML = renderScheduledContentChecklist(items, ruleConfigData.scheduledContentIds || [], 'toggleRuleScheduleContent');
+    }
+
     function renderWatermarkPreview(acc) {
       const list = getWatermarkList(acc);
       const previewSize = getWatermarkPreviewSize(acc.id);
@@ -3114,6 +3293,205 @@
       }
     }
 
+    function ensureScheduledContents(acc) {
+      if (!Array.isArray(acc.scheduledContents)) {
+        acc.scheduledContents = [];
+      }
+      return acc.scheduledContents;
+    }
+
+    function getScheduledContentItem(acc, id) {
+      const list = ensureScheduledContents(acc);
+      return list.find((item) => item && item.id === id) || null;
+    }
+
+    function createScheduledContentItem(name) {
+      return {
+        id: genId(),
+        name: name || '',
+        enabled: true,
+        text: '',
+        mediaType: undefined,
+        mediaSource: undefined,
+        mediaValue: ''
+      };
+    }
+
+    function addScheduledContent() {
+      const acc = getActiveAccount();
+      const list = ensureScheduledContents(acc);
+      const nextName = `内容${list.length + 1}`;
+      list.push(createScheduledContentItem(nextName));
+      saveConfig();
+      render();
+    }
+
+    function removeScheduledContent(id) {
+      const acc = getActiveAccount();
+      const list = ensureScheduledContents(acc);
+      const idx = list.findIndex((item) => item && item.id === id);
+      if (idx === -1) return;
+      list.splice(idx, 1);
+      saveConfig();
+      render();
+    }
+
+    function updateScheduledContentField(id, field, value) {
+      const acc = getActiveAccount();
+      const item = getScheduledContentItem(acc, id);
+      if (!item) return;
+      if (field === 'enabled') {
+        item.enabled = value === true;
+      } else if (field === 'name') {
+        item.name = value || '';
+      } else if (field === 'text') {
+        item.text = value || '';
+      } else if (field === 'mediaValue') {
+        item.mediaValue = value || '';
+      } else if (field === 'mediaType') {
+        item.mediaType = value === 'image' || value === 'video' ? value : undefined;
+      } else if (field === 'mediaSource') {
+        item.mediaSource = value === 'local' || value === 'url' ? value : undefined;
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateScheduledContentType(id, value) {
+      const acc = getActiveAccount();
+      const item = getScheduledContentItem(acc, id);
+      if (!item) return;
+      if (value === 'text') {
+        item.mediaType = undefined;
+        item.mediaSource = undefined;
+        item.mediaValue = '';
+      } else if (value === 'image' || value === 'video') {
+        item.mediaType = value;
+        if (!item.mediaSource) item.mediaSource = 'local';
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateScheduledContentSource(id, value) {
+      const acc = getActiveAccount();
+      const item = getScheduledContentItem(acc, id);
+      if (!item) return;
+      item.mediaSource = value === 'url' ? 'url' : 'local';
+      saveConfig();
+      render();
+    }
+
+    function getScheduledContentType(item) {
+      if (!item) return 'text';
+      if (item.mediaType === 'image') return 'image';
+      if (item.mediaType === 'video') return 'video';
+      return 'text';
+    }
+
+    function getScheduledMediaLabel(item) {
+      const value = item?.mediaValue || '';
+      if (!value) return '';
+      const cleaned = value.split('?')[0];
+      const parts = cleaned.split('/');
+      return parts[parts.length - 1] || cleaned;
+    }
+
+    function formatScheduledContentLabel(item) {
+      if (!item) return '未命名内容';
+      if (item.name) return escapeHtml(item.name);
+      if (item.text) return escapeHtml(item.text.slice(0, 20));
+      if (item.mediaType) {
+        const label = item.mediaType === 'video' ? '视频' : '图片';
+        const mediaName = getScheduledMediaLabel(item);
+        return mediaName ? `${label}: ${escapeHtml(mediaName)}` : label;
+      }
+      return `内容 ${item.id ? item.id.slice(0, 6) : ''}`;
+    }
+
+    function renderScheduledContentChecklist(items, selectedIds, toggleFnName) {
+      if (!items || items.length === 0) {
+        return '<div class="text-xs text-slate-400">暂无可选内容，请先添加内容</div>';
+      }
+      const selected = new Set((selectedIds || []).map(String));
+      return items.map((item) => `
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" ${selected.has(item.id) ? 'checked' : ''} onchange="${toggleFnName}('${item.id}', this.checked)"
+            class="h-4 w-4 rounded border-slate-300">
+          ${formatScheduledContentLabel(item)}
+        </label>
+      `).join('');
+    }
+
+    function ensureScheduledBroadcast(acc) {
+      if (!acc.scheduledBroadcast || typeof acc.scheduledBroadcast !== 'object') {
+        acc.scheduledBroadcast = { enabled: false, intervalMinutes: 60, contentIds: [] };
+      }
+      if (!Array.isArray(acc.scheduledBroadcast.contentIds)) {
+        acc.scheduledBroadcast.contentIds = [];
+      }
+      return acc.scheduledBroadcast;
+    }
+
+    function updateScheduledBroadcastField(field, value) {
+      const acc = getActiveAccount();
+      const config = ensureScheduledBroadcast(acc);
+      if (field === 'enabled') {
+        config.enabled = value === true;
+      } else if (field === 'intervalMinutes') {
+        const numeric = Number(value);
+        config.intervalMinutes = Number.isFinite(numeric) ? Math.max(1, Math.round(numeric)) : 60;
+      }
+      saveConfig();
+      render();
+    }
+
+    function toggleScheduledBroadcastContent(id, checked) {
+      const acc = getActiveAccount();
+      const config = ensureScheduledBroadcast(acc);
+      const set = new Set((config.contentIds || []).map(String));
+      if (checked) {
+        set.add(id);
+      } else {
+        set.delete(id);
+      }
+      config.contentIds = Array.from(set);
+      saveConfig();
+      render();
+    }
+
+    async function uploadScheduledContentMedia(input, id) {
+      const file = input.files[0];
+      if (!file) return;
+      const acc = getActiveAccount();
+      try {
+        const form = new FormData();
+        form.append('accountId', acc.id);
+        form.append('contentId', id);
+        form.append('file', file, file.name);
+        const res = await fetch('/api/scheduled-content/upload', {
+          method: 'POST',
+          body: form
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || data?.message || `上传失败(${res.status})`);
+        }
+        const item = getScheduledContentItem(acc, id);
+        if (!item) return;
+        const isVideo = (file.type || '').startsWith('video/');
+        item.mediaType = isVideo ? 'video' : 'image';
+        item.mediaSource = 'local';
+        item.mediaValue = data.path || '';
+        item.enabled = true;
+        saveConfig();
+        render();
+        alert('内容文件已上传');
+      } catch (e) {
+        alert('内容文件上传失败: ' + (e?.message || e));
+      }
+    }
+
     function updateTelegramLongMessage(field, value) {
       const acc = getActiveAccount();
       if (!acc.telegramLongMessage) acc.telegramLongMessage = { enabled: false };
@@ -3190,7 +3568,10 @@
       stripChinese: false,
       watermarkMode: "inherit",
       watermarks: [],
-      senderAccountType: "bot"
+      senderAccountType: "bot",
+      scheduledBroadcastMode: "inherit",
+      scheduledIntervalMinutes: 60,
+      scheduledContentIds: []
     };
 
     // 渲染规则配置标签
@@ -3314,6 +3695,20 @@
       } else if (ruleWatermarks.length > 0) {
         watermarkMode = 'enable';
       }
+      const globalSchedule = acc.scheduledBroadcast || {};
+      const ruleSchedule = mapping.scheduledBroadcast || {};
+      let scheduleMode = 'inherit';
+      if (ruleSchedule && ruleSchedule.enabled === false) {
+        scheduleMode = 'disable';
+      } else if (ruleSchedule && ruleSchedule.enabled === true) {
+        scheduleMode = 'enable';
+      }
+      const fallbackScheduleIds = Array.isArray(globalSchedule.contentIds) ? [...globalSchedule.contentIds] : [];
+      const ruleScheduleIds = Array.isArray(ruleSchedule.contentIds) ? [...ruleSchedule.contentIds] : fallbackScheduleIds;
+      const scheduleInterval = typeof ruleSchedule.intervalMinutes === 'number'
+        ? ruleSchedule.intervalMinutes
+        : (typeof globalSchedule.intervalMinutes === 'number' ? globalSchedule.intervalMinutes : 60);
+
       ruleConfigData = {
         allowedUsersIds: [...(mapping.allowedUsersIds || [])],
         mutedUsersIds: [...(mapping.mutedUsersIds || [])],
@@ -3337,7 +3732,12 @@
         stripChinese: mapping.stripChinese === true,
         watermarkMode,
         watermarks: ruleWatermarks,
-        senderAccountType: getEffectiveTelegramSenderType(acc, forwardingType, mapping)
+        senderAccountType: forwardingType === 'discord-to-telegram'
+          ? getEffectiveTelegramSenderType(acc, forwardingType, mapping)
+          : undefined,
+        scheduledBroadcastMode: scheduleMode,
+        scheduledIntervalMinutes: scheduleInterval,
+        scheduledContentIds: ruleScheduleIds
       };
 
       // 设置显示源用户选项
@@ -3357,7 +3757,7 @@
       document.getElementById('ruleStripChinese').checked = ruleConfigData.stripChinese;
 
       const senderSection = document.getElementById('ruleTelegramSenderSection');
-      if (forwardingType === 'telegram-to-telegram' || forwardingType === 'discord-to-telegram') {
+      if (forwardingType === 'discord-to-telegram') {
         senderSection.classList.remove('hidden');
         document.getElementById('ruleTelegramSenderType').value = ruleConfigData.senderAccountType;
       } else {
@@ -3366,6 +3766,13 @@
 
       document.getElementById('ruleWatermarkMode').value = ruleConfigData.watermarkMode;
       updateRuleWatermarkMode(ruleConfigData.watermarkMode);
+
+      document.getElementById('ruleScheduleMode').value = ruleConfigData.scheduledBroadcastMode;
+      updateRuleScheduleMode(ruleConfigData.scheduledBroadcastMode);
+      const scheduleIntervalInput = document.getElementById('ruleScheduleInterval');
+      if (scheduleIntervalInput) {
+        scheduleIntervalInput.value = ruleConfigData.scheduledIntervalMinutes ?? 60;
+      }
 
       // 渲染所有标签
       renderRuleTags('allowedUsersIds');
@@ -3464,7 +3871,7 @@
       mapping.ignoreEnglishThreshold = Number.isFinite(ruleEnglishThreshold) ? ruleEnglishThreshold : undefined;
       mapping.ignoreChineseThreshold = Number.isFinite(ruleChineseThreshold) ? ruleChineseThreshold : undefined;
 
-      if (currentRuleConfigType === 'telegram-to-telegram' || currentRuleConfigType === 'discord-to-telegram') {
+      if (currentRuleConfigType === 'discord-to-telegram') {
         const senderType = document.getElementById('ruleTelegramSenderType').value;
         mapping.senderAccountType = senderType === 'bot' || senderType === 'client' ? senderType : undefined;
       } else if (mapping.senderAccountType) {
@@ -3490,6 +3897,22 @@
         mapping.watermarks = list;
         delete mapping.watermark;
         delete mapping.watermarkSecondary;
+      }
+
+      const scheduleMode = document.getElementById('ruleScheduleMode').value;
+      if (scheduleMode === 'inherit') {
+        delete mapping.scheduledBroadcast;
+      } else if (scheduleMode === 'disable') {
+        mapping.scheduledBroadcast = { enabled: false };
+      } else {
+        const intervalValue = parseInt(document.getElementById('ruleScheduleInterval').value, 10);
+        mapping.scheduledBroadcast = {
+          enabled: true,
+          intervalMinutes: Number.isFinite(intervalValue) ? Math.max(1, intervalValue) : undefined,
+          contentIds: Array.isArray(ruleConfigData.scheduledContentIds)
+            ? [...ruleConfigData.scheduledContentIds]
+            : []
+        };
       }
 
       // 超长消息处理（Discord/TG/飞书规则）
@@ -3602,6 +4025,10 @@
 
       closeLongMessageConfigModal();
     }
+
+    // Ensure login handlers are always available for inline onclick bindings
+    window.handleLogin = handleLogin;
+    window.handleLogout = handleLogout;
 
     function updateForwardingUI() {
       const acc = getActiveAccount();
@@ -3796,6 +4223,8 @@
         stripEnglish: false,
         stripChinese: false,
         watermarks: [],
+        scheduledContents: [],
+        scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
         ocrServerUrl: 'http://localhost:9003',
         ocrBlockedKeywords: [],
         ocrTriggerKeywords: []
@@ -3843,7 +4272,7 @@
           translateDirection: 'auto'
         };
         const defaultSenderType = getEffectiveTelegramSenderType(acc, forwardingType);
-        if ((mappingType === 'telegram-to-telegram' || mappingType === 'discord-to-telegram') &&
+        if (mappingType === 'discord-to-telegram' &&
             (defaultSenderType === 'bot' || defaultSenderType === 'client')) {
           newMapping.senderAccountType = defaultSenderType;
         }
@@ -3891,8 +4320,12 @@
 
         if (acc.telegramConfig.mappings[idx]) {
           if (field === 'senderAccountType') {
-            if (value === 'bot' || value === 'client') {
-              acc.telegramConfig.mappings[idx].senderAccountType = value;
+            if (forwardingType === 'discord-to-telegram') {
+              if (value === 'bot' || value === 'client') {
+                acc.telegramConfig.mappings[idx].senderAccountType = value;
+              } else if (acc.telegramConfig.mappings[idx].senderAccountType) {
+                delete acc.telegramConfig.mappings[idx].senderAccountType;
+              }
             } else if (acc.telegramConfig.mappings[idx].senderAccountType) {
               delete acc.telegramConfig.mappings[idx].senderAccountType;
             }

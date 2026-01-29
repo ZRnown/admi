@@ -11,6 +11,8 @@ import {
   getMultiConfig,
   type MultiConfig,
   type AccountConfig,
+  type RuleLevelConfig,
+  type ScheduledContentItem,
   accountToLegacyConfig,
   ensureConfigFile,
   getConfigPath,
@@ -44,7 +46,38 @@ interface RunningAccount {
   loginTimeout?: NodeJS.Timeout; // 登录超时定时器
   sharedKey?: string;
   sharedPrimary?: boolean;
+  scheduledJobs?: Map<string, NodeJS.Timeout>;
+  scheduledSenderCache?: Map<string, SenderBot>;
+  scheduledInFlight?: Set<string>;
 }
+
+type ScheduledTarget =
+  | {
+      key: string;
+      kind: "discord";
+      webhookUrl: string;
+      mappingType: string;
+      label: string;
+      rule?: RuleLevelConfig;
+    }
+  | {
+      key: string;
+      kind: "telegram";
+      chatId: string;
+      mappingType: string;
+      label: string;
+      preferredSenderType?: "bot" | "client";
+      rule?: RuleLevelConfig;
+    }
+  | {
+      key: string;
+      kind: "feishu";
+      target: string;
+      mode: "webhook" | "thread";
+      mappingType: string;
+      label: string;
+      rule?: RuleLevelConfig;
+    };
 
 const runningAccounts = new Map<string, RunningAccount>();
 const sharedDiscordClients = new Map<
@@ -349,6 +382,368 @@ function parseFeishuTarget(raw: any): { mode: "webhook" | "thread"; target: stri
   const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
   if (!webhookUrl) return null;
   return { mode, target: webhookUrl };
+}
+
+function resolveScheduledConfig(
+  account: AccountConfig,
+  rule?: RuleLevelConfig,
+): { intervalMinutes: number; contentIds: string[] } | null {
+  const globalConfig = account.scheduledBroadcast;
+  const ruleConfig = rule?.scheduledBroadcast;
+  if (ruleConfig?.enabled === false) return null;
+  const ruleEnabled = ruleConfig?.enabled === true;
+  const globalEnabled = globalConfig?.enabled === true;
+  if (!ruleEnabled && !globalEnabled) return null;
+  const intervalMinutes =
+    (ruleEnabled ? ruleConfig?.intervalMinutes : undefined) ??
+    (globalEnabled ? globalConfig?.intervalMinutes : undefined) ??
+    60;
+  const contentIds =
+    (ruleEnabled ? ruleConfig?.contentIds : undefined) ??
+    (globalEnabled ? globalConfig?.contentIds : undefined) ??
+    [];
+  const normalizedIds = Array.isArray(contentIds) ? contentIds.map(String).filter(Boolean) : [];
+  if (normalizedIds.length === 0) return null;
+  return {
+    intervalMinutes: Math.max(1, Math.round(intervalMinutes || 60)),
+    contentIds: normalizedIds,
+  };
+}
+
+function resolveScheduledContents(
+  account: AccountConfig,
+  contentIds: string[],
+): ScheduledContentItem[] {
+  if (!Array.isArray(contentIds) || contentIds.length === 0) return [];
+  const set = new Set(contentIds.map(String));
+  const items = Array.isArray(account.scheduledContents) ? account.scheduledContents : [];
+  return items.filter((item) => {
+    if (!item || !item.id || !set.has(item.id)) return false;
+    if (item.enabled === false) return false;
+    const hasText = typeof item.text === "string" && item.text.trim().length > 0;
+    const hasMedia = typeof item.mediaValue === "string" && item.mediaValue.trim().length > 0;
+    return hasText || hasMedia;
+  });
+}
+
+function inferMediaSource(value?: string, source?: "local" | "url"): "local" | "url" | undefined {
+  if (source === "local" || source === "url") return source;
+  if (!value) return undefined;
+  return /^https?:\/\//i.test(value) ? "url" : "local";
+}
+
+function buildScheduledUploads(item: ScheduledContentItem): Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean; isVideo?: boolean }> {
+  const uploads: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean; isVideo?: boolean }> = [];
+  const rawValue = typeof item.mediaValue === "string" ? item.mediaValue.trim() : "";
+  if (!rawValue) return uploads;
+  const mediaSource = inferMediaSource(rawValue, item.mediaSource);
+  if (!mediaSource) return uploads;
+  const filename = path.basename(rawValue.split("?")[0]) || "media";
+  const isImage = item.mediaType === "image";
+  const isVideo = item.mediaType === "video";
+  if (mediaSource === "url") {
+    uploads.push({ url: rawValue, filename, isImage, isVideo });
+  } else {
+    uploads.push({ localPath: rawValue, filename, isImage, isVideo });
+  }
+  return uploads;
+}
+
+function formatScheduledItemLabel(item: ScheduledContentItem): string {
+  if (item.name && item.name.trim()) return item.name.trim();
+  if (item.text && item.text.trim()) return item.text.trim().slice(0, 24);
+  if (item.mediaValue) return path.basename(item.mediaValue);
+  return item.id;
+}
+
+function collectScheduledTargets(account: AccountConfig): ScheduledTarget[] {
+  const targets: ScheduledTarget[] = [];
+  const forwardingType = account.forwardingType || "discord-to-discord";
+
+  if (forwardingType === "discord-to-discord" && account.enableDiscordForward !== false) {
+    const mappings = Array.isArray(account.mappings) ? account.mappings : [];
+    for (const mapping of mappings) {
+      if (!mapping?.id || !mapping?.targetWebhookUrl) continue;
+      targets.push({
+        key: `discord:${mapping.id}`,
+        kind: "discord",
+        webhookUrl: mapping.targetWebhookUrl,
+        mappingType: "discord-to-discord",
+        label: mapping.note || mapping.sourceChannelId || mapping.id,
+        rule: mapping,
+      });
+    }
+  }
+
+  if (
+    (forwardingType === "discord-to-telegram" ||
+      forwardingType === "telegram-to-discord" ||
+      forwardingType === "telegram-to-telegram") &&
+    account.telegramConfig?.enableTelegramForward !== false
+  ) {
+    const mappings = Array.isArray(account.telegramConfig?.mappings) ? account.telegramConfig?.mappings : [];
+    for (const mapping of mappings) {
+      if (!mapping || mapping.type !== forwardingType) continue;
+      const mappingId = mapping.id || `${mapping.sourceChannelId}_${mapping.targetChannelId}`;
+      if (mapping.type === "telegram-to-discord") {
+        if (!mapping.targetChannelId) continue;
+        targets.push({
+          key: `discord:${mappingId}`,
+          kind: "discord",
+          webhookUrl: mapping.targetChannelId,
+          mappingType: mapping.type,
+          label: mapping.note || mapping.sourceChannelId || mappingId,
+          rule: mapping,
+        });
+      } else {
+        if (!mapping.targetChannelId) continue;
+        const preferredSenderType =
+          mapping.type === "discord-to-telegram" && (mapping.senderAccountType === "bot" || mapping.senderAccountType === "client")
+            ? mapping.senderAccountType
+            : account.telegramConfig?.defaultSenderAccountType;
+        targets.push({
+          key: `telegram:${mappingId}`,
+          kind: "telegram",
+          chatId: mapping.targetChannelId,
+          mappingType: mapping.type,
+          label: mapping.note || mapping.sourceChannelId || mappingId,
+          preferredSenderType: preferredSenderType === "bot" || preferredSenderType === "client" ? preferredSenderType : undefined,
+          rule: mapping,
+        });
+      }
+    }
+  }
+
+  if (forwardingType === "discord-to-feishu" && account.enableFeishuForward === true) {
+    const feishuTargets = account.channelFeishuWebhooks || {};
+    for (const [sourceId, rawTarget] of Object.entries(feishuTargets)) {
+      const target = parseFeishuTarget(rawTarget);
+      if (!target) continue;
+      const rule = account.feishuRuleConfigs?.[sourceId];
+      targets.push({
+        key: `feishu:${sourceId}`,
+        kind: "feishu",
+        target: target.target,
+        mode: target.mode,
+        mappingType: "discord-to-feishu",
+        label: sourceId,
+        rule,
+      });
+    }
+  }
+
+  return targets;
+}
+
+function getScheduledSenderBot(
+  running: RunningAccount,
+  account: AccountConfig,
+  webhookUrl: string,
+): SenderBot {
+  if (!running.scheduledSenderCache) {
+    running.scheduledSenderCache = new Map();
+  }
+  const cached = running.scheduledSenderCache.get(webhookUrl);
+  if (cached) return cached;
+  const proxy = account.proxyUrl || getEnv().PROXY_URL;
+  const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
+  const sender = new SenderBot({
+    replacementsDictionary: account.replacementsDictionary || {},
+    webhookUrl,
+    httpAgent,
+    enableTranslation: false,
+    watermark: account.watermark,
+    watermarkSecondary: account.watermarkSecondary,
+    watermarks: account.watermarks,
+  });
+  running.scheduledSenderCache.set(webhookUrl, sender);
+  return sender;
+}
+
+async function dispatchScheduledToDiscord(
+  account: AccountConfig,
+  running: RunningAccount,
+  target: ScheduledTarget & { kind: "discord" },
+  item: ScheduledContentItem,
+) {
+  const sender = getScheduledSenderBot(running, account, target.webhookUrl);
+  const uploads = buildScheduledUploads(item);
+  const content = typeof item.text === "string" ? item.text : "";
+  await sender.sendData([
+    {
+      content,
+      uploads: uploads.length > 0 ? uploads : undefined,
+      ruleReplacementsDictionary: target.rule?.replacementsDictionary,
+      watermark: target.rule?.watermark,
+      watermarkSecondary: target.rule?.watermarkSecondary,
+      watermarks: target.rule?.watermarks,
+    },
+  ]);
+}
+
+async function dispatchScheduledToTelegram(
+  account: AccountConfig,
+  target: ScheduledTarget & { kind: "telegram" },
+  item: ScheduledContentItem,
+) {
+  const bridge = telegramBridgeClient;
+  if (!bridge) {
+    throw new Error("Telegram Bridge 未就绪");
+  }
+  const senderAccount = selectTelegramSendAccount(account, target.preferredSenderType, "sender");
+  if (!senderAccount) {
+    throw new Error("未找到可用 Telegram 发送账号");
+  }
+  const uploads = buildScheduledUploads(item);
+  let content = typeof item.text === "string" ? item.text : "";
+  const replacements = account.replacementsDictionary || {};
+  for (const [a, b] of Object.entries(replacements)) {
+    content = content.replaceAll(a, b);
+  }
+  if (target.rule?.replacementsDictionary) {
+    for (const [a, b] of Object.entries(target.rule.replacementsDictionary)) {
+      content = content.replaceAll(a, b);
+    }
+  }
+  const effectiveWatermarks = resolveWatermarkList(
+    account.watermarks,
+    target.rule?.watermarks,
+    account.watermark,
+    target.rule?.watermark,
+    account.watermarkSecondary,
+    target.rule?.watermarkSecondary,
+  );
+  await bridge.sendMessage({
+    accountId: senderAccount.id,
+    accountType: senderAccount.type,
+    chatId: target.chatId,
+    message: {
+      text: content,
+      watermark: effectiveWatermarks[0],
+      watermarkSecondary: effectiveWatermarks[1],
+      watermarks: effectiveWatermarks,
+    },
+    media: uploads.length > 0 ? uploads : undefined,
+  });
+}
+
+async function dispatchScheduledToFeishu(
+  account: AccountConfig,
+  running: RunningAccount,
+  target: ScheduledTarget & { kind: "feishu" },
+  item: ScheduledContentItem,
+) {
+  if (!running.feishuSendersBySource) {
+    running.feishuSendersBySource = new Map();
+  }
+  const key = `${target.mode}:${target.target}`;
+  let sender = running.feishuSendersBySource.get(key);
+  if (!sender) {
+    const proxy = account.proxyUrl || getEnv().PROXY_URL;
+    const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
+    sender = new FeishuSender(
+      target.target,
+      httpAgent,
+      account.feishuAppId,
+      account.feishuAppSecret,
+      { mode: target.mode, watermark: account.watermark, watermarkSecondary: account.watermarkSecondary, watermarks: account.watermarks },
+    );
+    running.feishuSendersBySource.set(key, sender);
+  }
+  const uploads = buildScheduledUploads(item);
+  const attachments = uploads
+    .filter((upload) => upload.url && upload.isImage)
+    .map((upload) => ({ url: upload.url as string, filename: upload.filename, isImage: true }));
+  const content = typeof item.text === "string" ? item.text : "";
+  if (!content.trim() && attachments.length === 0) {
+    throw new Error("飞书定时发送仅支持文字或 URL 图片");
+  }
+  await sender.send({
+    content,
+    attachments: attachments.length > 0 ? attachments : undefined,
+    watermark: target.rule?.watermark,
+    watermarkSecondary: target.rule?.watermarkSecondary,
+    watermarks: target.rule?.watermarks,
+  });
+}
+
+async function runScheduledTarget(
+  account: AccountConfig,
+  running: RunningAccount,
+  target: ScheduledTarget,
+  schedule: { intervalMinutes: number; contentIds: string[] },
+  logger?: FileLogger,
+) {
+  if (!running.scheduledInFlight) {
+    running.scheduledInFlight = new Set();
+  }
+  if (running.scheduledInFlight.has(target.key)) {
+    return;
+  }
+  running.scheduledInFlight.add(target.key);
+  try {
+    const items = resolveScheduledContents(account, schedule.contentIds);
+    if (items.length === 0) {
+      if (logger) {
+        logger.warn(`[定时] 规则 ${target.label} 未找到可用内容，已跳过`);
+      }
+      return;
+    }
+    for (const item of items) {
+      const label = formatScheduledItemLabel(item);
+      try {
+        if (target.kind === "discord") {
+          await dispatchScheduledToDiscord(account, running, target, item);
+        } else if (target.kind === "telegram") {
+          await dispatchScheduledToTelegram(account, target, item);
+        } else if (target.kind === "feishu") {
+          await dispatchScheduledToFeishu(account, running, target, item);
+        }
+        if (logger) {
+          logger.info(`[定时] 已发送内容 "${label}" 到 ${target.mappingType} (${target.label})`);
+        }
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        if (logger) {
+          logger.error(`[定时] 发送失败 (${target.mappingType} ${target.label}) 内容="${label}" 错误=${msg}`);
+        }
+      }
+    }
+  } finally {
+    running.scheduledInFlight.delete(target.key);
+  }
+}
+
+function clearScheduledBroadcasts(running?: RunningAccount) {
+  if (!running) return;
+  if (running.scheduledJobs) {
+    for (const timer of running.scheduledJobs.values()) {
+      clearInterval(timer);
+    }
+  }
+  running.scheduledJobs = new Map();
+  running.scheduledSenderCache = new Map();
+  running.scheduledInFlight = new Set();
+}
+
+function refreshScheduledBroadcasts(account: AccountConfig, running: RunningAccount, logger?: FileLogger) {
+  clearScheduledBroadcasts(running);
+  const targets = collectScheduledTargets(account);
+  if (targets.length === 0) return;
+  for (const target of targets) {
+    const schedule = resolveScheduledConfig(account, target.rule);
+    if (!schedule) continue;
+    const intervalMs = Math.max(1, schedule.intervalMinutes) * 60 * 1000;
+    const timer = setInterval(() => {
+      runScheduledTarget(account, running, target, schedule, logger).catch(() => {});
+    }, intervalMs);
+    running.scheduledJobs?.set(target.key, timer);
+    if (logger) {
+      logger.info(
+        `[定时] 已启用 ${target.mappingType} (${target.label}) 间隔=${schedule.intervalMinutes}分钟 内容数=${schedule.contentIds.length}`,
+      );
+    }
+  }
 }
 
 async function writeStatus(accountId: string, state: string, message?: string) {
@@ -1044,8 +1439,7 @@ function setupTelegramBridgeClient() {
               continue;
             }
 
-            const preferredSenderType =
-              rule.senderAccountType || account.telegramConfig?.defaultSenderAccountType;
+            const preferredSenderType = account.telegramConfig?.defaultSenderAccountType;
             const senderAccount = selectTelegramSendAccount(account, preferredSenderType, "sender");
             if (!senderAccount) {
               logSkip("未找到可用 Telegram 发送账号", `目标: ${targetChatId}`);
@@ -1236,6 +1630,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       (existing as any).feishuSendersBySource = feishuSendersBySource;
       existing.defaultSenderBot = defaultSenderBot;
       existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
+      refreshScheduledBroadcasts(account, existing, logger);
       
       if (isAlreadyLoggedIn) {
         await writeStatusForAccount(
@@ -1281,6 +1676,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       sharedPrimary: false,
     };
     runningAccounts.set(account.id, runningInfo);
+    refreshScheduledBroadcasts(account, runningInfo, logger);
 
     if ((sharedClientEntry.client as any)?.user) {
       await writeStatusForAccount(account.id, "online", buildDiscordLoginMessage((sharedClientEntry.client as any)?.user, "登录成功"));
@@ -1362,6 +1758,7 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
       sharedPrimary: Boolean(shareKey),
     };
     runningAccounts.set(account.id, runningInfo);
+    refreshScheduledBroadcasts(account, runningInfo, logger);
 
     // 添加调试日志，查看底层 WebSocket 状态（仅对 User Token）
     if (account.type === "selfbot") {
@@ -1479,6 +1876,8 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
 async function stopAccount(accountId: string, logger: FileLogger, manual: boolean = true) {
   const running = runningAccounts.get(accountId);
   if (!running) return;
+
+  clearScheduledBroadcasts(running);
   
   // 标记为手动停止
   if (manual) {
@@ -1916,6 +2315,9 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       JSON.stringify(account.watermarks || []) !== JSON.stringify(oldAccount.watermarks || []) ||
       JSON.stringify(account.watermark || {}) !== JSON.stringify(oldAccount.watermark || {}) ||
       JSON.stringify(account.watermarkSecondary || {}) !== JSON.stringify(oldAccount.watermarkSecondary || {});
+    const scheduledChanged =
+      JSON.stringify(account.scheduledContents || []) !== JSON.stringify(oldAccount.scheduledContents || []) ||
+      JSON.stringify(account.scheduledBroadcast || {}) !== JSON.stringify(oldAccount.scheduledBroadcast || {});
     // 检测用户过滤配置变化
     const userFilterChanged =
       JSON.stringify(account.allowedUsersIds || []) !== JSON.stringify(oldAccount.allowedUsersIds || []) ||
@@ -1951,7 +2353,8 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         userFilterChanged ||
         relayChanged ||
         watermarkChanged ||
-        forwardingTypeChanged
+        forwardingTypeChanged ||
+        scheduledChanged
       ) {
         let senderBotsBySource = existing.senderBotsBySource;
         let defaultSenderBot = existing.defaultSenderBot;
@@ -1977,6 +2380,9 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         existing.senderBotsBySource = senderBotsBySource;
         existing.defaultSenderBot = defaultSenderBot;
         (existing as any).feishuSendersBySource = feishuSendersBySource;
+        if (ruleConfigChanged || scheduledChanged || forwardingTypeChanged) {
+          refreshScheduledBroadcasts(account, existing, logger);
+        }
 
         // 如果转发类型变化，记录日志
         if (forwardingTypeChanged) {

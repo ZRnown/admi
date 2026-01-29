@@ -11,6 +11,8 @@ import {
   type FrontendTelegramConfig,
   type RuleLevelConfig,
   type WatermarkConfig,
+  type ScheduledBroadcastConfig,
+  type ScheduledContentItem,
 } from "@/src/config";
 import { readStatus, triggerFile } from "../_lib/common";
 import { requireAuth } from "@/app/api/_lib/auth";
@@ -176,6 +178,7 @@ interface FrontendMapping {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
+  scheduledBroadcast?: ScheduledBroadcastConfig;
 }
 
 interface FrontendAccount {
@@ -227,6 +230,8 @@ interface FrontendAccount {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
+  scheduledContents?: ScheduledContentItem[];
+  scheduledBroadcast?: ScheduledBroadcastConfig;
   // OCR 图片检测相关
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
@@ -322,12 +327,14 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermark: undefined,
       watermarkSecondary: undefined,
       watermarks: undefined,
+      scheduledBroadcast: undefined,
     };
   }
   const watermark = raw.watermark && typeof raw.watermark === "object" ? raw.watermark : undefined;
   const watermarkSecondary =
     raw.watermarkSecondary && typeof raw.watermarkSecondary === "object" ? raw.watermarkSecondary : undefined;
   const watermarks = resolveFrontendWatermarks(raw.watermarks, watermark, watermarkSecondary);
+  const scheduledBroadcast = normalizeScheduledBroadcastConfig(raw.scheduledBroadcast);
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
     mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
@@ -374,6 +381,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermark,
     watermarkSecondary,
     watermarks,
+    scheduledBroadcast,
   };
 }
 
@@ -394,6 +402,57 @@ function resolveFrontendWatermarks(
   if (Array.isArray(list)) return list as WatermarkConfig[];
   const legacy = [primary, secondary].filter((item): item is WatermarkConfig => !!item);
   return legacy.length > 0 ? legacy : undefined;
+}
+
+function normalizeScheduledContentItem(raw: any): ScheduledContentItem | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const id =
+    typeof raw.id === "string" && raw.id.trim().length > 0 ? raw.id.trim() : randomUUID();
+  const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : undefined;
+  const text = typeof raw.text === "string" ? raw.text : undefined;
+  const mediaType = raw.mediaType === "image" || raw.mediaType === "video" ? raw.mediaType : undefined;
+  const mediaSource = raw.mediaSource === "local" || raw.mediaSource === "url" ? raw.mediaSource : undefined;
+  const mediaValue =
+    typeof raw.mediaValue === "string" && raw.mediaValue.trim() ? raw.mediaValue.trim() : undefined;
+  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : undefined;
+  return {
+    id,
+    name,
+    text,
+    mediaType,
+    mediaSource,
+    mediaValue,
+    enabled,
+  };
+}
+
+function normalizeScheduledContentList(raw: any): ScheduledContentItem[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const list = raw
+    .map((item) => normalizeScheduledContentItem(item))
+    .filter((item): item is ScheduledContentItem => !!item);
+  return list.length > 0 ? list : [];
+}
+
+function normalizeScheduledBroadcastConfig(raw: any): ScheduledBroadcastConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const normalizeNumber = (value: any): number | undefined => {
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && value.trim() && !isNaN(Number(value))) {
+      return Number(value);
+    }
+    return undefined;
+  };
+  const intervalMinutes = normalizeNumber(raw.intervalMinutes);
+  const contentIds = Array.isArray(raw.contentIds) ? raw.contentIds.map(String).filter(Boolean) : undefined;
+  const hasContent = (contentIds?.length || 0) > 0;
+  const enabled =
+    raw.enabled === true ? true : raw.enabled === false ? false : hasContent && !!intervalMinutes;
+  return {
+    enabled,
+    intervalMinutes,
+    contentIds,
+  };
 }
 
 function mergeTelegramConfig(
@@ -518,6 +577,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         watermark: savedRule.watermark,
         watermarkSecondary: savedRule.watermarkSecondary,
         watermarks: resolvedWatermarks,
+        scheduledBroadcast: normalizeScheduledBroadcastConfig(savedRule.scheduledBroadcast),
       });
     }
   } else {
@@ -542,6 +602,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         watermark: undefined,
         watermarkSecondary: undefined,
         watermarks: undefined,
+        scheduledBroadcast: undefined,
       });
     }
   }
@@ -599,6 +660,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
     watermarks: resolveFrontendWatermarks(account.watermarks, account.watermark, account.watermarkSecondary),
+    scheduledContents: normalizeScheduledContentList(account.scheduledContents),
+    scheduledBroadcast: normalizeScheduledBroadcastConfig(account.scheduledBroadcast),
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
     ocrBlockedKeywords: account.ocrBlockedKeywords || [],
     ocrTriggerKeywords: account.ocrTriggerKeywords || [],
@@ -777,6 +840,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           watermark: mapping.watermark,
           watermarkSecondary: mapping.watermarkSecondary,
           watermarks: mappingWatermarks,
+          scheduledBroadcast: normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast),
         });
       }
     }
@@ -825,6 +889,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     dto.watermark,
     dto.watermarkSecondary,
   );
+  const resolvedScheduledContents = normalizeScheduledContentList(dto.scheduledContents);
+  const resolvedScheduledBroadcast = normalizeScheduledBroadcastConfig(dto.scheduledBroadcast);
 
   let loginRequested: boolean;
   if (fallback && fallback.loginRequested === true) {
@@ -924,6 +990,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         ? dto.watermarkSecondary
         : base.watermarkSecondary,
     watermarks: resolvedAccountWatermarks ?? base.watermarks,
+    scheduledContents: resolvedScheduledContents ?? base.scheduledContents,
+    scheduledBroadcast: resolvedScheduledBroadcast ?? base.scheduledBroadcast,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(dto.ocrTriggerKeywords) ? dto.ocrTriggerKeywords : [],
