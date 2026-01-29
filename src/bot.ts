@@ -1333,6 +1333,17 @@ export class Bot {
             text: `⏰ ${ts}`
           }
         };
+        if (forwardStyle === "style3") {
+          // 确保样式3不显示嵌入标题头
+          style2ReplyEmbed.title = undefined;
+          style2ReplyEmbed.author = undefined;
+          if (typeof style2ReplyEmbed.description === "string") {
+            const cleaned = style2ReplyEmbed.description
+              .replace(/^(\*\*)?💬 回复[^\n]*\n?/, "")
+              .trim();
+            style2ReplyEmbed.description = cleaned || "回复消息";
+          }
+        }
       }
     }
 

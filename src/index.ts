@@ -1481,6 +1481,16 @@ function setupTelegramBridgeClient() {
                     footer: { text: `⏰ ${formatTimestampFromSeconds(params.date)}` }
                   }
                 ];
+                if (forwardStyle === "style3" && extraEmbeds[0]) {
+                  extraEmbeds[0].title = undefined;
+                  extraEmbeds[0].author = undefined;
+                  if (typeof extraEmbeds[0].description === "string") {
+                    const cleaned = extraEmbeds[0].description
+                      .replace(/^(\*\*)?💬 回复[^\n]*\n?/, "")
+                      .trim();
+                    extraEmbeds[0].description = cleaned || "回复消息";
+                  }
+                }
               }
             }
           }
