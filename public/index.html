@@ -1647,13 +1647,13 @@
           </div>
         </div>
 
-        <!-- 定时内容库 -->
+        <!-- 定时内容库 + 定时发送 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">定时内容库</h2>
             <p class="text-xs text-slate-500 mt-1">可创建文字/图片/视频内容，用于定时发送</p>
           </div>
-          <div class="p-6 space-y-4">
+          <div class="p-6 space-y-6">
             <div class="flex flex-wrap items-center justify-between gap-3">
               <p class="text-xs text-slate-500">内容可单独启用/禁用，支持本地文件或 URL</p>
               <button onclick="addScheduledContent()" class="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">
@@ -1727,16 +1727,13 @@
                 <div class="text-xs text-slate-400">暂无定时内容，请点击“添加内容”</div>
               `}
             </div>
-          </div>
-        </div>
-
-        <!-- 定时发送（全局） -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100">
-            <h2 class="font-semibold text-slate-800">定时发送（全局）</h2>
-            <p class="text-xs text-slate-500 mt-1">对所有规则生效（规则可单独覆盖）</p>
-          </div>
-          <div class="p-6 space-y-4">
+            <div class="border-t border-slate-100 pt-6 space-y-4">
+              <div class="flex items-center justify-between">
+                <div>
+                  <h3 class="text-sm font-medium text-slate-800">定时发送（全局）</h3>
+                  <p class="text-xs text-slate-500 mt-1">对所有规则生效（规则可单独覆盖）</p>
+                </div>
+              </div>
             <label class="inline-flex items-center gap-2 text-sm text-slate-700">
               <input type="checkbox" ${scheduledBroadcast.enabled ? 'checked' : ''} onchange="updateScheduledBroadcastField('enabled', this.checked)"
                 class="h-4 w-4 rounded border-slate-300">
@@ -1754,6 +1751,7 @@
               <div class="flex flex-wrap gap-3">
                 ${renderScheduledContentChecklist(scheduledContents, scheduledBroadcast.contentIds || [], 'toggleScheduledBroadcastContent')}
               </div>
+            </div>
             </div>
           </div>
         </div>
