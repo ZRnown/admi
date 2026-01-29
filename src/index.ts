@@ -23,7 +23,7 @@ import { FeishuSender } from "./feishuSender.js";
 import { ProxyAgent } from "proxy-agent";
 import { FileLogger } from "./logger.js";
 import { telegramBridgeManager } from "./processManager.js";
-import { TelegramBridgeClient } from "./telegramBridgeClient.js";
+import { TelegramBridgeClient, type SendMessageParams } from "./telegramBridgeClient.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { resolveWatermarkList } from "./watermark.js";
@@ -377,6 +377,56 @@ function selectTelegramSendAccount(
   return bot || candidates[0];
 }
 
+function shouldFallbackToTelegramClient(sendResult: any): boolean {
+  if (!sendResult) return false;
+  const errorText = `${sendResult.error || ""} ${sendResult.message || ""}`.toLowerCase();
+  if (!errorText) return false;
+  if (errorText.includes("chat not found")) return true;
+  if (errorText.includes("bot was kicked")) return true;
+  if (errorText.includes("forbidden")) return true;
+  if (errorText.includes("not enough rights")) return true;
+  return false;
+}
+
+async function sendTelegramMessageWithFallback(
+  bridge: TelegramBridgeClient,
+  account: AccountConfig,
+  preferredType: "bot" | "client" | undefined,
+  preferredRole: "listener" | "sender" | undefined,
+  params: Omit<SendMessageParams, "accountId" | "accountType">,
+  log?: (message: string) => void,
+): Promise<{ result: any; account: TelegramAccountRef | null; usedFallback: boolean }> {
+  const primary = selectTelegramSendAccount(account, preferredType, preferredRole);
+  if (!primary) {
+    return { result: null, account: null, usedFallback: false };
+  }
+
+  const sendWithAccount = async (entry: TelegramAccountRef) => {
+    return bridge.sendMessage({
+      accountId: entry.id,
+      accountType: entry.type,
+      chatId: params.chatId,
+      message: params.message,
+      media: params.media,
+    });
+  };
+
+  let result = await sendWithAccount(primary);
+  if (
+    primary.type === "bot" &&
+    shouldFallbackToTelegramClient(result)
+  ) {
+    const fallback = selectTelegramSendAccount(account, "client", preferredRole);
+    if (fallback && fallback.id !== primary.id) {
+      log?.(`[TG] Bot 发送失败，尝试使用 Client 账号重试`);
+      result = await sendWithAccount(fallback);
+      return { result, account: fallback, usedFallback: true };
+    }
+  }
+
+  return { result, account: primary, usedFallback: false };
+}
+
 function parseFeishuTarget(raw: any): { mode: "webhook" | "thread"; target: string } | null {
   if (typeof raw === "string") {
     const trimmed = raw.trim();
@@ -602,10 +652,6 @@ async function dispatchScheduledToTelegram(
   if (!bridge) {
     throw new Error("Telegram Bridge 未就绪");
   }
-  const senderAccount = selectTelegramSendAccount(account, target.preferredSenderType, "sender");
-  if (!senderAccount) {
-    throw new Error("未找到可用 Telegram 发送账号");
-  }
   const sendChatId = normalizeTelegramChatId(target.chatId);
   const uploads = buildScheduledUploads(item);
   let content = typeof item.text === "string" ? item.text : "";
@@ -628,18 +674,25 @@ async function dispatchScheduledToTelegram(
         account.watermarkSecondary,
         target.rule?.watermarkSecondary,
       );
-  await bridge.sendMessage({
-    accountId: senderAccount.id,
-    accountType: senderAccount.type,
-    chatId: sendChatId,
-    message: {
-      text: content,
-      watermark: effectiveWatermarks[0],
-      watermarkSecondary: effectiveWatermarks[1],
-      watermarks: effectiveWatermarks,
+  const { account: senderAccount } = await sendTelegramMessageWithFallback(
+    bridge,
+    account,
+    target.preferredSenderType,
+    "sender",
+    {
+      chatId: sendChatId,
+      message: {
+        text: content,
+        watermark: effectiveWatermarks[0],
+        watermarkSecondary: effectiveWatermarks[1],
+        watermarks: effectiveWatermarks,
+      },
+      media: uploads.length > 0 ? uploads : undefined,
     },
-    media: uploads.length > 0 ? uploads : undefined,
-  });
+  );
+  if (!senderAccount) {
+    throw new Error("未找到可用 Telegram 发送账号");
+  }
 }
 
 async function dispatchScheduledToFeishu(
@@ -1491,12 +1544,10 @@ function setupTelegramBridgeClient() {
             }
             const sendChatId = normalizeTelegramChatId(targetChatId);
 
-            const preferredSenderType = account.telegramConfig?.defaultSenderAccountType;
-            const senderAccount = selectTelegramSendAccount(account, preferredSenderType, "sender");
-            if (!senderAccount) {
-              logSkip("未找到可用 Telegram 发送账号", `目标: ${targetChatId}`);
-              continue;
-            }
+            const preferredSenderType =
+              (rule.senderAccountType === "bot" || rule.senderAccountType === "client")
+                ? rule.senderAccountType
+                : account.telegramConfig?.defaultSenderAccountType;
 
             const replySourceId = params.reply_to_message_id || replyInfo?.id;
             const replyTargetId = resolveTelegramReplyTarget(sourceChatId, replySourceId, targetChatId);
@@ -1553,19 +1604,35 @@ function setupTelegramBridgeClient() {
               continue;
             }
 
-            const sendResult = await bridge.sendMessage({
-              accountId: senderAccount.id,
-              accountType: senderAccount.type,
-              chatId: sendChatId,
-              message: {
-                text: telegramContent,
-                reply_to_message_id: replyTargetId,
-                watermark: effectiveWatermarks[0],
-                watermarkSecondary: effectiveWatermarks[1],
-                watermarks: effectiveWatermarks,
-              },
-              media: uploads.length > 0 ? uploads : undefined,
-            });
+            const { result: sendResult, account: senderAccount } =
+              await sendTelegramMessageWithFallback(
+                bridge,
+                account,
+                preferredSenderType,
+                "sender",
+                {
+                  chatId: sendChatId,
+                  message: {
+                    text: telegramContent,
+                    reply_to_message_id: replyTargetId,
+                    watermark: effectiveWatermarks[0],
+                    watermarkSecondary: effectiveWatermarks[1],
+                    watermarks: effectiveWatermarks,
+                  },
+                  media: uploads.length > 0 ? uploads : undefined,
+                },
+                (message) => {
+                  const logMsg =
+                    `[${forwardTag}] ${message} | 账号: ${account.name} | 目标: ${targetChatId}`;
+                  console.warn(logMsg);
+                  telegramForwardLogger.info(logMsg);
+                },
+              );
+
+            if (!senderAccount) {
+              logSkip("未找到可用 Telegram 发送账号", `目标: ${targetChatId}`);
+              continue;
+            }
 
             if (sendResult?.messageId && sourceChatId && sourceMessageId) {
               recordTelegramReplyMapping(sourceChatId, String(sourceMessageId), targetChatId, String(sendResult.messageId));
