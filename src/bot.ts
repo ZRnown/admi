@@ -1251,9 +1251,21 @@ export class Bot {
               // 使用 webhook 名称
               display = (firstSender as any).webhookName || "Webhook";
             }
-            const hasAssets = (ref.attachments?.size ?? 0) > 0 || (ref.embeds?.length ?? 0) > 0;
-            const label = hasAssets ? "查看附件" : "查看消息";
-            ctaLine = `↳ @${display}: [${label}](${link})`;
+          const hasAssets = (ref.attachments?.size ?? 0) > 0 || (ref.embeds?.length ?? 0) > 0;
+          const stripAllText = stripEnglish === true && stripChinese === true;
+          const preferEnglishLabel = stripChinese === true && stripEnglish !== true;
+          const preferChineseLabel = stripEnglish === true && stripChinese !== true;
+          let label: string;
+          if (stripAllText) {
+            label = "🔗";
+          } else if (preferEnglishLabel) {
+            label = hasAssets ? "View attachment" : "View message";
+          } else if (preferChineseLabel) {
+            label = hasAssets ? "查看附件" : "查看消息";
+          } else {
+            label = hasAssets ? "查看附件" : "查看消息";
+          }
+          ctaLine = `↳ @${display}: [${label}](${link})`;
           }
           // 记录被回复用户名称和内容（用于样式2显示）
           replyUserNameForStyle2 = (ref.member as any)?.displayName || ref.author?.username || ref.author?.tag || "用户";
@@ -1492,14 +1504,14 @@ export class Bot {
 
     // 构建 extraEmbeds：样式2下回复消息时，添加回复信息的embed；样式1或普通消息时，传递原消息的embeds
     let extraEmbeds: any[] | undefined = undefined;
-    if (forwardStyle === "style2" && style2ReplyEmbed) {
+    if ((forwardStyle === "style2" || forwardStyle === "style3") && style2ReplyEmbed) {
       // 样式2回复消息：添加回复信息的embed，同时保留原消息的embeds（如果有）
       const allEmbeds: any[] = [style2ReplyEmbed];
       if (message.embeds && message.embeds.length > 0) {
         allEmbeds.push(...message.embeds);
       }
       extraEmbeds = allEmbeds;
-    } else if (forwardStyle === "style2" && message.embeds && message.embeds.length > 0) {
+    } else if ((forwardStyle === "style2" || forwardStyle === "style3") && message.embeds && message.embeds.length > 0) {
       // 样式2普通消息：传递原消息的 embeds（修复 webhook 消息转发问题）
       extraEmbeds = message.embeds;
     } else if (message.embeds && message.embeds.length > 0) {
