@@ -317,8 +317,8 @@ export interface LegacyConfig {
   ignoreChineseThreshold?: number;
   stripEnglish?: boolean;
   stripChinese?: boolean;
-  // Discord -> Discord 转发样式：style1 = 当前内嵌样式；style2 = 纯文本样式（带时间等）
-  feishuStyle?: "style1" | "style2";
+  // Discord -> Discord 转发样式：style1 = 当前内嵌样式；style2 = 纯文本样式（带时间等）；style3 = 纯文本样式（隐藏回复对象）
+  feishuStyle?: "style1" | "style2" | "style3";
   // OCR 图片检测服务器URL
   ocrServerUrl?: string;
   // OCR 屏蔽关键词（检测到这些词的图片不会转发）
@@ -845,8 +845,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   const channelRelayMap: Record<string, string> =
     input?.channelRelayMap && typeof input.channelRelayMap === "object" ? input.channelRelayMap : {};
 
-  const feishuStyle: "style1" | "style2" =
-    input?.feishuStyle === "style2" ? "style2" : "style1";
+  const feishuStyle: "style1" | "style2" | "style3" =
+    input?.feishuStyle === "style3" ? "style3" : input?.feishuStyle === "style2" ? "style2" : "style1";
   const channelTranslate: Record<string, boolean> =
     input?.channelTranslate && typeof input.channelTranslate === "object" ? input.channelTranslate : {};
   const channelTranslateDirection: Record<string, "off" | "auto" | "zh-en" | "en-zh"> =

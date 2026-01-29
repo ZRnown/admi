@@ -1457,8 +1457,9 @@
               <span class="text-xs text-slate-500">Discord 转发样式：</span>
               <select onchange="updateField('feishuStyle', this.value)"
                 class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
-                <option value="style1" ${acc.feishuStyle === 'style2' ? '' : 'selected'}>样式1：内嵌</option>
+                <option value="style1" ${acc.feishuStyle === 'style1' || !acc.feishuStyle ? 'selected' : ''}>样式1：内嵌</option>
                 <option value="style2" ${acc.feishuStyle === 'style2' ? 'selected' : ''}>样式2：文本+时间</option>
+                <option value="style3" ${acc.feishuStyle === 'style3' ? 'selected' : ''}>样式3：文本+时间（隐藏回复对象）</option>
               </select>
             </div>
             <div class="space-y-3 ${acc.enableDiscordForward !== false ? '' : 'opacity-60'}">
@@ -1489,8 +1490,9 @@
               <span class="text-xs text-slate-500">转发样式：</span>
               <select onchange="updateField('feishuStyle', this.value)"
                 class="rounded border border-slate-200 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
-                <option value="style1" ${acc.feishuStyle === 'style2' ? '' : 'selected'}>样式1：内嵌</option>
+                <option value="style1" ${acc.feishuStyle === 'style1' || !acc.feishuStyle ? 'selected' : ''}>样式1：内嵌</option>
                 <option value="style2" ${acc.feishuStyle === 'style2' ? 'selected' : ''}>样式2：文本+时间</option>
+                <option value="style3" ${acc.feishuStyle === 'style3' ? 'selected' : ''}>样式3：文本+时间（隐藏回复对象）</option>
               </select>
             </div>
             <div class="space-y-3">

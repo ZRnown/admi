@@ -236,8 +236,8 @@ interface FrontendAccount {
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
   ocrTriggerKeywords?: string[];
-  // Discord -> Discord 转发样式：style1 = 内嵌（默认），style2 = 纯文本 + 时间
-  feishuStyle?: "style1" | "style2";
+  // Discord -> Discord 转发样式：style1 = 内嵌（默认），style2 = 纯文本 + 时间，style3 = 纯文本 + 时间（隐藏回复对象）
+  feishuStyle?: "style1" | "style2" | "style3";
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
@@ -995,7 +995,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(dto.ocrTriggerKeywords) ? dto.ocrTriggerKeywords : [],
-    feishuStyle: dto.feishuStyle === "style1" || dto.feishuStyle === "style2" ? dto.feishuStyle : (base.feishuStyle || "style1"),
+    feishuStyle:
+      dto.feishuStyle === "style1" || dto.feishuStyle === "style2" || dto.feishuStyle === "style3"
+        ? dto.feishuStyle
+        : (base.feishuStyle || "style1"),
     // Telegram认证配置保存
     telegramBotToken:
       typeof resolveSecretValue(dto.telegramBotToken, base.telegramBotToken) === "string" &&

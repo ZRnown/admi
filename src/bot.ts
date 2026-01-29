@@ -1266,7 +1266,8 @@ export class Bot {
     }
 
     // 根据配置对 Discord->Discord 文本应用样式
-    const forwardStyle = (this.config as any).feishuStyle === "style2" ? "style2" : "style1";
+    const rawStyle = (this.config as any).feishuStyle;
+    const forwardStyle = rawStyle === "style2" || rawStyle === "style3" ? rawStyle : "style1";
     const isReplyMessage = !!message.reference;
     
     // 样式1：保持原有逻辑（包含CTA）
@@ -1301,9 +1302,13 @@ export class Bot {
           now.getHours(),
         )}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
         
+        const replyTitle =
+          forwardStyle === "style3"
+            ? "💬 回复"
+            : `💬 回复 ${replyUserNameForStyle2}`;
         style2ReplyEmbed = {
           color: 0x0000FF, // 蓝色
-          description: `**💬 回复 ${replyUserNameForStyle2}**\n${replyContentForStyle2 || ""}`,
+          description: `**${replyTitle}**\n${replyContentForStyle2 || ""}`,
           footer: {
             text: `⏰ ${ts}`
           }

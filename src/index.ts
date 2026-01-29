@@ -1360,7 +1360,8 @@ function setupTelegramBridgeClient() {
           let forwardStyle = "style1";
 
           if (!isTelegramToTelegram) {
-            forwardStyle = account.feishuStyle === "style2" ? "style2" : "style1";
+            const rawStyle = account.feishuStyle;
+            forwardStyle = rawStyle === "style2" || rawStyle === "style3" ? rawStyle : "style1";
             avatarUrl = showSourceIdentity
               ? buildTelegramAvatarUrl(
                   params.from_avatar_file,
@@ -1386,10 +1387,11 @@ function setupTelegramBridgeClient() {
                 contentForRule = [ctaLine, contentForRule].filter(Boolean).join("\n");
               } else {
                 useEmbed = false;
+                const replyTitle = forwardStyle === "style3" ? "💬 回复" : `💬 回复 ${replyName}`;
                 extraEmbeds = [
                   {
                     color: 0x0000ff,
-                    description: `**💬 回复 ${replyName}**\n${replyContent}`,
+                    description: `**${replyTitle}**\n${replyContent}`,
                     footer: { text: `⏰ ${formatTimestampFromSeconds(params.date)}` }
                   }
                 ];
