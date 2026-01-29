@@ -1316,13 +1316,15 @@ export class Bot {
           now.getHours(),
         )}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
         
-        const replyTitle =
-          forwardStyle === "style3"
-            ? "💬 回复"
-            : `💬 回复 ${replyUserNameForStyle2}`;
+        const replyTitle = `💬 回复 ${replyUserNameForStyle2}`;
+        const replyBody =
+          replyContentForStyle2 || (forwardStyle === "style3" ? "回复消息" : "");
         style2ReplyEmbed = {
           color: 0x0000FF, // 蓝色
-          description: `**${replyTitle}**\n${replyContentForStyle2 || ""}`,
+          description:
+            forwardStyle === "style3"
+              ? replyBody
+              : `**${replyTitle}**\n${replyBody}`,
           footer: {
             text: `⏰ ${ts}`
           }

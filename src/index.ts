@@ -1416,11 +1416,15 @@ function setupTelegramBridgeClient() {
                 contentForRule = [ctaLine, contentForRule].filter(Boolean).join("\n");
               } else {
                 useEmbed = false;
-                const replyTitle = forwardStyle === "style3" ? "💬 回复" : `💬 回复 ${replyName}`;
+                const replyTitle = `💬 回复 ${replyName}`;
+                const replyBody = replyContent || (forwardStyle === "style3" ? "回复消息" : "");
                 extraEmbeds = [
                   {
                     color: 0x0000ff,
-                    description: `**${replyTitle}**\n${replyContent}`,
+                    description:
+                      forwardStyle === "style3"
+                        ? replyBody
+                        : `**${replyTitle}**\n${replyBody}`,
                     footer: { text: `⏰ ${formatTimestampFromSeconds(params.date)}` }
                   }
                 ];
