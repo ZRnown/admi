@@ -39,8 +39,11 @@ class TelegramBotManager:
         self._event_handlers: Dict[str, Any] = {}
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
+        media_root = os.getenv("TELEGRAM_MEDIA_DIR") or str(base_dir / ".data" / "telegram_media")
         self.avatar_dir = Path(avatar_root)
         self.avatar_dir.mkdir(parents=True, exist_ok=True)
+        self.media_dir = Path(media_root)
+        self.media_dir.mkdir(parents=True, exist_ok=True)
         self.avatar_cache: Dict[int, float] = {}
         self.avatar_ttl_seconds = 6 * 60 * 60
         self._entity_cache_seconds = 60 * 60
@@ -853,6 +856,19 @@ class TelegramBotManager:
             if message.media:
                 media_info = self._parse_media(message.media)
                 if media_info:
+                    try:
+                        media_type = media_info.get("type")
+                        mime_type = str(media_info.get("mimeType") or "")
+                        should_download = media_type == "photo" or (
+                            media_type == "document" and mime_type.startswith("image/")
+                        )
+                        if should_download:
+                            local_path = await self._download_media_file(event, message)
+                            if local_path:
+                                media_info["localPath"] = local_path
+                                media_info["fileName"] = Path(local_path).name
+                    except Exception as e:
+                        logger.debug(f"Failed to download media for bot message {getattr(message, 'id', None)}: {e}")
                     media.append(media_info)
 
             # 获取发送者信息（兼容不同 Telethon 版本字段）
@@ -904,6 +920,7 @@ class TelegramBotManager:
                     logger.debug(f"Failed to load reply message: {e}")
 
             # 转换为内部格式
+            text_content = message.message or message.text or ""
             telegram_message = TelegramMessage(
                 id=message.id,
                 chat_id=message.chat_id,
@@ -913,7 +930,7 @@ class TelegramBotManager:
                 from_username=from_user.get("username") if from_user else None,
                 from_display_name=self._build_display_name(from_user),
                 from_avatar_file=from_user.get("avatarFile") if from_user else None,
-                text=message.text,
+                text=text_content,
                 date=int(message.date.timestamp()),
                 media=media,
                 reply_to_message_id=message.reply_to_msg_id,
@@ -1015,6 +1032,13 @@ class TelegramBotManager:
             logger.error(f"Failed to parse media: {e}")
 
         return None
+
+    async def _download_media_file(self, event, message) -> Optional[str]:
+        try:
+            return await event.download_media(file=str(self.media_dir))
+        except Exception as e:
+            logger.debug(f"Failed to download media for message {getattr(message, 'id', None)}: {e}")
+            return None
 
     async def update_config(self, accounts: List[TelegramAccount | Dict[str, Any]]):
         """更新配置"""

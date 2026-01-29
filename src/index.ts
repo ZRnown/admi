@@ -1077,6 +1077,10 @@ function setupTelegramBridgeClient() {
         m?.type === "audio" || String(m?.mimeType || "").startsWith("audio/");
       const isDocument = (m: any) =>
         m?.type === "document" && !isImage(m) && !isVideo(m) && !isAudio(m);
+      const hasImage = Boolean(params.photo) || mediaItems.some(isImage);
+      const hasVideo = Boolean(params.video) || mediaItems.some(isVideo);
+      const hasAudio = mediaItems.some(isAudio);
+      const hasDocument = Boolean(params.document) || mediaItems.some(isDocument);
 
       try {
         if (globalRequiredGroups.length > 0 && hasText) {
@@ -1107,11 +1111,6 @@ function setupTelegramBridgeClient() {
       }
 
       try {
-        const hasImage = Boolean(params.photo) || mediaItems.some(isImage);
-        const hasVideo = Boolean(params.video) || mediaItems.some(isVideo);
-        const hasAudio = mediaItems.some(isAudio);
-        const hasDocument = Boolean(params.document) || mediaItems.some(isDocument);
-
         if (account.ignoreImages && hasImage) {
           logSkip("已启用忽略图片");
           continue;
@@ -1214,6 +1213,23 @@ function setupTelegramBridgeClient() {
         const stripChinese = account.stripChinese === true || rule.stripChinese === true;
         const stripOptions = { stripEnglish, stripChinese };
         try {
+          if (rule.ignoreImages === true && hasImage) {
+            logSkip("规则已启用忽略图片", `目标: ${rule.targetChannelId}`);
+            continue;
+          }
+          if (rule.ignoreVideo === true && hasVideo) {
+            logSkip("规则已启用忽略视频", `目标: ${rule.targetChannelId}`);
+            continue;
+          }
+          if (rule.ignoreAudio === true && hasAudio) {
+            logSkip("规则已启用忽略音频", `目标: ${rule.targetChannelId}`);
+            continue;
+          }
+          if (rule.ignoreDocuments === true && hasDocument) {
+            logSkip("规则已启用忽略文件", `目标: ${rule.targetChannelId}`);
+            continue;
+          }
+
           if (hasText && englishRatio !== null && chineseRatio !== null) {
             const ruleEnglishThreshold = clampPercent(rule.ignoreEnglishThreshold, 100);
             const ruleChineseThreshold = clampPercent(rule.ignoreChineseThreshold, 100);
@@ -2290,16 +2306,24 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       JSON.stringify(account.telegramConfig?.mappings || []) !== JSON.stringify(oldAccount.telegramConfig?.mappings || []) ||
       JSON.stringify(account.feishuRuleConfigs || {}) !== JSON.stringify(oldAccount.feishuRuleConfigs || {});
     const relayChanged =
+      account.enableBotRelay !== oldAccount.enableBotRelay ||
       JSON.stringify(account.botRelays || []) !== JSON.stringify(oldAccount.botRelays || []) ||
       JSON.stringify(account.channelRelayMap || {}) !== JSON.stringify(oldAccount.channelRelayMap || {});
     // 检测翻译配置变化
     const translationChanged =
       account.enableTranslation !== oldAccount.enableTranslation ||
+      account.translationProvider !== oldAccount.translationProvider ||
+      account.translationApiKey !== oldAccount.translationApiKey ||
+      account.translationSecret !== oldAccount.translationSecret ||
       account.deepseekApiKey !== oldAccount.deepseekApiKey;
     const keywordsChanged =
       JSON.stringify(account.blockedKeywords || []) !== JSON.stringify(oldAccount.blockedKeywords || []) ||
       JSON.stringify(account.excludeKeywords || []) !== JSON.stringify(oldAccount.excludeKeywords || []) ||
+      JSON.stringify(account.ocrBlockedKeywords || []) !== JSON.stringify(oldAccount.ocrBlockedKeywords || []) ||
+      JSON.stringify(account.ocrTriggerKeywords || []) !== JSON.stringify(oldAccount.ocrTriggerKeywords || []) ||
+      account.caseInsensitiveKeywords !== oldAccount.caseInsensitiveKeywords ||
       account.showSourceIdentity !== oldAccount.showSourceIdentity;
+    const ocrSettingsChanged = account.ocrServerUrl !== oldAccount.ocrServerUrl;
     const ignoreSettingsChanged =
       account.ignoreSelf !== oldAccount.ignoreSelf ||
       account.ignoreBot !== oldAccount.ignoreBot ||
@@ -2310,11 +2334,27 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       account.ignoreEnglish !== oldAccount.ignoreEnglish ||
       account.ignoreEnglishThreshold !== oldAccount.ignoreEnglishThreshold ||
       account.ignoreChinese !== oldAccount.ignoreChinese ||
-      account.ignoreChineseThreshold !== oldAccount.ignoreChineseThreshold;
+      account.ignoreChineseThreshold !== oldAccount.ignoreChineseThreshold ||
+      account.stripEnglish !== oldAccount.stripEnglish ||
+      account.stripChinese !== oldAccount.stripChinese;
+    const translateMapChanged =
+      JSON.stringify((account as any).channelTranslate || {}) !== JSON.stringify((oldAccount as any).channelTranslate || {}) ||
+      JSON.stringify((account as any).channelTranslateDirection || {}) !== JSON.stringify((oldAccount as any).channelTranslateDirection || {});
+    const historyScanChanged =
+      JSON.stringify(account.historyScan || {}) !== JSON.stringify(oldAccount.historyScan || {});
     const watermarkChanged =
       JSON.stringify(account.watermarks || []) !== JSON.stringify(oldAccount.watermarks || []) ||
       JSON.stringify(account.watermark || {}) !== JSON.stringify(oldAccount.watermark || {}) ||
       JSON.stringify(account.watermarkSecondary || {}) !== JSON.stringify(oldAccount.watermarkSecondary || {});
+    const styleChanged = account.feishuStyle !== oldAccount.feishuStyle;
+    const forwardSettingsChanged =
+      account.enableDiscordForward !== oldAccount.enableDiscordForward ||
+      account.enableFeishuForward !== oldAccount.enableFeishuForward;
+    const feishuConfigChanged =
+      JSON.stringify(account.channelFeishuWebhooks || {}) !== JSON.stringify(oldAccount.channelFeishuWebhooks || {}) ||
+      account.feishuAppId !== oldAccount.feishuAppId ||
+      account.feishuAppSecret !== oldAccount.feishuAppSecret;
+    const proxyChanged = account.proxyUrl !== oldAccount.proxyUrl;
     const scheduledChanged =
       JSON.stringify(account.scheduledContents || []) !== JSON.stringify(oldAccount.scheduledContents || []) ||
       JSON.stringify(account.scheduledBroadcast || {}) !== JSON.stringify(oldAccount.scheduledBroadcast || {});
@@ -2349,10 +2389,17 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         ruleConfigChanged ||
         translationChanged ||
         keywordsChanged ||
+        ocrSettingsChanged ||
         ignoreSettingsChanged ||
+        translateMapChanged ||
+        historyScanChanged ||
         userFilterChanged ||
         relayChanged ||
         watermarkChanged ||
+        styleChanged ||
+        forwardSettingsChanged ||
+        feishuConfigChanged ||
+        proxyChanged ||
         forwardingTypeChanged ||
         scheduledChanged
       ) {
@@ -2361,7 +2408,16 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         let feishuSendersBySource = (existing as any).feishuSendersBySource;
         // 如果映射或翻译配置变化，需要重新构建 SenderBot
         // 注意：ruleConfigChanged 包含 mappings 数组的变化，支持相同源ID多个webhook
-        if (mappingsChanged || ruleConfigChanged || translationChanged || relayChanged || watermarkChanged) {
+        if (
+          mappingsChanged ||
+          ruleConfigChanged ||
+          translationChanged ||
+          relayChanged ||
+          watermarkChanged ||
+          forwardSettingsChanged ||
+          feishuConfigChanged ||
+          proxyChanged
+        ) {
           try {
             const built = await buildSenderBots(account, logger);
             senderBotsBySource = built.senderBotsBySource;
@@ -2404,21 +2460,28 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     // 没有任何变化则跳过
-    if (
-      !typeChanged &&
-      !tokenChanged &&
-      !mappingsChanged &&
-      !ruleConfigChanged &&
-      !translationChanged &&
-      !keywordsChanged &&
-      !ignoreSettingsChanged &&
-      !userFilterChanged &&
-      !relayChanged &&
-      !watermarkChanged &&
-      !restartRequested &&
-      !loginRequestedBecameTrue &&
-      !forwardingTypeChanged
-    ) {
+      if (
+        !typeChanged &&
+        !tokenChanged &&
+        !mappingsChanged &&
+        !ruleConfigChanged &&
+        !translationChanged &&
+        !keywordsChanged &&
+        !ocrSettingsChanged &&
+        !ignoreSettingsChanged &&
+        !translateMapChanged &&
+        !historyScanChanged &&
+        !userFilterChanged &&
+        !relayChanged &&
+        !watermarkChanged &&
+        !styleChanged &&
+        !forwardSettingsChanged &&
+        !feishuConfigChanged &&
+        !proxyChanged &&
+        !restartRequested &&
+        !loginRequestedBecameTrue &&
+        !forwardingTypeChanged
+      ) {
       continue;
     }
 
@@ -2434,7 +2497,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     let defaultSenderBot = existing.defaultSenderBot;
     let feishuSendersBySource = (existing as any).feishuSendersBySource;
     // 如果映射或翻译配置变化，需要重新构建 SenderBot
-    if (mappingsChanged || translationChanged || relayChanged) {
+    if (mappingsChanged || translationChanged || relayChanged || forwardSettingsChanged || feishuConfigChanged || proxyChanged) {
       try {
       const built = await buildSenderBots(account, logger);
       senderBotsBySource = built.senderBotsBySource;
@@ -2454,7 +2517,22 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     existing.defaultSenderBot = defaultSenderBot;
     (existing as any).feishuSendersBySource = feishuSendersBySource;
 
-    if (keywordsChanged || ignoreSettingsChanged || mappingsChanged || ruleConfigChanged || translationChanged) {
+    if (
+      keywordsChanged ||
+      ocrSettingsChanged ||
+      ignoreSettingsChanged ||
+      translateMapChanged ||
+      historyScanChanged ||
+      mappingsChanged ||
+      ruleConfigChanged ||
+      translationChanged ||
+      relayChanged ||
+      watermarkChanged ||
+      styleChanged ||
+      forwardSettingsChanged ||
+      feishuConfigChanged ||
+      proxyChanged
+    ) {
       await logger.info(`账号 "${account.name}" 配置已热更新`);
     }
   }

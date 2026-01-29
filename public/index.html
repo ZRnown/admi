@@ -2144,16 +2144,28 @@
     }
 
     function useApiCredentials(apiId, apiHash) {
-      // 自动填充API ID和Hash输入框
-      const apiIdInput = document.querySelector('input[onchange*="telegramApiId"]');
-      const apiHashInput = document.querySelector('input[onchange*="telegramApiHash"]');
+      const acc = getActiveAccount();
+      if (!acc) return;
+      const numericId = Number(apiId);
+      const normalizedApiId = Number.isFinite(numericId) ? numericId : apiId;
 
-      if (apiIdInput) apiIdInput.value = apiId;
-      if (apiHashInput) apiHashInput.value = apiHash;
+      acc.telegramApiId = normalizedApiId;
+      acc.telegramApiHash = apiHash;
 
-      // 触发change事件以更新配置
-      if (apiIdInput) apiIdInput.dispatchEvent(new Event('change'));
-      if (apiHashInput) apiHashInput.dispatchEvent(new Event('change'));
+      if (acc.telegramConfig && Array.isArray(acc.telegramConfig.accounts)) {
+        const clientAccounts = acc.telegramConfig.accounts.filter((entry) => entry?.type === 'client');
+        const roleClients = clientAccounts.filter((entry) => entry?.role === 'listener' || entry?.role === 'sender');
+        const targets = roleClients.length > 0
+          ? roleClients
+          : clientAccounts.filter((entry) => entry?.id === acc.id);
+        targets.forEach((entry) => {
+          entry.apiId = normalizedApiId;
+          entry.apiHash = apiHash;
+        });
+      }
+
+      saveConfig();
+      render();
 
       // 显示成功提示
       const notification = document.createElement('div');
