@@ -184,6 +184,7 @@ interface FrontendMapping {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
+  watermarkEnabled?: boolean;
   scheduledBroadcast?: ScheduledBroadcastConfig;
 }
 
@@ -236,6 +237,7 @@ interface FrontendAccount {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
+  watermarkEnabled?: boolean;
   scheduledContents?: ScheduledContentItem[];
   scheduledBroadcast?: ScheduledBroadcastConfig;
   // OCR 图片检测相关
@@ -666,6 +668,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
     watermarks: resolveFrontendWatermarks(account.watermarks, account.watermark, account.watermarkSecondary),
+    watermarkEnabled: account.watermarkEnabled !== false,
     scheduledContents: normalizeScheduledContentList(account.scheduledContents),
     scheduledBroadcast: normalizeScheduledBroadcastConfig(account.scheduledBroadcast),
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
@@ -996,6 +999,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         ? dto.watermarkSecondary
         : base.watermarkSecondary,
     watermarks: resolvedAccountWatermarks ?? base.watermarks,
+    watermarkEnabled: dto.watermarkEnabled === false ? false : true,
     scheduledContents: resolvedScheduledContents ?? base.scheduledContents,
     scheduledBroadcast: resolvedScheduledBroadcast ?? base.scheduledBroadcast,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",

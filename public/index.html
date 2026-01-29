@@ -1416,20 +1416,6 @@
           </div>
         </div>
 
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100">
-            <h2 class="font-semibold text-slate-800">关键词设置</h2>
-            <p class="text-xs text-slate-500 mt-1">控制关键词匹配的全局规则</p>
-          </div>
-          <div class="p-6">
-            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" ${acc.caseInsensitiveKeywords !== false ? 'checked' : ''} onchange="updateField('caseInsensitiveKeywords', this.checked)"
-                class="h-4 w-4 rounded border-slate-300">
-              关键词不区分大小写（全局/规则/OCR）
-            </label>
-          </div>
-        </div>
-
         <!-- 转发规则 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
@@ -1540,6 +1526,19 @@
           </div>
         </div>
 
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">关键词设置</h2>
+            <p class="text-xs text-slate-500 mt-1">控制关键词匹配的全局规则</p>
+          </div>
+          <div class="p-6">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${acc.caseInsensitiveKeywords !== false ? 'checked' : ''} onchange="updateField('caseInsensitiveKeywords', this.checked)"
+                class="h-4 w-4 rounded border-slate-300">
+              关键词不区分大小写（全局/规则/OCR）
+            </label>
+          </div>
+        </div>
 
         <!-- 全局用户过滤 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
@@ -1769,11 +1768,19 @@
           </div>
           <div class="p-6 space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
-              <p class="text-xs text-slate-500">支持平铺或单个水印，顺序按列表叠加</p>
+              <div class="flex flex-wrap items-center gap-4">
+                <p class="text-xs text-slate-500">支持平铺或单个水印，顺序按列表叠加</p>
+                <label class="inline-flex items-center gap-2 text-xs text-slate-700">
+                  <input type="checkbox" ${acc.watermarkEnabled !== false ? 'checked' : ''} onchange="updateField('watermarkEnabled', this.checked)"
+                    class="h-4 w-4 rounded border-slate-300">
+                  启用水印
+                </label>
+              </div>
               <button onclick="addWatermark()" class="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">
                 + 添加水印
               </button>
             </div>
+            <p class="text-[11px] text-slate-500">关闭后仅停用水印，配置会保留。</p>
 
             <div class="grid gap-4 md:grid-cols-2">
               ${watermarkList.length > 0 ? watermarkList.map((_, idx) => renderWatermarkCard(acc, idx)).join('') : `
@@ -2179,14 +2186,14 @@
 
       if (acc.telegramConfig && Array.isArray(acc.telegramConfig.accounts)) {
         const clientAccounts = acc.telegramConfig.accounts.filter((entry) => entry?.type === 'client');
-        const roleClients = clientAccounts.filter((entry) => entry?.role === 'listener' || entry?.role === 'sender');
-        const targets = roleClients.length > 0
-          ? roleClients
-          : clientAccounts.filter((entry) => entry?.id === acc.id);
-        targets.forEach((entry) => {
-          entry.apiId = normalizedApiId;
-          entry.apiHash = apiHash;
-        });
+        const hasRoleClients = clientAccounts.some((entry) => entry?.role === 'listener' || entry?.role === 'sender');
+        if (!hasRoleClients) {
+          const targets = clientAccounts.filter((entry) => entry?.id === acc.id);
+          targets.forEach((entry) => {
+            entry.apiId = normalizedApiId;
+            entry.apiHash = apiHash;
+          });
+        }
       }
 
       saveConfig();
@@ -2367,25 +2374,6 @@
       entry.type = type;
       if (!entry.sessionType) {
         entry.sessionType = acc.sessionType || 'file';
-      }
-      if (type === 'bot') {
-        if (!entry.token && typeof acc.telegramBotToken === 'string' && acc.telegramBotToken.trim()) {
-          entry.token = acc.telegramBotToken.trim();
-        }
-      } else {
-        if (!entry.apiId && acc.telegramApiId) {
-          const value = Number(acc.telegramApiId);
-          if (Number.isFinite(value)) entry.apiId = value;
-        }
-        if (!entry.apiHash && acc.telegramApiHash) {
-          entry.apiHash = acc.telegramApiHash;
-        }
-        if (!entry.sessionPath && acc.telegramSessionPath) {
-          entry.sessionPath = acc.telegramSessionPath;
-        }
-        if (!entry.sessionString && acc.telegramSessionString) {
-          entry.sessionString = acc.telegramSessionString;
-        }
       }
       return entry;
     }
@@ -4249,6 +4237,7 @@
         stripEnglish: false,
         stripChinese: false,
         watermarks: [],
+        watermarkEnabled: true,
         scheduledContents: [],
         scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
         ocrServerUrl: 'http://localhost:9003',

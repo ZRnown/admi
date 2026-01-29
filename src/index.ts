@@ -210,6 +210,17 @@ function formatLogPreview(text?: string, limit = 160): string {
   return normalized.length > limit ? normalized.slice(0, limit) + "..." : normalized;
 }
 
+function normalizeTelegramChatId(value: string | number): string | number {
+  if (typeof value === "number") return value;
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return value;
+  if (/^-?\d+$/.test(trimmed)) {
+    const num = Number(trimmed);
+    if (Number.isSafeInteger(num)) return num;
+  }
+  return trimmed;
+}
+
 function stripEmbedText(
   embeds: any[] | undefined,
   options: { stripEnglish?: boolean; stripChinese?: boolean },
@@ -555,6 +566,7 @@ function getScheduledSenderBot(
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
     watermarks: account.watermarks,
+    watermarkEnabled: account.watermarkEnabled !== false,
   });
   running.scheduledSenderCache.set(webhookUrl, sender);
   return sender;
@@ -594,6 +606,7 @@ async function dispatchScheduledToTelegram(
   if (!senderAccount) {
     throw new Error("未找到可用 Telegram 发送账号");
   }
+  const sendChatId = normalizeTelegramChatId(target.chatId);
   const uploads = buildScheduledUploads(item);
   let content = typeof item.text === "string" ? item.text : "";
   const replacements = account.replacementsDictionary || {};
@@ -605,18 +618,20 @@ async function dispatchScheduledToTelegram(
       content = content.replaceAll(a, b);
     }
   }
-  const effectiveWatermarks = resolveWatermarkList(
-    account.watermarks,
-    target.rule?.watermarks,
-    account.watermark,
-    target.rule?.watermark,
-    account.watermarkSecondary,
-    target.rule?.watermarkSecondary,
-  );
+  const effectiveWatermarks = account.watermarkEnabled === false
+    ? []
+    : resolveWatermarkList(
+        account.watermarks,
+        target.rule?.watermarks,
+        account.watermark,
+        target.rule?.watermark,
+        account.watermarkSecondary,
+        target.rule?.watermarkSecondary,
+      );
   await bridge.sendMessage({
     accountId: senderAccount.id,
     accountType: senderAccount.type,
-    chatId: target.chatId,
+    chatId: sendChatId,
     message: {
       text: content,
       watermark: effectiveWatermarks[0],
@@ -646,7 +661,13 @@ async function dispatchScheduledToFeishu(
       httpAgent,
       account.feishuAppId,
       account.feishuAppSecret,
-      { mode: target.mode, watermark: account.watermark, watermarkSecondary: account.watermarkSecondary, watermarks: account.watermarks },
+      {
+        mode: target.mode,
+        watermark: account.watermark,
+        watermarkSecondary: account.watermarkSecondary,
+        watermarks: account.watermarks,
+        watermarkEnabled: account.watermarkEnabled !== false,
+      },
     );
     running.feishuSendersBySource.set(key, sender);
   }
@@ -854,6 +875,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           watermark,
           watermarkSecondary,
           watermarks,
+          watermarkEnabled: account.watermarkEnabled !== false,
         });
         prepares.push(sb.prepare());
         // 将 SenderBot 添加到数组中
@@ -882,6 +904,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           watermark,
           watermarkSecondary,
           watermarks,
+          watermarkEnabled: account.watermarkEnabled !== false,
         });
         prepares.push(sb.prepare());
         senderBotsBySource.set(channelId, [sb]);
@@ -899,7 +922,13 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
         httpAgent,
         account.feishuAppId,
         account.feishuAppSecret,
-        { mode: target.mode, watermark, watermarkSecondary, watermarks },
+        {
+          mode: target.mode,
+          watermark,
+          watermarkSecondary,
+          watermarks,
+          watermarkEnabled: account.watermarkEnabled !== false,
+        },
       );
       feishuSendersBySource.set(channelId, fs);
     }
@@ -1456,6 +1485,7 @@ function setupTelegramBridgeClient() {
               logSkip("未配置目标 Chat ID", `目标: ${rule.targetChannelId || "空"}`);
               continue;
             }
+            const sendChatId = normalizeTelegramChatId(targetChatId);
 
             const preferredSenderType = account.telegramConfig?.defaultSenderAccountType;
             const senderAccount = selectTelegramSendAccount(account, preferredSenderType, "sender");
@@ -1485,14 +1515,16 @@ function setupTelegramBridgeClient() {
               }
             }
 
-            const effectiveWatermarks = resolveWatermarkList(
-              account.watermarks,
-              rule.watermarks,
-              account.watermark,
-              rule.watermark,
-              account.watermarkSecondary,
-              rule.watermarkSecondary,
-            );
+            const effectiveWatermarks = account.watermarkEnabled === false
+              ? []
+              : resolveWatermarkList(
+                  account.watermarks,
+                  rule.watermarks,
+                  account.watermark,
+                  rule.watermark,
+                  account.watermarkSecondary,
+                  rule.watermarkSecondary,
+                );
             if (!replyTargetId && replyInfo) {
               const replyUser = replyInfo.from_user || {};
               const replyName =
@@ -1520,7 +1552,7 @@ function setupTelegramBridgeClient() {
             const sendResult = await bridge.sendMessage({
               accountId: senderAccount.id,
               accountType: senderAccount.type,
-              chatId: targetChatId,
+              chatId: sendChatId,
               message: {
                 text: telegramContent,
                 reply_to_message_id: replyTargetId,
@@ -1554,6 +1586,7 @@ function setupTelegramBridgeClient() {
               watermark: account.watermark,
               watermarkSecondary: account.watermarkSecondary,
               watermarks: account.watermarks,
+              watermarkEnabled: account.watermarkEnabled !== false,
             });
 
             await tempSender.sendData([{
@@ -2347,7 +2380,8 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     const watermarkChanged =
       JSON.stringify(account.watermarks || []) !== JSON.stringify(oldAccount.watermarks || []) ||
       JSON.stringify(account.watermark || {}) !== JSON.stringify(oldAccount.watermark || {}) ||
-      JSON.stringify(account.watermarkSecondary || {}) !== JSON.stringify(oldAccount.watermarkSecondary || {});
+      JSON.stringify(account.watermarkSecondary || {}) !== JSON.stringify(oldAccount.watermarkSecondary || {}) ||
+      account.watermarkEnabled !== oldAccount.watermarkEnabled;
     const styleChanged = account.feishuStyle !== oldAccount.feishuStyle;
     const forwardSettingsChanged =
       account.enableDiscordForward !== oldAccount.enableDiscordForward ||

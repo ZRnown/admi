@@ -87,7 +87,7 @@ class MediaHandler:
     async def upload_to_telegram(
         self,
         client_or_bot,
-        chat_id: int,
+        chat_id: Any,
         media_path: Path,
         media_type: str,
         caption: str = "",
@@ -98,7 +98,7 @@ class MediaHandler:
 
         Args:
             client_or_bot: Telegram客户端或机器人实例
-            chat_id: 聊天ID
+            chat_id: 聊天ID或实体对象
             media_path: 媒体文件路径
             media_type: 媒体类型 ('photo', 'video', 'audio', 'document')
             caption: 媒体描述

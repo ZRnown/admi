@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
 
     const botStatusId = telegramAccountId || `${accountId}_bot`;
     const configuredBot = account.telegramConfig?.accounts?.find((acc) => acc.id === botStatusId);
-    const tokenToUse = configuredBot?.token || account.telegramBotToken || "";
+    const tokenToUse = telegramAccountId ? configuredBot?.token || "" : configuredBot?.token || account.telegramBotToken || "";
 
     // 检查是否配置了 Telegram Bot Token
     if (!tokenToUse || tokenToUse.trim() === '') {
@@ -134,7 +134,6 @@ export async function POST(req: NextRequest) {
       });
     } else {
       // 写入错误状态
-      const botStatusId = `${accountId}_bot`;
       await writeTelegramStatus(botStatusId, "error", result.message);
 
       return NextResponse.json({

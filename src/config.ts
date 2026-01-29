@@ -276,6 +276,7 @@ export interface LegacyConfig {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
+  watermarkEnabled?: boolean;
   scheduledContents?: ScheduledContentItem[];
   scheduledBroadcast?: ScheduledBroadcastConfig;
   historyScan?: {
@@ -387,6 +388,7 @@ export interface AccountConfig extends LegacyConfig {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
+  watermarkEnabled?: boolean;
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
@@ -472,6 +474,7 @@ function createDefaultAccount(): AccountConfig {
     feishuStyle: "style1",
     channelTranslate: {},
     channelTranslateDirection: {},
+    watermarkEnabled: true,
     scheduledContents: [],
     scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
   };
@@ -859,6 +862,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     accountWatermark,
     accountWatermarkSecondary,
   );
+  const watermarkEnabled = input?.watermarkEnabled === false ? false : true;
   const scheduledContents = normalizeScheduledContentList(input?.scheduledContents);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(input?.scheduledBroadcast);
 
@@ -1065,6 +1069,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     watermark: accountWatermark,
     watermarkSecondary: accountWatermarkSecondary,
     watermarks: accountWatermarks,
+    watermarkEnabled,
     scheduledContents,
     scheduledBroadcast,
     historyScan: input?.historyScan,

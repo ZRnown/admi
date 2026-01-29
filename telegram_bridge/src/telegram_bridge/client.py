@@ -669,7 +669,7 @@ class TelegramClientManager:
     async def _send_media_attachment(
         self,
         client: TelegramClient,
-        chat_id: int,
+        target: Any,
         attachment: Dict[str, Any],
         caption: Optional[str] = None,
         reply_to_message_id: Optional[int] = None,
@@ -690,7 +690,7 @@ class TelegramClientManager:
 
             # 上传到Telegram
             return await self.media_handler.upload_to_telegram(
-                client, chat_id, file_path, media_type, caption or "", reply_to_message_id
+                client, target, file_path, media_type, caption or "", reply_to_message_id
             )
 
         except Exception as e:
@@ -772,11 +772,15 @@ class TelegramClientManager:
 
             client = self.clients[account_id]
 
+            target = await self._resolve_target_entity(client, chat_id)
+            if not target:
+                target = chat_id
+
             # 处理附件
             if attachments:
                 for attachment in attachments:
                     result = await self._send_media_attachment(
-                        client, chat_id, attachment, message if message else None, reply_to_message_id, watermark
+                        client, target, attachment, message if message else None, reply_to_message_id, watermark
                     )
                     if result["success"]:
                         return result  # 只发送第一个附件
@@ -790,7 +794,7 @@ class TelegramClientManager:
             if reply_to_message_id:
                 kwargs["reply_to"] = reply_to_message_id
 
-            result = await client.send_message(chat_id, message, **kwargs)
+            result = await client.send_message(target, message, **kwargs)
 
             return {
                 "success": True,
@@ -804,6 +808,21 @@ class TelegramClientManager:
                 "error": "SEND_MESSAGE_FAILED",
                 "message": str(e)
             }
+
+    async def _resolve_target_entity(self, client: TelegramClient, chat_id: Any):
+        """尝试解析目标实体，修复 entity 缓存缺失导致的发送失败"""
+        if chat_id is None:
+            return None
+        try:
+            return await client.get_input_entity(chat_id)
+        except Exception as e:
+            logger.warning(f"Failed to resolve entity from cache: {chat_id} err={e}")
+        try:
+            await client.get_dialogs(limit=200)
+            return await client.get_input_entity(chat_id)
+        except Exception as e:
+            logger.warning(f"Failed to resolve entity after dialogs refresh: {chat_id} err={e}")
+            return None
 
     async def _handle_message(self, event, account_id: str):
         """处理接收到的消息"""

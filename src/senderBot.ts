@@ -67,6 +67,7 @@ export class SenderBot {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
+  watermarkEnabled?: boolean;
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
@@ -82,6 +83,7 @@ export class SenderBot {
     watermark?: WatermarkConfig;
     watermarkSecondary?: WatermarkConfig;
     watermarks?: WatermarkConfig[];
+    watermarkEnabled?: boolean;
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
@@ -96,6 +98,7 @@ export class SenderBot {
     this.watermark = options.watermark;
     this.watermarkSecondary = options.watermarkSecondary;
     this.watermarks = options.watermarks;
+    this.watermarkEnabled = options.watermarkEnabled;
   }
 
   private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
@@ -171,14 +174,16 @@ export class SenderBot {
     watermarks?: WatermarkConfig[],
   ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
     const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
-    const effectiveWatermarks = resolveWatermarkList(
-      this.watermarks,
-      watermarks,
-      this.watermark,
-      watermark,
-      this.watermarkSecondary,
-      watermarkSecondary,
-    );
+    const effectiveWatermarks = this.watermarkEnabled === false
+      ? []
+      : resolveWatermarkList(
+          this.watermarks,
+          watermarks,
+          this.watermark,
+          watermark,
+          this.watermarkSecondary,
+          watermarkSecondary,
+        );
     for (const u of uploads) {
       let buf: Buffer;
       if (u.localPath) {

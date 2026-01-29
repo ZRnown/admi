@@ -67,6 +67,7 @@ export async function POST(req: NextRequest) {
     }
 
     const clientAccountId = resolveClientAccountId(account, telegramAccountId);
+    const allowLegacyFallback = !telegramAccountId;
 
     // 保存 enabled 状态到配置
     if (!account.telegramConfig) {
@@ -85,10 +86,10 @@ export async function POST(req: NextRequest) {
         name: role === "listener" ? "Telegram Listener" : role === "sender" ? "Telegram Sender" : "Telegram Client",
         type: "client" as const,
         token: "",
-        apiId: account.telegramApiId,
-        apiHash: account.telegramApiHash,
-        sessionPath: account.telegramSessionPath,
-        sessionString: account.telegramSessionString,
+        apiId: allowLegacyFallback ? account.telegramApiId : undefined,
+        apiHash: allowLegacyFallback ? account.telegramApiHash : undefined,
+        sessionPath: allowLegacyFallback ? account.telegramSessionPath : undefined,
+        sessionString: allowLegacyFallback ? account.telegramSessionString : undefined,
         enabled: true,
         role,
       };
@@ -105,22 +106,24 @@ export async function POST(req: NextRequest) {
 
     // 检查是否有必要的配置
     const clientAccount = candidates.find((acc) => acc.id === clientAccountId) || {
-      apiId: account.telegramApiId,
-      apiHash: account.telegramApiHash,
-      sessionPath: account.telegramSessionPath,
-      sessionString: account.telegramSessionString,
+      apiId: allowLegacyFallback ? account.telegramApiId : undefined,
+      apiHash: allowLegacyFallback ? account.telegramApiHash : undefined,
+      sessionPath: allowLegacyFallback ? account.telegramSessionPath : undefined,
+      sessionString: allowLegacyFallback ? account.telegramSessionString : undefined,
     };
-    if (!clientAccount.apiId && account.telegramApiId) {
-      clientAccount.apiId = account.telegramApiId;
-    }
-    if (!clientAccount.apiHash && account.telegramApiHash) {
-      clientAccount.apiHash = account.telegramApiHash;
-    }
-    if (!clientAccount.sessionPath && account.telegramSessionPath) {
-      clientAccount.sessionPath = account.telegramSessionPath;
-    }
-    if (!clientAccount.sessionString && account.telegramSessionString) {
-      clientAccount.sessionString = account.telegramSessionString;
+    if (allowLegacyFallback) {
+      if (!clientAccount.apiId && account.telegramApiId) {
+        clientAccount.apiId = account.telegramApiId;
+      }
+      if (!clientAccount.apiHash && account.telegramApiHash) {
+        clientAccount.apiHash = account.telegramApiHash;
+      }
+      if (!clientAccount.sessionPath && account.telegramSessionPath) {
+        clientAccount.sessionPath = account.telegramSessionPath;
+      }
+      if (!clientAccount.sessionString && account.telegramSessionString) {
+        clientAccount.sessionString = account.telegramSessionString;
+      }
     }
 
     if (!clientAccount.apiId || !clientAccount.apiHash) {

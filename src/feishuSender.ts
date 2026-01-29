@@ -35,6 +35,7 @@ export class FeishuSender {
   private watermark?: WatermarkConfig;
   private watermarkSecondary?: WatermarkConfig;
   private watermarks?: WatermarkConfig[];
+  private watermarkEnabled?: boolean;
 
   // 缓存 tenant_access_token，避免每次都请求
   private static token: string = "";
@@ -50,6 +51,7 @@ export class FeishuSender {
       watermark?: WatermarkConfig;
       watermarkSecondary?: WatermarkConfig;
       watermarks?: WatermarkConfig[];
+      watermarkEnabled?: boolean;
     },
   ) {
     const env = getEnv();
@@ -63,6 +65,7 @@ export class FeishuSender {
     this.watermark = options?.watermark;
     this.watermarkSecondary = options?.watermarkSecondary;
     this.watermarks = options?.watermarks;
+    this.watermarkEnabled = options?.watermarkEnabled;
   }
 
   // 1. 获取飞书 tenant_access_token（内部应用）
@@ -106,14 +109,16 @@ export class FeishuSender {
       console.log(`[FeishuSender] 开始下载图片: ${imgUrl.substring(0, 80)}...`);
       const imgBuffer = await this.download(imgUrl);
       console.log(`[FeishuSender] 图片下载完成，大小: ${imgBuffer.length} bytes`);
-      const effectiveWatermarks = resolveWatermarkList(
-        this.watermarks,
-        watermarks,
-        this.watermark,
-        watermark,
-        this.watermarkSecondary,
-        watermarkSecondary,
-      );
+      const effectiveWatermarks = this.watermarkEnabled === false
+        ? []
+        : resolveWatermarkList(
+            this.watermarks,
+            watermarks,
+            this.watermark,
+            watermark,
+            this.watermarkSecondary,
+            watermarkSecondary,
+          );
       const finalBuffer = effectiveWatermarks.length > 0
         ? await applyWatermarksToBuffer(imgBuffer, effectiveWatermarks)
         : imgBuffer;

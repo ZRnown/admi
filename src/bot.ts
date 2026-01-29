@@ -841,14 +841,16 @@ export class Bot {
     const stripEnglish = this.config.stripEnglish === true || ruleConfig.stripEnglish === true;
     const stripChinese = this.config.stripChinese === true || ruleConfig.stripChinese === true;
     const stripOptions = { stripEnglish, stripChinese };
-    const effectiveWatermarks = resolveWatermarkList(
-      this.config.watermarks,
-      ruleConfig.watermarks,
-      this.config.watermark,
-      ruleConfig.watermark,
-      this.config.watermarkSecondary,
-      ruleConfig.watermarkSecondary,
-    );
+    const effectiveWatermarks = this.config.watermarkEnabled === false
+      ? []
+      : resolveWatermarkList(
+          this.config.watermarks,
+          ruleConfig.watermarks,
+          this.config.watermark,
+          ruleConfig.watermark,
+          this.config.watermarkSecondary,
+          ruleConfig.watermarkSecondary,
+        );
 
     // 忽略选项检查（规则级别优先，未设置则使用全局设置）
     try {
