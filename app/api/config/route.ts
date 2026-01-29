@@ -175,6 +175,7 @@ interface FrontendMapping {
   stripChinese?: boolean;
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
+  watermarks?: WatermarkConfig[];
 }
 
 interface FrontendAccount {
@@ -225,6 +226,7 @@ interface FrontendAccount {
   stripChinese?: boolean;
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
+  watermarks?: WatermarkConfig[];
   // OCR 图片检测相关
   ocrServerUrl?: string;
   ocrBlockedKeywords?: string[];
@@ -318,8 +320,14 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       stripEnglish: undefined,
       stripChinese: undefined,
       watermark: undefined,
+      watermarkSecondary: undefined,
+      watermarks: undefined,
     };
   }
+  const watermark = raw.watermark && typeof raw.watermark === "object" ? raw.watermark : undefined;
+  const watermarkSecondary =
+    raw.watermarkSecondary && typeof raw.watermarkSecondary === "object" ? raw.watermarkSecondary : undefined;
+  const watermarks = resolveFrontendWatermarks(raw.watermarks, watermark, watermarkSecondary);
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
     mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
@@ -363,7 +371,9 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
           : undefined,
     stripEnglish: raw.stripEnglish === true ? true : undefined,
     stripChinese: raw.stripChinese === true ? true : undefined,
-    watermark: raw.watermark && typeof raw.watermark === "object" ? raw.watermark : undefined,
+    watermark,
+    watermarkSecondary,
+    watermarks,
   };
 }
 
@@ -374,6 +384,16 @@ function normalizeRuleConfigs(raw: any): Record<string, RuleLevelConfig> {
     result[sourceId] = normalizeRuleConfig(config);
   }
   return result;
+}
+
+function resolveFrontendWatermarks(
+  list: unknown,
+  primary?: WatermarkConfig,
+  secondary?: WatermarkConfig,
+): WatermarkConfig[] | undefined {
+  if (Array.isArray(list)) return list as WatermarkConfig[];
+  const legacy = [primary, secondary].filter((item): item is WatermarkConfig => !!item);
+  return legacy.length > 0 ? legacy : undefined;
 }
 
 function mergeTelegramConfig(
@@ -461,6 +481,11 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     for (const savedRule of savedMappings) {
       if (!savedRule?.sourceChannelId || !savedRule?.targetWebhookUrl) continue;
       const channelId = String(savedRule.sourceChannelId);
+      const resolvedWatermarks = resolveFrontendWatermarks(
+        savedRule.watermarks,
+        savedRule.watermark,
+        savedRule.watermarkSecondary,
+      );
       mappings.push({
         id: savedRule.id || channelId,
         sourceChannelId: channelId,
@@ -492,6 +517,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         stripChinese: savedRule.stripChinese,
         watermark: savedRule.watermark,
         watermarkSecondary: savedRule.watermarkSecondary,
+        watermarks: resolvedWatermarks,
       });
     }
   } else {
@@ -515,6 +541,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         replacementsDictionary: {},
         watermark: undefined,
         watermarkSecondary: undefined,
+        watermarks: undefined,
       });
     }
   }
@@ -571,6 +598,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     stripChinese: account.stripChinese === true,
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
+    watermarks: resolveFrontendWatermarks(account.watermarks, account.watermark, account.watermarkSecondary),
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
     ocrBlockedKeywords: account.ocrBlockedKeywords || [],
     ocrTriggerKeywords: account.ocrTriggerKeywords || [],
@@ -714,10 +742,15 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         }
 
         // 保存完整的规则配置
-      savedMappings.push({
-        id: mapping.id || randomUUID(),
-        sourceChannelId: key,
-        targetWebhookUrl: String(mapping.targetWebhookUrl),
+        const mappingWatermarks = resolveFrontendWatermarks(
+          mapping.watermarks,
+          mapping.watermark,
+          mapping.watermarkSecondary,
+        );
+        savedMappings.push({
+          id: mapping.id || randomUUID(),
+          sourceChannelId: key,
+          targetWebhookUrl: String(mapping.targetWebhookUrl),
           note: mapping.note,
           translateDirection: mapping.translateDirection,
           longMessage: mapping.longMessage,
@@ -743,6 +776,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           stripChinese: mapping.stripChinese,
           watermark: mapping.watermark,
           watermarkSecondary: mapping.watermarkSecondary,
+          watermarks: mappingWatermarks,
         });
       }
     }
@@ -785,6 +819,12 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         })
         .filter(Boolean)
     : base.botRelays || [];
+
+  const resolvedAccountWatermarks = resolveFrontendWatermarks(
+    dto.watermarks,
+    dto.watermark,
+    dto.watermarkSecondary,
+  );
 
   let loginRequested: boolean;
   if (fallback && fallback.loginRequested === true) {
@@ -883,6 +923,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       dto.watermarkSecondary && typeof dto.watermarkSecondary === "object"
         ? dto.watermarkSecondary
         : base.watermarkSecondary,
+    watermarks: resolvedAccountWatermarks ?? base.watermarks,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(dto.ocrBlockedKeywords) ? dto.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(dto.ocrTriggerKeywords) ? dto.ocrTriggerKeywords : [],

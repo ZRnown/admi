@@ -12,6 +12,8 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const accountId = form.get("accountId");
     const file = form.get("file");
+    const watermarkIndexRaw = form.get("watermarkIndex");
+    const skipAssign = form.get("skipAssign") === "1";
 
     if (!accountId || typeof accountId !== "string") {
       return NextResponse.json({ error: "缺少 accountId" }, { status: 400 });
@@ -40,12 +42,23 @@ export async function POST(req: NextRequest) {
     const filePath = path.join(dir, filename);
     await fs.writeFile(filePath, buffer);
 
-    if (!account.watermark || typeof account.watermark !== "object") {
-      account.watermark = {};
-    }
-    account.watermark.imageUrl = filePath;
-    if (account.watermark.enabled !== false) {
-      account.watermark.enabled = true;
+    const parsedIndex =
+      typeof watermarkIndexRaw === "string" && watermarkIndexRaw.trim() && !isNaN(Number(watermarkIndexRaw))
+        ? Math.max(0, Math.floor(Number(watermarkIndexRaw)))
+        : 0;
+
+    if (!skipAssign) {
+      if (!Array.isArray(account.watermarks)) {
+        account.watermarks = [];
+      }
+      while (account.watermarks.length <= parsedIndex) {
+        account.watermarks.push({});
+      }
+      const target = account.watermarks[parsedIndex] || {};
+      target.imageUrl = filePath;
+      target.enabled = true;
+      target.mode = "image";
+      account.watermarks[parsedIndex] = target;
     }
     await saveMultiConfig(multi);
 

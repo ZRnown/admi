@@ -57,12 +57,20 @@ function resolvePosition(
       x = margin;
       y = margin;
       break;
+    case "top":
+      x = Math.round((baseWidth - markWidth) / 2);
+      y = margin;
+      break;
     case "top-right":
       x = baseWidth - markWidth - margin;
       y = margin;
       break;
     case "bottom-left":
       x = margin;
+      y = baseHeight - markHeight - margin;
+      break;
+    case "bottom":
+      x = Math.round((baseWidth - markWidth) / 2);
       y = baseHeight - markHeight - margin;
       break;
     case "center":
@@ -335,16 +343,18 @@ export function resolveWatermarkConfig(
     ...(globalConfig || {}),
     ...(ruleConfig || {}),
   } as WatermarkConfig;
+  const hasText = Boolean(merged.text);
+  const hasImage = Boolean(merged.imageUrl);
   const enabled =
-    merged.enabled === true ||
-    (ruleConfig && ruleConfig.enabled === true) ||
-    (globalConfig && globalConfig.enabled === true);
+    merged.enabled === true
+      ? true
+      : merged.enabled === false
+        ? false
+        : hasText || hasImage;
   if (!enabled) return undefined;
   const mode = merged.mode === "image" || merged.mode === "text" ? merged.mode : merged.imageUrl ? "image" : "text";
   const allowText = mode === "text";
   const allowImage = mode === "image";
-  const hasText = Boolean(merged.text);
-  const hasImage = Boolean(merged.imageUrl);
   if ((allowText && !hasText) || (allowImage && !hasImage)) return undefined;
   return { ...merged, enabled: true, mode };
 }
@@ -366,6 +376,23 @@ export function resolveWatermarkConfigs(
     resolved.push(secondary);
   }
   return resolved;
+}
+
+export function resolveWatermarkList(
+  globalList?: WatermarkConfig[],
+  ruleList?: WatermarkConfig[],
+  globalPrimary?: WatermarkConfig,
+  rulePrimary?: WatermarkConfig,
+  globalSecondary?: WatermarkConfig,
+  ruleSecondary?: WatermarkConfig,
+): WatermarkConfig[] {
+  const list = ruleList !== undefined ? ruleList : globalList;
+  if (list !== undefined) {
+    return list
+      .map((item) => resolveWatermarkConfig(item))
+      .filter((item): item is WatermarkConfig => !!item);
+  }
+  return resolveWatermarkConfigs(globalPrimary, rulePrimary, globalSecondary, ruleSecondary);
 }
 
 export async function applyWatermarksToBuffer(

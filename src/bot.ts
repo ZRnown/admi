@@ -17,7 +17,7 @@ import { FileLogger } from "./logger.js";
 import { getTelegramBridgeClient } from "./index.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
-import { resolveWatermarkConfigs } from "./watermark.js";
+import { resolveWatermarkList } from "./watermark.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -613,6 +613,7 @@ export class Bot {
     stripChinese?: boolean;
     watermark?: WatermarkConfig;
     watermarkSecondary?: WatermarkConfig;
+    watermarks?: WatermarkConfig[];
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
@@ -654,6 +655,7 @@ export class Bot {
         stripChinese: undefined,
         watermark: undefined,
         watermarkSecondary: undefined,
+        watermarks: undefined,
       };
     }
     return {
@@ -687,6 +689,7 @@ export class Bot {
       stripChinese: rule.stripChinese,
       watermark: rule.watermark,
       watermarkSecondary: rule.watermarkSecondary,
+      watermarks: rule.watermarks,
     };
   }
 
@@ -838,7 +841,9 @@ export class Bot {
     const stripEnglish = this.config.stripEnglish === true || ruleConfig.stripEnglish === true;
     const stripChinese = this.config.stripChinese === true || ruleConfig.stripChinese === true;
     const stripOptions = { stripEnglish, stripChinese };
-    const effectiveWatermarks = resolveWatermarkConfigs(
+    const effectiveWatermarks = resolveWatermarkList(
+      this.config.watermarks,
+      ruleConfig.watermarks,
       this.config.watermark,
       ruleConfig.watermark,
       this.config.watermarkSecondary,
@@ -1517,6 +1522,7 @@ export class Bot {
       stripChinese,
       watermark: effectiveWatermarks[0],
       watermarkSecondary: effectiveWatermarks[1],
+      watermarks: effectiveWatermarks,
     }];
 
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
@@ -1608,6 +1614,7 @@ export class Bot {
           embeds: feishuEmbeds && feishuEmbeds.length > 0 ? feishuEmbeds : undefined,
           watermark: effectiveWatermarks[0],
           watermarkSecondary: effectiveWatermarks[1],
+          watermarks: effectiveWatermarks,
         });
         const feishuTarget = feishuSenderForThis.target;
         const feishuPreview = formatLogPreview(feishuContent);

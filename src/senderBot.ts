@@ -3,7 +3,7 @@ import https from "node:https";
 import { URL, fileURLToPath } from "node:url";
 
 import { ChannelId, WatermarkConfig } from "./config.js";
-import { applyWatermarksToBuffer, resolveWatermarkConfigs } from "./watermark.js";
+import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark.js";
 import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
 
@@ -66,6 +66,7 @@ export class SenderBot {
   botRelayToken?: string;
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
+  watermarks?: WatermarkConfig[];
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
@@ -80,6 +81,7 @@ export class SenderBot {
     botRelayToken?: string;
     watermark?: WatermarkConfig;
     watermarkSecondary?: WatermarkConfig;
+    watermarks?: WatermarkConfig[];
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
@@ -93,6 +95,7 @@ export class SenderBot {
     this.botRelayToken = options.botRelayToken;
     this.watermark = options.watermark;
     this.watermarkSecondary = options.watermarkSecondary;
+    this.watermarks = options.watermarks;
   }
 
   private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
@@ -165,9 +168,12 @@ export class SenderBot {
     uploads: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean }>,
     watermark?: WatermarkConfig,
     watermarkSecondary?: WatermarkConfig,
+    watermarks?: WatermarkConfig[],
   ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
     const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
-    const effectiveWatermarks = resolveWatermarkConfigs(
+    const effectiveWatermarks = resolveWatermarkList(
+      this.watermarks,
+      watermarks,
       this.watermark,
       watermark,
       this.watermarkSecondary,
@@ -674,6 +680,7 @@ export class SenderBot {
     // 可选：规则级别水印配置
     watermark?: WatermarkConfig;
     watermarkSecondary?: WatermarkConfig;
+    watermarks?: WatermarkConfig[];
   }>) {
     if (messagesToSend.length == 0) return;
 
@@ -781,7 +788,12 @@ export class SenderBot {
           
         if (hasUploads) {
           // Build multipart form with files and payload_json
-          const files = await this.downloadUploads(item.uploads!, item.watermark, item.watermarkSecondary);
+          const files = await this.downloadUploads(
+            item.uploads!,
+            item.watermark,
+            item.watermarkSecondary,
+            item.watermarks,
+          );
           const desc = (chunk || "").slice(0, 4096);
           const embed: any = {};
           if (item.useEmbed && desc.trim() !== "") {

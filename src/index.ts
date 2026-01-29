@@ -24,7 +24,7 @@ import { telegramBridgeManager } from "./processManager.js";
 import { TelegramBridgeClient } from "./telegramBridgeClient.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
-import { resolveWatermarkConfigs } from "./watermark.js";
+import { resolveWatermarkList } from "./watermark.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -426,6 +426,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const enableBotRelay = account.enableBotRelay || false;
   const watermark = account.watermark;
   const watermarkSecondary = account.watermarkSecondary;
+  const watermarks = account.watermarks;
   const relayById = new Map((account.botRelays || []).map((r) => [r.id, r]));
   // 复用同一个代理实例，避免为每个 webhook 创建独立连接池
   const httpAgent = proxy ? new ProxyAgent(proxy as unknown as any) : undefined;
@@ -457,6 +458,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           botRelayToken: relayToken,
           watermark,
           watermarkSecondary,
+          watermarks,
         });
         prepares.push(sb.prepare());
         // 将 SenderBot 添加到数组中
@@ -484,6 +486,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           botRelayToken: relayToken,
           watermark,
           watermarkSecondary,
+          watermarks,
         });
         prepares.push(sb.prepare());
         senderBotsBySource.set(channelId, [sb]);
@@ -501,7 +504,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
         httpAgent,
         account.feishuAppId,
         account.feishuAppSecret,
-        { mode: target.mode, watermark, watermarkSecondary },
+        { mode: target.mode, watermark, watermarkSecondary, watermarks },
       );
       feishuSendersBySource.set(channelId, fs);
     }
@@ -1070,7 +1073,9 @@ function setupTelegramBridgeClient() {
               }
             }
 
-            const effectiveWatermarks = resolveWatermarkConfigs(
+            const effectiveWatermarks = resolveWatermarkList(
+              account.watermarks,
+              rule.watermarks,
               account.watermark,
               rule.watermark,
               account.watermarkSecondary,
@@ -1136,6 +1141,7 @@ function setupTelegramBridgeClient() {
               webhookUrl: rule.targetChannelId,
               watermark: account.watermark,
               watermarkSecondary: account.watermarkSecondary,
+              watermarks: account.watermarks,
             });
 
             await tempSender.sendData([{
@@ -1149,6 +1155,7 @@ function setupTelegramBridgeClient() {
               stripChinese,
               watermark: rule.watermark,
               watermarkSecondary: rule.watermarkSecondary,
+              watermarks: rule.watermarks,
             }]);
 
             const logMsg =
@@ -1906,6 +1913,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       account.ignoreChinese !== oldAccount.ignoreChinese ||
       account.ignoreChineseThreshold !== oldAccount.ignoreChineseThreshold;
     const watermarkChanged =
+      JSON.stringify(account.watermarks || []) !== JSON.stringify(oldAccount.watermarks || []) ||
       JSON.stringify(account.watermark || {}) !== JSON.stringify(oldAccount.watermark || {}) ||
       JSON.stringify(account.watermarkSecondary || {}) !== JSON.stringify(oldAccount.watermarkSecondary || {});
     // 检测用户过滤配置变化

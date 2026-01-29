@@ -124,7 +124,7 @@ export interface ChannelConfig {
   allowed: ChannelId[];
 }
 
-export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
+export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center" | "top" | "bottom";
 
 export interface WatermarkConfig {
   enabled?: boolean;
@@ -144,6 +144,8 @@ export interface WatermarkConfig {
   position?: WatermarkPosition;
   margin?: number;
 }
+
+export type WatermarkList = WatermarkConfig[];
 
 // 规则级别的完整配置（适用于所有转发类型）
 export interface RuleLevelConfig {
@@ -190,6 +192,7 @@ export interface RuleLevelConfig {
   stripChinese?: boolean;
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
+  watermarks?: WatermarkList;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -252,6 +255,7 @@ export interface LegacyConfig {
   replacementsDictionary?: Record<string, string>;
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
+  watermarks?: WatermarkList;
   historyScan?: {
     enabled?: boolean;
     limit?: number;
@@ -360,6 +364,7 @@ export interface AccountConfig extends LegacyConfig {
   ocrTriggerKeywords?: string[];
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
+  watermarks?: WatermarkList;
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
@@ -517,7 +522,7 @@ function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
     return trimmed ? trimmed : undefined;
   };
   const normalizePosition = (value: any): WatermarkPosition | undefined => {
-    const allowed: WatermarkPosition[] = ["top-left", "top-right", "bottom-left", "bottom-right", "center"];
+    const allowed: WatermarkPosition[] = ["top-left", "top-right", "bottom-left", "bottom-right", "center", "top", "bottom"];
     return allowed.includes(value as WatermarkPosition) ? (value as WatermarkPosition) : undefined;
   };
   const normalizeMode = (value: any): "text" | "image" | undefined => {
@@ -535,9 +540,12 @@ function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
   const normalizedText = normalizeText(raw.text);
   const normalizedImageUrl = normalizeText(raw.imageUrl);
   const normalizedMode = normalizeMode(raw.mode) ?? (normalizedImageUrl ? "image" : normalizedText ? "text" : undefined);
+  const hasContent = Boolean(normalizedText || normalizedImageUrl);
+  const enabled =
+    raw.enabled === true ? true : raw.enabled === false ? false : hasContent;
 
   return {
-    enabled: raw.enabled === true,
+    enabled,
     mode: normalizedMode,
     pattern: normalizePattern(raw.pattern),
     tileGap: normalizeNumber(raw.tileGap),
@@ -554,6 +562,24 @@ function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
     position: normalizePosition(raw.position),
     margin: normalizeNumber(raw.margin),
   };
+}
+
+function normalizeWatermarkList(raw: any): WatermarkList | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const list = raw
+    .map((item) => normalizeWatermarkConfig(item))
+    .filter((item): item is WatermarkConfig => !!item);
+  return list.length > 0 ? list : [];
+}
+
+function mergeLegacyWatermarks(
+  list: WatermarkList | undefined,
+  primary?: WatermarkConfig,
+  secondary?: WatermarkConfig,
+): WatermarkList | undefined {
+  if (list !== undefined) return list;
+  const legacy = [primary, secondary].filter((item): item is WatermarkConfig => !!item);
+  return legacy.length > 0 ? legacy : undefined;
 }
 
 function normalizeRuleConfig(raw: any): RuleLevelConfig {
@@ -582,8 +608,12 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       stripChinese: undefined,
       watermark: undefined,
       watermarkSecondary: undefined,
+      watermarks: undefined,
     };
   }
+  const watermark = normalizeWatermarkConfig(raw.watermark);
+  const watermarkSecondary = normalizeWatermarkConfig(raw.watermarkSecondary);
+  const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(raw.watermarks), watermark, watermarkSecondary);
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
     mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
@@ -627,8 +657,9 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
           : undefined,
     stripEnglish: raw.stripEnglish === true ? true : undefined,
     stripChinese: raw.stripChinese === true ? true : undefined,
-    watermark: normalizeWatermarkConfig(raw.watermark),
-    watermarkSecondary: normalizeWatermarkConfig(raw.watermarkSecondary),
+    watermark,
+    watermarkSecondary,
+    watermarks,
   };
 }
 
@@ -741,58 +772,71 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   const channelTranslateDirection: Record<string, "off" | "auto" | "zh-en" | "en-zh"> =
     input?.channelTranslateDirection && typeof input.channelTranslateDirection === "object" ? input.channelTranslateDirection : {};
   const sessionType: "file" | "string" = input?.sessionType === "string" ? "string" : "file";
+  const accountWatermark = normalizeWatermarkConfig(input?.watermark);
+  const accountWatermarkSecondary = normalizeWatermarkConfig(input?.watermarkSecondary);
+  const accountWatermarks = mergeLegacyWatermarks(
+    normalizeWatermarkList(input?.watermarks),
+    accountWatermark,
+    accountWatermarkSecondary,
+  );
 
   // 处理 Discord->Discord mappings（保留规则级别配置）
   const mappings: DiscordMappingRule[] = Array.isArray(input?.mappings)
-    ? input.mappings.map((m: any) => ({
-        id: typeof m.id === "string" ? m.id : randomUUID(),
-        sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
-        targetWebhookUrl: typeof m.targetWebhookUrl === "string" ? m.targetWebhookUrl : "",
-        note: typeof m.note === "string" ? m.note : undefined,
-        translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,
-        // RuleLevelConfig 规则级别过滤配置
-        allowedUsersIds: Array.isArray(m.allowedUsersIds) ? m.allowedUsersIds : [],
-        mutedUsersIds: Array.isArray(m.mutedUsersIds) ? m.mutedUsersIds : [],
-        blockedKeywords: Array.isArray(m.blockedKeywords) ? m.blockedKeywords : [],
-        excludeKeywords: Array.isArray(m.excludeKeywords) ? m.excludeKeywords : [],
-        ocrBlockedKeywords: Array.isArray(m.ocrBlockedKeywords) ? m.ocrBlockedKeywords : [],
-        ocrTriggerKeywords: Array.isArray(m.ocrTriggerKeywords) ? m.ocrTriggerKeywords : [],
-        longMessage:
-          m.longMessage && typeof m.longMessage === "object"
-            ? {
-                enabled: m.longMessage.enabled === true,
-                threshold: typeof m.longMessage.threshold === "number" ? m.longMessage.threshold : undefined,
-                appendMessage:
-                  typeof m.longMessage.appendMessage === "string" ? m.longMessage.appendMessage : undefined,
-              }
-            : undefined,
-        replacementsDictionary: typeof m.replacementsDictionary === 'object' && m.replacementsDictionary ? m.replacementsDictionary : {},
-        // 规则级别忽略配置
-        ignoreSelf: m.ignoreSelf === true ? true : undefined,
-        ignoreBot: m.ignoreBot === true ? true : undefined,
-        ignoreImages: m.ignoreImages === true ? true : undefined,
-        ignoreAudio: m.ignoreAudio === true ? true : undefined,
-        ignoreVideo: m.ignoreVideo === true ? true : undefined,
-        ignoreDocuments: m.ignoreDocuments === true ? true : undefined,
-        ignoreEnglish: m.ignoreEnglish === true ? true : undefined,
-        ignoreEnglishThreshold:
-          typeof m.ignoreEnglishThreshold === "number"
-            ? m.ignoreEnglishThreshold
-            : typeof m.ignoreEnglishThreshold === "string" && m.ignoreEnglishThreshold.trim() && !isNaN(Number(m.ignoreEnglishThreshold))
-              ? Number(m.ignoreEnglishThreshold)
+    ? input.mappings.map((m: any) => {
+        const watermark = normalizeWatermarkConfig(m.watermark);
+        const watermarkSecondary = normalizeWatermarkConfig(m.watermarkSecondary);
+        const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(m.watermarks), watermark, watermarkSecondary);
+        return {
+          id: typeof m.id === "string" ? m.id : randomUUID(),
+          sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
+          targetWebhookUrl: typeof m.targetWebhookUrl === "string" ? m.targetWebhookUrl : "",
+          note: typeof m.note === "string" ? m.note : undefined,
+          translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,
+          // RuleLevelConfig 规则级别过滤配置
+          allowedUsersIds: Array.isArray(m.allowedUsersIds) ? m.allowedUsersIds : [],
+          mutedUsersIds: Array.isArray(m.mutedUsersIds) ? m.mutedUsersIds : [],
+          blockedKeywords: Array.isArray(m.blockedKeywords) ? m.blockedKeywords : [],
+          excludeKeywords: Array.isArray(m.excludeKeywords) ? m.excludeKeywords : [],
+          ocrBlockedKeywords: Array.isArray(m.ocrBlockedKeywords) ? m.ocrBlockedKeywords : [],
+          ocrTriggerKeywords: Array.isArray(m.ocrTriggerKeywords) ? m.ocrTriggerKeywords : [],
+          longMessage:
+            m.longMessage && typeof m.longMessage === "object"
+              ? {
+                  enabled: m.longMessage.enabled === true,
+                  threshold: typeof m.longMessage.threshold === "number" ? m.longMessage.threshold : undefined,
+                  appendMessage:
+                    typeof m.longMessage.appendMessage === "string" ? m.longMessage.appendMessage : undefined,
+                }
               : undefined,
-        ignoreChinese: m.ignoreChinese === true ? true : undefined,
-        ignoreChineseThreshold:
-          typeof m.ignoreChineseThreshold === "number"
-            ? m.ignoreChineseThreshold
-            : typeof m.ignoreChineseThreshold === "string" && m.ignoreChineseThreshold.trim() && !isNaN(Number(m.ignoreChineseThreshold))
-              ? Number(m.ignoreChineseThreshold)
-              : undefined,
-        stripEnglish: m.stripEnglish === true ? true : undefined,
-        stripChinese: m.stripChinese === true ? true : undefined,
-        watermark: normalizeWatermarkConfig(m.watermark),
-        watermarkSecondary: normalizeWatermarkConfig(m.watermarkSecondary),
-      }))
+          replacementsDictionary: typeof m.replacementsDictionary === 'object' && m.replacementsDictionary ? m.replacementsDictionary : {},
+          // 规则级别忽略配置
+          ignoreSelf: m.ignoreSelf === true ? true : undefined,
+          ignoreBot: m.ignoreBot === true ? true : undefined,
+          ignoreImages: m.ignoreImages === true ? true : undefined,
+          ignoreAudio: m.ignoreAudio === true ? true : undefined,
+          ignoreVideo: m.ignoreVideo === true ? true : undefined,
+          ignoreDocuments: m.ignoreDocuments === true ? true : undefined,
+          ignoreEnglish: m.ignoreEnglish === true ? true : undefined,
+          ignoreEnglishThreshold:
+            typeof m.ignoreEnglishThreshold === "number"
+              ? m.ignoreEnglishThreshold
+              : typeof m.ignoreEnglishThreshold === "string" && m.ignoreEnglishThreshold.trim() && !isNaN(Number(m.ignoreEnglishThreshold))
+                ? Number(m.ignoreEnglishThreshold)
+                : undefined,
+          ignoreChinese: m.ignoreChinese === true ? true : undefined,
+          ignoreChineseThreshold:
+            typeof m.ignoreChineseThreshold === "number"
+              ? m.ignoreChineseThreshold
+              : typeof m.ignoreChineseThreshold === "string" && m.ignoreChineseThreshold.trim() && !isNaN(Number(m.ignoreChineseThreshold))
+                ? Number(m.ignoreChineseThreshold)
+                : undefined,
+          stripEnglish: m.stripEnglish === true ? true : undefined,
+          stripChinese: m.stripChinese === true ? true : undefined,
+          watermark,
+          watermarkSecondary,
+          watermarks,
+        };
+      })
     : [];
 
   // 处理Telegram配置
@@ -827,6 +871,13 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             normalizedType = "telegram-to-discord";
           }
 
+          const watermark = normalizeWatermarkConfig(mapping.watermark);
+          const watermarkSecondary = normalizeWatermarkConfig(mapping.watermarkSecondary);
+          const watermarks = mergeLegacyWatermarks(
+            normalizeWatermarkList(mapping.watermarks),
+            watermark,
+            watermarkSecondary,
+          );
           return {
             id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
             sourceChannelId: typeof mapping.sourceChannelId === "string" ? mapping.sourceChannelId : "",
@@ -872,8 +923,9 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
                   : undefined,
             stripEnglish: mapping.stripEnglish === true ? true : undefined,
             stripChinese: mapping.stripChinese === true ? true : undefined,
-            watermark: normalizeWatermarkConfig(mapping.watermark),
-            watermarkSecondary: normalizeWatermarkConfig(mapping.watermarkSecondary),
+            watermark,
+            watermarkSecondary,
+            watermarks,
           };
         })
       : [],
@@ -925,8 +977,9 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     showMessageDeletions: input?.showMessageDeletions,
     showMessageUpdates: input?.showMessageUpdates,
     replacementsDictionary: replacementsDict,
-    watermark: normalizeWatermarkConfig(input?.watermark),
-    watermarkSecondary: normalizeWatermarkConfig(input?.watermarkSecondary),
+    watermark: accountWatermark,
+    watermarkSecondary: accountWatermarkSecondary,
+    watermarks: accountWatermarks,
     historyScan: input?.historyScan,
     mutedGuildsIds: input?.mutedGuildsIds || [],
     allowedGuildsIds: input?.allowedGuildsIds || [],
@@ -1104,6 +1157,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       replacementsDictionary: {},
       watermark: undefined,
       watermarkSecondary: undefined,
+      watermarks: undefined,
       historyScan: { enabled: true },
       mutedGuildsIds: [],
       allowedGuildsIds: [],
@@ -1166,6 +1220,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     replacementsDictionary: account.replacementsDictionary,
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
+    watermarks: account.watermarks,
     historyScan: account.historyScan,
     mutedGuildsIds: account.mutedGuildsIds,
     allowedGuildsIds: account.allowedGuildsIds,

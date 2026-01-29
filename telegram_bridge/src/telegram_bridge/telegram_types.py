@@ -67,6 +67,7 @@ class TelegramMapping(BaseModel):
     # Telegram特有的超长消息处理
     longMessage: Optional[Dict[str, Any]] = None
     watermark: Optional[Any] = None
+    watermarks: Optional[Any] = None
     watermark_secondary: Optional[Any] = Field(default=None, alias="watermarkSecondary")
 
 

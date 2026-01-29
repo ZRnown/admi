@@ -279,157 +279,21 @@
           <div class="grid gap-3 md:grid-cols-2">
             <div>
               <label class="block text-xs text-slate-600 mb-1">规则水印策略</label>
-              <select id="ruleWatermarkMode" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <select id="ruleWatermarkMode" onchange="updateRuleWatermarkMode(this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                 <option value="inherit">继承全局</option>
                 <option value="enable">强制启用</option>
                 <option value="disable">强制关闭</option>
               </select>
             </div>
-            <div>
-              <label class="block text-xs text-slate-600 mb-1">水印类型</label>
-              <select id="ruleWatermarkType" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="text">文字水印</option>
-                <option value="image">图片水印</option>
-              </select>
-            </div>
           </div>
-          <div class="mt-4 grid gap-4 md:grid-cols-2">
-            <div class="border border-slate-200 rounded-lg p-3">
-              <h4 class="text-sm font-medium text-slate-700 mb-3">水印1</h4>
-              <div class="grid gap-3">
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">铺设方式</label>
-                  <select id="ruleWatermarkPattern" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                    <option value="single">单个</option>
-                    <option value="tile">平铺</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">平铺间距（px）</label>
-                  <input type="number" min="0" id="ruleWatermarkTileGap" placeholder="40"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
-                  <input type="text" id="ruleWatermarkText" placeholder="例如：转发狗"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">文字大小（px）</label>
-                  <input type="number" min="8" id="ruleWatermarkTextSize" placeholder="16"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
-                  <input type="number" min="0" max="100" id="ruleWatermarkTextOpacity" placeholder="60"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">文字颜色</label>
-                  <input type="color" id="ruleWatermarkTextColor" value="#ffffff"
-                    class="h-10 w-full rounded border border-slate-200 px-2">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">图片水印地址</label>
-                  <input type="text" id="ruleWatermarkImageUrl" placeholder="https://example.com/watermark.png 或 /path/to/file.png"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">图片缩放（%）</label>
-                  <input type="number" min="1" max="100" id="ruleWatermarkImageScale" placeholder="20"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">图片透明度（0-100）</label>
-                  <input type="number" min="0" max="100" id="ruleWatermarkImageOpacity" placeholder="60"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">水印位置</label>
-                  <select id="ruleWatermarkPosition" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                    <option value="">默认（右下）</option>
-                    <option value="top-left">左上</option>
-                    <option value="top-right">右上</option>
-                    <option value="bottom-left">左下</option>
-                    <option value="bottom-right">右下</option>
-                    <option value="center">居中</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">边距（px）</label>
-                  <input type="number" min="0" id="ruleWatermarkMargin" placeholder="8"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-              </div>
+          <div id="ruleWatermarkConfigWrap" class="mt-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <p class="text-xs text-slate-500">规则可单独配置多个水印（仅对该规则生效）</p>
+              <button onclick="addRuleWatermark()" class="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">
+                + 添加水印
+              </button>
             </div>
-            <div class="border border-slate-200 rounded-lg p-3">
-              <h4 class="text-sm font-medium text-slate-700 mb-3">水印2</h4>
-              <div class="grid gap-3">
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">铺设方式</label>
-                  <select id="ruleWatermark2Pattern" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                    <option value="single">单个</option>
-                    <option value="tile">平铺</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">平铺间距（px）</label>
-                  <input type="number" min="0" id="ruleWatermark2TileGap" placeholder="40"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
-                  <input type="text" id="ruleWatermark2Text" placeholder="例如：转发狗"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">文字大小（px）</label>
-                  <input type="number" min="8" id="ruleWatermark2TextSize" placeholder="16"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
-                  <input type="number" min="0" max="100" id="ruleWatermark2TextOpacity" placeholder="60"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">文字颜色</label>
-                  <input type="color" id="ruleWatermark2TextColor" value="#ffffff"
-                    class="h-10 w-full rounded border border-slate-200 px-2">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">图片水印地址</label>
-                  <input type="text" id="ruleWatermark2ImageUrl" placeholder="https://example.com/watermark.png 或 /path/to/file.png"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">图片缩放（%）</label>
-                  <input type="number" min="1" max="100" id="ruleWatermark2ImageScale" placeholder="20"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">图片透明度（0-100）</label>
-                  <input type="number" min="0" max="100" id="ruleWatermark2ImageOpacity" placeholder="60"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">水印位置</label>
-                  <select id="ruleWatermark2Position" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                    <option value="">默认（右下）</option>
-                    <option value="top-left">左上</option>
-                    <option value="top-right">右上</option>
-                    <option value="bottom-left">左下</option>
-                    <option value="bottom-right">右下</option>
-                    <option value="center">居中</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">边距（px）</label>
-                  <input type="number" min="0" id="ruleWatermark2Margin" placeholder="8"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-              </div>
-            </div>
+            <div id="ruleWatermarkList" class="grid gap-4 md:grid-cols-2"></div>
           </div>
           <p class="text-xs text-slate-500 mt-2">策略为“强制启用”时才会使用此处的水印设置。</p>
         </div>
@@ -564,10 +428,13 @@
       const wrap = document.getElementById(`watermarkPreviewWrap-${accountId}`);
       const container = wrap ? wrap.parentElement : null;
       const width = container ? container.clientWidth : 0;
-      if (width && width > 0) {
-        return Math.max(140, width);
+      const form = document.getElementById('configForm');
+      const formWidth = form ? form.clientWidth : 0;
+      const baseWidth = Math.max(width || 0, formWidth ? formWidth - 40 : 0);
+      if (baseWidth && baseWidth > 0) {
+        return Math.max(140, baseWidth);
       }
-      const fallback = Math.max(140, window.innerWidth - 160);
+      const fallback = Math.max(140, Math.min(window.innerWidth - 80, 1400));
       return fallback;
     }
 
@@ -616,8 +483,8 @@
 
     let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
     const watermarkPreviewCache = new Map();
-    function getWatermarkPreviewKey(accountId, slot = 'primary') {
-      return `${accountId}:${slot}`;
+    function getWatermarkPreviewKey(accountId, index = 0) {
+      return `${accountId}:${index}`;
     }
     const watermarkPreviewRaf = new Map();
     const watermarkPreviewSizes = (() => {
@@ -1100,7 +967,6 @@
           : !isTelegramToTelegram && forwardingType === 'discord-to-telegram'
             ? discordToTelegramUsesClient
             : false;
-      const watermarkMode = getWatermarkMode(acc);
       if (isTelegramToTelegram) {
         ensureTelegramConfig(acc);
         if (tgListenerType === 'bot' || tgListenerType === 'client') {
@@ -1110,6 +976,7 @@
           ensureTelegramRoleAccount(acc, 'sender', tgSenderType);
         }
       }
+      const watermarkList = getWatermarkList(acc);
 
       const renderTelegramBotConfig = (title, note, options = {}) => {
         const role = options.role;
@@ -1757,23 +1624,20 @@
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">水印设置</h2>
-            <p class="text-xs text-slate-500 mt-1">仅对图片生效，可选择文字或图片水印（支持水印1/水印2叠加）</p>
+            <p class="text-xs text-slate-500 mt-1">仅对图片生效，可添加多个水印（每个水印可独立设置文字或图片）</p>
           </div>
           <div class="p-6 space-y-4">
-            <div class="flex flex-wrap items-center gap-3">
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">水印类型</label>
-                <select onchange="updateWatermarkMode(this.value)" class="w-40 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                  <option value="text" ${watermarkMode === 'text' ? 'selected' : ''}>文字水印</option>
-                  <option value="image" ${watermarkMode === 'image' ? 'selected' : ''}>图片水印</option>
-                </select>
-              </div>
-              <p class="text-xs text-slate-500">水印1/水印2可分别设置样式与位置</p>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <p class="text-xs text-slate-500">支持平铺或单个水印，顺序按列表叠加</p>
+              <button onclick="addWatermark()" class="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">
+                + 添加水印
+              </button>
             </div>
 
             <div class="grid gap-4 md:grid-cols-2">
-              ${renderWatermarkCard(acc, 'primary')}
-              ${renderWatermarkCard(acc, 'secondary')}
+              ${watermarkList.length > 0 ? watermarkList.map((_, idx) => renderWatermarkCard(acc, idx)).join('') : `
+                <div class="text-xs text-slate-400">暂无水印，请点击“添加水印”</div>
+              `}
             </div>
 
             <div>
@@ -2469,72 +2333,130 @@
       render();
     }
 
-    function getWatermarkConfig(acc, slot) {
-      return slot === 'secondary' ? acc.watermarkSecondary : acc.watermark;
+    function createWatermarkDefaults(overrides) {
+      return Object.assign(
+        { enabled: false, mode: 'text', pattern: 'single', tileGap: 40 },
+        overrides || {}
+      );
     }
 
-    function ensureWatermarkConfig(acc, slot = 'primary') {
-      const key = slot === 'secondary' ? 'watermarkSecondary' : 'watermark';
-      if (!acc[key] || typeof acc[key] !== 'object') {
-        acc[key] = { enabled: false };
+    function createActiveWatermark() {
+      return createWatermarkDefaults({
+        enabled: true,
+        textSize: 16,
+        textOpacity: 60,
+        textColor: '#ffffff'
+      });
+    }
+
+    function cloneWatermarkList(list) {
+      if (!Array.isArray(list)) return [];
+      return list
+        .map((item) => (item && typeof item === 'object' ? { ...item } : null))
+        .filter((item) => item && typeof item === 'object');
+    }
+
+    function resolveLegacyWatermarkList(source) {
+      const list = [];
+      if (source && source.watermark && typeof source.watermark === 'object') list.push({ ...source.watermark });
+      if (source && source.watermarkSecondary && typeof source.watermarkSecondary === 'object') {
+        list.push({ ...source.watermarkSecondary });
       }
+      return list;
     }
 
-    function getWatermarkMode(acc) {
-      const primary = acc.watermark || {};
-      const secondary = acc.watermarkSecondary || {};
-      const primaryMode = primary.mode === 'image' || primary.mode === 'text' ? primary.mode : undefined;
-      const secondaryMode = secondary.mode === 'image' || secondary.mode === 'text' ? secondary.mode : undefined;
-      if (primary.enabled === true && primaryMode) return primaryMode;
-      if (secondary.enabled === true && secondaryMode) return secondaryMode;
-      if (primaryMode || secondaryMode) return primaryMode || secondaryMode;
-      return (primary.imageUrl || secondary.imageUrl) ? 'image' : 'text';
-    }
-
-    function updateWatermarkMode(value) {
-      const acc = getActiveAccount();
-      ensureWatermarkConfig(acc, 'primary');
-      ensureWatermarkConfig(acc, 'secondary');
-      const normalized = value === 'image' ? 'image' : 'text';
-      acc.watermark.mode = normalized;
-      acc.watermarkSecondary.mode = normalized;
-      saveConfig();
+    function commitAccountWatermarkChange(accountId, options) {
+      const safeAccountId = accountId || state.activeId;
+      const opts = options || {};
+      if (opts.immediate) {
+        void saveConfigImmediate().catch((e) => console.error('保存失败', e));
+      } else {
+        saveConfig();
+      }
+      if (opts.previewOnly) {
+        if (safeAccountId) scheduleWatermarkPreviewRender(safeAccountId);
+        return;
+      }
       render();
     }
 
-    function updateWatermarkField(field, value, slot = 'primary') {
+    function getWatermarkList(acc) {
+      if (!acc) return [];
+      if (Array.isArray(acc.watermarks)) return acc.watermarks;
+      const legacy = resolveLegacyWatermarkList(acc);
+      acc.watermarks = legacy;
+      return acc.watermarks;
+    }
+
+    function ensureWatermarkList(acc) {
+      if (!Array.isArray(acc.watermarks)) {
+        acc.watermarks = [];
+      }
+      return acc.watermarks;
+    }
+
+    function ensureWatermarkItem(acc, index) {
+      const list = ensureWatermarkList(acc);
+      if (!list[index] || typeof list[index] !== 'object') {
+        list[index] = createWatermarkDefaults();
+      }
+      return list[index];
+    }
+
+    function normalizeWatermarkMode(config) {
+      if (!config || typeof config !== 'object') return 'text';
+      if (config.mode === 'image' || config.mode === 'text') return config.mode;
+      if (config.imageUrl) return 'image';
+      return 'text';
+    }
+
+    function addWatermark() {
       const acc = getActiveAccount();
-      ensureWatermarkConfig(acc, slot);
-      const key = slot === 'secondary' ? 'watermarkSecondary' : 'watermark';
+      const list = ensureWatermarkList(acc);
+      list.push(createActiveWatermark());
+      commitAccountWatermarkChange(acc.id, { immediate: true });
+    }
+
+    function removeWatermark(index) {
+      const acc = getActiveAccount();
+      const list = ensureWatermarkList(acc);
+      if (!list[index]) return;
+      list.splice(index, 1);
+      // 清理预览缓存，避免索引变更导致预览错位
+      const prefix = `${acc.id}:`;
+      for (const key of watermarkPreviewCache.keys()) {
+        if (key.startsWith(prefix)) {
+          watermarkPreviewCache.delete(key);
+        }
+      }
+      commitAccountWatermarkChange(acc.id, { immediate: true });
+    }
+
+    function updateWatermarkField(index, field, value) {
+      const acc = getActiveAccount();
+      const item = ensureWatermarkItem(acc, index);
       let normalized = value;
       if (typeof normalized === 'number' && !Number.isFinite(normalized)) {
         normalized = undefined;
       }
       if (field === 'enabled') {
-        acc[key].enabled = normalized === true;
+        item.enabled = normalized === true;
+      } else if (field === 'mode') {
+        item.mode = normalized === 'image' ? 'image' : 'text';
       } else {
-        acc[key][field] = normalized;
+        item[field] = normalized;
       }
-      saveConfig();
-      render();
+      commitAccountWatermarkChange(acc.id, { immediate: true });
     }
 
-    function updateWatermarkAnglePreview(accountId, value, slot = 'primary') {
+    function updateWatermarkAnglePreview(accountId, value, index) {
       const acc = getActiveAccount();
-      ensureWatermarkConfig(acc, slot);
-      const key = slot === 'secondary' ? 'watermarkSecondary' : 'watermark';
+      const item = ensureWatermarkItem(acc, index);
       const numeric = Number(value);
-      acc[key].textAngle = Number.isFinite(numeric) ? numeric : 0;
-      const suffix = slot === 'secondary' ? 'secondary' : 'primary';
-      const label = document.getElementById(`watermarkAngleValue-${accountId}-${suffix}`);
-      if (label) label.textContent = `${Number.isFinite(numeric) ? numeric : 0}°`;
-      const box = document.getElementById(`watermarkPreviewBox-${accountId}`);
-      if (box) {
-        const varName = slot === 'secondary' ? "--wm-angle-2" : "--wm-angle-1";
-        box.style.setProperty(varName, `${Number.isFinite(numeric) ? numeric : 0}deg`);
-      } else {
-        scheduleWatermarkPreviewRender(accountId);
-      }
+      item.textAngle = Number.isFinite(numeric) ? numeric : 0;
+      const label = document.getElementById(`watermarkAngleValue-${accountId}-${index}`);
+      if (label) label.textContent = `${item.textAngle}°`;
+      commitAccountWatermarkChange(accountId, { previewOnly: true });
     }
 
     function isPreviewableUrl(value) {
@@ -2612,33 +2534,35 @@
       }
     ];
 
-    function getWatermarkFontPresetKey(acc, slot = 'primary') {
-      const config = getWatermarkConfig(acc, slot) || {};
-      const fontPath = config.fontPath;
+    function getWatermarkFontPresetKeyFromConfig(config) {
+      const fontPath = config?.fontPath;
       if (!fontPath) return '';
       const preset = watermarkFontPresets.find((item) => item.url === fontPath);
       if (preset) return preset.key;
       return 'custom';
     }
 
-    function updateWatermarkFontPreset(accountId, value, slot = 'primary') {
+    function getWatermarkFontPresetKey(acc, index) {
+      const config = ensureWatermarkItem(acc, index) || {};
+      return getWatermarkFontPresetKeyFromConfig(config);
+    }
+
+    function updateWatermarkFontPreset(accountId, value, index) {
       const acc = getActiveAccount();
-      ensureWatermarkConfig(acc, slot);
-      const key = slot === 'secondary' ? 'watermarkSecondary' : 'watermark';
+      const item = ensureWatermarkItem(acc, index);
       if (!value) {
-        acc[key].fontPath = undefined;
-        acc[key].fontFamily = undefined;
+        item.fontPath = undefined;
+        item.fontFamily = undefined;
       } else if (value === 'custom') {
         // 保留现有设置
       } else {
         const preset = watermarkFontPresets.find((item) => item.key === value);
         if (preset) {
-          acc[key].fontPath = preset.url;
-          acc[key].fontFamily = preset.family || preset.label;
+          item.fontPath = preset.url;
+          item.fontFamily = preset.family || preset.label;
         }
       }
-      saveConfig();
-      render();
+      commitAccountWatermarkChange(accountId, { immediate: true });
     }
 
     function measureWatermarkText(text, fontSize, fontFamily) {
@@ -2677,29 +2601,77 @@
       watermarkPreviewRaf.set(accountId, rafId);
     }
 
-    function renderWatermarkCard(acc, slot) {
-      const watermark = getWatermarkConfig(acc, slot) || {};
-      const mode = getWatermarkMode(acc);
+    function resolvePreviewPosition(position, baseWidth, baseHeight, markWidth, markHeight, margin) {
+      const pos = position || 'bottom-right';
+      let x = margin;
+      let y = margin;
+      if (pos === 'top-left') {
+        x = margin;
+        y = margin;
+      } else if (pos === 'top') {
+        x = Math.round((baseWidth - markWidth) / 2);
+        y = margin;
+      } else if (pos === 'top-right') {
+        x = baseWidth - markWidth - margin;
+        y = margin;
+      } else if (pos === 'bottom-left') {
+        x = margin;
+        y = baseHeight - markHeight - margin;
+      } else if (pos === 'bottom') {
+        x = Math.round((baseWidth - markWidth) / 2);
+        y = baseHeight - markHeight - margin;
+      } else if (pos === 'center') {
+        x = Math.round((baseWidth - markWidth) / 2);
+        y = Math.round((baseHeight - markHeight) / 2);
+      } else {
+        x = baseWidth - markWidth - margin;
+        y = baseHeight - markHeight - margin;
+      }
+      return { x: Math.max(0, x), y: Math.max(0, y) };
+    }
+
+    function renderWatermarkCardTemplate(options) {
+      const watermark = options.watermark || {};
+      const mode = normalizeWatermarkMode(watermark);
       const pattern = watermark.pattern === 'tile' ? 'tile' : 'single';
       const showText = mode === 'text';
       const showImage = mode === 'image';
-      const slotLabel = slot === 'secondary' ? '水印2' : '水印1';
       const angleValue = Number.isFinite(Number(watermark.textAngle)) ? Number(watermark.textAngle) : 0;
-      const fontPresetKey = getWatermarkFontPresetKey(acc, slot);
+      const fontPresetKey = getWatermarkFontPresetKeyFromConfig(watermark);
+      const updateFn = options.updateFn;
+      const angleFn = options.angleFn;
+      const fontFn = options.fontFn;
+      const removeFn = options.removeFn;
+      const uploadFn = options.uploadFn;
+      const labelId = options.labelId;
+      const slotLabel = options.label;
+      const accountId = options.accountId;
+      const index = options.index;
+      const showUpload = options.showUpload === true;
 
       return `
         <div class="border border-slate-200 rounded-lg p-4 space-y-3">
           <div class="flex items-center justify-between">
             <h3 class="text-sm font-medium text-slate-800">${slotLabel}</h3>
-            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" ${watermark.enabled ? 'checked' : ''} onchange="updateWatermarkField('enabled', this.checked, '${slot}')"
-                class="h-4 w-4 rounded border-slate-300"> 启用
-            </label>
+            <div class="flex items-center gap-3">
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" ${watermark.enabled ? 'checked' : ''} onchange="${updateFn}(${index}, 'enabled', this.checked)"
+                  class="h-4 w-4 rounded border-slate-300"> 启用
+              </label>
+              <button onclick="${removeFn}(${index})" class="text-xs text-slate-500 hover:text-red-500">删除</button>
+            </div>
           </div>
           <div class="flex flex-wrap items-center gap-3">
             <div>
+              <label class="block text-xs text-slate-600 mb-1">水印类型</label>
+              <select onchange="${updateFn}(${index}, 'mode', this.value)" class="w-32 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="text" ${mode === 'text' ? 'selected' : ''}>文字</option>
+                <option value="image" ${mode === 'image' ? 'selected' : ''}>图片</option>
+              </select>
+            </div>
+            <div>
               <label class="block text-xs text-slate-600 mb-1">铺设方式</label>
-              <select onchange="updateWatermarkField('pattern', this.value, '${slot}')" class="w-32 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <select onchange="${updateFn}(${index}, 'pattern', this.value)" class="w-32 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                 <option value="single" ${pattern === 'single' ? 'selected' : ''}>单个</option>
                 <option value="tile" ${pattern === 'tile' ? 'selected' : ''}>平铺</option>
               </select>
@@ -2707,7 +2679,7 @@
             ${pattern === 'tile' ? `
             <div>
               <label class="block text-xs text-slate-600 mb-1">平铺间距（px）</label>
-              <input type="number" min="0" value="${watermark.tileGap ?? ''}" onchange="updateWatermarkField('tileGap', Number(this.value), '${slot}')"
+              <input type="number" min="0" value="${watermark.tileGap ?? ''}" onchange="${updateFn}(${index}, 'tileGap', Number(this.value))"
                 placeholder="40" class="w-28 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             ` : ''}
@@ -2717,35 +2689,35 @@
           <div class="grid gap-3 md:grid-cols-2">
             <div>
               <label class="block text-xs text-slate-600 mb-1">文字水印内容</label>
-              <input type="text" value="${watermark.text || ''}" onchange="updateWatermarkField('text', this.value, '${slot}')"
+              <input type="text" value="${watermark.text || ''}" onchange="${updateFn}(${index}, 'text', this.value)"
                 placeholder="例如：转发狗" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">文字大小（px）</label>
-              <input type="number" min="8" value="${watermark.textSize || ''}" onchange="updateWatermarkField('textSize', Number(this.value), '${slot}')"
+              <input type="number" min="8" value="${watermark.textSize || ''}" onchange="${updateFn}(${index}, 'textSize', Number(this.value))"
                 placeholder="16" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">文字颜色</label>
-              <input type="color" value="${watermark.textColor || '#ffffff'}" onchange="updateWatermarkField('textColor', this.value, '${slot}')"
+              <input type="color" value="${watermark.textColor || '#ffffff'}" onchange="${updateFn}(${index}, 'textColor', this.value)"
                 class="h-10 w-full rounded border border-slate-200 px-2">
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">文字透明度（0-100）</label>
-              <input type="number" min="0" max="100" value="${watermark.textOpacity || ''}" onchange="updateWatermarkField('textOpacity', Number(this.value), '${slot}')"
+              <input type="number" min="0" max="100" value="${watermark.textOpacity || ''}" onchange="${updateFn}(${index}, 'textOpacity', Number(this.value))"
                 placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">文字角度（-180° ~ 180°）</label>
               <div class="flex items-center gap-2">
                 <input type="range" min="-180" max="180" value="${angleValue}"
-                  oninput="updateWatermarkAnglePreview('${acc.id}', this.value, '${slot}')" onchange="updateWatermarkField('textAngle', Number(this.value), '${slot}')" class="flex-1">
-                <span class="text-xs text-slate-500 w-12 text-right" id="watermarkAngleValue-${acc.id}-${slot}">${angleValue}°</span>
+                  oninput="${angleFn}('${accountId}', this.value, ${index})" class="flex-1">
+                <span class="text-xs text-slate-500 w-12 text-right" id="${labelId}">${angleValue}°</span>
               </div>
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">中文字体（自动下载）</label>
-              <select onchange="updateWatermarkFontPreset('${acc.id}', this.value, '${slot}')" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <select onchange="${fontFn}('${accountId}', this.value, ${index})" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                 <option value="" ${fontPresetKey === '' ? 'selected' : ''}>自动选择（默认）</option>
                 ${watermarkFontPresets.map((preset) => `
                   <option value="${preset.key}" ${fontPresetKey === preset.key ? 'selected' : ''}>${preset.label}</option>
@@ -2759,25 +2731,27 @@
 
           ${showImage ? `
           <div class="grid gap-3 md:grid-cols-2">
+            ${showUpload ? `
             <div>
               <label class="block text-xs text-slate-600 mb-1">上传水印图片</label>
-              <input type="file" accept="image/*" onchange="uploadWatermarkImage(this, '${slot}')"
+              <input type="file" accept="image/*" onchange="${uploadFn}(this, ${index})"
                 class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
               <p class="text-xs text-slate-500 mt-2">上传后会保存到本地并自动应用</p>
             </div>
+            ` : ''}
             <div>
               <label class="block text-xs text-slate-600 mb-1">图片水印地址（URL 或本地路径）</label>
-              <input type="text" value="${watermark.imageUrl || ''}" onchange="updateWatermarkField('imageUrl', this.value, '${slot}')"
+              <input type="text" value="${watermark.imageUrl || ''}" onchange="${updateFn}(${index}, 'imageUrl', this.value)"
                 placeholder="https://example.com/watermark.png 或 /path/to/file.png" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">图片缩放（%）</label>
-              <input type="number" min="1" max="100" value="${watermark.imageScale || ''}" onchange="updateWatermarkField('imageScale', Number(this.value), '${slot}')"
+              <input type="number" min="1" max="100" value="${watermark.imageScale || ''}" onchange="${updateFn}(${index}, 'imageScale', Number(this.value))"
                 placeholder="20" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">图片透明度（0-100）</label>
-              <input type="number" min="0" max="100" value="${watermark.imageOpacity || ''}" onchange="updateWatermarkField('imageOpacity', Number(this.value), '${slot}')"
+              <input type="number" min="0" max="100" value="${watermark.imageOpacity || ''}" onchange="${updateFn}(${index}, 'imageOpacity', Number(this.value))"
                 placeholder="60" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
           </div>
@@ -2786,18 +2760,20 @@
           <div class="grid gap-3 md:grid-cols-2">
             <div>
               <label class="block text-xs text-slate-600 mb-1">水印位置（单个模式）</label>
-              <select onchange="updateWatermarkField('position', this.value, '${slot}')" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <select onchange="${updateFn}(${index}, 'position', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                 <option value="" ${watermark.position ? '' : 'selected'}>默认（右下）</option>
                 <option value="top-left" ${watermark.position === 'top-left' ? 'selected' : ''}>左上</option>
+                <option value="top" ${watermark.position === 'top' ? 'selected' : ''}>顶部居中</option>
                 <option value="top-right" ${watermark.position === 'top-right' ? 'selected' : ''}>右上</option>
                 <option value="bottom-left" ${watermark.position === 'bottom-left' ? 'selected' : ''}>左下</option>
+                <option value="bottom" ${watermark.position === 'bottom' ? 'selected' : ''}>底部居中</option>
                 <option value="bottom-right" ${watermark.position === 'bottom-right' ? 'selected' : ''}>右下</option>
                 <option value="center" ${watermark.position === 'center' ? 'selected' : ''}>居中</option>
               </select>
             </div>
             <div>
               <label class="block text-xs text-slate-600 mb-1">边距（px）</label>
-              <input type="number" min="0" value="${watermark.margin || ''}" onchange="updateWatermarkField('margin', Number(this.value), '${slot}')"
+              <input type="number" min="0" value="${watermark.margin || ''}" onchange="${updateFn}(${index}, 'margin', Number(this.value))"
                 placeholder="8" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
             </div>
           </div>
@@ -2805,40 +2781,207 @@
       `;
     }
 
+    function renderWatermarkCard(acc, index) {
+      const watermark = ensureWatermarkItem(acc, index) || {};
+      return renderWatermarkCardTemplate({
+        watermark,
+        index,
+        accountId: acc.id,
+        label: `水印 ${index + 1}`,
+        labelId: `watermarkAngleValue-${acc.id}-${index}`,
+        updateFn: 'updateWatermarkField',
+        angleFn: 'updateWatermarkAnglePreview',
+        fontFn: 'updateWatermarkFontPreset',
+        removeFn: 'removeWatermark',
+        uploadFn: 'uploadWatermarkImage',
+        showUpload: true
+      });
+    }
+
+    function resolveRuleWatermarkList(mapping) {
+      if (mapping && Array.isArray(mapping.watermarks)) {
+        return cloneWatermarkList(mapping.watermarks);
+      }
+      return resolveLegacyWatermarkList(mapping);
+    }
+
+    function ensureRuleWatermarkList() {
+      if (!Array.isArray(ruleConfigData.watermarks)) {
+        ruleConfigData.watermarks = [];
+      }
+      return ruleConfigData.watermarks;
+    }
+
+    function ensureRuleWatermarkItem(index) {
+      const list = ensureRuleWatermarkList();
+      if (!list[index] || typeof list[index] !== 'object') {
+        list[index] = createWatermarkDefaults();
+      }
+      return list[index];
+    }
+
+    function ensureRuleWatermarkModeEnabled() {
+      if (ruleConfigData.watermarkMode !== 'enable') {
+        ruleConfigData.watermarkMode = 'enable';
+        const select = document.getElementById('ruleWatermarkMode');
+        if (select) select.value = 'enable';
+      }
+    }
+
+    function updateRuleWatermarkMode(value) {
+      ruleConfigData.watermarkMode = value;
+      const wrap = document.getElementById('ruleWatermarkConfigWrap');
+      if (wrap) {
+        if (value === 'inherit') {
+          wrap.classList.add('hidden');
+        } else {
+          wrap.classList.remove('hidden');
+        }
+      }
+      renderRuleWatermarkList();
+    }
+
+    function addRuleWatermark() {
+      const list = ensureRuleWatermarkList();
+      ensureRuleWatermarkModeEnabled();
+      list.push(createActiveWatermark());
+      renderRuleWatermarkList();
+    }
+
+    function removeRuleWatermark(index) {
+      const list = ensureRuleWatermarkList();
+      if (!list[index]) return;
+      list.splice(index, 1);
+      renderRuleWatermarkList();
+    }
+
+    function updateRuleWatermarkField(index, field, value) {
+      ensureRuleWatermarkModeEnabled();
+      const item = ensureRuleWatermarkItem(index);
+      let normalized = value;
+      if (typeof normalized === 'number' && !Number.isFinite(normalized)) {
+        normalized = undefined;
+      }
+      if (field === 'enabled') {
+        item.enabled = normalized === true;
+      } else if (field === 'mode') {
+        item.mode = normalized === 'image' ? 'image' : 'text';
+      } else {
+        item[field] = normalized;
+      }
+      renderRuleWatermarkList();
+    }
+
+    function updateRuleWatermarkAnglePreview(accountId, value, index) {
+      ensureRuleWatermarkModeEnabled();
+      const item = ensureRuleWatermarkItem(index);
+      const numeric = Number(value);
+      item.textAngle = Number.isFinite(numeric) ? numeric : 0;
+      const label = document.getElementById(`ruleWatermarkAngleValue-${index}`);
+      if (label) label.textContent = `${item.textAngle}°`;
+    }
+
+    function updateRuleWatermarkFontPreset(accountId, value, index) {
+      ensureRuleWatermarkModeEnabled();
+      const item = ensureRuleWatermarkItem(index);
+      if (!value) {
+        item.fontPath = undefined;
+        item.fontFamily = undefined;
+      } else if (value === 'custom') {
+        // 保留现有设置
+      } else {
+        const preset = watermarkFontPresets.find((item) => item.key === value);
+        if (preset) {
+          item.fontPath = preset.url;
+          item.fontFamily = preset.family || preset.label;
+        }
+      }
+      renderRuleWatermarkList();
+    }
+
+    async function uploadRuleWatermarkImage(input, index) {
+      const file = input.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        alert("图片过大，请选择 5MB 以内的图片");
+        return;
+      }
+      ensureRuleWatermarkModeEnabled();
+      const acc = getActiveAccount();
+      try {
+        const form = new FormData();
+        form.append('accountId', acc.id);
+        form.append('watermarkIndex', String(index));
+        form.append('skipAssign', '1');
+        form.append('file', file, file.name);
+        const res = await fetch('/api/watermark/upload', {
+          method: 'POST',
+          body: form
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || data?.message || `上传失败(${res.status})`);
+        }
+        const item = ensureRuleWatermarkItem(index);
+        item.imageUrl = data.imageUrl || '';
+        item.mode = 'image';
+        item.enabled = true;
+        renderRuleWatermarkList();
+      } catch (e) {
+        alert("水印图片上传失败: " + (e?.message || e));
+      }
+    }
+
+    function renderRuleWatermarkCard(index) {
+      const watermark = ensureRuleWatermarkItem(index) || {};
+      return renderWatermarkCardTemplate({
+        watermark,
+        index,
+        accountId: 'rule',
+        label: `水印 ${index + 1}`,
+        labelId: `ruleWatermarkAngleValue-${index}`,
+        updateFn: 'updateRuleWatermarkField',
+        angleFn: 'updateRuleWatermarkAnglePreview',
+        fontFn: 'updateRuleWatermarkFontPreset',
+        removeFn: 'removeRuleWatermark',
+        uploadFn: 'uploadRuleWatermarkImage',
+        showUpload: true
+      });
+    }
+
+    function renderRuleWatermarkList() {
+      const container = document.getElementById('ruleWatermarkList');
+      if (!container) return;
+      const list = ensureRuleWatermarkList();
+      if (ruleConfigData.watermarkMode === 'inherit') {
+        container.innerHTML = '<div class="text-xs text-slate-400">已继承全局水印设置</div>';
+        return;
+      }
+      container.innerHTML = list.length > 0
+        ? list.map((_, idx) => renderRuleWatermarkCard(idx)).join('')
+        : '<div class="text-xs text-slate-400">暂无水印，请点击“添加水印”</div>';
+    }
+
     function renderWatermarkPreview(acc) {
-      const primary = acc.watermark || {};
-      const secondary = acc.watermarkSecondary || {};
-      const mode = getWatermarkMode(acc);
+      const list = getWatermarkList(acc);
       const previewSize = getWatermarkPreviewSize(acc.id);
       const previewWidth = previewSize.width;
       const previewHeight = previewSize.height;
       const maxImageWidth = Math.max(60, Math.round(previewWidth * 0.45));
-      const posClassMap = {
-        'top-left': 'top-2 left-2',
-        'top-right': 'top-2 right-2',
-        'bottom-left': 'bottom-2 left-2',
-        'bottom-right': 'bottom-2 right-2',
-        center: 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2'
-      };
-      const slots = [
-        { key: 'primary', index: 1, config: primary },
-        { key: 'secondary', index: 2, config: secondary }
-      ];
-      const anyEnabled = slots.some((slot) => slot.config && slot.config.enabled === true);
+      const anyEnabled = list.some((item) => item && item.enabled === true);
       if (!anyEnabled) {
         return '<div class="text-xs text-slate-400">未启用水印</div>';
       }
 
       const overlayItems = [];
       let hasContent = false;
-      for (const slot of slots) {
-        const watermark = slot.config || {};
-        if (watermark.enabled !== true) continue;
+      list.forEach((watermark, index) => {
+        if (!watermark || watermark.enabled !== true) return;
+        const mode = normalizeWatermarkMode(watermark);
         const pattern = watermark.pattern === 'tile' ? 'tile' : 'single';
         const tileGap = typeof watermark.tileGap === 'number' ? watermark.tileGap : 40;
         const position = watermark.position || 'bottom-right';
-        const posClass = posClassMap[position] || 'bottom-2 right-2';
-        const angleVar = `--wm-angle-${slot.index}`;
+        const margin = typeof watermark.margin === 'number' ? watermark.margin : 8;
 
         if (mode === 'text') {
           const text = watermark.text || '';
@@ -2850,9 +2993,14 @@
           const textAngle = Number.isFinite(Number(watermark.textAngle)) ? Number(watermark.textAngle) : 0;
           const fontFamily = watermark.fontFamily || 'sans-serif';
           if (pattern === 'single') {
-            const rotateStyle = `transform: rotate(var(${angleVar})); transform-origin: 0 0;`;
+            const measured = measureWatermarkText(text, textSize, fontFamily);
+            const paddedWidth = Math.max(textSize, measured.width + 10);
+            const paddedHeight = Math.max(textSize, measured.height + 10);
+            const rotated = applyRotationBounds(paddedWidth, paddedHeight, textAngle);
+            const pos = resolvePreviewPosition(position, previewWidth, previewHeight, rotated.width, rotated.height, margin);
+            const rotateStyle = `transform: rotate(${textAngle}deg); transform-origin: 0 0;`;
             overlayItems.push(
-              `<div class="absolute ${posClass}" style="color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(fontFamily)};${rotateStyle}">${escapeHtml(text)}</div>`
+              `<div style="position:absolute;left:${pos.x}px;top:${pos.y}px;color:${textColor};opacity:${textOpacity / 100};font-size:${textSize}px;font-family:${escapeHtml(fontFamily)};white-space:nowrap;${rotateStyle}">${escapeHtml(text)}</div>`
             );
           } else {
             const measured = measureWatermarkText(text, textSize, fontFamily);
@@ -2863,7 +3011,7 @@
             const stepY = rotated.height + tileGap;
             const cols = Math.max(1, Math.ceil(previewWidth / stepX));
             const rows = Math.max(1, Math.ceil(previewHeight / stepY));
-            const rotateStyle = `transform: translate(-50%, -50%) rotate(var(${angleVar}));`;
+            const rotateStyle = `transform: translate(-50%, -50%) rotate(${textAngle}deg);`;
             let tiles = '';
             for (let row = 0; row < rows; row++) {
               for (let col = 0; col < cols; col++) {
@@ -2883,20 +3031,24 @@
           }
         } else {
           const previewImage =
-            watermarkPreviewCache.get(getWatermarkPreviewKey(acc.id, slot.key)) ||
+            watermarkPreviewCache.get(getWatermarkPreviewKey(acc.id, index)) ||
             (isPreviewableUrl(watermark.imageUrl) ? watermark.imageUrl : '');
           if (!previewImage) continue;
           hasContent = true;
           const imageScale = typeof watermark.imageScale === 'number' ? watermark.imageScale : 20;
           const imageOpacity = typeof watermark.imageOpacity === 'number' ? watermark.imageOpacity : 60;
           if (pattern === 'single') {
+            const rawWidth = Math.max(24, Math.round((previewWidth * imageScale) / 100));
+            const imageWidth = Math.min(rawWidth, maxImageWidth);
+            const pos = resolvePreviewPosition(position, previewWidth, previewHeight, imageWidth, imageWidth, margin);
             overlayItems.push(
-              `<img src="${previewImage}" class="absolute ${posClass}" style="opacity:${imageOpacity / 100};width:${imageScale}%;min-width:24px;max-width:${maxImageWidth}px;">`
+              `<img src="${previewImage}" style="position:absolute;left:${pos.x}px;top:${pos.y}px;opacity:${imageOpacity / 100};width:${imageWidth}px;max-width:${maxImageWidth}px;">`
             );
           } else {
-            const imageWidth = Math.max(24, Math.round((previewWidth * imageScale) / 100));
-            const stepX = imageWidth + tileGap;
-            const stepY = imageWidth + tileGap;
+            const rawWidth = Math.max(24, Math.round((previewWidth * imageScale) / 100));
+            const tileWidth = Math.min(rawWidth, maxImageWidth);
+            const stepX = tileWidth + tileGap;
+            const stepY = tileWidth + tileGap;
             const cols = Math.max(1, Math.ceil(previewWidth / stepX));
             const rows = Math.max(1, Math.ceil(previewHeight / stepY));
             let tiles = '';
@@ -2904,28 +3056,26 @@
               for (let col = 0; col < cols; col++) {
                 const left = Math.round(col * stepX);
                 const top = Math.round(row * stepY);
-                tiles += `<img src="${previewImage}" style="position:absolute;left:${left}px;top:${top}px;opacity:${imageOpacity / 100};width:${imageWidth}px;">`;
+                tiles += `<img src="${previewImage}" style="position:absolute;left:${left}px;top:${top}px;opacity:${imageOpacity / 100};width:${tileWidth}px;">`;
               }
             }
             overlayItems.push(`<div class="absolute inset-0">${tiles}</div>`);
           }
         }
-      }
+      });
 
       if (!hasContent) {
         return '<div class="text-xs text-slate-400">未设置水印内容</div>';
       }
 
-      const angle1 = Number.isFinite(Number(primary.textAngle)) ? Number(primary.textAngle) : 0;
-      const angle2 = Number.isFinite(Number(secondary.textAngle)) ? Number(secondary.textAngle) : 0;
       return `
-        <div id="watermarkPreviewBox-${acc.id}" class="relative overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100" style="width:${previewWidth}px;height:${previewHeight}px;max-width:100%;--wm-angle-1:${angle1}deg;--wm-angle-2:${angle2}deg;">
+        <div id="watermarkPreviewBox-${acc.id}" class="relative overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100" style="width:${previewWidth}px;height:${previewHeight}px;max-width:100%;">
           ${overlayItems.join('')}
         </div>
       `;
     }
 
-    async function uploadWatermarkImage(input, slot = 'primary') {
+    async function uploadWatermarkImage(input, index) {
       const file = input.files[0];
       if (!file) return;
       if (file.size > 5 * 1024 * 1024) {
@@ -2936,13 +3086,14 @@
       try {
         const reader = new FileReader();
         reader.onload = () => {
-          watermarkPreviewCache.set(getWatermarkPreviewKey(acc.id, slot), reader.result);
-          render();
+          watermarkPreviewCache.set(getWatermarkPreviewKey(acc.id, index), reader.result);
+          scheduleWatermarkPreviewRender(acc.id);
         };
         reader.readAsDataURL(file);
 
         const form = new FormData();
         form.append('accountId', acc.id);
+        form.append('watermarkIndex', String(index));
         form.append('file', file, file.name);
         const res = await fetch('/api/watermark/upload', {
           method: 'POST',
@@ -2952,18 +3103,11 @@
         if (!res.ok) {
           throw new Error(data?.error || data?.message || `上传失败(${res.status})`);
         }
-        ensureWatermarkConfig(acc, slot);
-        ensureWatermarkConfig(acc, 'primary');
-        ensureWatermarkConfig(acc, 'secondary');
-        const key = slot === 'secondary' ? 'watermarkSecondary' : 'watermark';
-        acc[key].imageUrl = data.imageUrl || '';
-        acc.watermark.mode = 'image';
-        acc.watermarkSecondary.mode = 'image';
-        if (acc[key].enabled !== true) {
-          acc[key].enabled = true;
-        }
-        saveConfig();
-        render();
+        const item = ensureWatermarkItem(acc, index);
+        item.imageUrl = data.imageUrl || '';
+        item.mode = 'image';
+        item.enabled = true;
+        commitAccountWatermarkChange(acc.id, { immediate: true });
         alert("水印图片已上传");
       } catch (e) {
         alert("水印图片上传失败: " + (e?.message || e));
@@ -3045,8 +3189,7 @@
       stripEnglish: false,
       stripChinese: false,
       watermarkMode: "inherit",
-      watermark: {},
-      watermarkSecondary: {},
+      watermarks: [],
       senderAccountType: "bot"
     };
 
@@ -3160,10 +3303,17 @@
       }
 
       // 初始化临时数据
-      const hasRuleWatermark = mapping.watermark && typeof mapping.watermark === 'object';
-      const hasRuleWatermarkSecondary = mapping.watermarkSecondary && typeof mapping.watermarkSecondary === 'object';
-      const anyRuleWatermark = hasRuleWatermark || hasRuleWatermarkSecondary;
-      const watermarkMode = hasRuleWatermark && mapping.watermark.enabled === false ? 'disable' : (anyRuleWatermark ? 'enable' : 'inherit');
+      const ruleWatermarks = resolveRuleWatermarkList(mapping);
+      const hasRuleList = Array.isArray(mapping.watermarks);
+      const hasEnabledRuleWatermark = ruleWatermarks.some((item) => item && item.enabled !== false);
+      let watermarkMode = 'inherit';
+      if (hasRuleList) {
+        watermarkMode = hasEnabledRuleWatermark ? 'enable' : 'disable';
+      } else if (mapping.watermark && mapping.watermark.enabled === false) {
+        watermarkMode = 'disable';
+      } else if (ruleWatermarks.length > 0) {
+        watermarkMode = 'enable';
+      }
       ruleConfigData = {
         allowedUsersIds: [...(mapping.allowedUsersIds || [])],
         mutedUsersIds: [...(mapping.mutedUsersIds || [])],
@@ -3186,8 +3336,7 @@
         stripEnglish: mapping.stripEnglish === true,
         stripChinese: mapping.stripChinese === true,
         watermarkMode,
-        watermark: hasRuleWatermark ? { ...mapping.watermark } : {},
-        watermarkSecondary: hasRuleWatermarkSecondary ? { ...mapping.watermarkSecondary } : {},
+        watermarks: ruleWatermarks,
         senderAccountType: getEffectiveTelegramSenderType(acc, forwardingType, mapping)
       };
 
@@ -3216,31 +3365,7 @@
       }
 
       document.getElementById('ruleWatermarkMode').value = ruleConfigData.watermarkMode;
-      const ruleWatermarkMode = ruleConfigData.watermark.mode || ruleConfigData.watermarkSecondary.mode || 'text';
-      document.getElementById('ruleWatermarkType').value = ruleWatermarkMode === 'image' ? 'image' : 'text';
-      document.getElementById('ruleWatermarkPattern').value = ruleConfigData.watermark.pattern || 'single';
-      document.getElementById('ruleWatermarkTileGap').value = ruleConfigData.watermark.tileGap ?? '';
-      document.getElementById('ruleWatermarkText').value = ruleConfigData.watermark.text || '';
-      document.getElementById('ruleWatermarkTextSize').value = ruleConfigData.watermark.textSize || '';
-      document.getElementById('ruleWatermarkTextOpacity').value = ruleConfigData.watermark.textOpacity || '';
-      document.getElementById('ruleWatermarkTextColor').value = ruleConfigData.watermark.textColor || '#ffffff';
-      document.getElementById('ruleWatermarkImageUrl').value = ruleConfigData.watermark.imageUrl || '';
-      document.getElementById('ruleWatermarkImageScale').value = ruleConfigData.watermark.imageScale || '';
-      document.getElementById('ruleWatermarkImageOpacity').value = ruleConfigData.watermark.imageOpacity || '';
-      document.getElementById('ruleWatermarkPosition').value = ruleConfigData.watermark.position || '';
-      document.getElementById('ruleWatermarkMargin').value = ruleConfigData.watermark.margin || '';
-
-      document.getElementById('ruleWatermark2Pattern').value = ruleConfigData.watermarkSecondary.pattern || 'single';
-      document.getElementById('ruleWatermark2TileGap').value = ruleConfigData.watermarkSecondary.tileGap ?? '';
-      document.getElementById('ruleWatermark2Text').value = ruleConfigData.watermarkSecondary.text || '';
-      document.getElementById('ruleWatermark2TextSize').value = ruleConfigData.watermarkSecondary.textSize || '';
-      document.getElementById('ruleWatermark2TextOpacity').value = ruleConfigData.watermarkSecondary.textOpacity || '';
-      document.getElementById('ruleWatermark2TextColor').value = ruleConfigData.watermarkSecondary.textColor || '#ffffff';
-      document.getElementById('ruleWatermark2ImageUrl').value = ruleConfigData.watermarkSecondary.imageUrl || '';
-      document.getElementById('ruleWatermark2ImageScale').value = ruleConfigData.watermarkSecondary.imageScale || '';
-      document.getElementById('ruleWatermark2ImageOpacity').value = ruleConfigData.watermarkSecondary.imageOpacity || '';
-      document.getElementById('ruleWatermark2Position').value = ruleConfigData.watermarkSecondary.position || '';
-      document.getElementById('ruleWatermark2Margin').value = ruleConfigData.watermarkSecondary.margin || '';
+      updateRuleWatermarkMode(ruleConfigData.watermarkMode);
 
       // 渲染所有标签
       renderRuleTags('allowedUsersIds');
@@ -3348,68 +3473,23 @@
 
       const watermarkMode = document.getElementById('ruleWatermarkMode').value;
       if (watermarkMode === 'inherit') {
+        delete mapping.watermarks;
         delete mapping.watermark;
         delete mapping.watermarkSecondary;
       } else if (watermarkMode === 'disable') {
-        mapping.watermark = { enabled: false };
+        const list = ensureRuleWatermarkList()
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => ({ ...item, enabled: false }));
+        mapping.watermarks = list;
+        delete mapping.watermark;
         delete mapping.watermarkSecondary;
       } else {
-        const watermarkType = document.getElementById('ruleWatermarkType').value;
-        const watermarkPattern = document.getElementById('ruleWatermarkPattern').value;
-        const watermark2Pattern = document.getElementById('ruleWatermark2Pattern').value;
-        const textSize = parseInt(document.getElementById('ruleWatermarkTextSize').value, 10);
-        const textOpacity = parseInt(document.getElementById('ruleWatermarkTextOpacity').value, 10);
-        const imageScale = parseInt(document.getElementById('ruleWatermarkImageScale').value, 10);
-        const imageOpacity = parseInt(document.getElementById('ruleWatermarkImageOpacity').value, 10);
-        const margin = parseInt(document.getElementById('ruleWatermarkMargin').value, 10);
-        const tileGap = parseInt(document.getElementById('ruleWatermarkTileGap').value, 10);
-        const textSize2 = parseInt(document.getElementById('ruleWatermark2TextSize').value, 10);
-        const textOpacity2 = parseInt(document.getElementById('ruleWatermark2TextOpacity').value, 10);
-        const imageScale2 = parseInt(document.getElementById('ruleWatermark2ImageScale').value, 10);
-        const imageOpacity2 = parseInt(document.getElementById('ruleWatermark2ImageOpacity').value, 10);
-        const margin2 = parseInt(document.getElementById('ruleWatermark2Margin').value, 10);
-        const tileGap2 = parseInt(document.getElementById('ruleWatermark2TileGap').value, 10);
-        const normalizedType = watermarkType === 'image' ? 'image' : 'text';
-        const primaryWatermark = {
-          enabled: true,
-          mode: normalizedType,
-          pattern: watermarkPattern === 'tile' ? 'tile' : 'single',
-          tileGap: Number.isFinite(tileGap) ? tileGap : undefined,
-          text: document.getElementById('ruleWatermarkText').value.trim() || undefined,
-          textSize: Number.isFinite(textSize) ? textSize : undefined,
-          textColor: document.getElementById('ruleWatermarkTextColor').value || undefined,
-          textOpacity: Number.isFinite(textOpacity) ? textOpacity : undefined,
-          imageUrl: document.getElementById('ruleWatermarkImageUrl').value.trim() || undefined,
-          imageScale: Number.isFinite(imageScale) ? imageScale : undefined,
-          imageOpacity: Number.isFinite(imageOpacity) ? imageOpacity : undefined,
-          position: document.getElementById('ruleWatermarkPosition').value || undefined,
-          margin: Number.isFinite(margin) ? margin : undefined
-        };
-        const secondaryWatermark = {
-          enabled: true,
-          mode: normalizedType,
-          pattern: watermark2Pattern === 'tile' ? 'tile' : 'single',
-          tileGap: Number.isFinite(tileGap2) ? tileGap2 : undefined,
-          text: document.getElementById('ruleWatermark2Text').value.trim() || undefined,
-          textSize: Number.isFinite(textSize2) ? textSize2 : undefined,
-          textColor: document.getElementById('ruleWatermark2TextColor').value || undefined,
-          textOpacity: Number.isFinite(textOpacity2) ? textOpacity2 : undefined,
-          imageUrl: document.getElementById('ruleWatermark2ImageUrl').value.trim() || undefined,
-          imageScale: Number.isFinite(imageScale2) ? imageScale2 : undefined,
-          imageOpacity: Number.isFinite(imageOpacity2) ? imageOpacity2 : undefined,
-          position: document.getElementById('ruleWatermark2Position').value || undefined,
-          margin: Number.isFinite(margin2) ? margin2 : undefined
-        };
-        if (primaryWatermark.text || primaryWatermark.imageUrl) {
-          mapping.watermark = primaryWatermark;
-        } else {
-          delete mapping.watermark;
-        }
-        if (secondaryWatermark.text || secondaryWatermark.imageUrl) {
-          mapping.watermarkSecondary = secondaryWatermark;
-        } else {
-          delete mapping.watermarkSecondary;
-        }
+        const list = ensureRuleWatermarkList()
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => ({ ...item }));
+        mapping.watermarks = list;
+        delete mapping.watermark;
+        delete mapping.watermarkSecondary;
       }
 
       // 超长消息处理（Discord/TG/飞书规则）
@@ -3715,7 +3795,7 @@
         ignoreChineseThreshold: 100,
         stripEnglish: false,
         stripChinese: false,
-        watermark: { enabled: false },
+        watermarks: [],
         ocrServerUrl: 'http://localhost:9003',
         ocrBlockedKeywords: [],
         ocrTriggerKeywords: []

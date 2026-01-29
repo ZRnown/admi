@@ -246,11 +246,20 @@ class MediaHandler:
         pos = position or "bottom-right"
         x = margin
         y = margin
-        if pos == "top-right":
+        if pos == "top-left":
+            x = margin
+            y = margin
+        elif pos == "top":
+            x = (base_width - mark_width) // 2
+            y = margin
+        elif pos == "top-right":
             x = base_width - mark_width - margin
             y = margin
         elif pos == "bottom-left":
             x = margin
+            y = base_height - mark_height - margin
+        elif pos == "bottom":
+            x = (base_width - mark_width) // 2
             y = base_height - mark_height - margin
         elif pos == "center":
             x = (base_width - mark_width) // 2
