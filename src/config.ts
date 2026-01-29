@@ -791,6 +791,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         stripEnglish: m.stripEnglish === true ? true : undefined,
         stripChinese: m.stripChinese === true ? true : undefined,
         watermark: normalizeWatermarkConfig(m.watermark),
+        watermarkSecondary: normalizeWatermarkConfig(m.watermarkSecondary),
       }))
     : [];
 
@@ -872,6 +873,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             stripEnglish: mapping.stripEnglish === true ? true : undefined,
             stripChinese: mapping.stripChinese === true ? true : undefined,
             watermark: normalizeWatermarkConfig(mapping.watermark),
+            watermarkSecondary: normalizeWatermarkConfig(mapping.watermarkSecondary),
           };
         })
       : [],
