@@ -334,6 +334,21 @@ class TelegramBridgeService:
                 else:
                     watermark = primary
 
+        # 统一规范 chat_id（允许传入字符串）
+        if isinstance(chat_id, str):
+            trimmed = chat_id.strip()
+            if trimmed.startswith("https://t.me/"):
+                trimmed = trimmed.split("/")[-1]
+            if trimmed.startswith("@"):
+                trimmed = trimmed[1:]
+            if trimmed.lstrip("-").isdigit():
+                try:
+                    chat_id = int(trimmed)
+                except Exception:
+                    chat_id = trimmed
+            else:
+                chat_id = trimmed
+
         if account_type == "client":
             return await self.client_manager.send_message(
                 account_id,

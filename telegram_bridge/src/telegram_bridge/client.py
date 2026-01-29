@@ -809,19 +809,45 @@ class TelegramClientManager:
                 "message": str(e)
             }
 
+    def _normalize_chat_target(self, chat_id: Any):
+        if isinstance(chat_id, str):
+            trimmed = chat_id.strip()
+            if trimmed.startswith("https://t.me/"):
+                trimmed = trimmed.split("/")[-1]
+            if trimmed.startswith("@"):
+                trimmed = trimmed[1:]
+            if trimmed.lstrip("-").isdigit():
+                try:
+                    return int(trimmed)
+                except Exception:
+                    return trimmed
+            return trimmed
+        return chat_id
+
     async def _resolve_target_entity(self, client: TelegramClient, chat_id: Any):
         """尝试解析目标实体，修复 entity 缓存缺失导致的发送失败"""
         if chat_id is None:
             return None
+        target = self._normalize_chat_target(chat_id)
         try:
-            return await client.get_input_entity(chat_id)
+            return await client.get_input_entity(target)
         except Exception as e:
-            logger.warning(f"Failed to resolve entity from cache: {chat_id} err={e}")
+            logger.warning(f"Failed to resolve entity from cache: {target} err={e}")
         try:
             await client.get_dialogs(limit=200)
-            return await client.get_input_entity(chat_id)
+            return await client.get_input_entity(target)
         except Exception as e:
-            logger.warning(f"Failed to resolve entity after dialogs refresh: {chat_id} err={e}")
+            logger.warning(f"Failed to resolve entity after dialogs refresh(200): {target} err={e}")
+        try:
+            await client.get_dialogs(limit=1000)
+            return await client.get_input_entity(target)
+        except Exception as e:
+            logger.warning(f"Failed to resolve entity after dialogs refresh(1000): {target} err={e}")
+        try:
+            await client.get_dialogs(limit=None)
+            return await client.get_input_entity(target)
+        except Exception as e:
+            logger.warning(f"Failed to resolve entity after dialogs refresh(all): {target} err={e}")
             return None
 
     async def _handle_message(self, event, account_id: str):
