@@ -1004,6 +1004,7 @@
       const scheduledContents = ensureScheduledContents(acc);
       const scheduledBroadcast = ensureScheduledBroadcast(acc);
       const watermarkList = getWatermarkList(acc);
+      const showScheduledLibrary = false;
 
       const renderTelegramBotConfig = (title, note, options = {}) => {
         const role = options.role;
@@ -1647,6 +1648,7 @@
           </div>
         </div>
 
+        ${showScheduledLibrary ? `
         <!-- 定时内容库 + 定时发送 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
@@ -1755,6 +1757,7 @@
             </div>
           </div>
         </div>
+        ` : ''}
 
         <!-- 水印设置 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
