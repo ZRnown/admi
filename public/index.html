@@ -2985,7 +2985,7 @@
 
         if (mode === 'text') {
           const text = watermark.text || '';
-          if (!text) continue;
+          if (!text) return;
           hasContent = true;
           const textSize = typeof watermark.textSize === 'number' ? watermark.textSize : 16;
           const textColor = watermark.textColor || '#ffffff';
@@ -3033,7 +3033,7 @@
           const previewImage =
             watermarkPreviewCache.get(getWatermarkPreviewKey(acc.id, index)) ||
             (isPreviewableUrl(watermark.imageUrl) ? watermark.imageUrl : '');
-          if (!previewImage) continue;
+          if (!previewImage) return;
           hasContent = true;
           const imageScale = typeof watermark.imageScale === 'number' ? watermark.imageScale : 20;
           const imageOpacity = typeof watermark.imageOpacity === 'number' ? watermark.imageOpacity : 60;
