@@ -1399,7 +1399,7 @@ function setupTelegramBridgeClient() {
                   params.from_username,
                 )
               : undefined;
-            useEmbed = forwardStyle === "style1";
+            useEmbed = forwardStyle === "style1" || forwardStyle === "style3";
 
             if (replyInfo) {
               const replyUser = replyInfo.from_user || {};
@@ -1415,7 +1415,7 @@ function setupTelegramBridgeClient() {
                 const ctaLine = `↳ @${replyName}: ${replyContent || "回复消息"}`;
                 contentForRule = [ctaLine, contentForRule].filter(Boolean).join("\n");
               } else {
-                useEmbed = false;
+                useEmbed = forwardStyle !== "style2";
                 const replyTitle = `💬 回复 ${replyName}`;
                 const replyBody = replyContent || (forwardStyle === "style3" ? "回复消息" : "");
                 extraEmbeds = [

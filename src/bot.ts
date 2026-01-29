@@ -1299,12 +1299,16 @@ export class Bot {
       // 样式1：拼装最终内容，CTA 在顶部
       discordContent = finalContent;
     } else {
-      // 样式2：普通消息直接发originalContent（不含CTA），回复消息时上面发originalContent，下面发embed
+      // 样式2/3：普通消息直接发 originalContent（不含 CTA）
       discordContent = originalContent || "";
-      useEmbed = false; // 样式2下，主内容不使用embed
-
-      // 但是，如果消息只有embeds（比如webhook消息），即使在style2模式下也需要使用embed模式
-      if (!hasText && message.embeds && message.embeds.length > 0) {
+      if (forwardStyle === "style2") {
+        useEmbed = false; // 样式2下，主内容不使用 embed
+        // 但是，如果消息只有 embeds（比如 webhook 消息），即使在 style2 模式下也需要使用 embed
+        if (!hasText && message.embeds && message.embeds.length > 0) {
+          useEmbed = true;
+        }
+      } else {
+        // 样式3：主内容使用 embed
         useEmbed = true;
       }
       
