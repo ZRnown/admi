@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
           name: role === "listener" ? "Telegram Listener" : role === "sender" ? "Telegram Sender" : "Telegram Client",
           type: "client",
           token: "",
-          enabled: true,
+          enabled: false,
         };
         if (role === "listener" || role === "sender") {
           (entry as any).role = role;

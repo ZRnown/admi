@@ -60,32 +60,31 @@ function resolveTelegramAccountStatuses(
   telegramStatus: Record<string, TelegramStatusEntry>,
 ) {
   const telegramAccounts = account.telegramConfig?.accounts || [];
-  const enabledAccounts = telegramAccounts.filter((acc) => acc.enabled === true);
+  const activeAccounts = telegramAccounts.filter((acc) => acc.enabled !== false);
 
-  const botAccount =
-    enabledAccounts.find((acc) => acc.type === "bot") ||
-    telegramAccounts.find((acc) => acc.type === "bot") ||
-    null;
-  const clientAccount =
-    enabledAccounts.find((acc) => acc.type === "client") ||
-    telegramAccounts.find((acc) => acc.type === "client") ||
-    null;
+  const botAccount = activeAccounts.find((acc) => acc.type === "bot") || null;
+  const clientAccount = activeAccounts.find((acc) => acc.type === "client") || null;
 
   const hasExplicitBot = telegramAccounts.some((acc) => acc.type === "bot");
+  const hasExplicitClient = telegramAccounts.some((acc) => acc.type === "client");
   const hasLegacyBotConfig = Boolean(account.telegramBotToken);
+  const hasLegacyClientConfig = Boolean(
+    (account.telegramSessionPath || account.telegramSessionString) &&
+      account.telegramApiId &&
+      account.telegramApiHash,
+  );
 
   // Bot ID: 优先使用显式 bot 账号 ID，否则使用 account.id_bot
   const botAccountId =
     botAccount?.id || (!hasExplicitBot && hasLegacyBotConfig ? `${account.id}_bot` : undefined);
 
-  // Client ID: 更宽松的查找逻辑
-  // 1. 优先使用显式 client 账号 ID
-  // 2. 否则直接使用 account.id（不再依赖 hasLegacyClientConfig 判断）
-  const clientAccountId = clientAccount?.id || account.id;
+  // Client ID: 仅在没有显式 client 账号时回退到 legacy 配置
+  const clientAccountId =
+    clientAccount?.id || (!hasExplicitClient && hasLegacyClientConfig ? account.id : undefined);
 
   // 从状态文件中查找状态
   let botStatus = botAccountId ? telegramStatus[botAccountId] : undefined;
-  let clientStatus = telegramStatus[clientAccountId];
+  let clientStatus = clientAccountId ? telegramStatus[clientAccountId] : undefined;
 
   // 如果 clientAccountId 对应的状态看起来像 Bot（username 以 bot 结尾），则不作为 Client 状态
   if (clientStatus?.userInfo?.username?.toLowerCase().endsWith("bot")) {
@@ -110,6 +109,13 @@ function buildTelegramAccountStates(
   const accounts = account.telegramConfig?.accounts || [];
   for (const item of accounts) {
     if (!item?.id) continue;
+    if (item.enabled === false) {
+      result[item.id] = {
+        state: "idle",
+        message: "未连接",
+      };
+      continue;
+    }
     const status = telegramStatus[item.id];
     const normalizedState = normalizeTelegramState(status?.state);
     result[item.id] = {

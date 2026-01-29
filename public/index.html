@@ -1012,7 +1012,7 @@
         const accountEntry = role ? getTelegramRoleAccount(acc, role, 'bot') : null;
         const tokenValue = role ? (accountEntry?.token || '') : (acc.telegramBotToken || '');
         const status = role
-          ? getTelegramAccountStatus(acc, accountId, acc.telegramBotState, acc.telegramBotMessage)
+          ? getTelegramAccountStatus(acc, accountId, 'idle', '未连接')
           : { state: acc.telegramBotState, message: acc.telegramBotMessage };
         const state = status?.state || 'idle';
         const message = status?.message || '';
@@ -1059,7 +1059,7 @@
         const sessionPathValue = role ? (accountEntry?.sessionPath || '') : (acc.telegramSessionPath || '');
         const sessionStringValue = role ? (accountEntry?.sessionString || '') : (acc.telegramSessionString || '');
         const status = role
-          ? getTelegramAccountStatus(acc, accountId, acc.telegramClientState, acc.telegramClientMessage)
+          ? getTelegramAccountStatus(acc, accountId, 'idle', '未连接')
           : { state: acc.telegramClientState, message: acc.telegramClientMessage };
         const state = status?.state || 'idle';
         const message = status?.message || '';
@@ -2116,17 +2116,45 @@
       `).join('');
     }
 
+    function getToastContainer() {
+      let container = document.getElementById('toastContainer');
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'fixed top-4 right-4 z-50 flex flex-col gap-2';
+        container.setAttribute('aria-live', 'polite');
+        document.body.appendChild(container);
+      }
+      return container;
+    }
+
+    function showToast(message, type = 'success') {
+      const colorClass = type === 'error'
+        ? 'bg-red-500'
+        : type === 'info'
+          ? 'bg-slate-700'
+          : 'bg-emerald-500';
+      const toast = document.createElement('div');
+      toast.className = `${colorClass} text-white px-4 py-2 rounded-lg shadow-lg transition-all duration-200`;
+      toast.textContent = message;
+      toast.setAttribute('role', 'status');
+      const container = getToastContainer();
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-1');
+      }, 1800);
+      setTimeout(() => {
+        toast.remove();
+        if (container.childElementCount === 0) {
+          container.remove();
+        }
+      }, 2200);
+    }
+
     function copyToClipboard(text, type) {
       navigator.clipboard.writeText(text).then(() => {
-        // 显示临时成功提示
-        const notification = document.createElement('div');
-        notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50';
-        notification.textContent = `${type}已复制到剪贴板`;
-        document.body.appendChild(notification);
-
-        setTimeout(() => {
-          document.body.removeChild(notification);
-        }, 2000);
+        showToast(`${type}已复制到剪贴板`, 'success');
       }).catch(err => {
         console.error('复制失败:', err);
         // 降级到传统方法
@@ -2136,15 +2164,7 @@
         textArea.select();
         document.execCommand('copy');
         document.body.removeChild(textArea);
-
-        const notification = document.createElement('div');
-        notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50';
-        notification.textContent = `${type}已复制到剪贴板`;
-        document.body.appendChild(notification);
-
-        setTimeout(() => {
-          document.body.removeChild(notification);
-        }, 2000);
+        showToast(`${type}已复制到剪贴板`, 'success');
       });
     }
 
@@ -2172,15 +2192,7 @@
       saveConfig();
       render();
 
-      // 显示成功提示
-      const notification = document.createElement('div');
-      notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50';
-      notification.textContent = 'API凭据已自动填写';
-      document.body.appendChild(notification);
-
-      setTimeout(() => {
-        document.body.removeChild(notification);
-      }, 2000);
+      showToast('API凭据已自动填写', 'success');
     }
 
       async function fetchFeishuChats() {
@@ -2346,14 +2358,13 @@
           name: role === 'listener' ? 'Telegram 监听账号' : 'Telegram 发送账号',
           type,
           token: '',
-          enabled: true,
+          enabled: false,
           role
         };
         acc.telegramConfig.accounts.push(entry);
       }
       entry.role = role;
       entry.type = type;
-      entry.enabled = true;
       if (!entry.sessionType) {
         entry.sessionType = acc.sessionType || 'file';
       }
@@ -4725,7 +4736,7 @@
 
       // 增加简单的检查，防止误上传二进制文件
       if (file.size > 1024 * 1024) { // 1MB
-        alert("文件过大，Session 文件通常很小。请确认上传的是正确的 Session 文件。");
+        showToast("文件过大，Session 文件通常很小。请确认上传的是正确的 Session 文件。", "error");
         return;
       }
 
@@ -4764,9 +4775,9 @@
         }
         saveConfig();
         render();
-        alert("Session 文件已上传并保存。");
+        showToast("Session 文件已上传并保存。", "success");
       } catch (e) {
-        alert("Session 文件上传失败: " + (e?.message || e));
+        showToast("Session 文件上传失败: " + (e?.message || e), "error");
       }
     }
 
