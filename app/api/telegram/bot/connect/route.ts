@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getMultiConfig, saveMultiConfig } from "@/src/config";
+import { getMultiConfig, saveMultiConfig, type AccountConfig } from "@/src/config";
 import { promises as fs } from "fs";
 import path from "path";
 
@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 // Telegram 状态文件路径
 const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
+const triggerFile = path.resolve(process.cwd(), ".data", "trigger_reload");
 
 async function writeTelegramStatus(accountId: string, state: string, message: string, userInfo?: any) {
   try {
@@ -21,6 +22,59 @@ async function writeTelegramStatus(accountId: string, state: string, message: st
     statusData[accountId] = { state, message, userInfo };
     await fs.mkdir(path.dirname(telegramStatusFile), { recursive: true });
     await fs.writeFile(telegramStatusFile, JSON.stringify(statusData, null, 2));
+  } catch {
+    // 忽略错误
+  }
+}
+
+async function markTelegramAccountsIdle(accountIds: string[], message: string) {
+  if (!accountIds.length) return;
+  try {
+    let statusData: Record<string, any> = {};
+    try {
+      const content = await fs.readFile(telegramStatusFile, "utf-8");
+      statusData = JSON.parse(content);
+    } catch {
+      // ignore
+    }
+    for (const id of accountIds) {
+      if (!id) continue;
+      const current = statusData[id] || {};
+      statusData[id] = { ...current, state: "idle", message };
+    }
+    await fs.mkdir(path.dirname(telegramStatusFile), { recursive: true });
+    await fs.writeFile(telegramStatusFile, JSON.stringify(statusData, null, 2));
+  } catch {
+    // 忽略错误
+  }
+}
+
+function disableOppositeTelegramAccounts(
+  account: AccountConfig,
+  role: "listener" | "sender" | undefined,
+): string[] {
+  if (!account.telegramConfig?.accounts) return [];
+  const disabledIds: string[] = [];
+  for (const entry of account.telegramConfig.accounts) {
+    if (!entry || entry.type !== "client") continue;
+    if (role) {
+      if (entry.role !== role) continue;
+    } else if (entry.role) {
+      // 无角色时不影响已有角色账号
+      continue;
+    }
+    if (entry.enabled !== false) {
+      entry.enabled = false;
+      disabledIds.push(entry.id);
+    }
+  }
+  return disabledIds;
+}
+
+async function triggerBotReload() {
+  try {
+    await fs.mkdir(path.dirname(triggerFile), { recursive: true });
+    await fs.writeFile(triggerFile, Date.now().toString());
   } catch {
     // 忽略错误
   }
@@ -122,10 +176,17 @@ export async function POST(req: NextRequest) {
         }
         botAccount.enabled = true;
       }
+      const disabledIds = disableOppositeTelegramAccounts(account, role);
       await saveMultiConfig(multi);
 
       // 写入状态到文件
       await writeTelegramStatus(botStatusId, "online", `连接成功: @${result.userInfo?.username || 'Bot'}`, result.userInfo);
+      if (disabledIds.length > 0) {
+        await markTelegramAccountsIdle(disabledIds, "已切换为 Bot");
+      }
+
+      // 触发 Bot 进程重新加载配置
+      await triggerBotReload();
 
       return NextResponse.json({
         state: 'online',

@@ -26,6 +26,50 @@ async function readTelegramStatus(): Promise<Record<string, any>> {
   }
 }
 
+async function markTelegramAccountsIdle(accountIds: string[], message: string) {
+  if (!accountIds.length) return;
+  try {
+    let statusData: Record<string, any> = {};
+    try {
+      const content = await fs.readFile(telegramStatusFile, "utf-8");
+      statusData = JSON.parse(content);
+    } catch {
+      // ignore
+    }
+    for (const id of accountIds) {
+      if (!id) continue;
+      const current = statusData[id] || {};
+      statusData[id] = { ...current, state: "idle", message };
+    }
+    await fs.mkdir(path.dirname(telegramStatusFile), { recursive: true });
+    await fs.writeFile(telegramStatusFile, JSON.stringify(statusData, null, 2));
+  } catch {
+    // 忽略错误
+  }
+}
+
+function disableOppositeTelegramAccounts(
+  account: AccountConfig,
+  role: "listener" | "sender" | undefined,
+): string[] {
+  if (!account.telegramConfig?.accounts) return [];
+  const disabledIds: string[] = [];
+  for (const entry of account.telegramConfig.accounts) {
+    if (!entry || entry.type !== "bot") continue;
+    if (role) {
+      if (entry.role !== role) continue;
+    } else if (entry.role) {
+      // 无角色时不影响已有角色账号
+      continue;
+    }
+    if (entry.enabled !== false) {
+      entry.enabled = false;
+      disabledIds.push(entry.id);
+    }
+  }
+  return disabledIds;
+}
+
 async function triggerBotReload() {
   try {
     await fs.mkdir(path.dirname(triggerFile), { recursive: true });
@@ -101,8 +145,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const disabledIds = disableOppositeTelegramAccounts(account, role);
+
     // 保存配置到磁盘（确保下次重启自动登录）
     await saveMultiConfig(multi);
+
+    if (disabledIds.length > 0) {
+      await markTelegramAccountsIdle(disabledIds, "已切换为 Client");
+    }
 
     // 检查是否有必要的配置
     const clientAccount = candidates.find((acc) => acc.id === clientAccountId) || {

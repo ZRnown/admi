@@ -377,6 +377,15 @@ function selectTelegramSendAccount(
   return bot || candidates[0];
 }
 
+function selectTelegramAccountByType(
+  account: AccountConfig,
+  type: "bot" | "client",
+): TelegramAccountRef | null {
+  const candidates = collectTelegramAccounts(account).filter((entry) => entry.enabled !== false);
+  const match = candidates.find((entry) => entry.type === type);
+  return match || null;
+}
+
 function shouldFallbackToTelegramClient(sendResult: any): boolean {
   if (!sendResult) return false;
   const errorText = `${sendResult.error || ""} ${sendResult.message || ""}`.toLowerCase();
@@ -416,9 +425,13 @@ async function sendTelegramMessageWithFallback(
     primary.type === "bot" &&
     shouldFallbackToTelegramClient(result)
   ) {
-    const fallback = selectTelegramSendAccount(account, "client", preferredRole);
+    let fallback = selectTelegramSendAccount(account, "client", preferredRole);
+    // 如果没有配置 sender 角色账号，允许回退到任意 client（包括 listener）
+    if (!fallback && preferredRole && !hasTelegramRoleAccount(account, preferredRole)) {
+      fallback = selectTelegramAccountByType(account, "client");
+    }
     if (fallback && fallback.id !== primary.id) {
-      log?.(`[TG] Bot 发送失败，尝试使用 Client 账号重试`);
+      log?.(`[TG] Bot 发送失败，尝试使用 Client 账号重试（${fallback.id}）`);
       result = await sendWithAccount(fallback);
       return { result, account: fallback, usedFallback: true };
     }
