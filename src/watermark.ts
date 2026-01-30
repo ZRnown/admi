@@ -161,6 +161,16 @@ async function resolveDefaultFontPath(preferCjk: boolean): Promise<string | unde
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
   ];
   const candidates = preferCjk ? cjkCandidates : [...cjkCandidates, ...latinCandidates];
+  if (preferCjk && AUTO_FONT_DOWNLOAD && DEFAULT_CJK_FONT_URLS.length > 0) {
+    // 默认优先微软雅黑（或环境变量配置的第一个字体）
+    const primaryUrl = DEFAULT_CJK_FONT_URLS[0];
+    if (primaryUrl) {
+      const downloaded = await resolveRemoteFontPath(primaryUrl);
+      if (downloaded) {
+        return downloaded;
+      }
+    }
+  }
   for (const candidate of candidates) {
     try {
       await fs.access(candidate);

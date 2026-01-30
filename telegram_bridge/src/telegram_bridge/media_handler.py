@@ -66,11 +66,17 @@ class MediaHandler:
             logger.warning("Watermark font not found; Chinese text watermark may show as squares")
 
     def _resolve_default_font_path(self) -> Optional[str]:
+        if AUTO_FONT_DOWNLOAD:
+            if DEFAULT_CJK_FONT_URLS:
+                primary = DEFAULT_CJK_FONT_URLS[0]
+                downloaded = self._download_font(primary)
+                if downloaded:
+                    return downloaded
         for candidate in DEFAULT_FONT_CANDIDATES:
             if candidate and os.path.exists(candidate):
                 return candidate
         if AUTO_FONT_DOWNLOAD:
-            for url in DEFAULT_CJK_FONT_URLS:
+            for url in DEFAULT_CJK_FONT_URLS[1:]:
                 downloaded = self._download_font(url)
                 if downloaded:
                     return downloaded
