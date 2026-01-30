@@ -57,12 +57,10 @@
     </header>
 
     <div id="app" style="display: none;">
-      <!-- 全局运行概览 -->
-      <div id="globalOverview" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6"></div>
       <!-- 账号切换标签 -->
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
         <div class="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/60 p-4">
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" id="accountTabs"></div>
+          <div class="flex flex-wrap gap-2" id="accountTabs"></div>
           <div class="flex flex-wrap items-center gap-2">
             <button onclick="showHelp()" class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
               <span>ℹ️</span> 使用说明
@@ -539,55 +537,6 @@
       }
     }
 
-    function getLocalDateKey() {
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    }
-
-    function normalizeForwardStats(raw) {
-      const date = typeof raw?.date === 'string' && raw.date ? raw.date : getLocalDateKey();
-      const total = typeof raw?.total === 'number' && Number.isFinite(raw.total) ? raw.total : 0;
-      return { date, total };
-    }
-
-    function buildGlobalOverviewSummary() {
-      return normalizeForwardStats(state.forwardStats);
-    }
-
-    function renderGlobalOverview() {
-      const overviewEl = document.getElementById('globalOverview');
-      if (!overviewEl) return;
-      const summary = buildGlobalOverviewSummary();
-      const countLabel = Number(summary.total || 0).toLocaleString('zh-CN');
-      overviewEl.innerHTML = `
-        <div class="px-6 py-4 border-b border-slate-100">
-          <h2 class="font-semibold text-slate-800">全局运行概览</h2>
-          <p class="text-xs text-slate-500 mt-1">汇总今日转发情况</p>
-        </div>
-        <div class="p-6">
-          <div class="flex items-baseline gap-3">
-            <div id="global-forward-count" class="text-3xl font-semibold text-slate-900">${countLabel}</div>
-            <div class="text-sm text-slate-500">今日转发数</div>
-          </div>
-          <div id="global-forward-date" class="text-xs text-slate-400 mt-2">统计日期: ${summary.date}</div>
-        </div>
-      `;
-    }
-
-    function updateGlobalOverviewElement(summary) {
-      const countEl = document.getElementById('global-forward-count');
-      const dateEl = document.getElementById('global-forward-date');
-      if (countEl) {
-        countEl.textContent = Number(summary.total || 0).toLocaleString('zh-CN');
-      }
-      if (dateEl) {
-        dateEl.textContent = `统计日期: ${summary.date}`;
-      }
-    }
-
     const statusLabelMap = {
       online: '已连接',
       idle: '未连接',
@@ -711,7 +660,7 @@
       };
     }
 
-    let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null, forwardStats: null };
+    let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
     const watermarkPreviewCache = new Map();
     function getWatermarkPreviewKey(accountId, index = 0) {
       return `${accountId}:${index}`;
@@ -1044,7 +993,6 @@
             loginPassword: data.loginPassword || "",
             telegramAvatarBaseUrl: data.telegramAvatarBaseUrl || "",
             enabledForwardingTypes: data.enabledForwardingTypes || null,
-            forwardStats: normalizeForwardStats(data.forwardStats),
           };
         } else {
           console.warn('配置数据格式不正确:', data);
@@ -1150,36 +1098,26 @@
         return;
       }
 
-      renderGlobalOverview();
-
       let tabsHtml = state.accounts.map(acc => {
-        const summary = buildAccountCardSummary(acc);
         const typeLabel = getForwardingTypeLabel(acc.forwardingType);
         const isActive = acc.id === state.activeId;
+        const summary = buildAccountCardSummary(acc);
         return `
           <button onclick="switchAccount('${acc.id}')"
-            class="text-left rounded-xl border p-4 transition ${isActive ? 'border-indigo-500 ring-1 ring-indigo-200 bg-indigo-50/40' : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40'}">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <div class="text-sm font-semibold text-slate-800">${acc.name || '未命名账号'}</div>
-                <div class="text-xs text-slate-500 mt-1">${typeLabel}</div>
-              </div>
-              <span id="account-card-status-${acc.id}" class="px-2 py-0.5 rounded-full text-xs ${getBadgeClass(summary.state)}">
+            class="text-left rounded-lg border px-4 py-2 transition ${isActive ? 'border-indigo-500 bg-indigo-50/60 text-indigo-700' : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40'}">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium">${acc.name || '未命名账号'}</span>
+              <span id="account-tab-status-${acc.id}" class="px-2 py-0.5 rounded-full text-xs ${getBadgeClass(summary.state)}">
                 ${summary.badgeLabel}
               </span>
             </div>
-            <div id="account-card-msg-${acc.id}" class="mt-2 text-xs text-slate-600">
-              ${summary.message || '—'}
-            </div>
-            <div id="account-card-sub-${acc.id}" class="mt-1 text-[11px] text-slate-400">
-              ${summary.sub || ''}
-            </div>
+            <div id="account-tab-sub-${acc.id}" class="text-[11px] text-slate-500 mt-1">${typeLabel}</div>
           </button>
         `;
       }).join('');
       tabsHtml += `
         <button onclick="addAccount(); render();"
-          class="text-left rounded-xl border border-dashed border-indigo-300 p-4 text-indigo-600 hover:bg-indigo-50/60">
+          class="text-left rounded-lg border border-dashed border-indigo-300 px-4 py-2 text-indigo-600 hover:bg-indigo-50/60">
           <div class="text-sm font-medium">+ 添加转发实例</div>
           <div class="text-xs text-indigo-400 mt-1">创建新的转发账号</div>
         </button>
@@ -6101,18 +6039,14 @@
 
     function updateAccountCardStatus(acc) {
       const summary = buildAccountCardSummary(acc);
-      const badgeEl = document.getElementById(`account-card-status-${acc.id}`);
-      const msgEl = document.getElementById(`account-card-msg-${acc.id}`);
-      const subEl = document.getElementById(`account-card-sub-${acc.id}`);
+      const badgeEl = document.getElementById(`account-tab-status-${acc.id}`);
+      const subEl = document.getElementById(`account-tab-sub-${acc.id}`);
       if (badgeEl) {
         badgeEl.textContent = summary.badgeLabel;
         badgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(summary.state)}`;
       }
-      if (msgEl) {
-        msgEl.textContent = summary.message || '—';
-      }
       if (subEl) {
-        subEl.textContent = summary.sub || '';
+        subEl.textContent = getForwardingTypeLabel(acc.forwardingType);
       }
     }
 
@@ -6180,13 +6114,6 @@
           }
           const data = await res.json();
           if (!Array.isArray(data?.accounts)) return;
-
-          const nextStats = normalizeForwardStats(data.forwardStats);
-          const prevStats = state.forwardStats || {};
-          if (prevStats.date !== nextStats.date || prevStats.total !== nextStats.total) {
-            state.forwardStats = nextStats;
-            updateGlobalOverviewElement(nextStats);
-          }
 
           let shouldRender = false;
 
