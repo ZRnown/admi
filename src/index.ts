@@ -26,10 +26,11 @@ import { telegramBridgeManager } from "./processManager.js";
 import { TelegramBridgeClient, type SendMessageParams } from "./telegramBridgeClient.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
-import { resolveWatermarkList } from "./watermark.js";
+import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
+const telegramSequentialDedupe = new Map<string, string>();
 
 interface RunningAccount {
   account: AccountConfig;
@@ -208,6 +209,29 @@ function formatLogPreview(text?: string, limit = 160): string {
   const normalized = (text || "").replace(/\s+/g, " ").trim();
   if (!normalized) return "(无文本内容)";
   return normalized.length > limit ? normalized.slice(0, limit) + "..." : normalized;
+}
+
+function buildTelegramSequentialSignature(params: any, content: string, mediaItems: any[]): string {
+  const normalized = (content || "").replace(/\s+/g, " ").trim();
+  const mediaTags: string[] = [];
+  if (params?.photo) mediaTags.push(`photo:${String(params.photo)}`);
+  if (params?.video) mediaTags.push(`video:${String(params.video)}`);
+  if (params?.document) mediaTags.push(`document:${String(params.document)}`);
+  for (const item of mediaItems || []) {
+    if (!item) continue;
+    const type = item.type || item.mimeType || "media";
+    const fingerprint =
+      item.fileId ||
+      item.file_id ||
+      item.url ||
+      item.localPath ||
+      item.fileName ||
+      item.filename ||
+      "";
+    mediaTags.push(`${String(type)}:${String(fingerprint)}`);
+  }
+  const mediaSignature = mediaTags.join("|");
+  return `${normalized}||media:${mediaSignature}`;
 }
 
 function normalizeTelegramChatId(value: string | number): string | number {
@@ -1154,6 +1178,16 @@ function setupTelegramBridgeClient() {
         console.log(msg);
         telegramForwardLogger.info(msg);
       };
+      if (account.dedupeSequentialMessages === true) {
+        const sourceKey = `${account.id}:${sourceChatId || sourceChatUsername || "unknown"}`;
+        const signature = buildTelegramSequentialSignature(params, content, mediaItems);
+        const last = telegramSequentialDedupe.get(sourceKey);
+        if (last && last === signature) {
+          logSkip("连续重复去重");
+          continue;
+        }
+        telegramSequentialDedupe.set(sourceKey, signature);
+      }
       const caseInsensitive = account.caseInsensitiveKeywords ?? true;
       const hasRuleOcrFilters = matchingRules.some(
         (rule: any) =>
@@ -2707,6 +2741,7 @@ async function main() {
   // 在启动时先确保文件存在。这是唯一一次允许创建默认文件的机会。
   // 之后的热重载只负责读取，不会创建文件，避免在原子保存间隙时覆盖配置
   await ensureConfigFile();
+  await preloadWatermarkFonts();
 
   const multi = await getMultiConfig();
   currentConfig = multi;

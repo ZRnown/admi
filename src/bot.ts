@@ -393,6 +393,8 @@ export class Bot {
   private logger = new FileLogger();
   // 优化：使用无定时器的去重缓存
   private processedIds = new DedupeCache(2000);
+  // 连续消息去重（按源频道）
+  private sequentialDedupe = new Map<string, string>();
   // Map 最大条目数，超过时删除最旧的（保留最近 10000 条映射）
   private readonly MAX_MAP_SIZE = 10000;
   // 定期保存定时器
@@ -600,6 +602,22 @@ export class Bot {
 
   private getFeishuSenderForChannel(channelId: string): FeishuSender | undefined {
     return this.feishuSendersBySource?.get(channelId);
+  }
+
+  private buildSequentialSignature(message: Message): string {
+    const text = collectMessageTextPieces(message)
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join("\n");
+    const attachmentKeys: string[] = [];
+    if (message.attachments && message.attachments.size > 0) {
+      for (const att of message.attachments.values()) {
+        attachmentKeys.push(att.url || att.name || "");
+      }
+    }
+    const attachments = attachmentKeys.join("|");
+    const embeds = message.embeds?.length || 0;
+    return `${text}||att:${attachments}||emb:${embeds}`;
   }
 
   /**
@@ -947,6 +965,17 @@ export class Bot {
       }
     } catch (e: any) {
       this.logger.error(`${logPrefix} [ERROR] Ignore filter check failed: ${String(e?.message || e)}`);
+    }
+
+    // 连续重复去重：上一条和当前一致则跳过
+    if (this.config.dedupeSequentialMessages === true) {
+      const signature = this.buildSequentialSignature(message);
+      const last = this.sequentialDedupe.get(message.channelId);
+      if (last && last === signature) {
+        this.logger.info(`${logPrefix} [SKIP] Duplicate sequential message (channel=${message.channelId})`);
+        return;
+      }
+      this.sequentialDedupe.set(message.channelId, signature);
     }
 
     // OCR 图片检测过滤（全局 + 规则级别）

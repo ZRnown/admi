@@ -7,11 +7,36 @@ import aiohttp
 import asyncio
 import tempfile
 import os
+import hashlib
+import urllib.request
 from pathlib import Path
 from typing import Dict, Optional, Any, Tuple
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 
+AUTO_FONT_DOWNLOAD = os.getenv("WATERMARK_AUTO_FONT_DOWNLOAD", "1") != "0"
+FONT_CACHE_DIR = Path(os.getcwd()) / ".data" / "watermark_fonts"
+DEFAULT_CJK_FONT_URLS = [
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91.ttf",
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91%E7%B2%97%E4%BD%93.ttf",
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E7%BB%86%E9%BB%91.ttf",
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E4%B8%AD%E5%AE%8B.ttf",
+    "https://raw.githubusercontent.com/chengda/popular-fonts/master/%E5%8D%8E%E6%96%87%E6%A5%B7%E4%BD%93.ttf",
+]
+DEFAULT_FONT_CANDIDATES = [
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.otf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+]
 
 class MediaHandler:
     """媒体文件处理器"""
@@ -26,6 +51,79 @@ class MediaHandler:
         self.max_file_size = max_file_size
         self.temp_dir = Path(tempfile.gettempdir()) / "telegram_bridge_media"
         self.temp_dir.mkdir(exist_ok=True)
+        self.default_font_path: Optional[str] = None
+        self._ensure_default_font()
+
+    def _ensure_default_font(self):
+        try:
+            FONT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        self.default_font_path = self._resolve_default_font_path()
+        if self.default_font_path:
+            logger.info(f"Watermark font ready: {self.default_font_path}")
+        else:
+            logger.warning("Watermark font not found; Chinese text watermark may show as squares")
+
+    def _resolve_default_font_path(self) -> Optional[str]:
+        for candidate in DEFAULT_FONT_CANDIDATES:
+            if candidate and os.path.exists(candidate):
+                return candidate
+        if AUTO_FONT_DOWNLOAD:
+            for url in DEFAULT_CJK_FONT_URLS:
+                downloaded = self._download_font(url)
+                if downloaded:
+                    return downloaded
+        return None
+
+    def _is_font_data(self, data: bytes) -> bool:
+        if not data or len(data) < 1024:
+            return False
+        magic = data[:4]
+        if magic in [b"OTTO", b"ttcf", b"true", b"typ1"]:
+            return True
+        if data[:4] == b"\x00\x01\x00\x00":
+            return True
+        head = data[:32].decode("utf-8", errors="ignore").lower()
+        if "<html" in head or "<!doctype" in head:
+            return False
+        return False
+
+    def _download_font(self, url: str) -> Optional[str]:
+        if not AUTO_FONT_DOWNLOAD or not url:
+            return None
+        try:
+            hash_key = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+            ext = os.path.splitext(url)[-1] or ".otf"
+            target = FONT_CACHE_DIR / f"{hash_key}{ext}"
+            if target.exists():
+                return str(target)
+            with urllib.request.urlopen(url, timeout=30) as resp:
+                data = resp.read()
+            if not self._is_font_data(data):
+                logger.warning(f"Invalid font data downloaded, skip: {url}")
+                return None
+            with open(target, "wb") as f:
+                f.write(data)
+            logger.info(f"Downloaded watermark font: {url} -> {target}")
+            return str(target)
+        except Exception as e:
+            logger.warning(f"Failed to download font: {url} err={e}")
+            return None
+
+    def _resolve_font_path(self, font_path: Optional[str]) -> Optional[str]:
+        if not font_path:
+            return None
+        raw = str(font_path).strip()
+        if not raw:
+            return None
+        if raw.startswith("file://"):
+            raw = raw[7:]
+        if raw.startswith("http://") or raw.startswith("https://"):
+            return self._download_font(raw)
+        if os.path.exists(raw):
+            return raw
+        return None
 
     async def download_media(self, url: str, filename: Optional[str] = None) -> Optional[Path]:
         """
@@ -283,7 +381,18 @@ class MediaHandler:
         except Exception:
             return (255, 255, 255)
 
-    def _load_font(self, size: int) -> ImageFont.ImageFont:
+    def _load_font(self, size: int, font_path: Optional[str] = None) -> ImageFont.ImageFont:
+        resolved = self._resolve_font_path(font_path)
+        if resolved:
+            try:
+                return ImageFont.truetype(resolved, size=size)
+            except Exception:
+                pass
+        if self.default_font_path:
+            try:
+                return ImageFont.truetype(self.default_font_path, size=size)
+            except Exception:
+                pass
         try:
             return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=size)
         except Exception:
@@ -380,7 +489,7 @@ class MediaHandler:
             if text and allow_text:
                 size = int(watermark.get("textSize") or 16)
                 size = max(8, size)
-                font = self._load_font(size)
+                font = self._load_font(size, watermark.get("fontPath"))
                 text_color = self._parse_hex_color(watermark.get("textColor"))
                 opacity = int(watermark.get("textOpacity") or 60)
                 opacity = max(0, min(100, opacity))

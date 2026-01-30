@@ -181,6 +181,7 @@ interface FrontendMapping {
   ignoreChineseThreshold?: number;
   stripEnglish?: boolean;
   stripChinese?: boolean;
+  dedupeSequentialMessages?: boolean;
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
@@ -665,6 +666,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     ignoreChineseThreshold: account.ignoreChineseThreshold,
     stripEnglish: account.stripEnglish === true,
     stripChinese: account.stripChinese === true,
+    dedupeSequentialMessages: account.dedupeSequentialMessages === true,
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
     watermarks: resolveFrontendWatermarks(account.watermarks, account.watermark, account.watermarkSecondary),
@@ -769,6 +771,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       ignoreChineseThreshold: dto.ignoreChineseThreshold,
       stripEnglish: dto.stripEnglish === true,
       stripChinese: dto.stripChinese === true,
+      dedupeSequentialMessages: dto.dedupeSequentialMessages === true,
       feishuStyle: "style1",
     } as AccountConfig);
 
@@ -993,6 +996,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         : base.ignoreChineseThreshold,
     stripEnglish: dto.stripEnglish === true,
     stripChinese: dto.stripChinese === true,
+    dedupeSequentialMessages: dto.dedupeSequentialMessages === true,
     watermark: dto.watermark && typeof dto.watermark === "object" ? dto.watermark : base.watermark,
     watermarkSecondary:
       dto.watermarkSecondary && typeof dto.watermarkSecondary === "object"

@@ -1411,6 +1411,10 @@
                 <input type="checkbox" ${acc.stripChinese ? 'checked' : ''} onchange="updateField('stripChinese', this.checked)"
                   class="h-4 w-4 rounded border-slate-300"> 剔除中文
               </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" ${acc.dedupeSequentialMessages ? 'checked' : ''} onchange="updateField('dedupeSequentialMessages', this.checked)"
+                  class="h-4 w-4 rounded border-slate-300"> 连续重复去重
+              </label>
             </div>
             <p class="text-xs text-slate-500 mt-2">提示：仅对文本生效；忽略会直接跳过整条消息，剔除会删除对应语言字符。</p>
           </div>
@@ -2178,6 +2182,7 @@
     function useApiCredentials(apiId, apiHash) {
       const acc = getActiveAccount();
       if (!acc) return;
+      ensureTelegramConfig(acc);
       const numericId = Number(apiId);
       const normalizedApiId = Number.isFinite(numericId) ? numericId : apiId;
 
@@ -2186,10 +2191,8 @@
 
       if (acc.telegramConfig && Array.isArray(acc.telegramConfig.accounts)) {
         const clientAccounts = acc.telegramConfig.accounts.filter((entry) => entry?.type === 'client');
-        const hasRoleClients = clientAccounts.some((entry) => entry?.role === 'listener' || entry?.role === 'sender');
-        if (!hasRoleClients) {
-          const targets = clientAccounts.filter((entry) => entry?.id === acc.id);
-          targets.forEach((entry) => {
+        if (clientAccounts.length > 0) {
+          clientAccounts.forEach((entry) => {
             entry.apiId = normalizedApiId;
             entry.apiHash = apiHash;
           });
@@ -4236,6 +4239,7 @@
         ignoreChineseThreshold: 100,
         stripEnglish: false,
         stripChinese: false,
+        dedupeSequentialMessages: false,
         watermarks: [],
         watermarkEnabled: true,
         scheduledContents: [],

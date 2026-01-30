@@ -318,6 +318,8 @@ export interface LegacyConfig {
   ignoreChineseThreshold?: number;
   stripEnglish?: boolean;
   stripChinese?: boolean;
+  // 连续重复消息去重（上一条与当前相同则跳过）
+  dedupeSequentialMessages?: boolean;
   // Discord -> Discord 转发样式：style1 = 当前内嵌样式；style2 = 纯文本样式（带时间等）；style3 = 纯文本样式（隐藏回复对象）
   feishuStyle?: "style1" | "style2" | "style3";
   // OCR 图片检测服务器URL
@@ -475,6 +477,7 @@ function createDefaultAccount(): AccountConfig {
     channelTranslate: {},
     channelTranslateDirection: {},
     watermarkEnabled: true,
+    dedupeSequentialMessages: false,
     scheduledContents: [],
     scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
   };
@@ -1114,6 +1117,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           : undefined,
     stripEnglish: input?.stripEnglish === true,
     stripChinese: input?.stripChinese === true,
+    dedupeSequentialMessages: input?.dedupeSequentialMessages === true,
     ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(input?.ocrTriggerKeywords) ? input.ocrTriggerKeywords : [],
@@ -1286,6 +1290,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       ignoreChineseThreshold: 100,
       stripEnglish: false,
       stripChinese: false,
+      dedupeSequentialMessages: false,
       feishuStyle: "style1",
       channelTranslate: {},
       channelTranslateDirection: {},
@@ -1345,6 +1350,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ignoreChineseThreshold: account.ignoreChineseThreshold,
     stripEnglish: account.stripEnglish,
     stripChinese: account.stripChinese,
+    dedupeSequentialMessages: account.dedupeSequentialMessages,
     ocrServerUrl: account.ocrServerUrl,
     ocrBlockedKeywords: account.ocrBlockedKeywords,
     ocrTriggerKeywords: account.ocrTriggerKeywords,

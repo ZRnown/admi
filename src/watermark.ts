@@ -34,6 +34,18 @@ const DEFAULT_CJK_FONT_URLS = (() => {
 const FONT_CACHE_DIR = path.join(process.cwd(), ".data", "watermark_fonts");
 const fontDownloadCache = new Map<string, string | null>();
 
+export async function preloadWatermarkFonts(): Promise<void> {
+  if (!AUTO_FONT_DOWNLOAD) return;
+  try {
+    const fontPath = await resolveDefaultFontPath(true);
+    if (fontPath) {
+      console.log(`[Watermark] 启动预热字体完成: ${fontPath}`);
+    }
+  } catch (err) {
+    console.warn(`[Watermark] 启动预热字体失败: ${String(err)}`);
+  }
+}
+
 function clampPercent(value: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
   if (value < 0) return 0;
