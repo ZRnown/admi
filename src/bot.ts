@@ -144,6 +144,27 @@ function stripEmbedText(
   });
 }
 
+function stripEmbedTitles(embeds: any[] | undefined): any[] | undefined {
+  if (!embeds || embeds.length === 0) return embeds;
+  return embeds.map((embed) => {
+    if (!embed || typeof embed !== "object") return embed;
+    let raw: any = embed;
+    if (typeof (embed as any).toJSON === "function") {
+      try {
+        raw = (embed as any).toJSON();
+      } catch {}
+    } else if ("data" in embed && (embed as any).data) {
+      raw = (embed as any).data;
+    }
+    if (!raw || typeof raw !== "object") return raw;
+    const next: any = { ...raw };
+    if ("title" in next) {
+      delete next.title;
+    }
+    return next;
+  });
+}
+
 function hasImageAttachment(attachments: any): boolean {
   if (!attachments) return false;
   const values = typeof attachments.values === "function" ? attachments.values() : Array.isArray(attachments) ? attachments : [];
@@ -1536,6 +1557,9 @@ export class Bot {
     } else if (message.embeds && message.embeds.length > 0) {
       // 样式1或其他情况：传递原消息的 embeds（这对于 webhook 消息至关重要）
       extraEmbeds = message.embeds;
+    }
+    if (forwardStyle === "style3") {
+      extraEmbeds = stripEmbedTitles(extraEmbeds);
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
     if (effectiveWatermarks.length > 0) {
