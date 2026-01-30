@@ -235,6 +235,7 @@ interface FrontendAccount {
   ignoreChineseThreshold?: number;
   stripEnglish?: boolean;
   stripChinese?: boolean;
+  dedupeSequentialMessages?: boolean;
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
