@@ -1130,7 +1130,7 @@
 
     // 渲染账号配置表单
     function renderAccountForm(acc, forwardingType) {
-      const isPending = acc.loginState === 'pending';
+      const isPending = acc.loginState === 'pending' || acc.loginState === 'connecting';
       const isOnline = acc.loginState === 'online';
       const inferredTelegramType = inferTelegramTypeFromCredentials(acc);
       const tgListenerType =
@@ -1458,8 +1458,8 @@
                     class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
                     ${isPending ? '连接中...' : isOnline ? '已连接' : '连接'}
                   </button>
-                  <button id="btn-discord-stop" onclick="requestStop()" ${isPending || (!isOnline && acc.loginState !== 'error') ? 'disabled' : ''}
-                    class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${isPending || (!isOnline && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                  <button id="btn-discord-stop" onclick="requestStop()" ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'disabled' : ''}
+                    class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
                     断开
                   </button>
                 </div>
@@ -6006,8 +6006,9 @@
       }
 
       if (btnDisconnect) {
-        btnDisconnect.disabled = isPending || (!isOnline && !isError);
-        btnDisconnect.className = `${baseClass} font-medium rounded-md border border-slate-200 ${isPending || (!isOnline && !isError) ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}`;
+        const canDisconnect = normalizedState !== 'idle';
+        btnDisconnect.disabled = !canDisconnect;
+        btnDisconnect.className = `${baseClass} font-medium rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}`;
       }
     }
 
