@@ -27,6 +27,7 @@ import { TelegramBridgeClient, type SendMessageParams } from "./telegramBridgeCl
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
+import { reconcileExternalForwarders, shutdownExternalForwarders } from "./externalForwarder.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -87,16 +88,27 @@ const sharedDiscordClients = new Map<
 >();
 let currentConfig: MultiConfig | null = null;
 const statusFile = path.resolve(process.cwd(), ".data", "status.json");
+const telegramLoginRequestFile = path.resolve(process.cwd(), ".data", "telegram_login_request.json");
+const telegramLoginResponseFile = path.resolve(process.cwd(), ".data", "telegram_login_response.json");
+const discordLoginRequestFile = path.resolve(process.cwd(), ".data", "discord_login_request.json");
+const discordLoginResponseFile = path.resolve(process.cwd(), ".data", "discord_login_response.json");
 const ocrClients = new Map<string, { url: string; client: OCRClient }>();
 const translationSenders = new Map<string, { key: string; sender: SenderBot }>();
 const telegramReplyMap = new Map<string, string>();
 const telegramReplyQueue: string[] = [];
 const TELEGRAM_REPLY_CACHE_LIMIT = 10000;
+const EXTERNAL_FORWARDING_TYPES = new Set(["x-to-discord", "truthsocial-to-discord"]);
 // 记录已经输出过"未配置 token"错误的账号，避免重复日志
 const loggedNoTokenAccounts = new Set<string>();
 // 记录配置文件的 hash，只在真正变化时才重新读取
 let lastConfigHash: string | null = null;
 let lastConfigMtime: number = 0;
+let telegramLoginProcessing = false;
+let discordLoginProcessing = false;
+
+function isExternalForwardingType(type?: string): boolean {
+  return typeof type === "string" && EXTERNAL_FORWARDING_TYPES.has(type);
+}
 
 function buildTelegramReplyKey(sourceChatId: string, sourceMessageId: string, targetChatId: string): string {
   return `${sourceChatId}:${sourceMessageId}:${targetChatId}`;
@@ -1782,6 +1794,180 @@ function setupTelegramBridgeClient() {
   });
 }
 
+async function processTelegramLoginRequest(logger: FileLogger) {
+  if (telegramLoginProcessing) return;
+  telegramLoginProcessing = true;
+  try {
+    await fs.access(telegramLoginRequestFile);
+  } catch {
+    telegramLoginProcessing = false;
+    return;
+  }
+
+  try {
+    const raw = await fs.readFile(telegramLoginRequestFile, "utf-8");
+    let request: any = null;
+    try {
+      request = JSON.parse(raw);
+    } catch {
+      request = null;
+    }
+    await fs.unlink(telegramLoginRequestFile).catch(() => {});
+
+    try {
+      await fs.mkdir(path.dirname(telegramLoginResponseFile), { recursive: true });
+    } catch {}
+
+    if (!request || !request.id || !request.action) {
+      await fs.writeFile(
+        telegramLoginResponseFile,
+        JSON.stringify({ id: request?.id || "unknown", success: false, error: "INVALID_REQUEST" }, null, 2),
+      );
+      telegramLoginProcessing = false;
+      return;
+    }
+
+    if (!telegramBridgeClient) {
+      await fs.writeFile(
+        telegramLoginResponseFile,
+        JSON.stringify({ id: request.id, success: false, error: "BRIDGE_NOT_READY" }, null, 2),
+      );
+      telegramLoginProcessing = false;
+      return;
+    }
+
+    let result: any = null;
+    if (request.action === "start") {
+      result = await telegramBridgeClient.startClientLogin(request.params || {});
+    } else if (request.action === "confirm") {
+      result = await telegramBridgeClient.confirmClientLogin(request.params || {});
+    } else {
+      result = { success: false, error: "UNKNOWN_ACTION" };
+    }
+
+    await fs.writeFile(
+      telegramLoginResponseFile,
+      JSON.stringify(
+        {
+          id: request.id,
+          success: result?.success === true,
+          result,
+          error: result?.error,
+        },
+        null,
+        2,
+      ),
+    );
+  } catch (e: any) {
+    try {
+      await fs.writeFile(
+        telegramLoginResponseFile,
+        JSON.stringify(
+          { id: "unknown", success: false, error: String(e?.message || e) },
+          null,
+          2,
+        ),
+      );
+    } catch {}
+    await logger.error(`处理 Telegram 登录请求失败: ${String(e?.message || e)}`);
+  } finally {
+    telegramLoginProcessing = false;
+  }
+}
+
+async function processDiscordLoginRequest(logger: FileLogger) {
+  if (discordLoginProcessing) return;
+  discordLoginProcessing = true;
+  try {
+    await fs.access(discordLoginRequestFile);
+  } catch {
+    discordLoginProcessing = false;
+    return;
+  }
+
+  try {
+    const raw = await fs.readFile(discordLoginRequestFile, "utf-8");
+    let request: any = null;
+    try {
+      request = JSON.parse(raw);
+    } catch {
+      request = null;
+    }
+    await fs.unlink(discordLoginRequestFile).catch(() => {});
+
+    try {
+      await fs.mkdir(path.dirname(discordLoginResponseFile), { recursive: true });
+    } catch {}
+
+    if (!request || !request.id || !request.action) {
+      await fs.writeFile(
+        discordLoginResponseFile,
+        JSON.stringify({ id: request?.id || "unknown", success: false, error: "INVALID_REQUEST" }, null, 2),
+      );
+      discordLoginProcessing = false;
+      return;
+    }
+
+    let result: any = null;
+    if (request.action === "password") {
+      const email = request.params?.email;
+      const password = request.params?.password;
+      const totpSecret = request.params?.totpSecret;
+      if (!email || !password) {
+        result = { success: false, error: "MISSING_CREDENTIALS" };
+      } else {
+        const client = new SelfBotClient({
+          checkUpdate: false,
+          patchVoice: false,
+          syncStatus: false,
+          ...(totpSecret ? { TOTPKey: totpSecret } : {}),
+        } as any);
+        try {
+          const token = await (client as any).passLogin(email, password);
+          const resolvedToken = typeof token === "string" && token.trim() ? token.trim() : (client as any).token;
+          if (resolvedToken) {
+            result = { success: true, token: resolvedToken };
+          } else {
+            result = { success: false, error: "TOKEN_NOT_FOUND" };
+          }
+        } catch (e: any) {
+          result = { success: false, error: String(e?.message || e) };
+        } finally {
+          try {
+            await (client as any).destroy();
+          } catch {}
+        }
+      }
+    } else {
+      result = { success: false, error: "UNKNOWN_ACTION" };
+    }
+
+    await fs.writeFile(
+      discordLoginResponseFile,
+      JSON.stringify(
+        {
+          id: request.id,
+          success: result?.success === true,
+          result,
+          error: result?.error,
+        },
+        null,
+        2,
+      ),
+    );
+  } catch (e: any) {
+    try {
+      await fs.writeFile(
+        discordLoginResponseFile,
+        JSON.stringify({ id: "unknown", success: false, error: String(e?.message || e) }, null, 2),
+      );
+    } catch {}
+    await logger.error(`处理 Discord 登录请求失败: ${String(e?.message || e)}`);
+  } finally {
+    discordLoginProcessing = false;
+  }
+}
+
 async function startAccount(account: AccountConfig, logger: FileLogger) {
   if (!account.loginRequested) {
     await writeStatusForAccount(account.id, "idle", "未请求登录");
@@ -2448,6 +2634,12 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
 
   // 新增或更新账号
   for (const account of newConfig.accounts) {
+    if (isExternalForwardingType(account.forwardingType)) {
+      if (runningAccounts.has(account.id)) {
+        await stopAccount(account.id, logger, false);
+      }
+      continue;
+    }
     // 如果账号请求登录但没有 token，跳过处理避免重复错误日志
     if (account.loginRequested && !account.token) {
       const existing = runningAccounts.get(account.id);
@@ -2732,6 +2924,13 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     await logger.error(`同步配置到Telegram Bridge失败: ${error.message}`);
   }
 
+  // 同步外部平台转发（X / TruthSocial）
+  try {
+    await reconcileExternalForwarders(newConfig, logger);
+  } catch (error: any) {
+    await logger.error(`同步外部平台转发失败: ${error.message}`);
+  }
+
   currentConfig = newConfig;
 }
 
@@ -2751,6 +2950,9 @@ async function main() {
 
   // 只启动已请求登录的账号，不自动登录
   for (const account of multi.accounts) {
+    if (isExternalForwardingType(account.forwardingType)) {
+      continue;
+    }
     if (account.loginRequested && account.token) {
       await startAccount(account, logger);
     } else {
@@ -2758,6 +2960,9 @@ async function main() {
       await writeStatus(account.id, "idle", "未请求登录");
     }
   }
+
+  // 启动外部平台转发（X / TruthSocial）
+  await reconcileExternalForwarders(multi, logger);
 
   // 启动Telegram Bridge进程
   try {
@@ -2897,6 +3102,16 @@ async function main() {
   setInterval(() => {
     scheduleReload();
   }, 2000);
+
+  // 处理 Telegram 手机号登录请求
+  setInterval(() => {
+    processTelegramLoginRequest(logger).catch(() => {});
+  }, 1000);
+
+  // 处理 Discord 邮箱密码登录请求
+  setInterval(() => {
+    processDiscordLoginRequest(logger).catch(() => {});
+  }, 1000);
 }
 
 process.on("unhandledRejection", async (reason: any) => {
@@ -2912,12 +3127,14 @@ process.on("uncaughtException", async (err: any) => {
 // 优雅关闭处理
 process.on("SIGINT", async () => {
   console.log("[Main] Received SIGINT, shutting down...");
+  shutdownExternalForwarders();
   await telegramBridgeManager.cleanup();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
   console.log("[Main] Received SIGTERM, shutting down...");
+  shutdownExternalForwarders();
   await telegramBridgeManager.cleanup();
   process.exit(0);
 });

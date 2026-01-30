@@ -7,11 +7,13 @@ import asyncio
 import hashlib
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.tl.types import User, Chat, Channel
-from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
+from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, PhoneCodeExpiredError
 from loguru import logger
 from .telegram_types import TelegramAccount, ConnectionStatus, ConnectionState, TelegramChannel, TelegramMessage
 from .session import SessionManager
@@ -39,6 +41,8 @@ class TelegramClientManager:
         self._shared_primary: Dict[str, str] = {}
         self._shared_user_info: Dict[str, dict] = {}
         self._event_handlers: Dict[str, Any] = {}
+        self._pending_logins: Dict[str, Dict[str, Any]] = {}
+        self._pending_login_ttl = 10 * 60
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
         media_root = os.getenv("TELEGRAM_MEDIA_DIR") or str(base_dir / ".data" / "telegram_media")
@@ -633,6 +637,150 @@ class TelegramClientManager:
     def get_status(self, account_id: str) -> Optional[ConnectionState]:
         """获取连接状态"""
         return self.connection_manager.get_state(account_id)
+
+    async def _prune_pending_logins(self):
+        """清理过期的登录会话"""
+        now = time.time()
+        expired_ids = [
+            login_id
+            for login_id, entry in self._pending_logins.items()
+            if entry.get("expires_at", 0) <= now
+        ]
+        for login_id in expired_ids:
+            entry = self._pending_logins.pop(login_id, None)
+            client = entry.get("client") if entry else None
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+
+    async def start_login(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """开始手机号登录流程，发送验证码"""
+        await self._prune_pending_logins()
+        phone_number = params.get("phoneNumber") or params.get("phone") or params.get("phone_number")
+        api_id = params.get("apiId") or params.get("api_id")
+        api_hash = params.get("apiHash") or params.get("api_hash")
+        proxy_url = params.get("proxyUrl") or params.get("proxy_url")
+
+        if not phone_number or not api_id or not api_hash:
+            return {
+                "success": False,
+                "error": "MISSING_PARAMS",
+                "message": "phoneNumber, apiId, apiHash are required"
+            }
+
+        client = None
+        try:
+            session = StringSession()
+            client = TelegramClient(
+                session,
+                int(api_id),
+                str(api_hash),
+                proxy=proxy_url
+            )
+            await client.connect()
+            sent = await client.send_code_request(str(phone_number))
+            login_id = str(uuid.uuid4())
+            self._pending_logins[login_id] = {
+                "client": client,
+                "phone": str(phone_number),
+                "phone_code_hash": getattr(sent, "phone_code_hash", None),
+                "expires_at": time.time() + self._pending_login_ttl,
+            }
+            return {
+                "success": True,
+                "loginId": login_id,
+            }
+        except Exception as e:
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+            logger.error(f"Failed to start login: {e}")
+            return {
+                "success": False,
+                "error": "LOGIN_START_FAILED",
+                "message": str(e)
+            }
+
+    async def confirm_login(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """提交验证码并完成登录，返回session字符串"""
+        await self._prune_pending_logins()
+        login_id = params.get("loginId") or params.get("login_id")
+        code = params.get("code")
+        password = params.get("password") or params.get("twoFactorPassword")
+
+        if not login_id or not code:
+            return {
+                "success": False,
+                "error": "MISSING_PARAMS",
+                "message": "loginId and code are required"
+            }
+
+        entry = self._pending_logins.get(login_id)
+        if not entry:
+            return {
+                "success": False,
+                "error": "LOGIN_NOT_FOUND",
+                "message": "Login session not found or expired"
+            }
+
+        client = entry.get("client")
+        phone = entry.get("phone")
+        phone_code_hash = entry.get("phone_code_hash")
+
+        try:
+            await client.sign_in(phone=phone, code=str(code), phone_code_hash=phone_code_hash)
+        except SessionPasswordNeededError:
+            if not password:
+                return {
+                    "success": False,
+                    "error": "2FA_REQUIRED",
+                    "message": "Two-factor password required"
+                }
+            await client.sign_in(password=str(password))
+        except PhoneCodeInvalidError:
+            return {
+                "success": False,
+                "error": "PHONE_CODE_INVALID",
+                "message": "Phone code invalid"
+            }
+        except PhoneCodeExpiredError:
+            return {
+                "success": False,
+                "error": "PHONE_CODE_EXPIRED",
+                "message": "Phone code expired"
+            }
+        except Exception as e:
+            logger.error(f"Failed to confirm login: {e}")
+            return {
+                "success": False,
+                "error": "LOGIN_CONFIRM_FAILED",
+                "message": str(e)
+            }
+
+        try:
+            me = await client.get_me()
+            session_string = client.session.save()
+            user_info = {
+                "id": me.id,
+                "firstName": me.first_name,
+                "lastName": me.last_name,
+                "username": me.username
+            }
+            return {
+                "success": True,
+                "sessionString": session_string,
+                "userInfo": user_info
+            }
+        finally:
+            self._pending_logins.pop(login_id, None)
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
 
     def _on_connection_state_changed(self, account_id: str, state: ConnectionState):
         """连接状态变更回调"""

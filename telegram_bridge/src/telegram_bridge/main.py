@@ -259,6 +259,12 @@ class TelegramBridgeService:
         async def wrap_get_client_channels(params):
             return await self.client_manager.get_channels(params.get("accountId"))
 
+        async def wrap_start_client_login(params):
+            return await self.client_manager.start_login(params)
+
+        async def wrap_confirm_client_login(params):
+            return await self.client_manager.confirm_login(params)
+
         async def wrap_disconnect_bot(params):
             account_id = params.get("accountId")
             result = await self.bot_manager.disconnect(account_id)
@@ -276,6 +282,8 @@ class TelegramBridgeService:
         self.ipc_server.register_handler("disconnectClient", wrap_disconnect_client)
         self.ipc_server.register_handler("getClientStatus", wrap_get_client_status)
         self.ipc_server.register_handler("getClientChannels", wrap_get_client_channels)
+        self.ipc_server.register_handler("startClientLogin", wrap_start_client_login)
+        self.ipc_server.register_handler("confirmClientLogin", wrap_confirm_client_login)
 
         # 机器人管理
         self.ipc_server.register_handler("connectBot", wrap_connect_bot)

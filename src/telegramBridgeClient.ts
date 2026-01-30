@@ -239,6 +239,20 @@ export class TelegramBridgeClient extends EventEmitter {
   }
 
   /**
+   * 开始 Telegram Client 手机号登录（发送验证码）
+   */
+  async startClientLogin(params: { phoneNumber: string; apiId: number; apiHash: string; proxyUrl?: string }): Promise<any> {
+    return this._sendRequest("startClientLogin", params);
+  }
+
+  /**
+   * 完成 Telegram Client 登录（提交验证码）
+   */
+  async confirmClientLogin(params: { loginId: string; code: string; password?: string }): Promise<any> {
+    return this._sendRequest("confirmClientLogin", params);
+  }
+
+  /**
    * 断开 Telegram Bot
    */
   async disconnectBot(accountId: string): Promise<any> {

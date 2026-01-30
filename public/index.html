@@ -60,7 +60,7 @@
       <!-- 账号切换标签 -->
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
         <div class="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/60 p-4">
-          <div class="flex flex-wrap items-center gap-2" id="accountTabs"></div>
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" id="accountTabs"></div>
           <div class="flex flex-wrap items-center gap-2">
             <button onclick="showHelp()" class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
               <span>ℹ️</span> 使用说明
@@ -506,6 +506,160 @@
       }
     }
 
+    function getForwardingTypeLabel(type) {
+      const value = type || 'discord-to-discord';
+      switch (value) {
+        case 'discord-to-discord':
+          return 'Discord → Discord';
+        case 'discord-to-telegram':
+          return 'Discord → Telegram';
+        case 'telegram-to-discord':
+          return 'Telegram → Discord';
+        case 'telegram-to-telegram':
+          return 'Telegram → Telegram';
+        case 'discord-to-feishu':
+          return 'Discord → 飞书';
+        case 'x-to-discord':
+          return 'X → Discord';
+        case 'truthsocial-to-discord':
+          return 'TruthSocial → Discord';
+        default:
+          return value;
+      }
+    }
+
+    function formatTime(value) {
+      if (!value) return '—';
+      try {
+        return new Date(value).toLocaleString('zh-CN', { hour12: false });
+      } catch (e) {
+        return '—';
+      }
+    }
+
+    const statusLabelMap = {
+      online: '已连接',
+      idle: '未连接',
+      pending: '连接中',
+      connecting: '连接中',
+      disconnecting: '断开中',
+      error: '异常'
+    };
+
+    function getStatusLabel(state) {
+      if (!state) return statusLabelMap.idle;
+      return statusLabelMap[state] || state;
+    }
+
+    function getBadgeClass(state) {
+      const normalized = state || 'idle';
+      const badgeState = normalized === 'disconnecting' ? 'pending' : normalized;
+      if (badgeState === 'online') return 'bg-emerald-50 text-emerald-700';
+      if (badgeState === 'error') return 'bg-red-50 text-red-700';
+      if (badgeState === 'pending' || badgeState === 'connecting') return 'bg-amber-50 text-amber-700';
+      return 'bg-slate-100 text-slate-600';
+    }
+
+    function buildExternalStatusSummary(acc, kind) {
+      const statusMap = acc?.externalForwardStatus?.[kind] || {};
+      const rules = kind === 'x' ? (acc.xConfig?.mappings || []) : (acc.truthSocialConfig?.mappings || []);
+      const statuses = Object.values(statusMap || {}).filter(Boolean);
+      const pickMax = (field) => {
+        let max = 0;
+        statuses.forEach((item) => {
+          const value = Number(item?.[field] || 0);
+          if (value > max) max = value;
+        });
+        return max || 0;
+      };
+      const lastPollAt = pickMax('lastPollAt');
+      const lastForwardAt = pickMax('lastForwardAt');
+      const lastErrorAt = pickMax('lastErrorAt');
+      let lastError = '';
+      if (lastErrorAt) {
+        statuses.forEach((item) => {
+          if (item?.lastErrorAt === lastErrorAt && item?.lastError) {
+            lastError = item.lastError;
+          }
+        });
+      }
+      const hasRules = rules.length > 0;
+      const running = acc.loginRequested === true && hasRules;
+      const state = running ? (lastError ? 'error' : 'online') : 'idle';
+      const badgeLabel = running ? (lastError ? '异常' : '运行中') : '未启动';
+      return {
+        state,
+        badgeLabel,
+        lastPollAt,
+        lastForwardAt,
+        lastErrorAt,
+        lastError,
+        lastPollLabel: lastPollAt ? formatTime(lastPollAt) : '—',
+        lastForwardLabel: lastForwardAt ? formatTime(lastForwardAt) : '—',
+        hasRules,
+        ruleCount: rules.length
+      };
+    }
+
+    function buildAccountCardSummary(acc) {
+      const type = acc.forwardingType || 'discord-to-discord';
+      if (type === 'x-to-discord' || type === 'truthsocial-to-discord') {
+        const kind = type === 'x-to-discord' ? 'x' : 'truthsocial';
+        const summary = buildExternalStatusSummary(acc, kind);
+        const message = summary.lastError
+          ? summary.lastError
+          : summary.lastForwardAt
+            ? `最近转发: ${summary.lastForwardLabel}`
+            : summary.lastPollAt
+              ? `最近拉取: ${summary.lastPollLabel}`
+              : summary.hasRules
+                ? '等待拉取'
+                : '未配置规则';
+        const sub = `规则 ${summary.ruleCount} 条`;
+        return {
+          state: summary.state,
+          badgeLabel: summary.badgeLabel,
+          message,
+          sub
+        };
+      }
+      if (type === 'telegram-to-discord') {
+        const state = acc.telegramClientState || 'idle';
+        return {
+          state,
+          badgeLabel: getStatusLabel(state),
+          message: acc.telegramClientMessage || '',
+          sub: 'Telegram Client'
+        };
+      }
+      if (type === 'telegram-to-telegram') {
+        const botState = acc.telegramBotState || 'idle';
+        const clientState = acc.telegramClientState || 'idle';
+        const states = [botState, clientState];
+        const state = states.includes('error')
+          ? 'error'
+          : states.some((item) => item === 'pending' || item === 'connecting' || item === 'disconnecting')
+            ? 'pending'
+            : states.includes('online')
+              ? 'online'
+              : 'idle';
+        const message = `Bot:${getStatusLabel(botState)} / Client:${getStatusLabel(clientState)}`;
+        return {
+          state,
+          badgeLabel: getStatusLabel(state),
+          message,
+          sub: 'Telegram 监听/发送'
+        };
+      }
+      const state = acc.loginState || 'idle';
+      return {
+        state,
+        badgeLabel: getStatusLabel(state),
+        message: acc.loginMessage || '',
+        sub: ''
+      };
+    }
+
     let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
     const watermarkPreviewCache = new Map();
     function getWatermarkPreviewKey(accountId, index = 0) {
@@ -944,17 +1098,38 @@
         return;
       }
 
-      let tabsHtml = state.accounts.map(acc => `
-        <button onclick="switchAccount('${acc.id}')" 
-          class="rounded-full px-3 py-1 text-sm font-medium transition ${
-            acc.id === state.activeId 
-              ? 'bg-indigo-600 text-white shadow' 
-              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-          }">
-          ${acc.name || '未命名账号'}
+      let tabsHtml = state.accounts.map(acc => {
+        const summary = buildAccountCardSummary(acc);
+        const typeLabel = getForwardingTypeLabel(acc.forwardingType);
+        const isActive = acc.id === state.activeId;
+        return `
+          <button onclick="switchAccount('${acc.id}')"
+            class="text-left rounded-xl border p-4 transition ${isActive ? 'border-indigo-500 ring-1 ring-indigo-200 bg-indigo-50/40' : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40'}">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold text-slate-800">${acc.name || '未命名账号'}</div>
+                <div class="text-xs text-slate-500 mt-1">${typeLabel}</div>
+              </div>
+              <span id="account-card-status-${acc.id}" class="px-2 py-0.5 rounded-full text-xs ${getBadgeClass(summary.state)}">
+                ${summary.badgeLabel}
+              </span>
+            </div>
+            <div id="account-card-msg-${acc.id}" class="mt-2 text-xs text-slate-600">
+              ${summary.message || '—'}
+            </div>
+            <div id="account-card-sub-${acc.id}" class="mt-1 text-[11px] text-slate-400">
+              ${summary.sub || ''}
+            </div>
+          </button>
+        `;
+      }).join('');
+      tabsHtml += `
+        <button onclick="addAccount(); render();"
+          class="text-left rounded-xl border border-dashed border-indigo-300 p-4 text-indigo-600 hover:bg-indigo-50/60">
+          <div class="text-sm font-medium">+ 添加转发实例</div>
+          <div class="text-xs text-indigo-400 mt-1">创建新的转发账号</div>
         </button>
-      `).join('');
-      tabsHtml += `<button onclick="addAccount(); render();" class="inline-flex items-center gap-1 rounded-full border border-dashed border-indigo-300 px-3 py-1 text-sm font-medium text-indigo-600 hover:bg-indigo-50">+ 添加转发实例</button>`;
+      `;
       accountTabsEl.innerHTML = tabsHtml;
 
       // 渲染配置表单
@@ -1005,6 +1180,32 @@
       const scheduledBroadcast = ensureScheduledBroadcast(acc);
       const watermarkList = getWatermarkList(acc);
       const showScheduledLibrary = false;
+
+      const renderExternalStatusSection = (kind) => {
+        const summary = buildExternalStatusSummary(acc, kind);
+        const title = kind === 'x' ? 'X / Twitter' : 'Truth Social';
+        return `
+        <div class="border-t pt-4 border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-medium text-slate-800">${title} 运行状态</h3>
+            <label class="inline-flex items-center gap-2 text-xs text-slate-700">
+              <input type="checkbox" ${acc.loginRequested ? 'checked' : ''} onchange="updateField('loginRequested', this.checked)"
+                class="h-4 w-4 rounded border-slate-300">
+              启用运行
+            </label>
+          </div>
+          <div class="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            状态: <span id="external-${kind}-badge" class="px-2 py-0.5 rounded-full ${getBadgeClass(summary.state)}">${summary.badgeLabel}</span>
+            <span id="external-${kind}-poll">最近拉取: ${summary.lastPollLabel}</span>
+            <span id="external-${kind}-forward">最近转发: ${summary.lastForwardLabel}</span>
+          </div>
+          <div id="external-${kind}-error" class="text-xs ${summary.lastError ? 'text-red-500' : 'text-slate-400'} mt-2">
+            ${summary.lastError ? `错误: ${escapeHtml(summary.lastError)}` : '暂无错误'}
+          </div>
+          <p class="text-xs text-slate-500 mt-2">已配置规则: ${summary.ruleCount} 条（配置入口暂在 config.json）</p>
+        </div>
+      `;
+      };
 
       const renderTelegramBotConfig = (title, note, options = {}) => {
         const role = options.role;
@@ -1187,9 +1388,15 @@
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-discord')) ? `<option value="telegram-to-discord" ${acc.forwardingType === 'telegram-to-discord' ? 'selected' : ''}>Telegram → Discord</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-telegram')) ? `<option value="telegram-to-telegram" ${acc.forwardingType === 'telegram-to-telegram' ? 'selected' : ''}>Telegram → Telegram</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-feishu')) ? `<option value="discord-to-feishu" ${acc.forwardingType === 'discord-to-feishu' ? 'selected' : ''}>Discord → 飞书</option>` : ''}
+                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('x-to-discord')) ? `<option value="x-to-discord" ${acc.forwardingType === 'x-to-discord' ? 'selected' : ''}>X → Discord</option>` : ''}
+                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('truthsocial-to-discord')) ? `<option value="truthsocial-to-discord" ${acc.forwardingType === 'truthsocial-to-discord' ? 'selected' : ''}>TruthSocial → Discord</option>` : ''}
               </select>
             </div>
             </div>
+
+            ${(forwardingType === 'x-to-discord' || forwardingType === 'truthsocial-to-discord')
+              ? renderExternalStatusSection(forwardingType === 'x-to-discord' ? 'x' : 'truthsocial')
+              : ''}
 
             ${forwardingType === 'telegram-to-telegram' ? `
             <!-- Telegram→Telegram 账号选择 -->
@@ -1428,14 +1635,18 @@
                 forwardingType === 'discord-to-telegram' ? 'Discord → Telegram 转发规则' :
                 forwardingType === 'telegram-to-discord' ? 'Telegram → Discord 转发规则' :
                 forwardingType === 'telegram-to-telegram' ? 'Telegram → Telegram 转发规则' :
-                'Discord → 飞书 转发规则'}
+                forwardingType === 'discord-to-feishu' ? 'Discord → 飞书 转发规则' :
+                forwardingType === 'x-to-discord' ? 'X → Discord 转发规则' :
+                'TruthSocial → Discord 转发规则'}
             </h2>
             <p class="text-xs text-slate-500 mt-1">
               ${forwardingType === 'discord-to-discord' ? '配置Discord频道之间的转发映射关系' :
                 forwardingType === 'discord-to-telegram' ? '配置Discord消息转发到Telegram频道的映射关系' :
                 forwardingType === 'telegram-to-discord' ? '配置Telegram消息转发到Discord频道的映射关系' :
                 forwardingType === 'telegram-to-telegram' ? '配置Telegram消息转发到Telegram频道的映射关系' :
-                '配置Discord消息转发到飞书的映射关系'}
+                forwardingType === 'discord-to-feishu' ? '配置Discord消息转发到飞书的映射关系' :
+                forwardingType === 'x-to-discord' ? '配置 X 平台内容转发到 Discord 的规则' :
+                '配置 TruthSocial 内容转发到 Discord 的规则'}
             </p>
           </div>
 
@@ -1506,6 +1717,30 @@
                 ${isTelegramForwardEnabled(acc) ? `<button onclick="addMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
               </div>
               ${isTelegramForwardEnabled(acc) ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Telegram→Telegram 转发</div>'}
+            </div>
+            ` : forwardingType === 'x-to-discord' ? `
+            <!-- X→Discord 转发规则 -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm text-slate-800 font-medium">X → Discord 转发规则</span>
+                <span class="text-xs text-slate-500">已配置 ${acc.xConfig?.mappings?.length || 0} 条</span>
+              </div>
+              <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                <p>当前类型暂不支持在 UI 内编辑规则，请在 <code class="px-1 bg-slate-100 rounded">config.json</code> 中配置。</p>
+                <p>修改后页面会自动同步状态。</p>
+              </div>
+            </div>
+            ` : forwardingType === 'truthsocial-to-discord' ? `
+            <!-- TruthSocial→Discord 转发规则 -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm text-slate-800 font-medium">TruthSocial → Discord 转发规则</span>
+                <span class="text-xs text-slate-500">已配置 ${acc.truthSocialConfig?.mappings?.length || 0} 条</span>
+              </div>
+              <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                <p>当前类型暂不支持在 UI 内编辑规则，请在 <code class="px-1 bg-slate-100 rounded">config.json</code> 中配置。</p>
+                <p>修改后页面会自动同步状态。</p>
+              </div>
             </div>
             ` : forwardingType === 'discord-to-feishu' ? `
             <!-- Discord→飞书 转发规则 -->
@@ -5532,6 +5767,49 @@
       }
     }
 
+    function updateExternalStatusElement(kind, summary) {
+      const badgeEl = document.getElementById(`external-${kind}-badge`);
+      const pollEl = document.getElementById(`external-${kind}-poll`);
+      const forwardEl = document.getElementById(`external-${kind}-forward`);
+      const errorEl = document.getElementById(`external-${kind}-error`);
+      if (badgeEl) {
+        badgeEl.textContent = summary.badgeLabel;
+        badgeEl.className = `px-2 py-0.5 rounded-full ${getBadgeClass(summary.state)}`;
+      }
+      if (pollEl) {
+        pollEl.textContent = `最近拉取: ${summary.lastPollLabel}`;
+      }
+      if (forwardEl) {
+        forwardEl.textContent = `最近转发: ${summary.lastForwardLabel}`;
+      }
+      if (errorEl) {
+        if (summary.lastError) {
+          errorEl.textContent = `错误: ${summary.lastError}`;
+          errorEl.className = 'text-xs text-red-500 mt-2';
+        } else {
+          errorEl.textContent = '暂无错误';
+          errorEl.className = 'text-xs text-slate-400 mt-2';
+        }
+      }
+    }
+
+    function updateAccountCardStatus(acc) {
+      const summary = buildAccountCardSummary(acc);
+      const badgeEl = document.getElementById(`account-card-status-${acc.id}`);
+      const msgEl = document.getElementById(`account-card-msg-${acc.id}`);
+      const subEl = document.getElementById(`account-card-sub-${acc.id}`);
+      if (badgeEl) {
+        badgeEl.textContent = summary.badgeLabel;
+        badgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(summary.state)}`;
+      }
+      if (msgEl) {
+        msgEl.textContent = summary.message || '—';
+      }
+      if (subEl) {
+        subEl.textContent = summary.sub || '';
+      }
+    }
+
     function updateRelayStatusElement(relayId, state, message) {
       const normalizedState = state || 'idle';
       const displayLabels = {
@@ -5723,6 +6001,32 @@
                 }
               }
             }
+
+            if (remoteAcc.externalForwardStatus) {
+              localAcc.externalForwardStatus = remoteAcc.externalForwardStatus;
+            }
+
+            if (typeof remoteAcc.forwardingType === 'string' && localAcc.forwardingType !== remoteAcc.forwardingType) {
+              localAcc.forwardingType = remoteAcc.forwardingType;
+              if (isActive) {
+                shouldRender = true;
+              }
+            }
+
+            if (isActive) {
+              const externalKind =
+                localAcc.forwardingType === 'x-to-discord'
+                  ? 'x'
+                  : localAcc.forwardingType === 'truthsocial-to-discord'
+                    ? 'truthsocial'
+                    : null;
+              if (externalKind) {
+                const summary = buildExternalStatusSummary(localAcc, externalKind);
+                updateExternalStatusElement(externalKind, summary);
+              }
+            }
+
+            updateAccountCardStatus(localAcc);
           });
 
           if (shouldRender) {

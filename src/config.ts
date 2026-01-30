@@ -19,6 +19,8 @@ const FORWARDING_TYPES = [
   "telegram-to-discord",
   "telegram-to-telegram",
   "discord-to-feishu",
+  "x-to-discord",
+  "truthsocial-to-discord",
 ] as const;
 
 type ForwardingType = (typeof FORWARDING_TYPES)[number];
@@ -56,6 +58,8 @@ export interface TelegramAccountConfig {
   sessionString?: string;  // Session字符串 (仅client, 加密存储)
   apiId?: number;          // API ID (仅client)
   apiHash?: string;        // API Hash (仅client)
+  phoneNumber?: string;
+  twoFactorPassword?: string;
   proxyUrl?: string;
   role?: "listener" | "sender";
   sessionType?: "file" | "string";
@@ -91,6 +95,8 @@ export interface FrontendTelegramAccount {
   sessionString?: string;
   apiId?: number;
   apiHash?: string;
+  phoneNumber?: string;
+  twoFactorPassword?: string;
   role?: "listener" | "sender";
   sessionType?: "file" | "string";
   loginRequested?: boolean;
@@ -222,6 +228,45 @@ export interface DiscordMappingRule extends RuleLevelConfig {
   targetWebhookUrl: string;
   note?: string;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
+}
+
+export interface XForwardingRule extends RuleLevelConfig {
+  id: string;
+  sourceUserName?: string;
+  sourceUserId?: string;
+  targetWebhookUrl: string;
+  note?: string;
+  includeReplies?: boolean;
+  includeRetweets?: boolean;
+  pollIntervalSeconds?: number;
+}
+
+export interface XSourceConfig {
+  apiKey?: string;
+  apiBaseUrl?: string;
+  pollIntervalSeconds?: number;
+  mappings?: XForwardingRule[];
+  loginCookie?: string;
+  loginUserName?: string;
+  loginEmail?: string;
+  loginPassword?: string;
+  loginTotpSecret?: string;
+  loginProxy?: string;
+}
+
+export interface TruthSocialForwardingRule extends RuleLevelConfig {
+  id: string;
+  sourceHandle: string;
+  targetWebhookUrl: string;
+  note?: string;
+  pollIntervalSeconds?: number;
+}
+
+export interface TruthSocialConfig {
+  username?: string;
+  password?: string;
+  pollIntervalSeconds?: number;
+  mappings?: TruthSocialForwardingRule[];
 }
 
 export type FeishuTargetMode = "webhook" | "thread";
@@ -358,6 +403,16 @@ export interface LegacyConfig {
   mappings?: DiscordMappingRule[];
   // 飞书规则级别过滤配置
   feishuRuleConfigs?: Record<string, RuleLevelConfig>;
+  // Discord 邮箱密码登录配置
+  discordLogin?: {
+    email?: string;
+    password?: string;
+    totpSecret?: string;
+  };
+  // X/Twitter 转发配置
+  xConfig?: XSourceConfig;
+  // TruthSocial 转发配置
+  truthSocialConfig?: TruthSocialConfig;
 }
 
 export interface AccountConfig extends LegacyConfig {
@@ -471,6 +526,7 @@ function createDefaultAccount(): AccountConfig {
     ocrServerUrl: "http://localhost:9003",
     ocrBlockedKeywords: [],
     ocrTriggerKeywords: [],
+    discordLogin: undefined,
     botRelays: [],
     channelRelayMap: {},
     feishuStyle: "style1",
@@ -478,6 +534,8 @@ function createDefaultAccount(): AccountConfig {
     channelTranslateDirection: {},
     watermarkEnabled: true,
     dedupeSequentialMessages: false,
+    xConfig: undefined,
+    truthSocialConfig: undefined,
     scheduledContents: [],
     scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
   };
@@ -758,6 +816,180 @@ function normalizeRuleConfigs(raw: any): Record<string, RuleLevelConfig> {
   return result;
 }
 
+function normalizeOptionalNumber(value: any): number | undefined {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() && !isNaN(Number(value))) {
+    return Number(value);
+  }
+  return undefined;
+}
+
+function normalizeXMappings(raw: any): XForwardingRule[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item: any) => {
+      if (!item || typeof item !== "object") return null;
+      const sourceUserName =
+        typeof item.sourceUserName === "string" && item.sourceUserName.trim()
+          ? item.sourceUserName.trim().replace(/^@+/, "")
+          : undefined;
+      const sourceUserId =
+        typeof item.sourceUserId === "string" && item.sourceUserId.trim()
+          ? item.sourceUserId.trim()
+          : undefined;
+      const targetWebhookUrl =
+        typeof item.targetWebhookUrl === "string" && item.targetWebhookUrl.trim()
+          ? item.targetWebhookUrl.trim()
+          : "";
+      if (!targetWebhookUrl || (!sourceUserName && !sourceUserId)) return null;
+      const base = normalizeRuleConfig(item);
+      return {
+        ...base,
+        id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : randomUUID(),
+        sourceUserName,
+        sourceUserId,
+        targetWebhookUrl,
+        note: typeof item.note === "string" && item.note.trim() ? item.note.trim() : undefined,
+        includeReplies: item.includeReplies === true,
+        includeRetweets: item.includeRetweets === true,
+        pollIntervalSeconds: normalizeOptionalNumber(item.pollIntervalSeconds),
+      };
+    })
+    .filter(Boolean) as XForwardingRule[];
+}
+
+function normalizeXConfig(raw: any): XSourceConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const loginRaw = raw.login && typeof raw.login === "object" ? raw.login : {};
+  const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
+  const apiBaseUrl = typeof raw.apiBaseUrl === "string" && raw.apiBaseUrl.trim() ? raw.apiBaseUrl.trim() : undefined;
+  const pollIntervalSeconds = normalizeOptionalNumber(raw.pollIntervalSeconds);
+  const mappings = normalizeXMappings(raw.mappings);
+  const loginCookie =
+    typeof raw.loginCookie === "string" && raw.loginCookie.trim()
+      ? raw.loginCookie.trim()
+      : typeof loginRaw.loginCookie === "string" && loginRaw.loginCookie.trim()
+        ? loginRaw.loginCookie.trim()
+        : undefined;
+  const loginUserNameRaw =
+    typeof raw.loginUserName === "string"
+      ? raw.loginUserName
+      : typeof raw.loginUsername === "string"
+        ? raw.loginUsername
+        : typeof raw.userName === "string"
+          ? raw.userName
+          : typeof raw.username === "string"
+            ? raw.username
+            : typeof loginRaw.userName === "string"
+              ? loginRaw.userName
+              : typeof loginRaw.username === "string"
+                ? loginRaw.username
+                : undefined;
+  const loginUserName =
+    typeof loginUserNameRaw === "string" && loginUserNameRaw.trim()
+      ? loginUserNameRaw.trim().replace(/^@+/, "")
+      : undefined;
+  const loginEmailRaw =
+    typeof raw.loginEmail === "string"
+      ? raw.loginEmail
+      : typeof raw.email === "string"
+        ? raw.email
+        : typeof loginRaw.email === "string"
+          ? loginRaw.email
+          : undefined;
+  const loginEmail = typeof loginEmailRaw === "string" && loginEmailRaw.trim() ? loginEmailRaw.trim() : undefined;
+  const loginPasswordRaw =
+    typeof raw.loginPassword === "string"
+      ? raw.loginPassword
+      : typeof raw.password === "string"
+        ? raw.password
+        : typeof loginRaw.password === "string"
+          ? loginRaw.password
+          : undefined;
+  const loginPassword = typeof loginPasswordRaw === "string" && loginPasswordRaw ? loginPasswordRaw : undefined;
+  const loginTotpRaw =
+    typeof raw.loginTotpSecret === "string"
+      ? raw.loginTotpSecret
+      : typeof raw.totpSecret === "string"
+        ? raw.totpSecret
+        : typeof loginRaw.totpSecret === "string"
+          ? loginRaw.totpSecret
+          : undefined;
+  const loginTotpSecret =
+    typeof loginTotpRaw === "string" && loginTotpRaw.trim() ? loginTotpRaw.trim() : undefined;
+  const loginProxyRaw =
+    typeof raw.loginProxy === "string"
+      ? raw.loginProxy
+      : typeof raw.proxy === "string"
+        ? raw.proxy
+        : typeof loginRaw.proxy === "string"
+          ? loginRaw.proxy
+          : undefined;
+  const loginProxy = typeof loginProxyRaw === "string" && loginProxyRaw.trim() ? loginProxyRaw.trim() : undefined;
+  const hasLogin =
+    !!loginCookie || !!loginUserName || !!loginEmail || !!loginPassword || !!loginTotpSecret || !!loginProxy;
+  if (!apiKey && mappings.length === 0 && !hasLogin) {
+    return undefined;
+  }
+  return {
+    apiKey,
+    apiBaseUrl,
+    pollIntervalSeconds,
+    mappings,
+    loginCookie,
+    loginUserName,
+    loginEmail,
+    loginPassword,
+    loginTotpSecret,
+    loginProxy,
+  };
+}
+
+function normalizeTruthSocialMappings(raw: any): TruthSocialForwardingRule[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item: any) => {
+      if (!item || typeof item !== "object") return null;
+      const rawHandle =
+        typeof item.sourceHandle === "string" && item.sourceHandle.trim()
+          ? item.sourceHandle.trim()
+          : "";
+      const sourceHandle = rawHandle.replace(/^@+/, "");
+      const targetWebhookUrl =
+        typeof item.targetWebhookUrl === "string" && item.targetWebhookUrl.trim()
+          ? item.targetWebhookUrl.trim()
+          : "";
+      if (!sourceHandle || !targetWebhookUrl) return null;
+      const base = normalizeRuleConfig(item);
+      return {
+        ...base,
+        id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : randomUUID(),
+        sourceHandle,
+        targetWebhookUrl,
+        note: typeof item.note === "string" && item.note.trim() ? item.note.trim() : undefined,
+        pollIntervalSeconds: normalizeOptionalNumber(item.pollIntervalSeconds),
+      };
+    })
+    .filter(Boolean) as TruthSocialForwardingRule[];
+}
+
+function normalizeTruthSocialConfig(raw: any): TruthSocialConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const username = typeof raw.username === "string" && raw.username.trim() ? raw.username.trim() : undefined;
+  const password = typeof raw.password === "string" && raw.password.trim() ? raw.password : undefined;
+  const pollIntervalSeconds = normalizeOptionalNumber(raw.pollIntervalSeconds);
+  const mappings = normalizeTruthSocialMappings(raw.mappings);
+  if (!username && !password && mappings.length === 0) {
+    return undefined;
+  }
+  return {
+    username,
+    password,
+    pollIntervalSeconds,
+    mappings,
+  };
+}
+
 function normalizeForwardingTypes(input?: any): ForwardingType[] | undefined {
   if (!Array.isArray(input)) return undefined;
   const filtered = input.filter((value): value is ForwardingType =>
@@ -868,6 +1100,40 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   const watermarkEnabled = input?.watermarkEnabled === false ? false : true;
   const scheduledContents = normalizeScheduledContentList(input?.scheduledContents);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(input?.scheduledBroadcast);
+  const discordLoginRaw = input?.discordLogin && typeof input.discordLogin === "object" ? input.discordLogin : {};
+  const discordLoginEmail = typeof discordLoginRaw.email === "string" ? discordLoginRaw.email : input?.discordLoginEmail;
+  const discordLoginPassword = typeof discordLoginRaw.password === "string" ? discordLoginRaw.password : input?.discordLoginPassword;
+  const discordLoginTotp = typeof discordLoginRaw.totpSecret === "string" ? discordLoginRaw.totpSecret : input?.discordLoginTotpSecret;
+  const discordLogin =
+    (typeof discordLoginEmail === "string" && discordLoginEmail.trim()) ||
+    (typeof discordLoginPassword === "string" && discordLoginPassword.trim()) ||
+    (typeof discordLoginTotp === "string" && discordLoginTotp.trim())
+      ? {
+          email: typeof discordLoginEmail === "string" ? discordLoginEmail.trim() : undefined,
+          password: typeof discordLoginPassword === "string" ? discordLoginPassword : undefined,
+          totpSecret: typeof discordLoginTotp === "string" ? discordLoginTotp.trim() : undefined,
+        }
+      : undefined;
+  const xConfig = normalizeXConfig(
+    input?.xConfig && typeof input.xConfig === "object"
+      ? input.xConfig
+      : {
+          apiKey: input?.xApiKey,
+          apiBaseUrl: input?.xApiBaseUrl,
+          pollIntervalSeconds: input?.xPollIntervalSeconds,
+          mappings: input?.xMappings,
+        },
+  );
+  const truthSocialConfig = normalizeTruthSocialConfig(
+    input?.truthSocialConfig && typeof input.truthSocialConfig === "object"
+      ? input.truthSocialConfig
+      : {
+          username: input?.truthSocialUsername,
+          password: input?.truthSocialPassword,
+          pollIntervalSeconds: input?.truthSocialPollIntervalSeconds,
+          mappings: input?.truthSocialMappings,
+        },
+  );
 
   // 处理 Discord->Discord mappings（保留规则级别配置）
   const mappings: DiscordMappingRule[] = Array.isArray(input?.mappings)
@@ -940,6 +1206,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       sessionString: typeof acc.sessionString === "string" ? acc.sessionString : undefined,
       apiId: typeof acc.apiId === "number" ? acc.apiId : undefined,
       apiHash: typeof acc.apiHash === "string" ? acc.apiHash : undefined,
+      phoneNumber: typeof acc.phoneNumber === "string" ? acc.phoneNumber : undefined,
+      twoFactorPassword: typeof acc.twoFactorPassword === "string" ? acc.twoFactorPassword : undefined,
       role: acc.role === "listener" || acc.role === "sender" ? acc.role : undefined,
       sessionType: acc.sessionType === "string" ? "string" : acc.sessionType === "file" ? "file" : undefined,
       loginRequested: acc.loginRequested === true,
@@ -1121,6 +1389,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(input?.ocrTriggerKeywords) ? input.ocrTriggerKeywords : [],
+    discordLogin,
 
     // --- 修复：添加 Telegram 相关顶层字段 ---
     telegramBotToken: typeof input?.telegramBotToken === "string" ? input.telegramBotToken.trim() : undefined,
@@ -1142,6 +1411,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     feishuStyle,
     channelTranslate,
     channelTranslateDirection,
+    xConfig,
+    truthSocialConfig,
     telegramConfig,
     forwardingType: FORWARDING_TYPES.includes(input?.forwardingType as ForwardingType)
       ? (input.forwardingType as ForwardingType)
@@ -1354,6 +1625,9 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     ocrServerUrl: account.ocrServerUrl,
     ocrBlockedKeywords: account.ocrBlockedKeywords,
     ocrTriggerKeywords: account.ocrTriggerKeywords,
+    discordLogin: account.discordLogin,
+    xConfig: account.xConfig,
+    truthSocialConfig: account.truthSocialConfig,
     enableTelegramOverflow: (account as any).enableTelegramOverflow,
     telegramOverflowThreshold: (account as any).telegramOverflowThreshold,
     telegramOverflowMessage: (account as any).telegramOverflowMessage,

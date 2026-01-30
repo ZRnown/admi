@@ -10,7 +10,9 @@ import {
   type FeishuTargetConfig,
   type FrontendTelegramConfig,
   type RuleLevelConfig,
+  type TruthSocialConfig,
   type WatermarkConfig,
+  type XSourceConfig,
   type ScheduledBroadcastConfig,
   type ScheduledContentItem,
 } from "@/src/config";
@@ -21,6 +23,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
+const externalStatusFile = path.resolve(process.cwd(), ".data", "external_forward_status.json");
 
 const MASKED_SECRET = "********";
 
@@ -28,6 +31,20 @@ type TelegramStatusEntry = {
   state?: string;
   message?: string;
   userInfo?: any;
+};
+
+type ExternalRuleStatus = {
+  lastPollAt?: number;
+  lastSuccessAt?: number;
+  lastForwardAt?: number;
+  lastError?: string;
+  lastErrorAt?: number;
+  lastItemId?: string;
+};
+
+type ExternalForwardStatusMap = {
+  x?: Record<string, Record<string, ExternalRuleStatus>>;
+  truthsocial?: Record<string, Record<string, ExternalRuleStatus>>;
 };
 
 function isMaskedSecret(value: unknown): boolean {
@@ -49,6 +66,15 @@ function maskSecret(value?: string): string {
 async function readTelegramStatus(): Promise<Record<string, TelegramStatusEntry>> {
   try {
     const content = await fs.readFile(telegramStatusFile, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
+
+async function readExternalForwardStatus(): Promise<ExternalForwardStatusMap> {
+  try {
+    const content = await fs.readFile(externalStatusFile, "utf-8");
     return JSON.parse(content);
   } catch {
     return {};
@@ -193,7 +219,7 @@ interface FrontendAccount {
   id: string;
   name: string;
   type: "bot" | "selfbot";
-  forwardingType?: "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu";
+  forwardingType?: "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu" | "x-to-discord" | "truthsocial-to-discord";
   token: string;
   proxyUrl: string;
   loginRequested: boolean;
@@ -268,6 +294,17 @@ interface FrontendAccount {
   // Telegram 配置（包含 accounts 和 mappings）
   telegramConfig?: FrontendTelegramConfig;
   feishuRuleConfigs?: Record<string, RuleLevelConfig>;
+  discordLogin?: {
+    email?: string;
+    password?: string;
+    totpSecret?: string;
+  };
+  xConfig?: XSourceConfig;
+  truthSocialConfig?: TruthSocialConfig;
+  externalForwardStatus?: {
+    x?: Record<string, ExternalRuleStatus>;
+    truthsocial?: Record<string, ExternalRuleStatus>;
+  };
 }
 
 interface FrontendPayload {
@@ -277,7 +314,7 @@ interface FrontendPayload {
   loginPassword?: string;
   telegramAvatarBaseUrl?: string;
   enabledForwardingTypes?: Array<
-    "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu"
+    "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu" | "x-to-discord" | "truthsocial-to-discord"
   >;
 }
 
@@ -465,6 +502,118 @@ function normalizeScheduledBroadcastConfig(raw: any): ScheduledBroadcastConfig |
   };
 }
 
+function normalizeOptionalNumber(value: any): number | undefined {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() && !isNaN(Number(value))) {
+    return Number(value);
+  }
+  return undefined;
+}
+
+function mergeDiscordLogin(
+  incoming?: { email?: string; password?: string; totpSecret?: string },
+  fallback?: { email?: string; password?: string; totpSecret?: string },
+) {
+  if (!incoming && !fallback) return undefined;
+  const email =
+    typeof incoming?.email === "string" && incoming.email.trim()
+      ? incoming.email.trim()
+      : fallback?.email;
+  const password = resolveSecretValue(incoming?.password, fallback?.password);
+  const totpSecret = resolveSecretValue(incoming?.totpSecret, fallback?.totpSecret);
+  if (!email && !password && !totpSecret) return undefined;
+  return { email, password, totpSecret };
+}
+
+function mergeXConfig(incoming?: XSourceConfig, fallback?: XSourceConfig): XSourceConfig | undefined {
+  if (!incoming && !fallback) return undefined;
+  if (!incoming) return fallback;
+  const next: XSourceConfig = { ...(fallback || {}), ...incoming };
+  if ("apiKey" in incoming) {
+    next.apiKey = resolveSecretValue(incoming.apiKey, fallback?.apiKey);
+  }
+  if ("loginCookie" in incoming) {
+    next.loginCookie = resolveSecretValue(incoming.loginCookie, fallback?.loginCookie);
+  }
+  if ("loginPassword" in incoming) {
+    next.loginPassword = resolveSecretValue(incoming.loginPassword, fallback?.loginPassword);
+  }
+  if ("loginTotpSecret" in incoming) {
+    next.loginTotpSecret = resolveSecretValue(incoming.loginTotpSecret, fallback?.loginTotpSecret);
+  }
+
+  if (typeof incoming.apiBaseUrl === "string") {
+    next.apiBaseUrl = incoming.apiBaseUrl.trim() || undefined;
+  } else if (fallback?.apiBaseUrl) {
+    next.apiBaseUrl = fallback.apiBaseUrl;
+  }
+  const pollIntervalSeconds = normalizeOptionalNumber(incoming.pollIntervalSeconds);
+  next.pollIntervalSeconds = pollIntervalSeconds ?? fallback?.pollIntervalSeconds;
+
+  if (typeof incoming.loginUserName === "string") {
+    next.loginUserName = incoming.loginUserName.trim().replace(/^@+/, "") || undefined;
+  } else if (fallback?.loginUserName) {
+    next.loginUserName = fallback.loginUserName;
+  }
+  if (typeof incoming.loginEmail === "string") {
+    next.loginEmail = incoming.loginEmail.trim() || undefined;
+  } else if (fallback?.loginEmail) {
+    next.loginEmail = fallback.loginEmail;
+  }
+  if (typeof incoming.loginProxy === "string") {
+    next.loginProxy = incoming.loginProxy.trim() || undefined;
+  } else if (fallback?.loginProxy) {
+    next.loginProxy = fallback.loginProxy;
+  }
+
+  if (Array.isArray(incoming.mappings)) {
+    next.mappings = incoming.mappings;
+  } else if (fallback?.mappings) {
+    next.mappings = fallback.mappings;
+  }
+
+  const hasMappings = Array.isArray(next.mappings) && next.mappings.length > 0;
+  const hasAny =
+    !!next.apiKey ||
+    !!next.apiBaseUrl ||
+    !!next.pollIntervalSeconds ||
+    !!next.loginCookie ||
+    !!next.loginUserName ||
+    !!next.loginEmail ||
+    !!next.loginPassword ||
+    !!next.loginTotpSecret ||
+    !!next.loginProxy ||
+    hasMappings;
+  return hasAny ? next : undefined;
+}
+
+function mergeTruthSocialConfig(
+  incoming?: TruthSocialConfig,
+  fallback?: TruthSocialConfig,
+): TruthSocialConfig | undefined {
+  if (!incoming && !fallback) return undefined;
+  if (!incoming) return fallback;
+  const next: TruthSocialConfig = { ...(fallback || {}), ...incoming };
+  if (typeof incoming.username === "string") {
+    next.username = incoming.username.trim() || undefined;
+  } else if (fallback?.username) {
+    next.username = fallback.username;
+  }
+  if ("password" in incoming) {
+    next.password = resolveSecretValue(incoming.password, fallback?.password);
+  }
+  const pollIntervalSeconds = normalizeOptionalNumber(incoming.pollIntervalSeconds);
+  next.pollIntervalSeconds = pollIntervalSeconds ?? fallback?.pollIntervalSeconds;
+  if (Array.isArray(incoming.mappings)) {
+    next.mappings = incoming.mappings;
+  } else if (fallback?.mappings) {
+    next.mappings = fallback.mappings;
+  }
+  const hasMappings = Array.isArray(next.mappings) && next.mappings.length > 0;
+  const hasAny = !!next.username || !!next.password || !!next.pollIntervalSeconds || hasMappings;
+  return hasAny ? next : undefined;
+}
+
 function mergeTelegramConfig(
   incoming?: FrontendTelegramConfig,
   fallback?: FrontendTelegramConfig,
@@ -496,6 +645,12 @@ function mergeTelegramConfig(
       }
       if ("sessionString" in acc) {
         merged.sessionString = resolveSecretValue(acc.sessionString, prev.sessionString) ?? merged.sessionString;
+      }
+      if ("twoFactorPassword" in acc) {
+        merged.twoFactorPassword = resolveSecretValue((acc as any).twoFactorPassword, (prev as any).twoFactorPassword) ?? merged.twoFactorPassword;
+      }
+      if ("phoneNumber" in acc && (acc as any).phoneNumber) {
+        merged.phoneNumber = (acc as any).phoneNumber;
       }
       if (acc.enabled === undefined && prev.enabled !== undefined) {
         merged.enabled = prev.enabled;
@@ -692,6 +847,9 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     // Telegram 配置（包含 accounts 和 mappings）
     telegramConfig: (account as any).telegramConfig || undefined,
     feishuRuleConfigs: normalizeRuleConfigs((account as any).feishuRuleConfigs),
+    discordLogin: account.discordLogin,
+    xConfig: account.xConfig,
+    truthSocialConfig: account.truthSocialConfig,
   };
 }
 
@@ -705,6 +863,28 @@ function maskFrontendAccount(account: FrontendAccount): FrontendAccount {
   masked.telegramBotToken = maskSecret(account.telegramBotToken);
   masked.telegramApiHash = maskSecret(account.telegramApiHash);
   masked.telegramSessionString = maskSecret(account.telegramSessionString);
+  if (masked.discordLogin) {
+    masked.discordLogin = {
+      ...masked.discordLogin,
+      password: maskSecret(masked.discordLogin.password),
+      totpSecret: maskSecret(masked.discordLogin.totpSecret),
+    };
+  }
+  if (masked.xConfig) {
+    masked.xConfig = {
+      ...masked.xConfig,
+      apiKey: maskSecret(masked.xConfig.apiKey),
+      loginCookie: maskSecret(masked.xConfig.loginCookie),
+      loginPassword: maskSecret(masked.xConfig.loginPassword),
+      loginTotpSecret: maskSecret(masked.xConfig.loginTotpSecret),
+    };
+  }
+  if (masked.truthSocialConfig) {
+    masked.truthSocialConfig = {
+      ...masked.truthSocialConfig,
+      password: maskSecret(masked.truthSocialConfig.password),
+    };
+  }
 
   if (Array.isArray(masked.botRelays)) {
     masked.botRelays = masked.botRelays.map((relay) => ({
@@ -721,6 +901,7 @@ function maskFrontendAccount(account: FrontendAccount): FrontendAccount {
         token: maskSecret(acc?.token),
         apiHash: maskSecret(acc?.apiHash),
         sessionString: maskSecret(acc?.sessionString),
+        twoFactorPassword: maskSecret((acc as any)?.twoFactorPassword),
       })),
     };
   }
@@ -904,6 +1085,9 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
   );
   const resolvedScheduledContents = normalizeScheduledContentList(dto.scheduledContents);
   const resolvedScheduledBroadcast = normalizeScheduledBroadcastConfig(dto.scheduledBroadcast);
+  const mergedDiscordLogin = mergeDiscordLogin(dto.discordLogin, base.discordLogin);
+  const mergedXConfig = mergeXConfig(dto.xConfig, base.xConfig);
+  const mergedTruthSocialConfig = mergeTruthSocialConfig(dto.truthSocialConfig, base.truthSocialConfig);
 
   let loginRequested: boolean;
   if (fallback && fallback.loginRequested === true) {
@@ -1044,6 +1228,9 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     telegramOverflowMessage: typeof dto.telegramOverflowMessage === "string" && dto.telegramOverflowMessage.trim() ? dto.telegramOverflowMessage.trim() : "",
     // Telegram 配置（包含 accounts 和 mappings）
     telegramConfig: mergedTelegramConfig,
+    discordLogin: mergedDiscordLogin,
+    xConfig: mergedXConfig,
+    truthSocialConfig: mergedTruthSocialConfig,
   };
 }
 
@@ -1058,6 +1245,7 @@ export async function GET(req: NextRequest) {
     const multi = await getMultiConfig();
     const status = await readStatus();
     const telegramStatus = await readTelegramStatus();
+    const externalStatus = await readExternalForwardStatus();
     const payload: FrontendPayload = {
       accounts: multi.accounts.map((acc) => {
         const { botStatus, clientStatus } = resolveTelegramAccountStatuses(acc, telegramStatus);
@@ -1071,6 +1259,10 @@ export async function GET(req: NextRequest) {
           telegramClientState: clientState,
           telegramClientMessage: normalizeTelegramMessage(clientState, clientStatus?.message),
           telegramAccountStates: buildTelegramAccountStates(acc, telegramStatus),
+          externalForwardStatus: {
+            x: externalStatus?.x?.[acc.id],
+            truthsocial: externalStatus?.truthsocial?.[acc.id],
+          },
         };
         return includeSecrets ? frontend : maskFrontendAccount(frontend);
       }),
