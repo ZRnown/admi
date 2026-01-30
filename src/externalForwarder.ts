@@ -22,8 +22,8 @@ type ExternalSourceType = "x" | "truthsocial";
 type ExternalForwardingType = "x-to-discord" | "truthsocial-to-discord";
 
 type ExternalState = {
-  x?: Record<string, Record<string, string>>;
-  truthsocial?: Record<string, Record<string, string>>;
+  x: Record<string, Record<string, string>>;
+  truthsocial: Record<string, Record<string, string>>;
 };
 
 type ExternalRuleStatus = {
@@ -36,8 +36,8 @@ type ExternalRuleStatus = {
 };
 
 type ExternalStatusState = {
-  x?: Record<string, Record<string, ExternalRuleStatus>>;
-  truthsocial?: Record<string, Record<string, ExternalRuleStatus>>;
+  x: Record<string, Record<string, ExternalRuleStatus>>;
+  truthsocial: Record<string, Record<string, ExternalRuleStatus>>;
 };
 
 type ExternalRunningAccount = {
@@ -49,27 +49,28 @@ type ExternalRunningAccount = {
 };
 
 const runningAccounts = new Map<string, ExternalRunningAccount>();
-let cachedState: ExternalState | null = null;
+let cachedState: ExternalState = { x: {}, truthsocial: {} };
+let stateLoaded = false;
 let stateWriteTimer: NodeJS.Timeout | null = null;
-let cachedStatus: ExternalStatusState | null = null;
+let cachedStatus: ExternalStatusState = { x: {}, truthsocial: {} };
+let statusLoaded = false;
 let statusWriteTimer: NodeJS.Timeout | null = null;
 
 function ensureStateLoaded() {
-  if (cachedState) return;
-  cachedState = { x: {}, truthsocial: {} };
+  if (stateLoaded) return;
   try {
     const raw = require("fs").readFileSync(STATE_FILE, "utf-8");
     cachedState = JSON.parse(raw);
   } catch {}
   cachedState.x = cachedState.x || {};
   cachedState.truthsocial = cachedState.truthsocial || {};
+  stateLoaded = true;
 }
 
 function scheduleStateWrite() {
   if (stateWriteTimer) return;
   stateWriteTimer = setTimeout(async () => {
     stateWriteTimer = null;
-    if (!cachedState) return;
     try {
       await fs.mkdir(path.dirname(STATE_FILE), { recursive: true });
       await fs.writeFile(STATE_FILE, JSON.stringify(cachedState, null, 2));
@@ -78,21 +79,20 @@ function scheduleStateWrite() {
 }
 
 function ensureStatusLoaded() {
-  if (cachedStatus) return;
-  cachedStatus = { x: {}, truthsocial: {} };
+  if (statusLoaded) return;
   try {
     const raw = require("fs").readFileSync(STATUS_FILE, "utf-8");
     cachedStatus = JSON.parse(raw);
   } catch {}
   cachedStatus.x = cachedStatus.x || {};
   cachedStatus.truthsocial = cachedStatus.truthsocial || {};
+  statusLoaded = true;
 }
 
 function scheduleStatusWrite() {
   if (statusWriteTimer) return;
   statusWriteTimer = setTimeout(async () => {
     statusWriteTimer = null;
-    if (!cachedStatus) return;
     try {
       await fs.mkdir(path.dirname(STATUS_FILE), { recursive: true });
       await fs.writeFile(STATUS_FILE, JSON.stringify(cachedStatus, null, 2));
@@ -107,27 +107,25 @@ function updateRuleStatus(
   patch: Partial<ExternalRuleStatus>,
 ) {
   ensureStatusLoaded();
-  if (!cachedStatus) return;
   if (!cachedStatus[kind]) cachedStatus[kind] = {};
-  if (!cachedStatus[kind]![accountId]) cachedStatus[kind]![accountId] = {};
-  const prev = cachedStatus[kind]![accountId]![ruleId] || {};
-  cachedStatus[kind]![accountId]![ruleId] = { ...prev, ...patch };
+  if (!cachedStatus[kind][accountId]) cachedStatus[kind][accountId] = {};
+  const prev = cachedStatus[kind][accountId][ruleId] || {};
+  cachedStatus[kind][accountId][ruleId] = { ...prev, ...patch };
   scheduleStatusWrite();
 }
 
 function getLastSeen(kind: ExternalSourceType, accountId: string, ruleId: string): string | undefined {
   ensureStateLoaded();
-  const bucket = cachedState?.[kind] || {};
-  return bucket?.[accountId]?.[ruleId];
+  const bucket = cachedState[kind] || {};
+  return bucket[accountId]?.[ruleId];
 }
 
 function setLastSeen(kind: ExternalSourceType, accountId: string, ruleId: string, value?: string) {
   if (!value) return;
   ensureStateLoaded();
-  if (!cachedState) return;
   if (!cachedState[kind]) cachedState[kind] = {};
-  if (!cachedState[kind]![accountId]) cachedState[kind]![accountId] = {};
-  cachedState[kind]![accountId]![ruleId] = value;
+  if (!cachedState[kind][accountId]) cachedState[kind][accountId] = {};
+  cachedState[kind][accountId][ruleId] = value;
   scheduleStateWrite();
 }
 
