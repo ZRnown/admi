@@ -24,6 +24,7 @@ export const dynamic = "force-dynamic";
 
 const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
 const externalStatusFile = path.resolve(process.cwd(), ".data", "external_forward_status.json");
+const forwardStatsFile = path.resolve(process.cwd(), ".data", "forward_stats.json");
 
 const MASKED_SECRET = "********";
 
@@ -45,6 +46,14 @@ type ExternalRuleStatus = {
 type ExternalForwardStatusMap = {
   x?: Record<string, Record<string, ExternalRuleStatus>>;
   truthsocial?: Record<string, Record<string, ExternalRuleStatus>>;
+};
+
+type ForwardStatsSnapshot = {
+  date?: string;
+  total?: number;
+  byType?: Record<string, number>;
+  byAccount?: Record<string, number>;
+  updatedAt?: number;
 };
 
 function isMaskedSecret(value: unknown): boolean {
@@ -78,6 +87,37 @@ async function readExternalForwardStatus(): Promise<ExternalForwardStatusMap> {
     return JSON.parse(content);
   } catch {
     return {};
+  }
+}
+
+function getLocalDateKey(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+async function readForwardStats(): Promise<ForwardStatsSnapshot> {
+  const today = getLocalDateKey();
+  const fallback = { date: today, total: 0, byType: {}, byAccount: {} } as ForwardStatsSnapshot;
+  try {
+    const content = await fs.readFile(forwardStatsFile, "utf-8");
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== "object") return fallback;
+    const date = typeof parsed.date === "string" ? parsed.date : today;
+    if (date !== today) return fallback;
+    const total =
+      typeof parsed.total === "number" && Number.isFinite(parsed.total) ? parsed.total : 0;
+    const byType = parsed.byType && typeof parsed.byType === "object" ? parsed.byType : {};
+    const byAccount = parsed.byAccount && typeof parsed.byAccount === "object" ? parsed.byAccount : {};
+    const updatedAt =
+      typeof parsed.updatedAt === "number" && Number.isFinite(parsed.updatedAt)
+        ? parsed.updatedAt
+        : undefined;
+    return { date, total, byType, byAccount, updatedAt };
+  } catch {
+    return fallback;
   }
 }
 
@@ -313,6 +353,7 @@ interface FrontendPayload {
   loginUser?: string;
   loginPassword?: string;
   telegramAvatarBaseUrl?: string;
+  forwardStats?: ForwardStatsSnapshot;
   enabledForwardingTypes?: Array<
     "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu" | "x-to-discord" | "truthsocial-to-discord"
   >;
@@ -1246,6 +1287,7 @@ export async function GET(req: NextRequest) {
     const status = await readStatus();
     const telegramStatus = await readTelegramStatus();
     const externalStatus = await readExternalForwardStatus();
+    const forwardStats = await readForwardStats();
     const payload: FrontendPayload = {
       accounts: multi.accounts.map((acc) => {
         const { botStatus, clientStatus } = resolveTelegramAccountStatuses(acc, telegramStatus);
@@ -1270,6 +1312,7 @@ export async function GET(req: NextRequest) {
       loginUser: multi.loginUser || "",
       loginPassword: includeSecrets ? multi.loginPassword || "" : maskSecret(multi.loginPassword),
       telegramAvatarBaseUrl: multi.telegramAvatarBaseUrl || "",
+      forwardStats,
       enabledForwardingTypes: multi.enabledForwardingTypes,
     };
     return NextResponse.json(payload);

@@ -18,6 +18,8 @@ import { getTelegramBridgeClient } from "./index.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { resolveWatermarkList } from "./watermark.js";
+import { recordForwardStat } from "./forwardStats.js";
+import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -33,6 +35,16 @@ const DOCUMENT_EXT_RE = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(?:$|[?#])/i;
 export type Client<Ready extends boolean = boolean> =
   | SelfBotClient<Ready>
   | BotClient<Ready>;
+
+function getStatsAccountId(config: any): string {
+  if (config && typeof config.id === "string" && config.id.trim()) {
+    return config.id.trim();
+  }
+  if (config && typeof config.name === "string" && config.name.trim()) {
+    return config.name.trim();
+  }
+  return "legacy";
+}
 
 function collectEmbedText(embeds: any[]): string[] {
   const pieces: string[] = [];
@@ -99,70 +111,6 @@ function collectMessageTextPieces(message: Message): string[] {
     pieces.push(...collectEmbedText((snapshot as any)?.embeds || []));
   }
   return pieces;
-}
-
-function stripEmbedText(
-  embeds: any[] | undefined,
-  options: { stripEnglish?: boolean; stripChinese?: boolean },
-): any[] | undefined {
-  if (!embeds || embeds.length === 0) return embeds;
-  if (!options.stripEnglish && !options.stripChinese) return embeds;
-  const sanitizeText = (value: unknown) =>
-    typeof value === "string" ? stripLanguages(value, options) : value;
-  return embeds.map((embed) => {
-    if (!embed || typeof embed !== "object") return embed;
-    let raw: any = embed;
-    if (typeof (embed as any).toJSON === "function") {
-      try {
-        raw = (embed as any).toJSON();
-      } catch {}
-    } else if ("data" in embed && (embed as any).data) {
-      raw = (embed as any).data;
-    }
-    if (!raw || typeof raw !== "object") return raw;
-    const next: any = { ...raw };
-    if (typeof next.title === "string") next.title = sanitizeText(next.title);
-    if (typeof next.description === "string") next.description = sanitizeText(next.description);
-    if (next.footer && typeof next.footer === "object") {
-      next.footer = { ...next.footer };
-      if (typeof next.footer.text === "string") next.footer.text = sanitizeText(next.footer.text);
-    }
-    if (next.author && typeof next.author === "object") {
-      next.author = { ...next.author };
-      if (typeof next.author.name === "string") next.author.name = sanitizeText(next.author.name);
-    }
-    if (Array.isArray(next.fields)) {
-      next.fields = next.fields.map((field: any) => {
-        if (!field || typeof field !== "object") return field;
-        const copy = { ...field };
-        if (typeof copy.name === "string") copy.name = sanitizeText(copy.name);
-        if (typeof copy.value === "string") copy.value = sanitizeText(copy.value);
-        return copy;
-      });
-    }
-    return next;
-  });
-}
-
-function stripEmbedTitles(embeds: any[] | undefined): any[] | undefined {
-  if (!embeds || embeds.length === 0) return embeds;
-  return embeds.map((embed) => {
-    if (!embed || typeof embed !== "object") return embed;
-    let raw: any = embed;
-    if (typeof (embed as any).toJSON === "function") {
-      try {
-        raw = (embed as any).toJSON();
-      } catch {}
-    } else if ("data" in embed && (embed as any).data) {
-      raw = (embed as any).data;
-    }
-    if (!raw || typeof raw !== "object") return raw;
-    const next: any = { ...raw };
-    if ("title" in next) {
-      delete next.title;
-    }
-    return next;
-  });
 }
 
 function hasImageAttachment(attachments: any): boolean {
@@ -1667,6 +1615,7 @@ export class Bot {
 
               console.log(logMsg);
               this.logger.info(logMsg);
+              recordForwardStat(getStatsAccountId(this.config), "discord-to-discord");
             } else {
               this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId [${senderIndex + 1}/${sendersForThis.length}]`);
             }
@@ -1713,6 +1662,7 @@ export class Bot {
           `目标: ${feishuTarget} | 内容: ${feishuPreview} | 附件: ${uploads.length} | 图片: ${imageCount}`;
         console.log(logMsg);
         this.logger.info(logMsg);
+        recordForwardStat(getStatsAccountId(this.config), "discord-to-feishu");
       } catch (err: any) {
         const feishuTarget = feishuSenderForThis.target;
         const feishuPreview = formatLogPreview(feishuContentRaw);
@@ -1793,6 +1743,7 @@ export class Bot {
               `目标: ${mapping.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
             console.log(logMsg);
             this.logger.info(logMsg);
+            recordForwardStat(getStatsAccountId(this.config), "discord-to-telegram");
           } catch (err: any) {
             const errorMsg =
               `${logPrefix} [TELEGRAM] 转发失败 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +

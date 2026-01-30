@@ -28,6 +28,8 @@ import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } fro
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
 import { reconcileExternalForwarders, shutdownExternalForwarders } from "./externalForwarder.js";
+import { recordForwardStat } from "./forwardStats.js";
+import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -255,70 +257,6 @@ function normalizeTelegramChatId(value: string | number): string | number {
     if (Number.isSafeInteger(num)) return num;
   }
   return trimmed;
-}
-
-function stripEmbedText(
-  embeds: any[] | undefined,
-  options: { stripEnglish?: boolean; stripChinese?: boolean },
-): any[] | undefined {
-  if (!embeds || embeds.length === 0) return embeds;
-  if (!options.stripEnglish && !options.stripChinese) return embeds;
-  const sanitizeText = (value: unknown) =>
-    typeof value === "string" ? stripLanguages(value, options) : value;
-  return embeds.map((embed) => {
-    if (!embed || typeof embed !== "object") return embed;
-    let raw: any = embed;
-    if (typeof (embed as any).toJSON === "function") {
-      try {
-        raw = (embed as any).toJSON();
-      } catch {}
-    } else if ("data" in embed && (embed as any).data) {
-      raw = (embed as any).data;
-    }
-    if (!raw || typeof raw !== "object") return raw;
-    const next: any = { ...raw };
-    if (typeof next.title === "string") next.title = sanitizeText(next.title);
-    if (typeof next.description === "string") next.description = sanitizeText(next.description);
-    if (next.footer && typeof next.footer === "object") {
-      next.footer = { ...next.footer };
-      if (typeof next.footer.text === "string") next.footer.text = sanitizeText(next.footer.text);
-    }
-    if (next.author && typeof next.author === "object") {
-      next.author = { ...next.author };
-      if (typeof next.author.name === "string") next.author.name = sanitizeText(next.author.name);
-    }
-    if (Array.isArray(next.fields)) {
-      next.fields = next.fields.map((field: any) => {
-        if (!field || typeof field !== "object") return field;
-        const copy = { ...field };
-        if (typeof copy.name === "string") copy.name = sanitizeText(copy.name);
-        if (typeof copy.value === "string") copy.value = sanitizeText(copy.value);
-        return copy;
-      });
-    }
-    return next;
-  });
-}
-
-function stripEmbedTitles(embeds: any[] | undefined): any[] | undefined {
-  if (!embeds || embeds.length === 0) return embeds;
-  return embeds.map((embed) => {
-    if (!embed || typeof embed !== "object") return embed;
-    let raw: any = embed;
-    if (typeof (embed as any).toJSON === "function") {
-      try {
-        raw = (embed as any).toJSON();
-      } catch {}
-    } else if ("data" in embed && (embed as any).data) {
-      raw = (embed as any).data;
-    }
-    if (!raw || typeof raw !== "object") return raw;
-    const next: any = { ...raw };
-    if ("title" in next) {
-      delete next.title;
-    }
-    return next;
-  });
 }
 
 function applyLongMessageConfig(
@@ -1737,6 +1675,10 @@ function setupTelegramBridgeClient() {
                 `目标: ${targetChatId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
               console.log(logMsg);
               telegramForwardLogger.info(logMsg);
+              recordForwardStat(
+                account.id,
+                currentForwardingType === "telegram-to-telegram" ? "telegram-to-telegram" : "telegram-to-discord",
+              );
             } else {
               const errorMsg =
                 `[${forwardTag}] 转发失败 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
@@ -1772,6 +1714,10 @@ function setupTelegramBridgeClient() {
               `目标: ${rule.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
             console.log(logMsg);
             telegramForwardLogger.info(logMsg);
+            recordForwardStat(
+              account.id,
+              currentForwardingType === "telegram-to-telegram" ? "telegram-to-telegram" : "telegram-to-discord",
+            );
           }
         } catch (error: any) {
           const errorMsg =

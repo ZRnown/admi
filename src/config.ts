@@ -570,7 +570,10 @@ async function readRawConfig(): Promise<any> {
   try {
     const buf = await readFile(CONFIG_PATH);
     return JSON.parse(buf.toString());
-  } catch (e) {
+  } catch (e: any) {
+    if (e?.code === "ENOENT") {
+      return {};
+    }
     // 如果读取失败（例如文件正在写入中），抛出错误让上层处理
     // 上层应该进行重试，而不是在这里写入默认配置
     throw e;

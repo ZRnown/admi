@@ -11,6 +11,7 @@ import { SenderBot } from "./senderBot";
 import { FileLogger } from "./logger";
 import { clampPercent, getLanguageRatio } from "./languageFilter";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher";
+import { recordForwardStat } from "./forwardStats";
 
 const STATE_FILE = path.resolve(process.cwd(), ".data", "external_forward_state.json");
 const STATUS_FILE = path.resolve(process.cwd(), ".data", "external_forward_status.json");
@@ -505,6 +506,7 @@ async function forwardSingleTweet(
   ]);
 
   logger.info(`${logPrefix} 转发成功: ${tweetId}`);
+  recordForwardStat(account.id, "x-to-discord");
   return true;
 }
 
@@ -701,6 +703,7 @@ async function forwardSingleTruth(
   ]);
 
   logger.info(`${logPrefix} 转发成功: ${statusId}`);
+  recordForwardStat(account.id, "truthsocial-to-discord");
   return true;
 }
 
