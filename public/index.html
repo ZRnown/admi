@@ -57,7 +57,6 @@
     </header>
 
     <div id="app" style="display: none;">
-      <div id="accountLibrary"></div>
       <!-- 账号切换标签 -->
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
         <div class="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/60 p-4">
@@ -71,6 +70,9 @@
             </button>
             <button onclick="importConfig()" class="inline-flex items-center gap-1 rounded-md border border-green-200 px-3 py-1.5 text-xs font-medium text-green-600 hover:bg-green-50">
               <span>⬆️</span> 导入配置
+            </button>
+            <button onclick="openAccountLibrary()" class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
+              <span>🗂️</span> 账号库
             </button>
             <input type="file" id="importConfigFile" accept=".json" style="display:none" onchange="handleImportConfig(event)">
             <button onclick="removeAccount()" class="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
@@ -405,6 +407,67 @@
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- 账号库弹窗 -->
+  <div id="accountLibraryModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeAccountLibrary()">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-5xl mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-slate-900">账号库</h2>
+        <button onclick="closeAccountLibrary()" class="text-slate-400 hover:text-slate-600">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <select id="libraryAddType" class="rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+            <option value="discord">Discord</option>
+            <option value="telegram">Telegram</option>
+            <option value="x">X</option>
+            <option value="truthsocial">TruthSocial</option>
+          </select>
+          <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <span id="accountLibrarySelectionCount">已选 0 个账号</span>
+          <button onclick="removeSelectedLibraryAccounts()" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除选中</button>
+          <button onclick="clearLibrarySelection()" class="text-xs border border-slate-200 text-slate-600 px-3 py-1.5 rounded-md hover:bg-slate-100">清空选择</button>
+        </div>
+      </div>
+      <div class="border border-slate-200 rounded-lg overflow-hidden">
+        <table class="min-w-full text-left text-sm">
+          <thead class="bg-slate-50 text-slate-600 text-xs uppercase">
+            <tr>
+              <th class="px-3 py-2">
+                <input id="accountLibrarySelectAll" type="checkbox" onchange="toggleLibrarySelectAll(this.checked)" class="h-4 w-4 rounded border-slate-300">
+              </th>
+              <th class="px-3 py-2">类型</th>
+              <th class="px-3 py-2">名称</th>
+              <th class="px-3 py-2">状态</th>
+              <th class="px-3 py-2">操作</th>
+            </tr>
+          </thead>
+          <tbody id="accountLibraryTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 账号库编辑弹窗 -->
+  <div id="accountLibraryEditModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeLibraryEdit()">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-slate-900">编辑账号</h2>
+        <button onclick="closeLibraryEdit()" class="text-slate-400 hover:text-slate-600">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div id="accountLibraryEditBody"></div>
     </div>
   </div>
 
@@ -1205,7 +1268,6 @@
       // 渲染账号标签
       const accountTabsEl = document.getElementById('accountTabs');
       const configFormEl = document.getElementById('configForm');
-      const accountLibraryEl = document.getElementById('accountLibrary');
       
       if (!accountTabsEl || !configFormEl) {
         console.error('找不到必要的 DOM 元素');
@@ -1238,12 +1300,10 @@
       `;
       accountTabsEl.innerHTML = tabsHtml;
 
-      if (accountLibraryEl) {
-        accountLibraryEl.innerHTML = renderAccountLibrarySection();
-      }
-
       // 渲染配置表单
       configFormEl.innerHTML = renderAccountForm(activeAccount, currentForwardingType);
+
+      renderAccountLibraryModal();
     }
 
     function renderDiscordLibrarySection() {
@@ -1590,10 +1650,12 @@
     }
 
     function addLibraryAccount(kind, name) {
+      let newId = '';
       if (kind === 'discord') {
         state.discordAccounts = state.discordAccounts || [];
+        newId = genId();
         state.discordAccounts.push({
-          id: genId(),
+          id: newId,
           name: name || 'Discord账号',
           type: 'selfbot',
           token: '',
@@ -1602,8 +1664,9 @@
         });
       } else if (kind === 'telegram') {
         state.telegramAccounts = state.telegramAccounts || [];
+        newId = genId();
         state.telegramAccounts.push({
-          id: genId(),
+          id: newId,
           name: name || 'Telegram账号',
           type: 'client',
           token: '',
@@ -1618,8 +1681,9 @@
         });
       } else if (kind === 'x') {
         state.xAccounts = state.xAccounts || [];
+        newId = genId();
         state.xAccounts.push({
-          id: genId(),
+          id: newId,
           name: name || 'X账号',
           apiKey: '',
           apiBaseUrl: '',
@@ -1632,8 +1696,9 @@
         });
       } else if (kind === 'truthsocial') {
         state.truthSocialAccounts = state.truthSocialAccounts || [];
+        newId = genId();
         state.truthSocialAccounts.push({
-          id: genId(),
+          id: newId,
           name: name || 'TruthSocial账号',
           username: '',
           password: ''
@@ -1641,6 +1706,7 @@
       }
       saveConfig();
       render();
+      return newId;
     }
 
     function addLibraryAccountFromSelect() {
@@ -1680,7 +1746,9 @@
       if (!current) return;
       const name = current.account?.name || '';
       removeLibraryAccount(kind, id);
-      addLibraryAccount(nextKind, name);
+      const newId = addLibraryAccount(nextKind, name);
+      showToast('账号类型已切换，请在列表中继续编辑', 'success');
+      return newId;
     }
 
     function renderLibraryAccountFields(kind, account) {
@@ -1907,51 +1975,161 @@
       return '';
     }
 
-    function renderLibraryAccountCard(item) {
-      const account = item.account;
-      return `
-        <div class="border border-slate-200 rounded-lg p-4">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="flex flex-wrap items-center gap-3">
-              <select onchange="changeLibraryAccountType('${item.kind}', '${item.id}', this.value)"
-                class="rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="discord" ${item.kind === 'discord' ? 'selected' : ''}>Discord</option>
-                <option value="telegram" ${item.kind === 'telegram' ? 'selected' : ''}>Telegram</option>
-                <option value="x" ${item.kind === 'x' ? 'selected' : ''}>X</option>
-                <option value="truthsocial" ${item.kind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>
-              </select>
-              <input type="text" value="${escapeHtml(account.name || '')}" onchange="updateLibraryAccountField('${item.kind}', '${item.id}', 'name', this.value)"
-                placeholder="账号名称" class="min-w-[200px] rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-            </div>
-            <button onclick="removeLibraryAccount('${item.kind}', '${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
-          </div>
-          <div class="mt-4">
-            ${renderLibraryAccountFields(item.kind, account)}
-          </div>
-        </div>
-      `;
+    const librarySelection = new Set();
+    let editingLibraryAccount = null;
+
+    function getLibrarySelectionKey(kind, id) {
+      return `${kind}:${id}`;
     }
 
-    function renderAccountLibrarySection() {
+    function toggleLibrarySelection(kind, id, checked) {
+      const key = getLibrarySelectionKey(kind, id);
+      if (checked) {
+        librarySelection.add(key);
+      } else {
+        librarySelection.delete(key);
+      }
+      renderAccountLibraryModal();
+    }
+
+    function toggleLibrarySelectAll(checked) {
+      if (!checked) {
+        librarySelection.clear();
+        renderAccountLibraryModal();
+        return;
+      }
+      getLibraryItems().forEach((item) => {
+        librarySelection.add(getLibrarySelectionKey(item.kind, item.id));
+      });
+      renderAccountLibraryModal();
+    }
+
+    function clearLibrarySelection() {
+      librarySelection.clear();
+      renderAccountLibraryModal();
+    }
+
+    function removeSelectedLibraryAccounts() {
+      if (librarySelection.size === 0) {
+        showToast('请先选择账号', 'error');
+        return;
+      }
       const items = getLibraryItems();
-      return `
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
-          <div class="px-6 py-4 border-b border-slate-100">
-            <h2 class="font-semibold text-slate-800">账号管理库</h2>
-            <p class="mt-1 text-xs text-slate-500">独立管理账号类型，实例中仅选择账号，不区分监听/发送。</p>
+      items.forEach((item) => {
+        const key = getLibrarySelectionKey(item.kind, item.id);
+        if (librarySelection.has(key)) {
+          removeLibraryAccount(item.kind, item.id);
+        }
+      });
+      librarySelection.clear();
+      renderAccountLibraryModal();
+    }
+
+    function openAccountLibrary() {
+      renderAccountLibraryModal();
+      const modal = document.getElementById('accountLibraryModal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeAccountLibrary() {
+      const modal = document.getElementById('accountLibraryModal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function openLibraryEdit(kind, id) {
+      editingLibraryAccount = { kind, id };
+      renderAccountLibraryEditModal();
+      const modal = document.getElementById('accountLibraryEditModal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeLibraryEdit() {
+      editingLibraryAccount = null;
+      const modal = document.getElementById('accountLibraryEditModal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function renderAccountLibraryModal() {
+      const modal = document.getElementById('accountLibraryModal');
+      if (!modal || modal.classList.contains('hidden')) return;
+      const tbody = document.getElementById('accountLibraryTableBody');
+      const selectAllEl = document.getElementById('accountLibrarySelectAll');
+      const countEl = document.getElementById('accountLibrarySelectionCount');
+      if (!tbody || !selectAllEl || !countEl) return;
+      const items = getLibraryItems();
+      const keys = items.map((item) => getLibrarySelectionKey(item.kind, item.id));
+      let selectedCount = 0;
+      librarySelection.forEach((key) => {
+        if (!keys.includes(key)) {
+          librarySelection.delete(key);
+        }
+      });
+      items.forEach((item) => {
+        const key = getLibrarySelectionKey(item.kind, item.id);
+        if (librarySelection.has(key)) selectedCount += 1;
+      });
+      selectAllEl.checked = items.length > 0 && selectedCount === items.length;
+      countEl.textContent = `已选 ${selectedCount} 个账号`;
+      if (items.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="text-center text-slate-400 text-sm py-6">暂无账号</td>
+          </tr>
+        `;
+        return;
+      }
+      tbody.innerHTML = items.map((item) => {
+        const key = getLibrarySelectionKey(item.kind, item.id);
+        const typeLabel = getLibraryKindLabel(item.kind);
+        const name = escapeHtml(item.account.name || '');
+        const status = item.kind === 'telegram' ? (item.account.loginState || 'idle') : '—';
+        return `
+          <tr class="border-t border-slate-100">
+            <td class="px-3 py-3">
+              <input type="checkbox" ${librarySelection.has(key) ? 'checked' : ''} onchange="toggleLibrarySelection('${item.kind}', '${item.id}', this.checked)"
+                class="h-4 w-4 rounded border-slate-300">
+            </td>
+            <td class="px-3 py-3 text-sm text-slate-700">${typeLabel}</td>
+            <td class="px-3 py-3 text-sm text-slate-700">${name || '未命名账号'}</td>
+            <td class="px-3 py-3 text-xs text-slate-500">${status}</td>
+            <td class="px-3 py-3 text-sm">
+              <button onclick="openLibraryEdit('${item.kind}', '${item.id}')" class="text-xs text-indigo-600 hover:text-indigo-800">编辑</button>
+              <button onclick="removeLibraryAccount('${item.kind}', '${item.id}')" class="ml-3 text-xs text-red-600 hover:text-red-800">删除</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderAccountLibraryEditModal() {
+      const modal = document.getElementById('accountLibraryEditModal');
+      if (!modal || modal.classList.contains('hidden')) return;
+      const body = document.getElementById('accountLibraryEditBody');
+      if (!body || !editingLibraryAccount) return;
+      const items = getLibraryItems();
+      const current = items.find((item) => item.kind === editingLibraryAccount.kind && item.id === editingLibraryAccount.id);
+      if (!current) return;
+      const account = current.account;
+      body.innerHTML = `
+        <div class="grid gap-3 md:grid-cols-2">
+          <div>
+            <label class="block text-xs text-slate-600 mb-1">账号类型</label>
+            <select onchange="changeLibraryAccountType('${current.kind}', '${current.id}', this.value); closeLibraryEdit();"
+              class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <option value="discord" ${current.kind === 'discord' ? 'selected' : ''}>Discord</option>
+              <option value="telegram" ${current.kind === 'telegram' ? 'selected' : ''}>Telegram</option>
+              <option value="x" ${current.kind === 'x' ? 'selected' : ''}>X</option>
+              <option value="truthsocial" ${current.kind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>
+            </select>
           </div>
-          <div class="p-6 space-y-4">
-            <div class="flex flex-wrap items-center gap-2">
-              <select id="libraryAddType" class="rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="discord">Discord</option>
-                <option value="telegram">Telegram</option>
-                <option value="x">X</option>
-                <option value="truthsocial">TruthSocial</option>
-              </select>
-              <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
-            </div>
-            ${items.length === 0 ? `<p class="text-xs text-slate-400">暂无账号</p>` : items.map(renderLibraryAccountCard).join('')}
+          <div>
+            <label class="block text-xs text-slate-600 mb-1">账号名称</label>
+            <input type="text" value="${escapeHtml(account.name || '')}" onchange="updateLibraryAccountField('${current.kind}', '${current.id}', 'name', this.value)"
+              class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
           </div>
+        </div>
+        <div class="mt-4">
+          ${renderLibraryAccountFields(current.kind, account)}
         </div>
       `;
     }
