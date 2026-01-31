@@ -1,39 +1,33 @@
 /**
  * 获取 Discord 服务器列表 API
  * POST /api/metadata/discord/guilds
+ *
+ * 注意：此 API 需要通过状态文件与 bot 进程通信
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { connectionPool, buildDiscordCredentialKey } from "../../../../src/connectionPool";
+import { promises as fs } from "fs";
+import path from "path";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { token } = body;
+    const { accountId } = body;
 
-    if (!token) {
-      return NextResponse.json({ error: "缺少 token 参数" }, { status: 400 });
+    if (!accountId) {
+      return NextResponse.json({ error: "缺少 accountId 参数" }, { status: 400 });
     }
 
-    const key = buildDiscordCredentialKey(token);
-    const connection = connectionPool.getConnection(key);
-
-    if (!connection || connection.type !== "discord") {
-      return NextResponse.json({ error: "账号未连接" }, { status: 400 });
+    // 读取缓存的服务器列表（由 bot 进程写入）
+    const cacheFile = path.join(process.cwd(), ".data", "discord_guilds_cache.json");
+    try {
+      const data = await fs.readFile(cacheFile, "utf-8");
+      const cache = JSON.parse(data);
+      const guilds = cache[accountId] || [];
+      return NextResponse.json({ guilds });
+    } catch {
+      return NextResponse.json({ guilds: [], message: "请先启动实例以获取服务器列表" });
     }
-
-    if (connection.status !== "connected") {
-      return NextResponse.json({ error: "账号未连接" }, { status: 400 });
-    }
-
-    const client = connection.client;
-    const guilds = client.guilds.cache.map((guild: any) => ({
-      id: guild.id,
-      name: guild.name,
-      icon: guild.iconURL(),
-    }));
-
-    return NextResponse.json({ guilds });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
