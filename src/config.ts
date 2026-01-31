@@ -333,6 +333,8 @@ export interface LegacyConfig {
   allowedChannelsIds?: ChannelId[];
   allowedUsersIds?: ChannelId[];
   mutedUsersIds?: ChannelId[];
+  allowedRoleIds?: ChannelId[];
+  mutedRoleIds?: ChannelId[];
   channelConfigs?: Record<string, ChannelConfig>;
   blockedKeywords?: string[];
   // 关键词是否忽略大小写（默认开启）
@@ -558,6 +560,8 @@ function createDefaultAccount(): AccountConfig {
     allowedChannelsIds: [],
     allowedUsersIds: [],
     mutedUsersIds: [],
+    allowedRoleIds: [],
+    mutedRoleIds: [],
     channelConfigs: {},
     enableTranslation: false,
     deepseekApiKey: undefined,
@@ -1480,6 +1484,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     allowedChannelsIds: input?.allowedChannelsIds || [],
     allowedUsersIds: input?.allowedUsersIds || [],
     mutedUsersIds: input?.mutedUsersIds || [],
+    allowedRoleIds: input?.allowedRoleIds || [],
+    mutedRoleIds: input?.mutedRoleIds || [],
     channelConfigs: input?.channelConfigs || {},
     enableTranslation: input?.enableTranslation === true,
     deepseekApiKey: typeof input?.deepseekApiKey === "string" && input.deepseekApiKey.trim() ? input.deepseekApiKey.trim() : undefined,
@@ -1887,6 +1893,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       allowedChannelsIds: [],
       allowedUsersIds: [],
       mutedUsersIds: [],
+      allowedRoleIds: [],
+      mutedRoleIds: [],
       channelConfigs: {},
       showChat: true,
       stackMessages: false,
@@ -1953,6 +1961,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     allowedChannelsIds: account.allowedChannelsIds,
     allowedUsersIds: account.allowedUsersIds,
     mutedUsersIds: account.mutedUsersIds,
+    allowedRoleIds: account.allowedRoleIds,
+    mutedRoleIds: account.mutedRoleIds,
     channelConfigs: account.channelConfigs,
     enableTranslation: account.enableTranslation,
     deepseekApiKey: account.deepseekApiKey,

@@ -295,6 +295,8 @@ interface FrontendAccount {
   replacements: { from: string; to: string }[];
   allowedUsersIds: string[];
   mutedUsersIds: string[];
+  allowedRoleIds?: string[];
+  mutedRoleIds?: string[];
   restartNonce?: number;
   enableTranslation?: boolean;
   translationProvider?: "deepseek" | "google" | "baidu" | "youdao" | "openai";
@@ -879,6 +881,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     replacements,
     allowedUsersIds: (account.allowedUsersIds || []).map((id: any) => String(id)),
     mutedUsersIds: (account.mutedUsersIds || []).map((id: any) => String(id)),
+    allowedRoleIds: (account.allowedRoleIds || []).map((id: any) => String(id)),
+    mutedRoleIds: (account.mutedRoleIds || []).map((id: any) => String(id)),
     restartNonce: account.restartNonce,
     enableTranslation: account.enableTranslation === true,
     translationProvider: account.translationProvider || "deepseek",
@@ -1395,6 +1399,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     replacementsDictionary,
     allowedUsersIds: Array.isArray(dto.allowedUsersIds) ? dto.allowedUsersIds : base.allowedUsersIds || [],
     mutedUsersIds: Array.isArray(dto.mutedUsersIds) ? dto.mutedUsersIds : base.mutedUsersIds || [],
+    allowedRoleIds: Array.isArray(dto.allowedRoleIds) ? dto.allowedRoleIds : base.allowedRoleIds || [],
+    mutedRoleIds: Array.isArray(dto.mutedRoleIds) ? dto.mutedRoleIds : base.mutedRoleIds || [],
     restartNonce: dto.restartNonce ?? base.restartNonce,
     enableTranslation: dto.enableTranslation === true,
     translationProvider: dto.translationProvider || base.translationProvider || "deepseek",

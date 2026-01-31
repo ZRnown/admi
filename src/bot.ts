@@ -1085,6 +1085,8 @@ export class Bot {
         // 全局设置
         const globalAllowed = (this.config.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
         const globalMuted = (this.config.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
+        const globalAllowedRoles = (this.config.allowedRoleIds || []).map((x: any) => String(x)).filter(Boolean);
+        const globalMutedRoles = (this.config.mutedRoleIds || []).map((x: any) => String(x)).filter(Boolean);
 
         // 规则级别设置
         const ruleAllowed = ruleConfig.allowedUsersIds;
@@ -1100,6 +1102,21 @@ export class Bot {
         if (globalAllowed.length > 0 && !globalAllowed.includes(authorId)) {
           this.logger.info(`${logPrefix} [SKIP] Author ${authorId} not in global allowedUsersIds`);
           return;
+        }
+
+        // 身份组过滤（全局）：黑名单优先
+        if (globalAllowedRoles.length > 0 || globalMutedRoles.length > 0) {
+          const memberRoleIds = message.member?.roles?.cache
+            ? Array.from(message.member.roles.cache.keys())
+            : [];
+          if (globalMutedRoles.length > 0 && memberRoleIds.some((id) => globalMutedRoles.includes(id))) {
+            this.logger.info(`${logPrefix} [SKIP] Member in global mutedRoleIds`);
+            return;
+          }
+          if (globalAllowedRoles.length > 0 && !memberRoleIds.some((id) => globalAllowedRoles.includes(id))) {
+            this.logger.info(`${logPrefix} [SKIP] Member not in global allowedRoleIds`);
+            return;
+          }
         }
 
         // 规则级别黑名单：如果在规则黑名单中，跳过

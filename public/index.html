@@ -57,6 +57,7 @@
     </header>
 
     <div id="app" style="display: none;">
+      <div id="accountLibrary"></div>
       <!-- 账号切换标签 -->
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
         <div class="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/60 p-4">
@@ -1204,6 +1205,7 @@
       // 渲染账号标签
       const accountTabsEl = document.getElementById('accountTabs');
       const configFormEl = document.getElementById('configForm');
+      const accountLibraryEl = document.getElementById('accountLibrary');
       
       if (!accountTabsEl || !configFormEl) {
         console.error('找不到必要的 DOM 元素');
@@ -1235,6 +1237,10 @@
         </button>
       `;
       accountTabsEl.innerHTML = tabsHtml;
+
+      if (accountLibraryEl) {
+        accountLibraryEl.innerHTML = renderAccountLibrarySection();
+      }
 
       // 渲染配置表单
       configFormEl.innerHTML = renderAccountForm(activeAccount, currentForwardingType);
@@ -1514,18 +1520,437 @@
       `;
     }
 
-    function renderAccountLibrarySection() {
-      return `
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100">
-            <h2 class="font-semibold text-slate-800">全局账号库</h2>
-            <p class="mt-1 text-xs text-slate-500">独立管理 Discord / Telegram / X / TruthSocial 账号，实例中选择使用。</p>
+    const libraryUiState = {};
+
+    function getLibraryUiKey(kind, id) {
+      return `${kind}:${id}`;
+    }
+
+    function inferLibraryLoginMode(kind, account) {
+      if (kind === 'discord') {
+        if (account?.email || account?.password) return 'password';
+        return 'token';
+      }
+      if (kind === 'telegram') {
+        if (account?.type === 'bot') return 'token';
+        if (account?.phoneNumber) return 'phone';
+        if (account?.sessionString || account?.sessionPath) return 'session';
+        return 'session';
+      }
+      if (kind === 'x') {
+        return account?.loginCookie ? 'cookie' : 'password';
+      }
+      if (kind === 'truthsocial') {
+        return 'password';
+      }
+      return 'token';
+    }
+
+    function getLibraryUiState(kind, id, account) {
+      const key = getLibraryUiKey(kind, id);
+      if (!libraryUiState[key]) {
+        libraryUiState[key] = {
+          loginMode: inferLibraryLoginMode(kind, account)
+        };
+      }
+      return libraryUiState[key];
+    }
+
+    function setLibraryLoginMode(kind, id, value) {
+      const key = getLibraryUiKey(kind, id);
+      if (!libraryUiState[key]) {
+        libraryUiState[key] = {};
+      }
+      libraryUiState[key].loginMode = value;
+      render();
+    }
+
+    function getLibraryItems() {
+      const items = [];
+      (state.discordAccounts || []).forEach((acc) => items.push({ kind: 'discord', id: acc.id, account: acc }));
+      (state.telegramAccounts || []).forEach((acc) => items.push({ kind: 'telegram', id: acc.id, account: acc }));
+      (state.xAccounts || []).forEach((acc) => items.push({ kind: 'x', id: acc.id, account: acc }));
+      (state.truthSocialAccounts || []).forEach((acc) => items.push({ kind: 'truthsocial', id: acc.id, account: acc }));
+      return items;
+    }
+
+    function getLibraryKindLabel(kind) {
+      switch (kind) {
+        case 'discord':
+          return 'Discord';
+        case 'telegram':
+          return 'Telegram';
+        case 'x':
+          return 'X';
+        case 'truthsocial':
+          return 'TruthSocial';
+        default:
+          return '账号';
+      }
+    }
+
+    function addLibraryAccount(kind, name) {
+      if (kind === 'discord') {
+        state.discordAccounts = state.discordAccounts || [];
+        state.discordAccounts.push({
+          id: genId(),
+          name: name || 'Discord账号',
+          type: 'selfbot',
+          token: '',
+          email: '',
+          password: ''
+        });
+      } else if (kind === 'telegram') {
+        state.telegramAccounts = state.telegramAccounts || [];
+        state.telegramAccounts.push({
+          id: genId(),
+          name: name || 'Telegram账号',
+          type: 'client',
+          token: '',
+          apiId: '',
+          apiHash: '',
+          phoneNumber: '',
+          twoFactorPassword: '',
+          sessionType: 'file',
+          sessionPath: '',
+          sessionString: '',
+          enabled: false
+        });
+      } else if (kind === 'x') {
+        state.xAccounts = state.xAccounts || [];
+        state.xAccounts.push({
+          id: genId(),
+          name: name || 'X账号',
+          apiKey: '',
+          apiBaseUrl: '',
+          loginCookie: '',
+          loginUserName: '',
+          loginEmail: '',
+          loginPassword: '',
+          loginTotpSecret: '',
+          loginProxy: ''
+        });
+      } else if (kind === 'truthsocial') {
+        state.truthSocialAccounts = state.truthSocialAccounts || [];
+        state.truthSocialAccounts.push({
+          id: genId(),
+          name: name || 'TruthSocial账号',
+          username: '',
+          password: ''
+        });
+      }
+      saveConfig();
+      render();
+    }
+
+    function addLibraryAccountFromSelect() {
+      const select = document.getElementById('libraryAddType');
+      const kind = select ? select.value : 'discord';
+      addLibraryAccount(kind);
+    }
+
+    function updateLibraryAccountField(kind, id, field, value) {
+      if (kind === 'discord') {
+        updateDiscordLibraryField(id, field, value);
+      } else if (kind === 'telegram') {
+        updateTelegramLibraryField(id, field, value);
+      } else if (kind === 'x') {
+        updateXLibraryField(id, field, value);
+      } else if (kind === 'truthsocial') {
+        updateTruthLibraryField(id, field, value);
+      }
+    }
+
+    function removeLibraryAccount(kind, id) {
+      if (kind === 'discord') {
+        removeDiscordLibraryAccount(id);
+      } else if (kind === 'telegram') {
+        removeTelegramLibraryAccount(id);
+      } else if (kind === 'x') {
+        removeXLibraryAccount(id);
+      } else if (kind === 'truthsocial') {
+        removeTruthLibraryAccount(id);
+      }
+    }
+
+    function changeLibraryAccountType(kind, id, nextKind) {
+      if (!nextKind || nextKind === kind) return;
+      const items = getLibraryItems();
+      const current = items.find((item) => item.kind === kind && item.id === id);
+      if (!current) return;
+      const name = current.account?.name || '';
+      removeLibraryAccount(kind, id);
+      addLibraryAccount(nextKind, name);
+    }
+
+    function renderLibraryAccountFields(kind, account) {
+      const ui = getLibraryUiState(kind, account.id, account);
+      if (kind === 'discord') {
+        const loginMode = ui.loginMode === 'password' ? 'password' : 'token';
+        return `
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">账号类型</label>
+              <select onchange="updateLibraryAccountField('discord', '${account.id}', 'type', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="selfbot" ${account.type === 'selfbot' ? 'selected' : ''}>用户账号</option>
+                <option value="bot" ${account.type === 'bot' ? 'selected' : ''}>机器人账号</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">登录方式</label>
+              <select onchange="setLibraryLoginMode('discord', '${account.id}', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="token" ${loginMode === 'token' ? 'selected' : ''}>Token</option>
+                <option value="password" ${loginMode === 'password' ? 'selected' : ''}>账号密码</option>
+              </select>
+            </div>
+            ${loginMode === 'token' ? `
+            <div class="md:col-span-2">
+              <label class="block text-xs text-slate-600 mb-1">Token</label>
+              <input type="password" value="${escapeHtml(account.token || '')}" onchange="updateLibraryAccountField('discord', '${account.id}', 'token', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+            ` : `
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">邮箱</label>
+              <input type="text" value="${escapeHtml(account.email || '')}" onchange="updateLibraryAccountField('discord', '${account.id}', 'email', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">密码</label>
+              <input type="password" value="${escapeHtml(account.password || '')}" onchange="updateLibraryAccountField('discord', '${account.id}', 'password', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div class="md:col-span-2">
+              <button onclick="loginDiscordLibrary('${account.id}')"
+                class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">账号密码登录获取 Token</button>
+            </div>
+            `}
           </div>
-          <div class="p-6 space-y-6">
-            ${renderDiscordLibrarySection()}
-            ${renderTelegramLibrarySection()}
-            ${renderXLibrarySection()}
-            ${renderTruthLibrarySection()}
+        `;
+      }
+
+      if (kind === 'telegram') {
+        const isBot = account.type === 'bot';
+        const loginMode = ui.loginMode === 'phone' ? 'phone' : 'session';
+        return `
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">账号类型</label>
+              <select onchange="updateLibraryAccountField('telegram', '${account.id}', 'type', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="client" ${account.type === 'client' ? 'selected' : ''}>用户账号</option>
+                <option value="bot" ${account.type === 'bot' ? 'selected' : ''}>机器人账号</option>
+              </select>
+            </div>
+            ${isBot ? '' : `
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">登录方式</label>
+              <select onchange="setLibraryLoginMode('telegram', '${account.id}', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="session" ${loginMode === 'session' ? 'selected' : ''}>Session</option>
+                <option value="phone" ${loginMode === 'phone' ? 'selected' : ''}>手机号登录</option>
+              </select>
+            </div>
+            `}
+          </div>
+          ${isBot ? `
+          <div class="mt-3">
+            <label class="block text-xs text-slate-600 mb-1">Bot Token</label>
+            <input type="password" value="${escapeHtml(account.token || '')}" onchange="updateLibraryAccountField('telegram', '${account.id}', 'token', this.value)"
+              class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+          </div>
+          ` : `
+          <div class="grid gap-3 md:grid-cols-2 mt-3">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">API ID</label>
+              <input type="number" value="${account.apiId || ''}" onchange="updateLibraryAccountField('telegram', '${account.id}', 'apiId', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">API Hash</label>
+              <input type="password" value="${escapeHtml(account.apiHash || '')}" onchange="updateLibraryAccountField('telegram', '${account.id}', 'apiHash', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+          ${loginMode === 'phone' ? `
+          <div class="grid gap-3 md:grid-cols-2 mt-3">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">手机号</label>
+              <input type="text" value="${escapeHtml(account.phoneNumber || '')}" onchange="updateLibraryAccountField('telegram', '${account.id}', 'phoneNumber', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">2FA 密码（可选）</label>
+              <input type="password" value="${escapeHtml(account.twoFactorPassword || '')}" onchange="updateLibraryAccountField('telegram', '${account.id}', 'twoFactorPassword', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button onclick="startTelegramLibraryLogin('${account.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">发送验证码</button>
+            <input type="text" id="tg-login-code-${account.id}" placeholder="验证码" class="w-28 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+            <button onclick="confirmTelegramLibraryLogin('${account.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">确认登录</button>
+          </div>
+          ` : `
+          <div class="mt-3">
+            <label class="block text-xs text-slate-600 mb-1">Session 方式</label>
+            <select onchange="updateLibraryAccountField('telegram', '${account.id}', 'sessionType', this.value)"
+              class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <option value="file" ${(account.sessionType || 'file') === 'file' ? 'selected' : ''}>Session 文件</option>
+              <option value="string" ${account.sessionType === 'string' ? 'selected' : ''}>Session 字符串</option>
+            </select>
+          </div>
+          <div class="mt-3 ${(account.sessionType || 'file') === 'string' ? '' : 'hidden'}">
+            <label class="block text-xs text-slate-600 mb-1">Session 字符串</label>
+            <textarea rows="3" onchange="updateLibraryAccountField('telegram', '${account.id}', 'sessionString', this.value)"
+              class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none resize-none">${escapeHtml(account.sessionString || '')}</textarea>
+          </div>
+          <div class="mt-3 ${(account.sessionType || 'file') === 'string' ? 'hidden' : ''}">
+            <label class="block text-xs text-slate-600 mb-1">上传 Session 文件</label>
+            <input type="file" accept=".session" onchange="uploadTelegramLibrarySessionFile('${account.id}', this.files[0])"
+              class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+            ${account.sessionPath ? `<p class="text-xs text-emerald-600 mt-2">已上传: ${escapeHtml(String(account.sessionPath).split(/[/\\\\]/).pop())}</p>` : ''}
+          </div>
+          `}
+          `}
+          <div class="flex gap-2 mt-3">
+            <button id="lib-tg-connect-${account.id}" onclick="connectTelegramLibrary('${account.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">连接</button>
+            <button id="lib-tg-disconnect-${account.id}" onclick="disconnectTelegramLibrary('${account.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">断开</button>
+          </div>
+          <div class="text-xs text-slate-500 mt-2">
+            状态: <span id="lib-tg-badge-${account.id}" class="px-2 py-0.5 rounded-full ${getBadgeClass(account.loginState || 'idle')}">${account.loginState || 'idle'}</span>
+            <span id="lib-tg-msg-${account.id}" class="ml-2">${escapeHtml(account.loginMessage || '')}</span>
+          </div>
+        `;
+      }
+
+      if (kind === 'x') {
+        const loginMode = ui.loginMode === 'cookie' ? 'cookie' : 'password';
+        return `
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">API Base URL</label>
+              <input type="text" value="${escapeHtml(account.apiBaseUrl || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'apiBaseUrl', this.value)"
+                placeholder="https://api.twitterapi.io" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">API Key</label>
+              <input type="password" value="${escapeHtml(account.apiKey || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'apiKey', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-xs text-slate-600 mb-1">登录方式</label>
+              <select onchange="setLibraryLoginMode('x', '${account.id}', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="cookie" ${loginMode === 'cookie' ? 'selected' : ''}>Cookie</option>
+                <option value="password" ${loginMode === 'password' ? 'selected' : ''}>账号密码</option>
+              </select>
+            </div>
+            ${loginMode === 'cookie' ? `
+            <div class="md:col-span-2">
+              <label class="block text-xs text-slate-600 mb-1">Login Cookie</label>
+              <input type="password" value="${escapeHtml(account.loginCookie || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginCookie', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+            ` : `
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">用户名</label>
+              <input type="text" value="${escapeHtml(account.loginUserName || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginUserName', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">邮箱</label>
+              <input type="text" value="${escapeHtml(account.loginEmail || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginEmail', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">密码</label>
+              <input type="password" value="${escapeHtml(account.loginPassword || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginPassword', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">2FA 密钥（可选）</label>
+              <input type="password" value="${escapeHtml(account.loginTotpSecret || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginTotpSecret', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-xs text-slate-600 mb-1">代理（登录接口必填）</label>
+              <input type="text" value="${escapeHtml(account.loginProxy || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginProxy', this.value)"
+                placeholder="http://username:password@ip:port" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div class="md:col-span-2">
+              <button onclick="loginXLibrary('${account.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">账号密码登录获取 Cookie</button>
+            </div>
+            `}
+          </div>
+        `;
+      }
+
+      if (kind === 'truthsocial') {
+        return `
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">用户名</label>
+              <input type="text" value="${escapeHtml(account.username || '')}" onchange="updateLibraryAccountField('truthsocial', '${account.id}', 'username', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">密码</label>
+              <input type="password" value="${escapeHtml(account.password || '')}" onchange="updateLibraryAccountField('truthsocial', '${account.id}', 'password', this.value)"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+        `;
+      }
+
+      return '';
+    }
+
+    function renderLibraryAccountCard(item) {
+      const account = item.account;
+      return `
+        <div class="border border-slate-200 rounded-lg p-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <select onchange="changeLibraryAccountType('${item.kind}', '${item.id}', this.value)"
+                class="rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="discord" ${item.kind === 'discord' ? 'selected' : ''}>Discord</option>
+                <option value="telegram" ${item.kind === 'telegram' ? 'selected' : ''}>Telegram</option>
+                <option value="x" ${item.kind === 'x' ? 'selected' : ''}>X</option>
+                <option value="truthsocial" ${item.kind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>
+              </select>
+              <input type="text" value="${escapeHtml(account.name || '')}" onchange="updateLibraryAccountField('${item.kind}', '${item.id}', 'name', this.value)"
+                placeholder="账号名称" class="min-w-[200px] rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <button onclick="removeLibraryAccount('${item.kind}', '${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
+          </div>
+          <div class="mt-4">
+            ${renderLibraryAccountFields(item.kind, account)}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAccountLibrarySection() {
+      const items = getLibraryItems();
+      return `
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">账号管理库</h2>
+            <p class="mt-1 text-xs text-slate-500">独立管理账号类型，实例中仅选择账号，不区分监听/发送。</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="flex flex-wrap items-center gap-2">
+              <select id="libraryAddType" class="rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="discord">Discord</option>
+                <option value="telegram">Telegram</option>
+                <option value="x">X</option>
+                <option value="truthsocial">TruthSocial</option>
+              </select>
+              <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
+            </div>
+            ${items.length === 0 ? `<p class="text-xs text-slate-400">暂无账号</p>` : items.map(renderLibraryAccountCard).join('')}
           </div>
         </div>
       `;
@@ -1800,7 +2225,6 @@
       };
       
       return `
-        ${renderAccountLibrarySection()}
         <!-- 基础设置 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
@@ -2220,6 +2644,32 @@
                     </span>
                   `).join('')}
                   <input type="text" placeholder="输入用户ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'mutedUsersIds')"
+                    class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+                </div>
+                <p class="text-xs text-slate-500">黑名单优先级高于白名单</p>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">身份组白名单（只转发这些身份组成员）</label>
+                <div class="flex flex-wrap gap-2 mb-3">
+                  ${(acc.allowedRoleIds || []).map((id, idx) => `
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 text-blue-600 text-sm border border-blue-100">
+                      ${escapeHtml(String(id))} <button onclick="removeKeyword('allowedRoleIds', ${idx})" class="hover:text-blue-800">✕</button>
+                    </span>
+                  `).join('')}
+                  <input type="text" placeholder="输入身份组ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'allowedRoleIds')"
+                    class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+                </div>
+                <p class="text-xs text-slate-500">用于 Discord 身份组过滤</p>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">身份组黑名单（不转发这些身份组成员）</label>
+                <div class="flex flex-wrap gap-2 mb-3">
+                  ${(acc.mutedRoleIds || []).map((id, idx) => `
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-purple-50 text-purple-600 text-sm border border-purple-100">
+                      ${escapeHtml(String(id))} <button onclick="removeKeyword('mutedRoleIds', ${idx})" class="hover:text-purple-800">✕</button>
+                    </span>
+                  `).join('')}
+                  <input type="text" placeholder="输入身份组ID后回车..." onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'mutedRoleIds')"
                     class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
                 </div>
                 <p class="text-xs text-slate-500">黑名单优先级高于白名单</p>
@@ -3247,9 +3697,7 @@
         type: 'selfbot',
         token: '',
         email: '',
-        password: '',
-        totpSecret: '',
-        proxyUrl: ''
+        password: ''
       });
       saveConfig();
       render();
