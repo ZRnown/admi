@@ -412,7 +412,7 @@
 
   <!-- 账号库弹窗 -->
   <div id="accountLibraryModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeAccountLibrary()">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-5xl mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-7xl w-[95vw] mx-4 max-h-[94vh] overflow-y-auto" onclick="event.stopPropagation()">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold text-slate-900">账号库</h2>
         <button onclick="closeAccountLibrary()" class="text-slate-400 hover:text-slate-600">
@@ -429,7 +429,15 @@
             <option value="x">X</option>
             <option value="truthsocial">TruthSocial</option>
           </select>
-          <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
+          <input id="libraryAddName" type="text" placeholder="账号名称（可选）" class="rounded border border-slate-200 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none">
+          <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 新建账号</button>
+          <div class="flex flex-wrap items-center gap-1 text-xs text-slate-500">
+            <button id="libraryFilterAll" onclick="setLibraryFilter('all')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">全部</button>
+            <button id="libraryFilterDiscord" onclick="setLibraryFilter('discord')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">Discord</button>
+            <button id="libraryFilterTelegram" onclick="setLibraryFilter('telegram')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">Telegram</button>
+            <button id="libraryFilterX" onclick="setLibraryFilter('x')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">X</button>
+            <button id="libraryFilterTruthsocial" onclick="setLibraryFilter('truthsocial')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">TruthSocial</button>
+          </div>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
           <span id="accountLibrarySelectionCount">已选 0 个账号</span>
@@ -458,7 +466,7 @@
 
   <!-- 账号库编辑弹窗 -->
   <div id="accountLibraryEditModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeLibraryEdit()">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-6xl w-[92vw] mx-4 max-h-[94vh] overflow-y-auto" onclick="event.stopPropagation()">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold text-slate-900">编辑账号</h2>
         <button onclick="closeLibraryEdit()" class="text-slate-400 hover:text-slate-600">
@@ -1304,6 +1312,7 @@
       configFormEl.innerHTML = renderAccountForm(activeAccount, currentForwardingType);
 
       renderAccountLibraryModal();
+      renderAccountLibraryEditModal();
     }
 
     function renderDiscordLibrarySection() {
@@ -1581,6 +1590,7 @@
     }
 
     const libraryUiState = {};
+    let libraryFilter = 'all';
 
     function getLibraryUiKey(kind, id) {
       return `${kind}:${id}`;
@@ -1711,8 +1721,14 @@
 
     function addLibraryAccountFromSelect() {
       const select = document.getElementById('libraryAddType');
+      const nameInput = document.getElementById('libraryAddName');
       const kind = select ? select.value : 'discord';
-      addLibraryAccount(kind);
+      const name = nameInput ? nameInput.value : '';
+      const newId = addLibraryAccount(kind, name);
+      if (nameInput) nameInput.value = '';
+      if (newId) {
+        openLibraryEdit(kind, newId);
+      }
     }
 
     function updateLibraryAccountField(kind, id, field, value) {
@@ -2026,9 +2042,9 @@
     }
 
     function openAccountLibrary() {
-      renderAccountLibraryModal();
       const modal = document.getElementById('accountLibraryModal');
       if (modal) modal.classList.remove('hidden');
+      renderAccountLibraryModal();
     }
 
     function closeAccountLibrary() {
@@ -2038,9 +2054,9 @@
 
     function openLibraryEdit(kind, id) {
       editingLibraryAccount = { kind, id };
-      renderAccountLibraryEditModal();
       const modal = document.getElementById('accountLibraryEditModal');
       if (modal) modal.classList.remove('hidden');
+      renderAccountLibraryEditModal();
     }
 
     function closeLibraryEdit() {
@@ -2049,14 +2065,39 @@
       if (modal) modal.classList.add('hidden');
     }
 
+    function setLibraryFilter(value) {
+      libraryFilter = value;
+      renderAccountLibraryModal();
+    }
+
+    function updateLibraryFilterButtons() {
+      const mapping = {
+        all: 'libraryFilterAll',
+        discord: 'libraryFilterDiscord',
+        telegram: 'libraryFilterTelegram',
+        x: 'libraryFilterX',
+        truthsocial: 'libraryFilterTruthsocial'
+      };
+      Object.entries(mapping).forEach(([key, id]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const active = libraryFilter === key;
+        el.className = `px-2 py-1 rounded border border-slate-200 ${active ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-100'}`;
+      });
+    }
+
     function renderAccountLibraryModal() {
       const modal = document.getElementById('accountLibraryModal');
-      if (!modal || modal.classList.contains('hidden')) return;
+      if (!modal) return;
       const tbody = document.getElementById('accountLibraryTableBody');
       const selectAllEl = document.getElementById('accountLibrarySelectAll');
       const countEl = document.getElementById('accountLibrarySelectionCount');
       if (!tbody || !selectAllEl || !countEl) return;
-      const items = getLibraryItems();
+      updateLibraryFilterButtons();
+      const items = getLibraryItems().filter((item) => {
+        if (libraryFilter === 'all') return true;
+        return item.kind === libraryFilter;
+      });
       const keys = items.map((item) => getLibrarySelectionKey(item.kind, item.id));
       let selectedCount = 0;
       librarySelection.forEach((key) => {
@@ -2103,12 +2144,15 @@
 
     function renderAccountLibraryEditModal() {
       const modal = document.getElementById('accountLibraryEditModal');
-      if (!modal || modal.classList.contains('hidden')) return;
+      if (!modal) return;
       const body = document.getElementById('accountLibraryEditBody');
       if (!body || !editingLibraryAccount) return;
       const items = getLibraryItems();
       const current = items.find((item) => item.kind === editingLibraryAccount.kind && item.id === editingLibraryAccount.id);
-      if (!current) return;
+      if (!current) {
+        body.innerHTML = `<div class="text-sm text-slate-500">未找到账号，请返回列表刷新。</div>`;
+        return;
+      }
       const account = current.account;
       body.innerHTML = `
         <div class="grid gap-3 md:grid-cols-2">
