@@ -4,7 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Discord Forwarder - A message forwarding tool supporting multi-account management, multi-channel mapping, keyword filtering, auto-translation, and cross-platform forwarding (Discord-to-Discord, Discord-to-Feishu, Discord-to-Telegram).
+Discord Forwarder (转发狗) - A message forwarding tool supporting multi-account management, multi-channel mapping, keyword filtering, auto-translation, and cross-platform forwarding.
+
+**Supported forwarding types:**
+- Discord → Discord
+- Discord → Telegram
+- Telegram → Discord
+- Telegram → Telegram
+- Discord → Feishu (飞书)
+- X (Twitter) → Discord
+- Truth Social → Discord
 
 ## Build and Run Commands
 
@@ -24,7 +33,7 @@ pnpm build:bot          # Compile TypeScript (src/ -> dist-bot/)
 pnpm start:bot          # Run the compiled bot
 
 # Web UI
-pnpm dev                # Development server
+pnpm dev                # Development server (Next.js)
 pnpm build && pnpm start # Production build and serve
 
 # OCR
@@ -48,12 +57,14 @@ cd telegram_bridge && python -m pytest tests/  # Run tests
    - Manages Telegram bridge subprocess via `processManager.ts`
 
 2. **Web Management UI** (Next.js App Router in `app/`)
-   - REST API routes in `app/api/`: account/, config/, feishu/, telegram/
+   - REST API routes in `app/api/`: account/, auth/, config/, feishu/, telegram/, watermark/, x/
+   - Shared utilities in `app/api/_lib/`
 
 3. **Telegram Bridge** (`telegram_bridge/`)
    - Python subprocess (Telethon-based) spawned by bot process
    - Auto-restart on failure (max 5 attempts, 5s delay)
    - Entry: `telegram_bridge/src/telegram_bridge/main.py`
+   - Dependencies: telethon, pydantic, rapidocr-onnxruntime
 
 ### Message Flow
 
@@ -71,9 +82,15 @@ Discord Webhook/Bot API | Feishu API | Telegram API
 
 - `src/index.ts` - Main entry, multi-account lifecycle, config watching
 - `src/bot.ts` - Message processing pipeline, filtering logic
+- `src/config.ts` - Configuration types, loading, migration logic
 - `src/senderBot.ts` - Discord webhook/bot API sending
 - `src/feishuSender.ts` - Feishu/Lark API integration
 - `src/processManager.ts` - Telegram bridge subprocess management
+- `src/telegramBridgeClient.ts` - IPC client for Telegram bridge
+- `src/keywordMatcher.ts` - Keyword filtering with group support
+- `src/languageFilter.ts` - Language detection and filtering
+- `src/watermark.ts` - Image watermark processing
+- `src/externalForwarder.ts` - X/Truth Social external forwarders
 - `app/api/config/route.ts` - Configuration CRUD endpoints
 
 ### TypeScript Configuration
@@ -91,3 +108,21 @@ Copy `config.sample.json` to `config.json` before running. The bot watches this 
 - Multi-account structure: `MultiConfig.accounts[]` contains `AccountConfig` objects
 - Legacy migration: Old single-account configs auto-migrate to multi-account format
 - Version tracking: `CONFIG_VERSION` in `src/config.ts` triggers automatic migrations
+
+## Environment Variables
+
+Optional `.env` file in project root:
+
+```bash
+# Limit available forwarding types in UI (comma-separated)
+ENABLED_FORWARDING_TYPES=discord-to-discord,discord-to-telegram,telegram-to-discord,discord-to-feishu
+
+# Custom config file path
+CONFIG_PATH=/path/to/config.json
+```
+
+## Runtime Data
+
+- `.data/status.json` - Account connection status
+- `.data/telegram_login_*.json` - Telegram auth flow state
+- `.data/discord_login_*.json` - Discord auth flow state
