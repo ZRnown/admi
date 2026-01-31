@@ -1286,6 +1286,50 @@
       }, 800);
     }
 
+    // 缓存服务器和频道列表
+    let cachedGuilds = [];
+    let cachedChannels = {};
+
+    // 获取 Discord 服务器列表
+    async function fetchDiscordGuilds(token) {
+      if (!token) return [];
+      try {
+        const res = await fetch('/api/metadata/discord/guilds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        cachedGuilds = data.guilds || [];
+        return cachedGuilds;
+      } catch (e) {
+        console.error('获取服务器列表失败', e);
+        return [];
+      }
+    }
+
+    // 获取 Discord 频道列表
+    async function fetchDiscordChannels(token, guildId) {
+      if (!token || !guildId) return [];
+      const cacheKey = `${token}:${guildId}`;
+      if (cachedChannels[cacheKey]) return cachedChannels[cacheKey];
+      try {
+        const res = await fetch('/api/metadata/discord/channels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, guildId })
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        cachedChannels[cacheKey] = data.channels || [];
+        return cachedChannels[cacheKey];
+      } catch (e) {
+        console.error('获取频道列表失败', e);
+        return [];
+      }
+    }
+
     // 渲染界面
     function render() {
       // 确保 app 元素存在
@@ -1463,10 +1507,7 @@
                   <label class="block text-xs text-slate-600 mb-1">Bot Token</label>
                   <input type="password" value="${escapeHtml(item.token || '')}" onchange="updateTelegramLibraryField('${item.id}', 'token', this.value)"
                     class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
-                  <div class="flex gap-2 mt-2">
-                    <button id="lib-tg-connect-${item.id}" onclick="connectTelegramLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">连接</button>
-                    <button id="lib-tg-disconnect-${item.id}" onclick="disconnectTelegramLibrary('${item.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">断开</button>
-                  </div>
+                  <p class="text-xs text-slate-500 mt-2">启动实例时自动连接</p>
                   ${renderStatus(item)}
                 </div>
               ` : `
@@ -1516,10 +1557,7 @@
                   <input type="text" id="tg-login-code-${item.id}" placeholder="验证码" class="w-28 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
                   <button onclick="confirmTelegramLibraryLogin('${item.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">确认登录</button>
                 </div>
-                <div class="flex gap-2 mt-2">
-                  <button id="lib-tg-connect-${item.id}" onclick="connectTelegramLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">连接</button>
-                  <button id="lib-tg-disconnect-${item.id}" onclick="disconnectTelegramLibrary('${item.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">断开</button>
-                </div>
+                <p class="text-xs text-slate-500 mt-2">启动实例时自动连接</p>
                 ${renderStatus(item)}
               `}
             </div>
@@ -2042,10 +2080,7 @@
           </div>
           `}
           `}
-          <div class="flex gap-2 mt-3">
-            <button id="lib-tg-connect-${account.id}" onclick="connectTelegramLibrary('${account.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">连接</button>
-            <button id="lib-tg-disconnect-${account.id}" onclick="disconnectTelegramLibrary('${account.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">断开</button>
-          </div>
+          <p class="text-xs text-slate-500 mt-3">启动实例时自动连接</p>
           <div class="text-xs text-slate-500 mt-2">
             状态: <span id="lib-tg-badge-${account.id}" class="px-2 py-0.5 rounded-full ${getBadgeClass(account.loginState || 'idle')}">${account.loginState || 'idle'}</span>
             <span id="lib-tg-msg-${account.id}" class="ml-2">${escapeHtml(account.loginMessage || '')}</span>

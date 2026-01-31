@@ -31,6 +31,7 @@ import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
 import { reconcileExternalForwarders, shutdownExternalForwarders } from "./externalForwarder.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { connectionPool, buildDiscordCredentialKey } from "./connectionPool.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
