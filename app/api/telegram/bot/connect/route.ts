@@ -120,12 +120,48 @@ export async function POST(req: NextRequest) {
     const accountId = body?.accountId as string | undefined;
     const telegramAccountId = body?.telegramAccountId as string | undefined;
     const role = body?.role === "listener" || body?.role === "sender" ? body.role : undefined;
+    const useLibrary = body?.useLibrary === true || !accountId;
 
-    if (!accountId) {
+    if (!accountId && !useLibrary) {
       return NextResponse.json({ error: "缺少 accountId" }, { status: 400 });
     }
 
     const multi = await getMultiConfig();
+    if (useLibrary) {
+      if (!telegramAccountId) {
+        return NextResponse.json({ error: "缺少 telegramAccountId" }, { status: 400 });
+      }
+      const tgAccount = (multi.telegramAccounts || []).find((acc) => acc.id === telegramAccountId);
+      if (!tgAccount) {
+        return NextResponse.json({ error: "Telegram账号不存在" }, { status: 404 });
+      }
+      const tokenToUse = tgAccount.token || "";
+      if (!tokenToUse || tokenToUse.trim() === '') {
+        return NextResponse.json({ state: 'error', message: '未配置 Telegram Bot Token' }, { status: 400 });
+      }
+
+      const result = await verifyTelegramBotToken(tokenToUse);
+      if (result.success) {
+        tgAccount.type = "bot";
+        tgAccount.token = tokenToUse;
+        tgAccount.name = result.userInfo?.username || tgAccount.name || 'Telegram Bot';
+        tgAccount.enabled = true;
+        await saveMultiConfig(multi);
+
+        await writeTelegramStatus(telegramAccountId, "online", `连接成功: @${result.userInfo?.username || 'Bot'}`, result.userInfo);
+        await triggerBotReload();
+
+        return NextResponse.json({
+          state: 'online',
+          message: `连接成功: @${result.userInfo?.username || result.userInfo?.first_name || 'Bot'}`,
+          userInfo: result.userInfo,
+        });
+      } else {
+        await writeTelegramStatus(telegramAccountId, "error", result.message);
+        return NextResponse.json({ state: 'error', message: result.message }, { status: 400 });
+      }
+    }
+
     const account = multi.accounts.find((a) => a.id === accountId);
 
     if (!account) {

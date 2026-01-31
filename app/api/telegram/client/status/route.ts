@@ -51,12 +51,35 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const accountId = body?.accountId as string | undefined;
     const telegramAccountId = body?.telegramAccountId as string | undefined;
+    const useLibrary = body?.useLibrary === true || !accountId;
 
-    if (!accountId) {
+    if (!accountId && !useLibrary) {
       return NextResponse.json({ error: "缺少 accountId" }, { status: 400 });
     }
 
     const multi = await getMultiConfig();
+    if (useLibrary) {
+      if (!telegramAccountId) {
+        return NextResponse.json({ error: "缺少 telegramAccountId" }, { status: 400 });
+      }
+      const tgAccount = (multi.telegramAccounts || []).find((acc) => acc.id === telegramAccountId);
+      if (!tgAccount) {
+        return NextResponse.json({ error: "Telegram账号不存在" }, { status: 404 });
+      }
+
+      const statusData = await readTelegramStatus();
+      const status = statusData[telegramAccountId];
+      if (!status) {
+        return NextResponse.json({ state: "idle", message: "未连接" });
+      }
+      const normalizedState = normalizeTelegramState(status.state);
+      return NextResponse.json({
+        state: normalizedState,
+        message: normalizeTelegramMessage(normalizedState, status.message),
+        userInfo: status.userInfo,
+      });
+    }
+
     const account = multi.accounts.find((a) => a.id === accountId);
 
     if (!account) {

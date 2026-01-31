@@ -70,6 +70,37 @@ export interface TelegramAccountConfig {
   enabled?: boolean;
 }
 
+export interface DiscordAccountLibrary {
+  id: string;
+  name: string;
+  type: "bot" | "selfbot";
+  token?: string;
+  email?: string;
+  password?: string;
+  totpSecret?: string;
+  proxyUrl?: string;
+}
+
+export interface XAccountLibrary {
+  id: string;
+  name: string;
+  apiKey?: string;
+  apiBaseUrl?: string;
+  loginCookie?: string;
+  loginUserName?: string;
+  loginEmail?: string;
+  loginPassword?: string;
+  loginTotpSecret?: string;
+  loginProxy?: string;
+}
+
+export interface TruthSocialAccountLibrary {
+  id: string;
+  name: string;
+  username?: string;
+  password?: string;
+}
+
 export interface TelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;     // 源频道ID
@@ -437,6 +468,12 @@ export interface AccountConfig extends LegacyConfig {
   loginNonce?: number;
   loginState?: string;
   loginMessage?: string;
+  // 全局账号库选择
+  discordAccountId?: string;
+  telegramListenerAccountId?: string;
+  telegramSenderAccountId?: string;
+  xAccountId?: string;
+  truthSocialAccountId?: string;
   // OCR配置
   enableOCR?: boolean;
   ocrServerUrl?: string;
@@ -477,6 +514,11 @@ export interface MultiConfig {
   loginUser?: string;
   loginPassword?: string;
   telegramAvatarBaseUrl?: string;
+  // 全局账号库
+  discordAccounts?: DiscordAccountLibrary[];
+  telegramAccounts?: TelegramAccountConfig[];
+  xAccounts?: XAccountLibrary[];
+  truthSocialAccounts?: TruthSocialAccountLibrary[];
   // 配置版本，用于迁移
   version?: string;
   // 启用的转发类型（如果不设置，默认全部启用）
@@ -542,7 +584,7 @@ function createDefaultAccount(): AccountConfig {
 }
 
 // 当前配置版本
-export const CONFIG_VERSION = "1.1.0"; // 添加Telegram支持
+export const CONFIG_VERSION = "1.2.0"; // 添加全局账号库支持
 
 // 导出 ensureConfigFile 供程序启动时调用，而不是在每次读取时调用
 // 这样可以避免在原子保存间隙时误判文件不存在而覆盖配置
@@ -810,6 +852,84 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
   };
 }
 
+function normalizeTelegramAccountList(raw: any): TelegramAccountConfig[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((acc: any) => ({
+    id: typeof acc.id === "string" ? acc.id : randomUUID(),
+    name: typeof acc.name === "string" ? acc.name : "Telegram Account",
+    type: acc.type === "bot" ? "bot" : "client",
+    token: typeof acc.token === "string" ? acc.token : "",
+    sessionPath: typeof acc.sessionPath === "string" ? acc.sessionPath : undefined,
+    sessionString: typeof acc.sessionString === "string" ? acc.sessionString : undefined,
+    apiId: typeof acc.apiId === "number" ? acc.apiId : undefined,
+    apiHash: typeof acc.apiHash === "string" ? acc.apiHash : undefined,
+    phoneNumber: typeof acc.phoneNumber === "string" ? acc.phoneNumber : undefined,
+    twoFactorPassword: typeof acc.twoFactorPassword === "string" ? acc.twoFactorPassword : undefined,
+    role: acc.role === "listener" || acc.role === "sender" ? acc.role : undefined,
+    sessionType: acc.sessionType === "string" ? "string" : acc.sessionType === "file" ? "file" : undefined,
+    loginRequested: acc.loginRequested === true,
+    loginNonce: typeof acc.loginNonce === "number" ? acc.loginNonce : undefined,
+    loginState: typeof acc.loginState === "string" ? acc.loginState : "idle",
+    loginMessage: typeof acc.loginMessage === "string" ? acc.loginMessage : "",
+    enabled: acc.enabled !== false
+  }));
+}
+
+function normalizeDiscordAccountLibrary(raw: any): DiscordAccountLibrary[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item: any) => {
+      if (!item || typeof item !== "object") return null;
+      return {
+        id: typeof item.id === "string" && item.id.trim() ? item.id : randomUUID(),
+        name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "Discord 账号",
+        type: item.type === "bot" ? "bot" : "selfbot",
+        token: typeof item.token === "string" ? item.token : undefined,
+        email: typeof item.email === "string" ? item.email : undefined,
+        password: typeof item.password === "string" ? item.password : undefined,
+        totpSecret: typeof item.totpSecret === "string" ? item.totpSecret : undefined,
+        proxyUrl: typeof item.proxyUrl === "string" && item.proxyUrl.trim() ? item.proxyUrl.trim() : undefined,
+      };
+    })
+    .filter(Boolean) as DiscordAccountLibrary[];
+}
+
+function normalizeXAccountLibrary(raw: any): XAccountLibrary[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item: any) => {
+      if (!item || typeof item !== "object") return null;
+      return {
+        id: typeof item.id === "string" && item.id.trim() ? item.id : randomUUID(),
+        name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "X 账号",
+        apiKey: typeof item.apiKey === "string" ? item.apiKey : undefined,
+        apiBaseUrl: typeof item.apiBaseUrl === "string" ? item.apiBaseUrl : undefined,
+        loginCookie: typeof item.loginCookie === "string" ? item.loginCookie : undefined,
+        loginUserName: typeof item.loginUserName === "string" ? item.loginUserName : undefined,
+        loginEmail: typeof item.loginEmail === "string" ? item.loginEmail : undefined,
+        loginPassword: typeof item.loginPassword === "string" ? item.loginPassword : undefined,
+        loginTotpSecret: typeof item.loginTotpSecret === "string" ? item.loginTotpSecret : undefined,
+        loginProxy: typeof item.loginProxy === "string" ? item.loginProxy : undefined,
+      };
+    })
+    .filter(Boolean) as XAccountLibrary[];
+}
+
+function normalizeTruthSocialAccountLibrary(raw: any): TruthSocialAccountLibrary[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item: any) => {
+      if (!item || typeof item !== "object") return null;
+      return {
+        id: typeof item.id === "string" && item.id.trim() ? item.id : randomUUID(),
+        name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "TruthSocial 账号",
+        username: typeof item.username === "string" ? item.username : undefined,
+        password: typeof item.password === "string" ? item.password : undefined,
+      };
+    })
+    .filter(Boolean) as TruthSocialAccountLibrary[];
+}
+
 function normalizeRuleConfigs(raw: any): Record<string, RuleLevelConfig> {
   const result: Record<string, RuleLevelConfig> = {};
   if (!raw || typeof raw !== "object") return result;
@@ -1045,6 +1165,26 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   const type: "bot" | "selfbot" = input?.type === "bot" ? "bot" : "selfbot";
   const token = typeof input?.token === "string" ? input.token : "";
   const proxyUrl = typeof input?.proxyUrl === "string" && input.proxyUrl.trim() ? input.proxyUrl.trim() : undefined;
+  const discordAccountId =
+    typeof input?.discordAccountId === "string" && input.discordAccountId.trim()
+      ? input.discordAccountId.trim()
+      : undefined;
+  const telegramListenerAccountId =
+    typeof input?.telegramListenerAccountId === "string" && input.telegramListenerAccountId.trim()
+      ? input.telegramListenerAccountId.trim()
+      : undefined;
+  const telegramSenderAccountId =
+    typeof input?.telegramSenderAccountId === "string" && input.telegramSenderAccountId.trim()
+      ? input.telegramSenderAccountId.trim()
+      : undefined;
+  const xAccountId =
+    typeof input?.xAccountId === "string" && input.xAccountId.trim()
+      ? input.xAccountId.trim()
+      : undefined;
+  const truthSocialAccountId =
+    typeof input?.truthSocialAccountId === "string" && input.truthSocialAccountId.trim()
+      ? input.truthSocialAccountId.trim()
+      : undefined;
   const replacementsDict: Record<string, string> =
     input?.replacementsDictionary && typeof input.replacementsDictionary === "object"
       ? input.replacementsDictionary
@@ -1200,25 +1340,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
 
   // 处理Telegram配置
   const telegramConfig: FrontendTelegramConfig | undefined = input?.telegramConfig && typeof input.telegramConfig === "object" ? {
-    accounts: Array.isArray(input.telegramConfig.accounts) ? input.telegramConfig.accounts.map((acc: any) => ({
-      id: typeof acc.id === "string" ? acc.id : randomUUID(),
-      name: typeof acc.name === "string" ? acc.name : "Telegram Account",
-      type: acc.type === "bot" ? "bot" : "client",
-      token: typeof acc.token === "string" ? acc.token : "",
-      sessionPath: typeof acc.sessionPath === "string" ? acc.sessionPath : undefined,
-      sessionString: typeof acc.sessionString === "string" ? acc.sessionString : undefined,
-      apiId: typeof acc.apiId === "number" ? acc.apiId : undefined,
-      apiHash: typeof acc.apiHash === "string" ? acc.apiHash : undefined,
-      phoneNumber: typeof acc.phoneNumber === "string" ? acc.phoneNumber : undefined,
-      twoFactorPassword: typeof acc.twoFactorPassword === "string" ? acc.twoFactorPassword : undefined,
-      role: acc.role === "listener" || acc.role === "sender" ? acc.role : undefined,
-      sessionType: acc.sessionType === "string" ? "string" : acc.sessionType === "file" ? "file" : undefined,
-      loginRequested: acc.loginRequested === true,
-      loginNonce: typeof acc.loginNonce === "number" ? acc.loginNonce : undefined,
-      loginState: typeof acc.loginState === "string" ? acc.loginState : "idle",
-      loginMessage: typeof acc.loginMessage === "string" ? acc.loginMessage : "",
-      enabled: acc.enabled !== false
-    })) : [],
+    accounts: normalizeTelegramAccountList(input.telegramConfig.accounts),
     mappings: Array.isArray(input.telegramConfig.mappings)
       ? input.telegramConfig.mappings.map((mapping: any) => {
           const rawTarget = typeof mapping.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
@@ -1317,6 +1439,11 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     loginNonce: typeof input?.loginNonce === "number" ? input.loginNonce : undefined,
     loginState: typeof input?.loginState === "string" ? input.loginState : "idle",
     loginMessage: typeof input?.loginMessage === "string" ? input.loginMessage : "",
+    discordAccountId,
+    telegramListenerAccountId,
+    telegramSenderAccountId,
+    xAccountId,
+    truthSocialAccountId,
     channelWebhooks: input?.channelWebhooks || {},
     mappings,
     channelFeishuWebhooks,
@@ -1442,6 +1569,218 @@ function migrateLegacyToMulti(raw: any): MultiConfig {
   };
 }
 
+function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; changed: boolean } {
+  let changed = false;
+  const discordAccounts = Array.isArray(config.discordAccounts) ? [...config.discordAccounts] : [];
+  const telegramAccounts = Array.isArray(config.telegramAccounts) ? [...config.telegramAccounts] : [];
+  const xAccounts = Array.isArray(config.xAccounts) ? [...config.xAccounts] : [];
+  const truthSocialAccounts = Array.isArray(config.truthSocialAccounts) ? [...config.truthSocialAccounts] : [];
+
+  const discordIdSet = new Set(discordAccounts.map((acc) => acc.id));
+  const telegramIdSet = new Set(telegramAccounts.map((acc) => acc.id));
+  const xIdSet = new Set(xAccounts.map((acc) => acc.id));
+  const truthIdSet = new Set(truthSocialAccounts.map((acc) => acc.id));
+
+  const ensureUniqueId = (set: Set<string>, preferred?: string) => {
+    if (preferred && !set.has(preferred)) return preferred;
+    let id = randomUUID();
+    while (set.has(id)) id = randomUUID();
+    return id;
+  };
+
+  if (discordAccounts.length === 0) {
+    for (const account of config.accounts) {
+      const hasToken = typeof account.token === "string" && account.token.trim();
+      const login = account.discordLogin || {};
+      const hasLogin =
+        typeof login.email === "string" ||
+        typeof login.password === "string" ||
+        typeof login.totpSecret === "string";
+      if (!hasToken && !hasLogin) continue;
+      const entryId = ensureUniqueId(discordIdSet, account.discordAccountId);
+      discordAccounts.push({
+        id: entryId,
+        name: account.name ? `${account.name} Discord` : "Discord 账号",
+        type: account.type,
+        token: hasToken ? account.token : undefined,
+        email: typeof login.email === "string" ? login.email : undefined,
+        password: typeof login.password === "string" ? login.password : undefined,
+        totpSecret: typeof login.totpSecret === "string" ? login.totpSecret : undefined,
+        proxyUrl: account.proxyUrl,
+      });
+      discordIdSet.add(entryId);
+      if (!account.discordAccountId) {
+        account.discordAccountId = entryId;
+        changed = true;
+      }
+      changed = true;
+    }
+  }
+
+  if (telegramAccounts.length === 0) {
+    for (const account of config.accounts) {
+      const sourceAccounts = Array.isArray(account.telegramConfig?.accounts)
+        ? account.telegramConfig?.accounts
+        : [];
+      for (const tgAccount of sourceAccounts) {
+        if (!tgAccount || !tgAccount.id) continue;
+        if (!telegramIdSet.has(tgAccount.id)) {
+          telegramAccounts.push({ ...tgAccount });
+          telegramIdSet.add(tgAccount.id);
+          changed = true;
+        }
+      }
+
+      const hasLegacyBot = typeof account.telegramBotToken === "string" && account.telegramBotToken.trim();
+      if (hasLegacyBot && !telegramIdSet.has(`${account.id}_bot`)) {
+        const botEntry: TelegramAccountConfig = {
+          id: `${account.id}_bot`,
+          name: `${account.name || "Telegram"} Bot`,
+          type: "bot",
+          token: account.telegramBotToken || "",
+          apiId: account.telegramApiId,
+          apiHash: account.telegramApiHash,
+          sessionType: account.sessionType,
+          enabled: false,
+        };
+        telegramAccounts.push(botEntry);
+        telegramIdSet.add(botEntry.id);
+        changed = true;
+      }
+
+      const hasLegacyClient =
+        (account.telegramSessionPath || account.telegramSessionString) &&
+        account.telegramApiId &&
+        account.telegramApiHash;
+      if (hasLegacyClient && !telegramIdSet.has(account.id)) {
+        const clientEntry: TelegramAccountConfig = {
+          id: account.id,
+          name: account.name || "Telegram Client",
+          type: "client",
+          token: account.telegramApiHash || "",
+          sessionPath: account.telegramSessionPath,
+          sessionString: account.telegramSessionString,
+          apiId: account.telegramApiId,
+          apiHash: account.telegramApiHash,
+          sessionType: account.sessionType,
+          enabled: false,
+        };
+        telegramAccounts.push(clientEntry);
+        telegramIdSet.add(clientEntry.id);
+        changed = true;
+      }
+
+      if (!account.telegramListenerAccountId) {
+        const listener =
+          sourceAccounts.find((item) => item?.role === "listener") ||
+          sourceAccounts.find((item) => item?.type === "client") ||
+          sourceAccounts[0];
+        if (listener?.id) {
+          account.telegramListenerAccountId = listener.id;
+          changed = true;
+        } else if (hasLegacyClient) {
+          account.telegramListenerAccountId = account.id;
+          changed = true;
+        } else if (hasLegacyBot) {
+          account.telegramListenerAccountId = `${account.id}_bot`;
+          changed = true;
+        }
+      }
+      if (!account.telegramSenderAccountId) {
+        const sender =
+          sourceAccounts.find((item) => item?.role === "sender") ||
+          sourceAccounts.find((item) => item?.type === "bot") ||
+          sourceAccounts[0];
+        if (sender?.id) {
+          account.telegramSenderAccountId = sender.id;
+          changed = true;
+        } else if (hasLegacyBot) {
+          account.telegramSenderAccountId = `${account.id}_bot`;
+          changed = true;
+        } else if (hasLegacyClient) {
+          account.telegramSenderAccountId = account.id;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if (xAccounts.length === 0) {
+    for (const account of config.accounts) {
+      const xConfig = account.xConfig;
+      if (!xConfig) continue;
+      const hasCreds =
+        (xConfig.apiKey && xConfig.apiKey.trim()) ||
+        (xConfig.loginCookie && xConfig.loginCookie.trim()) ||
+        (xConfig.loginUserName && xConfig.loginUserName.trim()) ||
+        (xConfig.loginEmail && xConfig.loginEmail.trim());
+      if (!hasCreds) continue;
+      const entryId = ensureUniqueId(xIdSet, account.xAccountId);
+      xAccounts.push({
+        id: entryId,
+        name: account.name ? `${account.name} X` : "X 账号",
+        apiKey: xConfig.apiKey,
+        apiBaseUrl: xConfig.apiBaseUrl,
+        loginCookie: xConfig.loginCookie,
+        loginUserName: xConfig.loginUserName,
+        loginEmail: xConfig.loginEmail,
+        loginPassword: xConfig.loginPassword,
+        loginTotpSecret: xConfig.loginTotpSecret,
+        loginProxy: xConfig.loginProxy,
+      });
+      xIdSet.add(entryId);
+      if (!account.xAccountId) {
+        account.xAccountId = entryId;
+        changed = true;
+      }
+      changed = true;
+    }
+  }
+
+  if (truthSocialAccounts.length === 0) {
+    for (const account of config.accounts) {
+      const truth = account.truthSocialConfig;
+      if (!truth) continue;
+      const hasCreds =
+        (truth.username && truth.username.trim()) ||
+        (truth.password && truth.password.trim());
+      if (!hasCreds) continue;
+      const entryId = ensureUniqueId(truthIdSet, account.truthSocialAccountId);
+      truthSocialAccounts.push({
+        id: entryId,
+        name: account.name ? `${account.name} TruthSocial` : "TruthSocial 账号",
+        username: truth.username,
+        password: truth.password,
+      });
+      truthIdSet.add(entryId);
+      if (!account.truthSocialAccountId) {
+        account.truthSocialAccountId = entryId;
+        changed = true;
+      }
+      changed = true;
+    }
+  }
+
+  if (!config.discordAccounts || config.discordAccounts !== discordAccounts) {
+    config.discordAccounts = discordAccounts;
+    changed = true;
+  }
+  if (!config.telegramAccounts || config.telegramAccounts !== telegramAccounts) {
+    config.telegramAccounts = telegramAccounts;
+    changed = true;
+  }
+  if (!config.xAccounts || config.xAccounts !== xAccounts) {
+    config.xAccounts = xAccounts;
+    changed = true;
+  }
+  if (!config.truthSocialAccounts || config.truthSocialAccounts !== truthSocialAccounts) {
+    config.truthSocialAccounts = truthSocialAccounts;
+    changed = true;
+  }
+
+  return { config, changed };
+}
+
 export async function getMultiConfig(): Promise<MultiConfig> {
   const raw = await readRawConfig();
   const envForwardingTypes = parseEnvForwardingTypes(getEnv().ENABLED_FORWARDING_TYPES);
@@ -1459,6 +1798,10 @@ export async function getMultiConfig(): Promise<MultiConfig> {
       typeof raw?.telegramAvatarBaseUrl === "string" && raw.telegramAvatarBaseUrl.trim()
         ? raw.telegramAvatarBaseUrl.trim()
         : undefined;
+    const discordAccounts = normalizeDiscordAccountLibrary(raw.discordAccounts);
+    const telegramAccounts = normalizeTelegramAccountList(raw.telegramAccounts);
+    const xAccounts = normalizeXAccountLibrary(raw.xAccounts);
+    const truthSocialAccounts = normalizeTruthSocialAccountLibrary(raw.truthSocialAccounts);
 
     // 迁移配置到最新版本
     const migratedAccounts = migrateAccountsToLatest(accounts, version);
@@ -1468,30 +1811,37 @@ export async function getMultiConfig(): Promise<MultiConfig> {
       loginUser,
       loginPassword,
       telegramAvatarBaseUrl,
+      discordAccounts,
+      telegramAccounts,
+      xAccounts,
+      truthSocialAccounts,
       version: CONFIG_VERSION,
       enabledForwardingTypes: envForwardingTypes,
     };
 
-    // 如果版本有更新，保存配置
-    if (version !== CONFIG_VERSION) {
-      await saveMultiConfig(config);
+    const libraryResult = ensureAccountLibraries(config);
+    const shouldSave = version !== CONFIG_VERSION || libraryResult.changed;
+    // 如果版本有更新或迁移了账号库，保存配置
+    if (shouldSave) {
+      await saveMultiConfig(libraryResult.config);
       console.log(`Migrated config from version ${version} to ${CONFIG_VERSION}`);
     }
 
     const restrictedAccounts = applyForwardingTypeRestrictions(migratedAccounts, effectiveForwardingTypes);
     return {
-      ...config,
+      ...libraryResult.config,
       accounts: restrictedAccounts,
       enabledForwardingTypes: envForwardingTypes,
     };
   }
   const legacyConfig = migrateLegacyToMulti(raw);
+  const legacyLibraryResult = ensureAccountLibraries(legacyConfig);
   const legacyRestrictedAccounts = applyForwardingTypeRestrictions(
     legacyConfig.accounts,
     effectiveForwardingTypes,
   );
   return {
-    ...legacyConfig,
+    ...legacyLibraryResult.config,
     accounts: legacyRestrictedAccounts,
     enabledForwardingTypes: envForwardingTypes,
   };
@@ -1644,6 +1994,105 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
 export async function getConfig(): Promise<LegacyConfig> {
   const multi = await getMultiConfig();
   return accountToLegacyConfig(multi.accounts[0]);
+}
+
+export function resolveMultiConfigForRuntime(config: MultiConfig): MultiConfig {
+  const discordById = new Map((config.discordAccounts || []).map((acc) => [acc.id, acc]));
+  const telegramById = new Map((config.telegramAccounts || []).map((acc) => [acc.id, acc]));
+  const xById = new Map((config.xAccounts || []).map((acc) => [acc.id, acc]));
+  const truthById = new Map((config.truthSocialAccounts || []).map((acc) => [acc.id, acc]));
+
+  const accounts = config.accounts.map((account) => {
+    let resolved: AccountConfig = { ...account };
+
+    const discordAccount = account.discordAccountId ? discordById.get(account.discordAccountId) : undefined;
+    if (discordAccount) {
+      if (typeof discordAccount.token === "string" && discordAccount.token.trim()) {
+        resolved.token = discordAccount.token;
+      }
+      resolved.type = discordAccount.type === "bot" ? "bot" : "selfbot";
+      if (discordAccount.proxyUrl && !resolved.proxyUrl) {
+        resolved.proxyUrl = discordAccount.proxyUrl;
+      }
+      if (discordAccount.email || discordAccount.password || discordAccount.totpSecret) {
+        resolved.discordLogin = {
+          email: discordAccount.email,
+          password: discordAccount.password,
+          totpSecret: discordAccount.totpSecret,
+        };
+      }
+    }
+
+    const selectedTelegramIds = [
+      account.telegramListenerAccountId,
+      account.telegramSenderAccountId,
+    ].filter((id, idx, arr): id is string => !!id && arr.indexOf(id) === idx);
+    if (selectedTelegramIds.length > 0) {
+      const selectedAccounts: TelegramAccountConfig[] = [];
+      for (const id of selectedTelegramIds) {
+        const entry = telegramById.get(id);
+        if (!entry) continue;
+        const role =
+          id === account.telegramSenderAccountId
+            ? "sender"
+            : id === account.telegramListenerAccountId
+              ? "listener"
+              : entry.role;
+        selectedAccounts.push({ ...entry, role });
+      }
+      const listenerAccount = account.telegramListenerAccountId
+        ? telegramById.get(account.telegramListenerAccountId)
+        : undefined;
+      const senderAccount = account.telegramSenderAccountId
+        ? telegramById.get(account.telegramSenderAccountId)
+        : undefined;
+      const baseConfig = resolved.telegramConfig || { accounts: [], mappings: [], enableTelegramForward: false };
+      const nextConfig: typeof baseConfig & {
+        listenerAccountType?: "bot" | "client";
+        defaultSenderAccountType?: "bot" | "client";
+      } = {
+        ...baseConfig,
+        accounts: selectedAccounts,
+      };
+      if (listenerAccount?.type === "bot" || listenerAccount?.type === "client") {
+        nextConfig.listenerAccountType = listenerAccount.type;
+      }
+      if (senderAccount?.type === "bot" || senderAccount?.type === "client") {
+        nextConfig.defaultSenderAccountType = senderAccount.type;
+      }
+      resolved = {
+        ...resolved,
+        telegramConfig: nextConfig,
+      };
+    }
+
+    const xAccount = account.xAccountId ? xById.get(account.xAccountId) : undefined;
+    if (xAccount) {
+      const base = account.xConfig || { mappings: [] };
+      resolved.xConfig = {
+        ...base,
+        ...xAccount,
+        mappings: base.mappings,
+        pollIntervalSeconds: base.pollIntervalSeconds,
+      };
+    }
+
+    const truthAccount = account.truthSocialAccountId ? truthById.get(account.truthSocialAccountId) : undefined;
+    if (truthAccount) {
+      const base = account.truthSocialConfig || { mappings: [] };
+      resolved.truthSocialConfig = {
+        ...base,
+        username: truthAccount.username ?? base.username,
+        password: truthAccount.password ?? base.password,
+        mappings: base.mappings,
+        pollIntervalSeconds: base.pollIntervalSeconds,
+      };
+    }
+
+    return resolved;
+  });
+
+  return { ...config, accounts };
 }
 
 /**

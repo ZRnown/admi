@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const accountId = typeof body?.accountId === "string" ? body.accountId : "";
     const telegramAccountId = typeof body?.telegramAccountId === "string" ? body.telegramAccountId : undefined;
+    const useLibrary = body?.useLibrary === true || !accountId;
     const loginId = typeof body?.loginId === "string" ? body.loginId : "";
     const code = typeof body?.code === "string" ? body.code.trim() : "";
     const password =
@@ -48,11 +49,83 @@ export async function POST(req: NextRequest) {
           ? body.password
           : undefined;
 
-    if (!accountId || !loginId || !code) {
+    if ((!accountId && !useLibrary) || !loginId || !code) {
       return NextResponse.json({ error: "缺少 accountId / loginId / code" }, { status: 400 });
     }
 
     const multi = await getMultiConfig();
+    if (useLibrary) {
+      if (!telegramAccountId) {
+        return NextResponse.json({ error: "缺少 telegramAccountId" }, { status: 400 });
+      }
+      await fs.mkdir(path.dirname(loginRequestFile), { recursive: true });
+      try {
+        await fs.access(loginRequestFile);
+        return NextResponse.json({ error: "已有登录请求处理中，请稍后" }, { status: 409 });
+      } catch {}
+
+      const requestId = randomUUID();
+      await fs.writeFile(
+        loginRequestFile,
+        JSON.stringify(
+          {
+            id: requestId,
+            action: "confirm",
+            params: {
+              loginId,
+              code,
+              password,
+            },
+            createdAt: Date.now(),
+          },
+          null,
+          2,
+        ),
+      );
+
+      const response = await waitForLoginResponse(requestId, 25000);
+      if (!response) {
+        return NextResponse.json({ error: "登录确认超时" }, { status: 504 });
+      }
+
+      if (!response.success) {
+        return NextResponse.json({ error: response.error || response?.result?.message || "登录失败" }, { status: 400 });
+      }
+
+      const sessionString = response?.result?.sessionString;
+      if (!sessionString) {
+        return NextResponse.json({ error: "登录成功但未返回 session" }, { status: 500 });
+      }
+
+      if (!multi.telegramAccounts) multi.telegramAccounts = [];
+      let targetAccount = multi.telegramAccounts.find((acc) => acc.id === telegramAccountId);
+      if (!targetAccount) {
+        targetAccount = {
+          id: telegramAccountId,
+          name: "Telegram Client",
+          type: "client",
+          token: "",
+          sessionString,
+          sessionType: "string",
+          enabled: true,
+        } as any;
+        multi.telegramAccounts.push(targetAccount);
+      } else {
+        targetAccount.type = "client";
+        targetAccount.sessionString = sessionString;
+        targetAccount.sessionType = "string";
+        targetAccount.enabled = true;
+      }
+
+      await saveMultiConfig(multi);
+      try {
+        await fs.mkdir(path.dirname(triggerFile), { recursive: true });
+        await fs.writeFile(triggerFile, Date.now().toString(), "utf-8");
+      } catch {}
+
+      return NextResponse.json({ success: true, userInfo: response?.result?.userInfo, telegramAccountId });
+    }
+
     const account = multi.accounts.find((a) => a.id === accountId);
     if (!account) {
       return NextResponse.json({ error: "账号不存在" }, { status: 404 });

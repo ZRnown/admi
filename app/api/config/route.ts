@@ -7,6 +7,10 @@ import {
   getMultiConfig,
   saveMultiConfig,
   type MultiConfig,
+  type DiscordAccountLibrary,
+  type TelegramAccountConfig,
+  type XAccountLibrary,
+  type TruthSocialAccountLibrary,
   type FeishuTargetConfig,
   type FrontendTelegramConfig,
   type RuleLevelConfig,
@@ -124,8 +128,17 @@ async function readForwardStats(): Promise<ForwardStatsSnapshot> {
 function resolveTelegramAccountStatuses(
   account: AccountConfig,
   telegramStatus: Record<string, TelegramStatusEntry>,
+  telegramLibraryById?: Map<string, TelegramAccountConfig>,
 ) {
-  const telegramAccounts = account.telegramConfig?.accounts || [];
+  const selectedIds = [account.telegramListenerAccountId, account.telegramSenderAccountId].filter(
+    (id, idx, arr): id is string => !!id && arr.indexOf(id) === idx,
+  );
+  const selectedAccounts = selectedIds
+    .map((id) => telegramLibraryById?.get(id))
+    .filter((item): item is TelegramAccountConfig => !!item);
+
+  const telegramAccounts =
+    selectedAccounts.length > 0 ? selectedAccounts : account.telegramConfig?.accounts || [];
   const activeAccounts = telegramAccounts.filter((acc) => acc.enabled !== false);
 
   const botAccount = activeAccounts.find((acc) => acc.type === "bot") || null;
@@ -140,21 +153,15 @@ function resolveTelegramAccountStatuses(
       account.telegramApiHash,
   );
 
-  // Bot ID: 优先使用显式 bot 账号 ID，否则使用 account.id_bot
   const botAccountId =
     botAccount?.id || (!hasExplicitBot && hasLegacyBotConfig ? `${account.id}_bot` : undefined);
-
-  // Client ID: 仅在没有显式 client 账号时回退到 legacy 配置
   const clientAccountId =
     clientAccount?.id || (!hasExplicitClient && hasLegacyClientConfig ? account.id : undefined);
 
-  // 从状态文件中查找状态
   let botStatus = botAccountId ? telegramStatus[botAccountId] : undefined;
   let clientStatus = clientAccountId ? telegramStatus[clientAccountId] : undefined;
 
-  // 如果 clientAccountId 对应的状态看起来像 Bot（username 以 bot 结尾），则不作为 Client 状态
   if (clientStatus?.userInfo?.username?.toLowerCase().endsWith("bot")) {
-    // 这可能是 Bot 状态被错误地记录在 account.id 上
     if (!botStatus) {
       botStatus = clientStatus;
     }
@@ -170,9 +177,18 @@ function resolveTelegramAccountStatuses(
 function buildTelegramAccountStates(
   account: AccountConfig,
   telegramStatus: Record<string, TelegramStatusEntry>,
+  telegramLibraryById?: Map<string, TelegramAccountConfig>,
 ) {
   const result: Record<string, { state?: string; message?: string; userInfo?: any }> = {};
-  const accounts = account.telegramConfig?.accounts || [];
+  const selectedIds = [account.telegramListenerAccountId, account.telegramSenderAccountId].filter(
+    (id, idx, arr): id is string => !!id && arr.indexOf(id) === idx,
+  );
+  const selectedAccounts = selectedIds
+    .map((id) => telegramLibraryById?.get(id))
+    .filter((item): item is TelegramAccountConfig => !!item);
+  const accounts =
+    selectedAccounts.length > 0 ? selectedAccounts : account.telegramConfig?.accounts || [];
+
   for (const item of accounts) {
     if (!item?.id) continue;
     if (item.enabled === false) {
@@ -266,6 +282,11 @@ interface FrontendAccount {
   loginNonce?: number;
   loginState?: string;
   loginMessage?: string;
+  discordAccountId?: string;
+  telegramListenerAccountId?: string;
+  telegramSenderAccountId?: string;
+  xAccountId?: string;
+  truthSocialAccountId?: string;
   showSourceIdentity: boolean;
   mappings: FrontendMapping[];
   blockedKeywords: string[];
@@ -347,8 +368,25 @@ interface FrontendAccount {
   };
 }
 
+interface FrontendDiscordAccountLibrary extends DiscordAccountLibrary {}
+
+interface FrontendTelegramAccountLibrary extends Omit<TelegramAccountConfig, "apiId"> {
+  apiId?: number | string;
+  loginState?: string;
+  loginMessage?: string;
+  userInfo?: any;
+}
+
+interface FrontendXAccountLibrary extends XAccountLibrary {}
+
+interface FrontendTruthSocialAccountLibrary extends TruthSocialAccountLibrary {}
+
 interface FrontendPayload {
   accounts: FrontendAccount[];
+  discordAccounts?: FrontendDiscordAccountLibrary[];
+  telegramAccounts?: FrontendTelegramAccountLibrary[];
+  xAccounts?: FrontendXAccountLibrary[];
+  truthSocialAccounts?: FrontendTruthSocialAccountLibrary[];
   activeId?: string;
   loginUser?: string;
   loginPassword?: string;
@@ -828,6 +866,11 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     loginNonce: account.loginNonce,
     loginState: account.loginState,
     loginMessage: account.loginMessage,
+    discordAccountId: (account as any).discordAccountId,
+    telegramListenerAccountId: (account as any).telegramListenerAccountId,
+    telegramSenderAccountId: (account as any).telegramSenderAccountId,
+    xAccountId: (account as any).xAccountId,
+    truthSocialAccountId: (account as any).truthSocialAccountId,
     showSourceIdentity: account.showSourceIdentity === true,
     mappings,
     blockedKeywords: account.blockedKeywords || [],
@@ -948,6 +991,161 @@ function maskFrontendAccount(account: FrontendAccount): FrontendAccount {
   }
 
   return masked;
+}
+
+function maskDiscordLibraryAccount(account: FrontendDiscordAccountLibrary): FrontendDiscordAccountLibrary {
+  return {
+    ...account,
+    token: maskSecret(account.token),
+    password: maskSecret(account.password),
+    totpSecret: maskSecret(account.totpSecret),
+  };
+}
+
+function maskTelegramLibraryAccount(account: FrontendTelegramAccountLibrary): FrontendTelegramAccountLibrary {
+  return {
+    ...account,
+    token: maskSecret(account.token),
+    apiHash: maskSecret(account.apiHash),
+    sessionString: maskSecret(account.sessionString),
+    twoFactorPassword: maskSecret(account.twoFactorPassword),
+  };
+}
+
+function maskXLibraryAccount(account: FrontendXAccountLibrary): FrontendXAccountLibrary {
+  return {
+    ...account,
+    apiKey: maskSecret(account.apiKey),
+    loginCookie: maskSecret(account.loginCookie),
+    loginPassword: maskSecret(account.loginPassword),
+    loginTotpSecret: maskSecret(account.loginTotpSecret),
+  };
+}
+
+function maskTruthLibraryAccount(account: FrontendTruthSocialAccountLibrary): FrontendTruthSocialAccountLibrary {
+  return {
+    ...account,
+    password: maskSecret(account.password),
+  };
+}
+
+function dtoToDiscordLibraryAccount(
+  dto: FrontendDiscordAccountLibrary,
+  fallback?: DiscordAccountLibrary,
+): DiscordAccountLibrary {
+  const base: DiscordAccountLibrary = fallback ?? {
+    id: randomUUID(),
+    name: "Discord 账号",
+    type: "selfbot",
+  };
+  const resolvedToken = resolveSecretValue(dto.token, base.token);
+  const resolvedPassword = resolveSecretValue(dto.password, base.password);
+  const resolvedTotp = resolveSecretValue(dto.totpSecret, base.totpSecret);
+  return {
+    ...base,
+    id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
+    name: typeof dto.name === "string" && dto.name.trim() ? dto.name.trim() : base.name,
+    type: dto.type === "bot" ? "bot" : "selfbot",
+    token: typeof resolvedToken === "string" && resolvedToken.trim() ? resolvedToken : undefined,
+    email: typeof dto.email === "string" && dto.email.trim() ? dto.email.trim() : base.email,
+    password: typeof resolvedPassword === "string" && resolvedPassword.trim() ? resolvedPassword : undefined,
+    totpSecret: typeof resolvedTotp === "string" && resolvedTotp.trim() ? resolvedTotp : undefined,
+    proxyUrl: typeof dto.proxyUrl === "string" && dto.proxyUrl.trim() ? dto.proxyUrl.trim() : base.proxyUrl,
+  };
+}
+
+function dtoToTelegramLibraryAccount(
+  dto: FrontendTelegramAccountLibrary,
+  fallback?: TelegramAccountConfig,
+): TelegramAccountConfig {
+  const base: TelegramAccountConfig = fallback ?? {
+    id: randomUUID(),
+    name: "Telegram Account",
+    type: "client",
+    token: "",
+  };
+  const resolvedToken = resolveSecretValue(dto.token, base.token);
+  const resolvedApiHash = resolveSecretValue(dto.apiHash, base.apiHash);
+  const resolvedSessionString = resolveSecretValue(dto.sessionString, base.sessionString);
+  const resolvedTwoFactor = resolveSecretValue(dto.twoFactorPassword, base.twoFactorPassword);
+  const apiId =
+    typeof dto.apiId === "number"
+      ? dto.apiId
+      : typeof dto.apiId === "string" && dto.apiId.trim() && !isNaN(Number(dto.apiId))
+        ? Number(dto.apiId)
+        : base.apiId;
+  return {
+    ...base,
+    id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
+    name: typeof dto.name === "string" && dto.name.trim() ? dto.name.trim() : base.name,
+    type: dto.type === "bot" ? "bot" : "client",
+    token: typeof resolvedToken === "string" ? resolvedToken : "",
+    sessionPath: typeof dto.sessionPath === "string" && dto.sessionPath.trim() ? dto.sessionPath.trim() : base.sessionPath,
+    sessionString:
+      typeof resolvedSessionString === "string" && resolvedSessionString.trim()
+        ? resolvedSessionString
+        : base.sessionString,
+    apiId,
+    apiHash: typeof resolvedApiHash === "string" && resolvedApiHash.trim() ? resolvedApiHash : base.apiHash,
+    phoneNumber: typeof dto.phoneNumber === "string" && dto.phoneNumber.trim() ? dto.phoneNumber.trim() : base.phoneNumber,
+    twoFactorPassword: typeof resolvedTwoFactor === "string" && resolvedTwoFactor.trim() ? resolvedTwoFactor : base.twoFactorPassword,
+    role: dto.role === "listener" || dto.role === "sender" ? dto.role : base.role,
+    sessionType: dto.sessionType === "string" ? "string" : dto.sessionType === "file" ? "file" : base.sessionType,
+    loginRequested: dto.loginRequested === true,
+    loginNonce: typeof dto.loginNonce === "number" ? dto.loginNonce : base.loginNonce,
+    loginState: typeof dto.loginState === "string" ? dto.loginState : base.loginState,
+    loginMessage: typeof dto.loginMessage === "string" ? dto.loginMessage : base.loginMessage,
+    enabled: dto.enabled !== false,
+  };
+}
+
+function dtoToXLibraryAccount(dto: FrontendXAccountLibrary, fallback?: XAccountLibrary): XAccountLibrary {
+  const base: XAccountLibrary = fallback ?? {
+    id: randomUUID(),
+    name: "X 账号",
+  };
+  const resolvedApiKey = resolveSecretValue(dto.apiKey, base.apiKey);
+  const resolvedLoginCookie = resolveSecretValue(dto.loginCookie, base.loginCookie);
+  const resolvedLoginPassword = resolveSecretValue(dto.loginPassword, base.loginPassword);
+  const resolvedLoginTotp = resolveSecretValue(dto.loginTotpSecret, base.loginTotpSecret);
+  return {
+    ...base,
+    id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
+    name: typeof dto.name === "string" && dto.name.trim() ? dto.name.trim() : base.name,
+    apiKey: typeof resolvedApiKey === "string" && resolvedApiKey.trim() ? resolvedApiKey : base.apiKey,
+    apiBaseUrl: typeof dto.apiBaseUrl === "string" && dto.apiBaseUrl.trim() ? dto.apiBaseUrl.trim() : base.apiBaseUrl,
+    loginCookie:
+      typeof resolvedLoginCookie === "string" && resolvedLoginCookie.trim() ? resolvedLoginCookie : base.loginCookie,
+    loginUserName:
+      typeof dto.loginUserName === "string" && dto.loginUserName.trim() ? dto.loginUserName.trim() : base.loginUserName,
+    loginEmail:
+      typeof dto.loginEmail === "string" && dto.loginEmail.trim() ? dto.loginEmail.trim() : base.loginEmail,
+    loginPassword:
+      typeof resolvedLoginPassword === "string" && resolvedLoginPassword.trim()
+        ? resolvedLoginPassword
+        : base.loginPassword,
+    loginTotpSecret:
+      typeof resolvedLoginTotp === "string" && resolvedLoginTotp.trim() ? resolvedLoginTotp : base.loginTotpSecret,
+    loginProxy: typeof dto.loginProxy === "string" && dto.loginProxy.trim() ? dto.loginProxy.trim() : base.loginProxy,
+  };
+}
+
+function dtoToTruthLibraryAccount(
+  dto: FrontendTruthSocialAccountLibrary,
+  fallback?: TruthSocialAccountLibrary,
+): TruthSocialAccountLibrary {
+  const base: TruthSocialAccountLibrary = fallback ?? {
+    id: randomUUID(),
+    name: "TruthSocial 账号",
+  };
+  const resolvedPassword = resolveSecretValue(dto.password, base.password);
+  return {
+    ...base,
+    id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
+    name: typeof dto.name === "string" && dto.name.trim() ? dto.name.trim() : base.name,
+    username: typeof dto.username === "string" && dto.username.trim() ? dto.username.trim() : base.username,
+    password: typeof resolvedPassword === "string" && resolvedPassword.trim() ? resolvedPassword : base.password,
+  };
 }
 
 function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountConfig {
@@ -1147,6 +1345,26 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     proxyUrl: dto.proxyUrl || "",
     loginRequested,
     loginNonce: dto.loginNonce ?? base.loginNonce,
+    discordAccountId:
+      typeof dto.discordAccountId === "string" && dto.discordAccountId.trim()
+        ? dto.discordAccountId.trim()
+        : base.discordAccountId,
+    telegramListenerAccountId:
+      typeof dto.telegramListenerAccountId === "string" && dto.telegramListenerAccountId.trim()
+        ? dto.telegramListenerAccountId.trim()
+        : base.telegramListenerAccountId,
+    telegramSenderAccountId:
+      typeof dto.telegramSenderAccountId === "string" && dto.telegramSenderAccountId.trim()
+        ? dto.telegramSenderAccountId.trim()
+        : base.telegramSenderAccountId,
+    xAccountId:
+      typeof dto.xAccountId === "string" && dto.xAccountId.trim()
+        ? dto.xAccountId.trim()
+        : base.xAccountId,
+    truthSocialAccountId:
+      typeof dto.truthSocialAccountId === "string" && dto.truthSocialAccountId.trim()
+        ? dto.truthSocialAccountId.trim()
+        : base.truthSocialAccountId,
     showSourceIdentity: dto.showSourceIdentity === true,
     channelWebhooks,
     mappings: savedMappings,
@@ -1288,9 +1506,24 @@ export async function GET(req: NextRequest) {
     const telegramStatus = await readTelegramStatus();
     const externalStatus = await readExternalForwardStatus();
     const forwardStats = await readForwardStats();
+    const telegramLibrary = Array.isArray(multi.telegramAccounts) ? multi.telegramAccounts : [];
+    const telegramLibraryById = new Map(telegramLibrary.map((acc) => [acc.id, acc]));
+    const frontendTelegramAccounts: FrontendTelegramAccountLibrary[] = telegramLibrary.map((acc) => {
+      const statusEntry = telegramStatus[acc.id];
+      const normalizedState = normalizeTelegramState(statusEntry?.state);
+      return {
+        ...acc,
+        loginState: normalizedState,
+        loginMessage: normalizeTelegramMessage(normalizedState, statusEntry?.message),
+        userInfo: statusEntry?.userInfo,
+      };
+    });
+    const discordAccounts = Array.isArray(multi.discordAccounts) ? multi.discordAccounts : [];
+    const xAccounts = Array.isArray(multi.xAccounts) ? multi.xAccounts : [];
+    const truthSocialAccounts = Array.isArray(multi.truthSocialAccounts) ? multi.truthSocialAccounts : [];
     const payload: FrontendPayload = {
       accounts: multi.accounts.map((acc) => {
-        const { botStatus, clientStatus } = resolveTelegramAccountStatuses(acc, telegramStatus);
+        const { botStatus, clientStatus } = resolveTelegramAccountStatuses(acc, telegramStatus, telegramLibraryById);
         const botState = normalizeTelegramState(botStatus?.state);
         const clientState = normalizeTelegramState(clientStatus?.state);
         const frontend = {
@@ -1300,7 +1533,7 @@ export async function GET(req: NextRequest) {
           telegramBotMessage: normalizeTelegramMessage(botState, botStatus?.message),
           telegramClientState: clientState,
           telegramClientMessage: normalizeTelegramMessage(clientState, clientStatus?.message),
-          telegramAccountStates: buildTelegramAccountStates(acc, telegramStatus),
+          telegramAccountStates: buildTelegramAccountStates(acc, telegramStatus, telegramLibraryById),
           externalForwardStatus: {
             x: externalStatus?.x?.[acc.id],
             truthsocial: externalStatus?.truthsocial?.[acc.id],
@@ -1308,6 +1541,18 @@ export async function GET(req: NextRequest) {
         };
         return includeSecrets ? frontend : maskFrontendAccount(frontend);
       }),
+      discordAccounts: includeSecrets
+        ? discordAccounts
+        : discordAccounts.map((acc) => maskDiscordLibraryAccount(acc as FrontendDiscordAccountLibrary)),
+      telegramAccounts: includeSecrets
+        ? frontendTelegramAccounts
+        : frontendTelegramAccounts.map((acc) => maskTelegramLibraryAccount(acc)),
+      xAccounts: includeSecrets
+        ? xAccounts
+        : xAccounts.map((acc) => maskXLibraryAccount(acc as FrontendXAccountLibrary)),
+      truthSocialAccounts: includeSecrets
+        ? truthSocialAccounts
+        : truthSocialAccounts.map((acc) => maskTruthLibraryAccount(acc as FrontendTruthSocialAccountLibrary)),
       activeId: multi.activeId || multi.accounts[0]?.id || "",
       loginUser: multi.loginUser || "",
       loginPassword: includeSecrets ? multi.loginPassword || "" : maskSecret(multi.loginPassword),
@@ -1337,6 +1582,32 @@ export async function POST(req: NextRequest) {
       });
       const activeId = typeof body.activeId === "string" ? body.activeId : accounts[0]?.id;
       const resolvedLoginPassword = resolveSecretValue(body.loginPassword, current.loginPassword);
+      const currentDiscord = new Map((current.discordAccounts || []).map((acc) => [acc.id, acc]));
+      const currentTelegram = new Map((current.telegramAccounts || []).map((acc) => [acc.id, acc]));
+      const currentX = new Map((current.xAccounts || []).map((acc) => [acc.id, acc]));
+      const currentTruth = new Map((current.truthSocialAccounts || []).map((acc) => [acc.id, acc]));
+
+      const discordAccounts = Array.isArray(body.discordAccounts)
+        ? (body.discordAccounts as FrontendDiscordAccountLibrary[]).map((acc) =>
+            dtoToDiscordLibraryAccount(acc, currentDiscord.get(acc.id)),
+          )
+        : current.discordAccounts || [];
+      const telegramAccounts = Array.isArray(body.telegramAccounts)
+        ? (body.telegramAccounts as FrontendTelegramAccountLibrary[]).map((acc) =>
+            dtoToTelegramLibraryAccount(acc, currentTelegram.get(acc.id)),
+          )
+        : current.telegramAccounts || [];
+      const xAccounts = Array.isArray(body.xAccounts)
+        ? (body.xAccounts as FrontendXAccountLibrary[]).map((acc) =>
+            dtoToXLibraryAccount(acc, currentX.get(acc.id)),
+          )
+        : current.xAccounts || [];
+      const truthSocialAccounts = Array.isArray(body.truthSocialAccounts)
+        ? (body.truthSocialAccounts as FrontendTruthSocialAccountLibrary[]).map((acc) =>
+            dtoToTruthLibraryAccount(acc, currentTruth.get(acc.id)),
+          )
+        : current.truthSocialAccounts || [];
+
       next = {
         accounts,
         activeId,
@@ -1346,6 +1617,10 @@ export async function POST(req: NextRequest) {
           typeof body.telegramAvatarBaseUrl === "string" && body.telegramAvatarBaseUrl.trim()
             ? body.telegramAvatarBaseUrl.trim()
             : current.telegramAvatarBaseUrl,
+        discordAccounts,
+        telegramAccounts,
+        xAccounts,
+        truthSocialAccounts,
       };
     } else {
       // 兼容旧版请求

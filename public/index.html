@@ -660,7 +660,110 @@
       };
     }
 
-    let state = { accounts: [], activeId: "", loginUser: "", loginPassword: "", enabledForwardingTypes: null };
+    function getDiscordLibraryLabel(item) {
+      if (!item) return '未命名账号';
+      const typeLabel = item.type === 'bot' ? '机器人' : '用户';
+      return `${item.name || 'Discord账号'} (${typeLabel})`;
+    }
+
+    function getTelegramLibraryLabel(item) {
+      if (!item) return '未命名账号';
+      const typeLabel = item.type === 'bot' ? 'Bot' : 'Client';
+      return `${item.name || 'Telegram账号'} [${typeLabel}]`;
+    }
+
+    function getXLibraryLabel(item) {
+      return item?.name || 'X账号';
+    }
+
+    function getTruthLibraryLabel(item) {
+      return item?.name || 'TruthSocial账号';
+    }
+
+    function getDiscordLibraryOptions(selectedId) {
+      const options = [`<option value="">未选择（使用实例配置）</option>`];
+      (state.discordAccounts || []).forEach((item) => {
+        if (!item?.id) return;
+        options.push(
+          `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(getDiscordLibraryLabel(item))}</option>`
+        );
+      });
+      return options.join('');
+    }
+
+    function getTelegramLibraryOptions(selectedId, filterType) {
+      const options = [`<option value="">未选择</option>`];
+      (state.telegramAccounts || []).forEach((item) => {
+        if (!item?.id) return;
+        if (filterType && item.type !== filterType) return;
+        options.push(
+          `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(getTelegramLibraryLabel(item))}</option>`
+        );
+      });
+      return options.join('');
+    }
+
+    function getXLibraryOptions(selectedId) {
+      const options = [`<option value="">未选择</option>`];
+      (state.xAccounts || []).forEach((item) => {
+        if (!item?.id) return;
+        options.push(
+          `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(getXLibraryLabel(item))}</option>`
+        );
+      });
+      return options.join('');
+    }
+
+    function getTruthLibraryOptions(selectedId) {
+      const options = [`<option value="">未选择</option>`];
+      (state.truthSocialAccounts || []).forEach((item) => {
+        if (!item?.id) return;
+        options.push(
+          `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(getTruthLibraryLabel(item))}</option>`
+        );
+      });
+      return options.join('');
+    }
+
+    function getTelegramLibraryAccountById(accountId) {
+      return (state.telegramAccounts || []).find((item) => item.id === accountId);
+    }
+
+    function getTelegramLibraryAccountTypeById(accountId) {
+      const account = getTelegramLibraryAccountById(accountId);
+      if (!account) return null;
+      return account.type === 'bot' || account.type === 'client' ? account.type : null;
+    }
+
+    function getSelectedTelegramAccountType(acc, role) {
+      if (!acc) return null;
+      const selectedId = role === 'listener' ? acc.telegramListenerAccountId : acc.telegramSenderAccountId;
+      if (!selectedId) return null;
+      return getTelegramLibraryAccountTypeById(selectedId);
+    }
+
+    function hasTelegramLibrarySelection(acc) {
+      return Boolean(getSelectedTelegramAccountType(acc, 'listener') || getSelectedTelegramAccountType(acc, 'sender'));
+    }
+
+    function getTelegramLibraryStatus(accountId) {
+      const account = getTelegramLibraryAccountById(accountId);
+      const stateValue = account?.loginState || 'idle';
+      const message = account?.loginMessage || '';
+      return { state: stateValue, message };
+    }
+
+    let state = {
+      accounts: [],
+      activeId: "",
+      loginUser: "",
+      loginPassword: "",
+      enabledForwardingTypes: null,
+      discordAccounts: [],
+      telegramAccounts: [],
+      xAccounts: [],
+      truthSocialAccounts: []
+    };
     const watermarkPreviewCache = new Map();
     function getWatermarkPreviewKey(accountId, index = 0) {
       return `${accountId}:${index}`;
@@ -922,7 +1025,12 @@
           accounts: state.accounts,
           activeId: state.activeId,
           loginUser: state.loginUser,
-          telegramAvatarBaseUrl: state.telegramAvatarBaseUrl
+          telegramAvatarBaseUrl: state.telegramAvatarBaseUrl,
+          discordAccounts: state.discordAccounts,
+          telegramAccounts: state.telegramAccounts,
+          xAccounts: state.xAccounts,
+          truthSocialAccounts: state.truthSocialAccounts,
+          enabledForwardingTypes: state.enabledForwardingTypes
         };
         // 只有在新密码不为空时才更新密码
         if (newPassword) {
@@ -993,6 +1101,10 @@
             loginPassword: data.loginPassword || "",
             telegramAvatarBaseUrl: data.telegramAvatarBaseUrl || "",
             enabledForwardingTypes: data.enabledForwardingTypes || null,
+            discordAccounts: Array.isArray(data.discordAccounts) ? data.discordAccounts : [],
+            telegramAccounts: Array.isArray(data.telegramAccounts) ? data.telegramAccounts : [],
+            xAccounts: Array.isArray(data.xAccounts) ? data.xAccounts : [],
+            truthSocialAccounts: Array.isArray(data.truthSocialAccounts) ? data.truthSocialAccounts : [],
           };
         } else {
           console.warn('配置数据格式不正确:', data);
@@ -1128,46 +1240,376 @@
       configFormEl.innerHTML = renderAccountForm(activeAccount, currentForwardingType);
     }
 
+    function renderDiscordLibrarySection() {
+      const items = state.discordAccounts || [];
+      return `
+        <div>
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-medium text-slate-800">Discord 账号库</h3>
+            <button onclick="addDiscordLibraryAccount()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
+          </div>
+          ${items.length === 0 ? `<p class="text-xs text-slate-400 mt-2">暂无账号</p>` : items.map((item) => `
+            <div class="mt-3 border border-slate-200 rounded-lg p-4">
+              <div class="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">名称</label>
+                  <input type="text" value="${escapeHtml(item.name || '')}" onchange="updateDiscordLibraryField('${item.id}', 'name', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">类型</label>
+                  <select onchange="updateDiscordLibraryField('${item.id}', 'type', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                    <option value="selfbot" ${item.type === 'selfbot' ? 'selected' : ''}>用户 Token</option>
+                    <option value="bot" ${item.type === 'bot' ? 'selected' : ''}>机器人 Token</option>
+                  </select>
+                </div>
+                <div class="md:col-span-2">
+                  <label class="block text-xs text-slate-600 mb-1">Token</label>
+                  <input type="password" value="${escapeHtml(item.token || '')}" onchange="updateDiscordLibraryField('${item.id}', 'token', this.value)"
+                    placeholder="可直接填写 Token" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">邮箱（可选）</label>
+                  <input type="text" value="${escapeHtml(item.email || '')}" onchange="updateDiscordLibraryField('${item.id}', 'email', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">密码（可选）</label>
+                  <input type="password" value="${escapeHtml(item.password || '')}" onchange="updateDiscordLibraryField('${item.id}', 'password', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">2FA 密钥（可选）</label>
+                  <input type="password" value="${escapeHtml(item.totpSecret || '')}" onchange="updateDiscordLibraryField('${item.id}', 'totpSecret', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">代理（可选）</label>
+                  <input type="text" value="${escapeHtml(item.proxyUrl || '')}" onchange="updateDiscordLibraryField('${item.id}', 'proxyUrl', this.value)"
+                    placeholder="http://127.0.0.1:7890" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2 mt-3">
+                <button onclick="loginDiscordLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">邮箱密码登录获取 Token</button>
+                <button onclick="removeDiscordLibraryAccount('${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderTelegramLibrarySection() {
+      const items = state.telegramAccounts || [];
+      const renderStatus = (item) => {
+        const status = getTelegramLibraryStatus(item.id);
+        const stateValue = status.state || 'idle';
+        const message = status.message || '';
+        return `
+          <div class="text-xs text-slate-500 mt-2">
+            状态: <span id="lib-tg-badge-${item.id}" class="px-2 py-0.5 rounded-full ${getBadgeClass(stateValue)}">${stateValue}</span>
+            <span id="lib-tg-msg-${item.id}" class="ml-2">${escapeHtml(message)}</span>
+          </div>
+        `;
+      };
+      return `
+        <div>
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-medium text-slate-800">Telegram 账号库</h3>
+            <button onclick="addTelegramLibraryAccount()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
+          </div>
+          ${items.length === 0 ? `<p class="text-xs text-slate-400 mt-2">暂无账号</p>` : items.map((item) => `
+            <div class="mt-3 border border-slate-200 rounded-lg p-4">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-medium text-slate-800">${escapeHtml(getTelegramLibraryLabel(item))}</div>
+                <button onclick="removeTelegramLibraryAccount('${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
+              </div>
+              <div class="grid gap-3 md:grid-cols-2 mt-3">
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">名称</label>
+                  <input type="text" value="${escapeHtml(item.name || '')}" onchange="updateTelegramLibraryField('${item.id}', 'name', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">类型</label>
+                  <select onchange="updateTelegramLibraryField('${item.id}', 'type', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                    <option value="client" ${item.type === 'client' ? 'selected' : ''}>用户 Session</option>
+                    <option value="bot" ${item.type === 'bot' ? 'selected' : ''}>机器人 Bot</option>
+                  </select>
+                </div>
+              </div>
+
+              ${item.type === 'bot' ? `
+                <div class="mt-3">
+                  <label class="block text-xs text-slate-600 mb-1">Bot Token</label>
+                  <input type="password" value="${escapeHtml(item.token || '')}" onchange="updateTelegramLibraryField('${item.id}', 'token', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                  <div class="flex gap-2 mt-2">
+                    <button id="lib-tg-connect-${item.id}" onclick="connectTelegramLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">连接</button>
+                    <button id="lib-tg-disconnect-${item.id}" onclick="disconnectTelegramLibrary('${item.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">断开</button>
+                  </div>
+                  ${renderStatus(item)}
+                </div>
+              ` : `
+                <div class="grid gap-3 md:grid-cols-2 mt-3">
+                  <div>
+                    <label class="block text-xs text-slate-600 mb-1">API ID</label>
+                    <input type="number" value="${item.apiId || ''}" onchange="updateTelegramLibraryField('${item.id}', 'apiId', this.value)"
+                      class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-slate-600 mb-1">API Hash</label>
+                    <input type="password" value="${escapeHtml(item.apiHash || '')}" onchange="updateTelegramLibraryField('${item.id}', 'apiHash', this.value)"
+                      class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-slate-600 mb-1">手机号</label>
+                    <input type="text" value="${escapeHtml(item.phoneNumber || '')}" onchange="updateTelegramLibraryField('${item.id}', 'phoneNumber', this.value)"
+                      class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-slate-600 mb-1">2FA 密码（可选）</label>
+                    <input type="password" value="${escapeHtml(item.twoFactorPassword || '')}" onchange="updateTelegramLibraryField('${item.id}', 'twoFactorPassword', this.value)"
+                      class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  </div>
+                </div>
+                <div class="mt-3">
+                  <label class="block text-xs text-slate-600 mb-1">Session 方式</label>
+                  <select onchange="updateTelegramLibraryField('${item.id}', 'sessionType', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                    <option value="file" ${(item.sessionType || 'file') === 'file' ? 'selected' : ''}>Session 文件</option>
+                    <option value="string" ${item.sessionType === 'string' ? 'selected' : ''}>Session 字符串</option>
+                  </select>
+                </div>
+                <div class="mt-3 ${(item.sessionType || 'file') === 'string' ? '' : 'hidden'}">
+                  <label class="block text-xs text-slate-600 mb-1">Session 字符串</label>
+                  <textarea rows="3" onchange="updateTelegramLibraryField('${item.id}', 'sessionString', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none resize-none">${escapeHtml(item.sessionString || '')}</textarea>
+                </div>
+                <div class="mt-3 ${(item.sessionType || 'file') === 'string' ? 'hidden' : ''}">
+                  <label class="block text-xs text-slate-600 mb-1">上传 Session 文件</label>
+                  <input type="file" accept=".session" onchange="uploadTelegramLibrarySessionFile('${item.id}', this.files[0])"
+                    class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                  ${item.sessionPath ? `<p class="text-xs text-emerald-600 mt-2">已上传: ${escapeHtml(String(item.sessionPath).split(/[/\\\\]/).pop())}</p>` : ''}
+                </div>
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button onclick="startTelegramLibraryLogin('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">发送验证码</button>
+                  <input type="text" id="tg-login-code-${item.id}" placeholder="验证码" class="w-28 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+                  <button onclick="confirmTelegramLibraryLogin('${item.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">确认登录</button>
+                </div>
+                <div class="flex gap-2 mt-2">
+                  <button id="lib-tg-connect-${item.id}" onclick="connectTelegramLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">连接</button>
+                  <button id="lib-tg-disconnect-${item.id}" onclick="disconnectTelegramLibrary('${item.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">断开</button>
+                </div>
+                ${renderStatus(item)}
+              `}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderXLibrarySection() {
+      const items = state.xAccounts || [];
+      return `
+        <div>
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-medium text-slate-800">X / Twitter 账号库</h3>
+            <button onclick="addXLibraryAccount()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
+          </div>
+          ${items.length === 0 ? `<p class="text-xs text-slate-400 mt-2">暂无账号</p>` : items.map((item) => `
+            <div class="mt-3 border border-slate-200 rounded-lg p-4">
+              <div class="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">名称</label>
+                  <input type="text" value="${escapeHtml(item.name || '')}" onchange="updateXLibraryField('${item.id}', 'name', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">API Base URL</label>
+                  <input type="text" value="${escapeHtml(item.apiBaseUrl || '')}" onchange="updateXLibraryField('${item.id}', 'apiBaseUrl', this.value)"
+                    placeholder="https://api.twitterapi.io" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div class="md:col-span-2">
+                  <label class="block text-xs text-slate-600 mb-1">API Key</label>
+                  <input type="password" value="${escapeHtml(item.apiKey || '')}" onchange="updateXLibraryField('${item.id}', 'apiKey', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div class="md:col-span-2">
+                  <label class="block text-xs text-slate-600 mb-1">Login Cookie</label>
+                  <input type="password" value="${escapeHtml(item.loginCookie || '')}" onchange="updateXLibraryField('${item.id}', 'loginCookie', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">用户名</label>
+                  <input type="text" value="${escapeHtml(item.loginUserName || '')}" onchange="updateXLibraryField('${item.id}', 'loginUserName', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">邮箱</label>
+                  <input type="text" value="${escapeHtml(item.loginEmail || '')}" onchange="updateXLibraryField('${item.id}', 'loginEmail', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">密码</label>
+                  <input type="password" value="${escapeHtml(item.loginPassword || '')}" onchange="updateXLibraryField('${item.id}', 'loginPassword', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">2FA 密钥</label>
+                  <input type="password" value="${escapeHtml(item.loginTotpSecret || '')}" onchange="updateXLibraryField('${item.id}', 'loginTotpSecret', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div class="md:col-span-2">
+                  <label class="block text-xs text-slate-600 mb-1">代理（必填，登录接口要求）</label>
+                  <input type="text" value="${escapeHtml(item.loginProxy || '')}" onchange="updateXLibraryField('${item.id}', 'loginProxy', this.value)"
+                    placeholder="http://username:password@ip:port" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2 mt-3">
+                <button onclick="loginXLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">邮箱密码登录获取 Cookie</button>
+                <button onclick="removeXLibraryAccount('${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderTruthLibrarySection() {
+      const items = state.truthSocialAccounts || [];
+      return `
+        <div>
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-medium text-slate-800">TruthSocial 账号库</h3>
+            <button onclick="addTruthLibraryAccount()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
+          </div>
+          ${items.length === 0 ? `<p class="text-xs text-slate-400 mt-2">暂无账号</p>` : items.map((item) => `
+            <div class="mt-3 border border-slate-200 rounded-lg p-4">
+              <div class="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">名称</label>
+                  <input type="text" value="${escapeHtml(item.name || '')}" onchange="updateTruthLibraryField('${item.id}', 'name', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-600 mb-1">用户名</label>
+                  <input type="text" value="${escapeHtml(item.username || '')}" onchange="updateTruthLibraryField('${item.id}', 'username', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div class="md:col-span-2">
+                  <label class="block text-xs text-slate-600 mb-1">密码</label>
+                  <input type="password" value="${escapeHtml(item.password || '')}" onchange="updateTruthLibraryField('${item.id}', 'password', this.value)"
+                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+              </div>
+              <div class="flex gap-2 mt-3">
+                <button onclick="removeTruthLibraryAccount('${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderAccountLibrarySection() {
+      return `
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">全局账号库</h2>
+            <p class="mt-1 text-xs text-slate-500">独立管理 Discord / Telegram / X / TruthSocial 账号，实例中选择使用。</p>
+          </div>
+          <div class="p-6 space-y-6">
+            ${renderDiscordLibrarySection()}
+            ${renderTelegramLibrarySection()}
+            ${renderXLibrarySection()}
+            ${renderTruthLibrarySection()}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAccountSelectors(acc, forwardingType) {
+      const needsDiscord = forwardingType === 'discord-to-discord' || forwardingType === 'discord-to-telegram' || forwardingType === 'discord-to-feishu';
+      const needsTelegramListener = forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram';
+      const needsTelegramSender = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram';
+      const needsX = forwardingType === 'x-to-discord';
+      const needsTruth = forwardingType === 'truthsocial-to-discord';
+
+      if (!needsDiscord && !needsTelegramListener && !needsTelegramSender && !needsX && !needsTruth) {
+        return '';
+      }
+
+      return `
+        <div class="border-t pt-4 border-slate-200">
+          <h3 class="text-sm font-medium text-slate-800 mb-3">账号选择（全局账号库）</h3>
+          <div class="grid gap-4 md:grid-cols-2">
+            ${needsDiscord ? `
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Discord 账号</label>
+                <select onchange="updateField('discordAccountId', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  ${getDiscordLibraryOptions(acc.discordAccountId)}
+                </select>
+                <p class="text-xs text-slate-500 mt-1">未选择时使用实例中的 Discord Token（旧版配置）。</p>
+              </div>
+            ` : ''}
+
+            ${needsTelegramListener ? `
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Telegram 监听账号</label>
+                <select onchange="updateField('telegramListenerAccountId', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  ${getTelegramLibraryOptions(acc.telegramListenerAccountId)}
+                </select>
+                <p class="text-xs text-slate-500 mt-1">连接/断开请在账号库中操作。</p>
+              </div>
+            ` : ''}
+
+            ${needsTelegramSender ? `
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Telegram 发送账号</label>
+                <select onchange="updateField('telegramSenderAccountId', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  ${getTelegramLibraryOptions(acc.telegramSenderAccountId)}
+                </select>
+                <p class="text-xs text-slate-500 mt-1">连接/断开请在账号库中操作。</p>
+              </div>
+            ` : ''}
+
+            ${needsX ? `
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">X 账号</label>
+                <select onchange="updateField('xAccountId', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  ${getXLibraryOptions(acc.xAccountId)}
+                </select>
+                <p class="text-xs text-slate-500 mt-1">请选择用于拉取推文的 X 账号。</p>
+              </div>
+            ` : ''}
+
+            ${needsTruth ? `
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">TruthSocial 账号</label>
+                <select onchange="updateField('truthSocialAccountId', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  ${getTruthLibraryOptions(acc.truthSocialAccountId)}
+                </select>
+                <p class="text-xs text-slate-500 mt-1">请选择用于拉取帖子/评论的账号。</p>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
     // 渲染账号配置表单
     function renderAccountForm(acc, forwardingType) {
       const isPending = acc.loginState === 'pending' || acc.loginState === 'connecting';
       const isOnline = acc.loginState === 'online';
-      const inferredTelegramType = inferTelegramTypeFromCredentials(acc);
-      const tgListenerType =
-        acc.telegramConfig?.listenerAccountType === 'bot' || acc.telegramConfig?.listenerAccountType === 'client'
-          ? acc.telegramConfig.listenerAccountType
-          : inferredTelegramType;
-      const tgSenderType =
-        acc.telegramConfig?.defaultSenderAccountType === 'bot' || acc.telegramConfig?.defaultSenderAccountType === 'client'
-          ? acc.telegramConfig.defaultSenderAccountType
-          : inferredTelegramType;
-      const discordToTelegramMappings = (acc.telegramConfig?.mappings || []).filter((m) => m.type === 'discord-to-telegram');
-      const discordToTelegramUsesBot = discordToTelegramMappings.some(
-        (m) => getEffectiveTelegramSenderType(acc, 'discord-to-telegram', m) === 'bot',
-      );
-      const discordToTelegramUsesClient = discordToTelegramMappings.some(
-        (m) => getEffectiveTelegramSenderType(acc, 'discord-to-telegram', m) === 'client',
-      );
-      const isTelegramToTelegram = forwardingType === 'telegram-to-telegram';
-      const needsTelegramBot =
-        !isTelegramToTelegram && forwardingType === 'discord-to-telegram'
-          ? (discordToTelegramMappings.length === 0 ? true : discordToTelegramUsesBot)
-          : false;
-      const needsTelegramClient =
-        !isTelegramToTelegram && forwardingType === 'telegram-to-discord'
-          ? true
-          : !isTelegramToTelegram && forwardingType === 'discord-to-telegram'
-            ? discordToTelegramUsesClient
-            : false;
-      if (isTelegramToTelegram) {
-        ensureTelegramConfig(acc);
-        if (tgListenerType === 'bot' || tgListenerType === 'client') {
-          ensureTelegramRoleAccount(acc, 'listener', tgListenerType);
-        }
-        if (tgSenderType === 'bot' || tgSenderType === 'client') {
-          ensureTelegramRoleAccount(acc, 'sender', tgSenderType);
-        }
-      }
+      ensureTelegramConfig(acc);
       const scheduledContents = ensureScheduledContents(acc);
       const scheduledBroadcast = ensureScheduledBroadcast(acc);
       const watermarkList = getWatermarkList(acc);
@@ -1358,6 +1800,7 @@
       };
       
       return `
+        ${renderAccountLibrarySection()}
         <!-- 基础设置 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
@@ -1390,32 +1833,11 @@
               ? renderExternalStatusSection(forwardingType === 'x-to-discord' ? 'x' : 'truthsocial')
               : ''}
 
-            ${forwardingType === 'telegram-to-telegram' ? `
-            <!-- Telegram→Telegram 账号选择 -->
-            <div class="border-t pt-4 border-slate-200">
-              <div class="grid gap-3 md:grid-cols-2">
-                <div>
-                  <label class="block text-sm font-medium text-slate-700 mb-1">监听账号类型</label>
-                  <select onchange="updateTelegramListenerType(this.value)"
-                    class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                    <option value="bot" ${tgListenerType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
-                    <option value="client" ${tgListenerType === 'client' ? 'selected' : ''}>用户（Session）</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-sm font-medium text-slate-700 mb-1">发送账号类型</label>
-                  <select onchange="updateTelegramDefaultSender(this.value)"
-                    class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                    <option value="bot" ${tgSenderType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
-                    <option value="client" ${tgSenderType === 'client' ? 'selected' : ''}>用户（Session）</option>
-                  </select>
-                </div>
-              </div>
-              <p class="text-xs text-slate-500 mt-2">仅对 Telegram → Telegram 生效；发送账号可被规则中的“发送账号类型”覆盖。</p>
-            </div>
-            ` : ''}
+            ${renderAccountSelectors(acc, forwardingType)}
 
-            ${forwardingType === 'discord-to-discord' ? `
+            
+
+            ${forwardingType === 'discord-to-discord' && !acc.discordAccountId ? `
             <!-- Discord→Discord 账号类型选择 -->
             <div class="border-t pt-4 border-slate-200">
               <div>
@@ -1429,39 +1851,31 @@
             </div>
             ` : ''}
 
-            ${isTelegramToTelegram ? `
-            ${tgListenerType === 'bot'
-              ? renderTelegramBotConfig('Telegram 监听账号配置', '监听账号选择 Bot 时填写', { role: 'listener' })
-              : renderTelegramClientConfig('Telegram 监听账号配置', '监听账号选择 Session 时填写', { role: 'listener' })}
-            ${tgSenderType === 'bot'
-              ? renderTelegramBotConfig(
-                  'Telegram 发送账号配置',
-                  tgSenderType === tgListenerType ? '发送账号与监听账号共用同一套凭据' : '发送账号选择 Bot 时填写',
-                  { role: 'sender' },
-                )
-              : renderTelegramClientConfig(
-                  'Telegram 发送账号配置',
-                  tgSenderType === tgListenerType ? '发送账号与监听账号共用同一套凭据' : '发送账号选择 Session 时填写',
-                  { role: 'sender' },
-                )}
-            ` : ''}
 
             <!-- Discord Token (所有Discord相关类型都需要) -->
             ${(forwardingType === 'discord-to-discord' || forwardingType === 'discord-to-telegram' || forwardingType === 'discord-to-feishu') ? `
             <div class="border-t pt-4 border-slate-200">
               <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Discord Token</label>
-                <div class="flex gap-2">
-                  <input type="password" value="${acc.token || ''}" onchange="updateField('token', this.value)"
-                    placeholder="OT..." class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
-                  <button id="btn-discord-login" onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''}
-                    class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                    ${isPending ? '连接中...' : isOnline ? '已连接' : '连接'}
-                  </button>
-                  <button id="btn-discord-stop" onclick="requestStop()" ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'disabled' : ''}
-                    class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                    断开
-                  </button>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Discord 连接</label>
+                <div class="flex flex-col gap-2">
+                  ${acc.discordAccountId ? `
+                    <div class="text-xs text-slate-500">
+                      当前使用账号库：${escapeHtml(getDiscordLibraryLabel((state.discordAccounts || []).find(item => item.id === acc.discordAccountId)))}
+                    </div>
+                  ` : `
+                    <input type="password" value="${acc.token || ''}" onchange="updateField('token', this.value)"
+                      placeholder="OT..." class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                  `}
+                  <div class="flex gap-2">
+                    <button id="btn-discord-login" onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''}
+                      class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                      ${isPending ? '连接中...' : isOnline ? '已连接' : '连接'}
+                    </button>
+                    <button id="btn-discord-stop" onclick="requestStop()" ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'disabled' : ''}
+                      class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                      断开
+                    </button>
+                  </div>
                 </div>
                 <div class="text-xs text-slate-500 mt-1">
                   状态: <span id="status-discord-badge" class="px-2 py-0.5 rounded-full ${acc.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.loginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.loginState || 'idle'}</span>
@@ -1471,8 +1885,7 @@
             </div>
             ` : ''}
 
-            ${needsTelegramBot ? renderTelegramBotConfig('Telegram Bot 配置') : ''}
-            ${needsTelegramClient ? renderTelegramClientConfig('Telegram Client 配置') : ''}
+            
 
             ${forwardingType === 'discord-to-feishu' ? `
             <!-- Discord→飞书配置 -->
@@ -2070,6 +2483,8 @@
     }
 
     function getEffectiveTelegramSenderType(acc, forwardingType, mapping) {
+      const librarySenderType = getSelectedTelegramAccountType(acc, 'sender');
+      if (librarySenderType) return librarySenderType;
       const allowRuleSender = forwardingType !== 'telegram-to-telegram';
       const explicit = allowRuleSender && mapping && (mapping.senderAccountType === 'bot' || mapping.senderAccountType === 'client')
         ? mapping.senderAccountType
@@ -2093,6 +2508,10 @@
         allMappings = (acc.mappings || []);
       }
       const mappings = allMappings;
+      const librarySender = forwardingType === 'discord-to-telegram'
+        ? getTelegramLibraryAccountById(acc.telegramSenderAccountId)
+        : null;
+      const librarySenderLabel = librarySender ? getTelegramLibraryLabel(librarySender) : '';
       console.log('[DEBUG] renderMappings - forwardingType:', forwardingType);
       console.log('[DEBUG] renderMappings - mappings长度:', mappings.length);
       console.log('[DEBUG] renderMappings - 当前页:', pagination.discordPage);
@@ -2151,12 +2570,14 @@
             <span class="text-slate-300">${arrowIcon}</span>
             <input type="text" value="${m.targetChannelId || m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, '${forwardingType === 'discord-to-discord' ? 'targetWebhookUrl' : forwardingType === 'discord-to-feishu' ? 'targetChannelId' : 'targetChannelId'}', this.value)"
               placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
-            ${(forwardingType === 'discord-to-telegram') ? `
+            ${(forwardingType === 'discord-to-telegram') ? (librarySender ? `
+            <span class="text-xs text-slate-500">发送账号: ${escapeHtml(librarySenderLabel)}</span>
+            ` : `
             <select onchange="updateMapping(${idx + startIdx}, 'senderAccountType', this.value)" class="w-36 px-2 py-1.5 rounded-lg border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none">
               <option value="bot" ${senderType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
               <option value="client" ${senderType === 'client' ? 'selected' : ''}>用户（Session）</option>
             </select>
-            ` : ''}
+            `) : ''}
             ${forwardingType === 'discord-to-discord' ? `
             <select onchange="updateMappingRelay(${idx + startIdx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="">Webhook 默认</option>
@@ -2814,6 +3235,369 @@
           });
         }
       }
+      saveConfig();
+      render();
+    }
+
+    function addDiscordLibraryAccount() {
+      state.discordAccounts = state.discordAccounts || [];
+      state.discordAccounts.push({
+        id: genId(),
+        name: 'Discord账号',
+        type: 'selfbot',
+        token: '',
+        email: '',
+        password: '',
+        totpSecret: '',
+        proxyUrl: ''
+      });
+      saveConfig();
+      render();
+    }
+
+    function updateDiscordLibraryField(accountId, field, value) {
+      const entry = (state.discordAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      entry[field] = value;
+      saveConfig();
+      render();
+    }
+
+    function removeDiscordLibraryAccount(accountId) {
+      state.discordAccounts = (state.discordAccounts || []).filter((item) => item.id !== accountId);
+      state.accounts.forEach((acc) => {
+        if (acc.discordAccountId === accountId) {
+          acc.discordAccountId = '';
+        }
+      });
+      saveConfig();
+      render();
+    }
+
+    async function loginDiscordLibrary(accountId) {
+      const entry = (state.discordAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      if (!entry.email || !entry.password) {
+        showToast('请先填写邮箱和密码', 'error');
+        return;
+      }
+      try {
+        const res = await fetch('/api/account/discord-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            discordAccountId: entry.id,
+            useLibrary: true,
+            mode: 'password',
+            email: entry.email,
+            password: entry.password,
+            totpSecret: entry.totpSecret || undefined,
+            autoLogin: false
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data?.error || '登录失败', 'error');
+          return;
+        }
+        await loadConfig();
+        render();
+        showToast('Token 已保存', 'success');
+      } catch (e) {
+        showToast('登录失败: ' + (e?.message || e), 'error');
+      }
+    }
+
+    function addTelegramLibraryAccount() {
+      state.telegramAccounts = state.telegramAccounts || [];
+      state.telegramAccounts.push({
+        id: genId(),
+        name: 'Telegram账号',
+        type: 'client',
+        token: '',
+        apiId: '',
+        apiHash: '',
+        phoneNumber: '',
+        twoFactorPassword: '',
+        sessionType: 'file',
+        sessionPath: '',
+        sessionString: '',
+        enabled: false
+      });
+      saveConfig();
+      render();
+    }
+
+    function updateTelegramLibraryField(accountId, field, value) {
+      const entry = (state.telegramAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      if (field === 'apiId') {
+        const numeric = Number(value);
+        entry.apiId = Number.isFinite(numeric) ? numeric : '';
+      } else if (field === 'sessionType') {
+        entry.sessionType = value === 'string' ? 'string' : 'file';
+        if (entry.sessionType === 'file') {
+          entry.sessionString = '';
+        }
+      } else if (field === 'sessionString') {
+        entry.sessionString = value || '';
+        if (entry.sessionString) {
+          entry.sessionPath = '';
+          entry.sessionType = 'string';
+        }
+      } else {
+        entry[field] = value;
+      }
+      saveConfig();
+      render();
+    }
+
+    function removeTelegramLibraryAccount(accountId) {
+      state.telegramAccounts = (state.telegramAccounts || []).filter((item) => item.id !== accountId);
+      state.accounts.forEach((acc) => {
+        if (acc.telegramListenerAccountId === accountId) acc.telegramListenerAccountId = '';
+        if (acc.telegramSenderAccountId === accountId) acc.telegramSenderAccountId = '';
+      });
+      saveConfig();
+      render();
+    }
+
+    async function uploadTelegramLibrarySessionFile(accountId, file) {
+      if (!file) return;
+      try {
+        const form = new FormData();
+        form.append('telegramAccountId', accountId);
+        form.append('useLibrary', '1');
+        form.append('file', file);
+        const res = await fetch('/api/telegram/client/session-file', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data?.error || '上传失败', 'error');
+          return;
+        }
+        await loadConfig();
+        render();
+        showToast('Session 文件已上传', 'success');
+      } catch (e) {
+        showToast('上传失败: ' + (e?.message || e), 'error');
+      }
+    }
+
+    async function startTelegramLibraryLogin(accountId) {
+      const entry = (state.telegramAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      if (!entry.phoneNumber || !entry.apiId || !entry.apiHash) {
+        showToast('请先填写手机号、API ID 和 API Hash', 'error');
+        return;
+      }
+      try {
+        const res = await fetch('/api/telegram/login/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            telegramAccountId: entry.id,
+            useLibrary: true,
+            phoneNumber: entry.phoneNumber,
+            apiId: entry.apiId,
+            apiHash: entry.apiHash,
+            twoFactorPassword: entry.twoFactorPassword || undefined
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data?.error || '验证码请求失败', 'error');
+          return;
+        }
+        entry.loginNonce = data.loginId;
+        saveConfig();
+        render();
+        showToast('验证码已发送，请输入验证码', 'success');
+      } catch (e) {
+        showToast('验证码请求失败: ' + (e?.message || e), 'error');
+      }
+    }
+
+    async function confirmTelegramLibraryLogin(accountId) {
+      const entry = (state.telegramAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      const codeEl = document.getElementById(`tg-login-code-${accountId}`);
+      const code = codeEl ? codeEl.value.trim() : '';
+      if (!entry.loginNonce || !code) {
+        showToast('请先发送验证码并输入验证码', 'error');
+        return;
+      }
+      try {
+        const res = await fetch('/api/telegram/login/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            telegramAccountId: entry.id,
+            useLibrary: true,
+            loginId: entry.loginNonce,
+            code,
+            twoFactorPassword: entry.twoFactorPassword || undefined
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data?.error || '登录失败', 'error');
+          return;
+        }
+        await loadConfig();
+        render();
+        showToast('登录成功，Session 已保存', 'success');
+      } catch (e) {
+        showToast('登录失败: ' + (e?.message || e), 'error');
+      }
+    }
+
+    async function connectTelegramLibrary(accountId) {
+      const entry = (state.telegramAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      const endpoint = entry.type === 'bot' ? '/api/telegram/bot/connect' : '/api/telegram/client/connect';
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ telegramAccountId: entry.id, useLibrary: true })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data?.message || data?.error || '连接失败', 'error');
+          return;
+        }
+        await loadConfig();
+        render();
+        showToast(data?.message || '连接成功', 'success');
+      } catch (e) {
+        showToast('连接失败: ' + (e?.message || e), 'error');
+      }
+    }
+
+    async function disconnectTelegramLibrary(accountId) {
+      const entry = (state.telegramAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      const endpoint = entry.type === 'bot' ? '/api/telegram/bot/disconnect' : '/api/telegram/client/disconnect';
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ telegramAccountId: entry.id, useLibrary: true })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data?.message || data?.error || '断开失败', 'error');
+          return;
+        }
+        await loadConfig();
+        render();
+        showToast(data?.message || '已断开', 'success');
+      } catch (e) {
+        showToast('断开失败: ' + (e?.message || e), 'error');
+      }
+    }
+
+    function addXLibraryAccount() {
+      state.xAccounts = state.xAccounts || [];
+      state.xAccounts.push({
+        id: genId(),
+        name: 'X账号',
+        apiKey: '',
+        apiBaseUrl: '',
+        loginCookie: '',
+        loginUserName: '',
+        loginEmail: '',
+        loginPassword: '',
+        loginTotpSecret: '',
+        loginProxy: ''
+      });
+      saveConfig();
+      render();
+    }
+
+    function updateXLibraryField(accountId, field, value) {
+      const entry = (state.xAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      entry[field] = value;
+      saveConfig();
+      render();
+    }
+
+    function removeXLibraryAccount(accountId) {
+      state.xAccounts = (state.xAccounts || []).filter((item) => item.id !== accountId);
+      state.accounts.forEach((acc) => {
+        if (acc.xAccountId === accountId) acc.xAccountId = '';
+      });
+      saveConfig();
+      render();
+    }
+
+    async function loginXLibrary(accountId) {
+      const entry = (state.xAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      if (!entry.apiKey || !entry.loginUserName || !entry.loginEmail || !entry.loginPassword) {
+        showToast('请填写 API Key、用户名、邮箱、密码', 'error');
+        return;
+      }
+      if (!entry.loginProxy) {
+        showToast('登录接口要求填写代理', 'error');
+        return;
+      }
+      try {
+        const res = await fetch('/api/x/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            xAccountId: entry.id,
+            useLibrary: true,
+            mode: 'password',
+            apiKey: entry.apiKey,
+            apiBaseUrl: entry.apiBaseUrl,
+            userName: entry.loginUserName,
+            email: entry.loginEmail,
+            password: entry.loginPassword,
+            proxy: entry.loginProxy,
+            totpSecret: entry.loginTotpSecret || undefined
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data?.error || '登录失败', 'error');
+          return;
+        }
+        await loadConfig();
+        render();
+        showToast('Cookie 已保存', 'success');
+      } catch (e) {
+        showToast('登录失败: ' + (e?.message || e), 'error');
+      }
+    }
+
+    function addTruthLibraryAccount() {
+      state.truthSocialAccounts = state.truthSocialAccounts || [];
+      state.truthSocialAccounts.push({
+        id: genId(),
+        name: 'TruthSocial账号',
+        username: '',
+        password: ''
+      });
+      saveConfig();
+      render();
+    }
+
+    function updateTruthLibraryField(accountId, field, value) {
+      const entry = (state.truthSocialAccounts || []).find((item) => item.id === accountId);
+      if (!entry) return;
+      entry[field] = value;
+      saveConfig();
+      render();
+    }
+
+    function removeTruthLibraryAccount(accountId) {
+      state.truthSocialAccounts = (state.truthSocialAccounts || []).filter((item) => item.id !== accountId);
+      state.accounts.forEach((acc) => {
+        if (acc.truthSocialAccountId === accountId) acc.truthSocialAccountId = '';
+      });
       saveConfig();
       render();
     }
@@ -4140,8 +4924,13 @@
 
       const senderSection = document.getElementById('ruleTelegramSenderSection');
       if (forwardingType === 'discord-to-telegram') {
-        senderSection.classList.remove('hidden');
-        document.getElementById('ruleTelegramSenderType').value = ruleConfigData.senderAccountType;
+        const librarySender = getTelegramLibraryAccountById(acc.telegramSenderAccountId);
+        if (librarySender) {
+          senderSection.classList.add('hidden');
+        } else {
+          senderSection.classList.remove('hidden');
+          document.getElementById('ruleTelegramSenderType').value = ruleConfigData.senderAccountType;
+        }
       } else {
         senderSection.classList.add('hidden');
       }
@@ -4260,8 +5049,13 @@
       mapping.ignoreChineseThreshold = Number.isFinite(ruleChineseThreshold) ? ruleChineseThreshold : undefined;
 
       if (currentRuleConfigType === 'discord-to-telegram') {
-        const senderType = document.getElementById('ruleTelegramSenderType').value;
-        mapping.senderAccountType = senderType === 'bot' || senderType === 'client' ? senderType : undefined;
+        const librarySender = getTelegramLibraryAccountById(acc.telegramSenderAccountId);
+        if (!librarySender) {
+          const senderType = document.getElementById('ruleTelegramSenderType').value;
+          mapping.senderAccountType = senderType === 'bot' || senderType === 'client' ? senderType : undefined;
+        } else if (mapping.senderAccountType) {
+          delete mapping.senderAccountType;
+        }
       } else if (mapping.senderAccountType) {
         delete mapping.senderAccountType;
       }
@@ -4424,17 +5218,22 @@
       const previousType = currentForwardingType;
       currentForwardingType = forwardingType; // 更新全局变量
 
+      const libraryListenerType = getSelectedTelegramAccountType(acc, 'listener');
+      const librarySenderType = getSelectedTelegramAccountType(acc, 'sender');
+      const usingLibrary = Boolean(libraryListenerType || librarySenderType);
       const hasBotToken = typeof acc.telegramBotToken === 'string' && acc.telegramBotToken.trim().length > 0;
       const hasClientSession = Boolean((acc.telegramSessionPath || acc.telegramSessionString) && acc.telegramApiId && acc.telegramApiHash);
-      const inferredTelegramType = hasBotToken ? 'bot' : hasClientSession ? 'client' : 'bot';
+      const inferredTelegramType = librarySenderType || libraryListenerType || (hasBotToken ? 'bot' : hasClientSession ? 'client' : 'bot');
       const listenerType =
-        acc.telegramConfig?.listenerAccountType === 'bot' || acc.telegramConfig?.listenerAccountType === 'client'
+        libraryListenerType ||
+        (acc.telegramConfig?.listenerAccountType === 'bot' || acc.telegramConfig?.listenerAccountType === 'client'
           ? acc.telegramConfig.listenerAccountType
-          : inferredTelegramType;
+          : inferredTelegramType);
       const senderType =
-        acc.telegramConfig?.defaultSenderAccountType === 'bot' || acc.telegramConfig?.defaultSenderAccountType === 'client'
+        librarySenderType ||
+        (acc.telegramConfig?.defaultSenderAccountType === 'bot' || acc.telegramConfig?.defaultSenderAccountType === 'client'
           ? acc.telegramConfig.defaultSenderAccountType
-          : inferredTelegramType;
+          : inferredTelegramType);
       const discordToTelegramMappings = (acc.telegramConfig?.mappings || []).filter((m) => m.type === 'discord-to-telegram');
       const discordToTelegramUsesBot = discordToTelegramMappings.some(
         (m) => getEffectiveTelegramSenderType(acc, 'discord-to-telegram', m) === 'bot',
@@ -4473,11 +5272,13 @@
 
       // 当转发类型改变时，断开其他类型的连接
       if (previousType && previousType !== forwardingType) {
-        if (prevNeedsBot && !needsBot && acc.telegramBotState === 'online') {
-          disconnectTelegramBot();
-        }
-        if (prevNeedsClient && !needsClient && acc.telegramClientState === 'online') {
-          disconnectTelegramClient();
+        if (!usingLibrary) {
+          if (prevNeedsBot && !needsBot && acc.telegramBotState === 'online') {
+            disconnectTelegramBot();
+          }
+          if (prevNeedsClient && !needsClient && acc.telegramClientState === 'online') {
+            disconnectTelegramClient();
+          }
         }
         // 如果之前是需要 Discord 的类型，现在切换到 Telegram-only，断开 Discord
         if ((previousType === 'discord-to-discord' || previousType === 'discord-to-telegram' || previousType === 'discord-to-feishu')
@@ -4486,45 +5287,53 @@
           requestStop();
         }
         // 重置不相关的状态
-        if (!needsBot) {
-          acc.telegramBotState = 'idle';
-        }
-        if (!needsClient) {
-          acc.telegramClientState = 'idle';
+        if (!usingLibrary) {
+          if (!needsBot) {
+            acc.telegramBotState = 'idle';
+          }
+          if (!needsClient) {
+            acc.telegramClientState = 'idle';
+          }
         }
       }
 
       // 当转发类型改变时，初始化相关字段
       if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') {
         if (!acc.token) acc.token = '';
-        if (!acc.telegramBotState) acc.telegramBotState = 'idle';
+        if (!usingLibrary && !acc.telegramBotState) acc.telegramBotState = 'idle';
         ensureTelegramConfig(acc);
       }
       if (forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         if (!acc.telegramApiId) acc.telegramApiId = '';
         if (!acc.telegramApiHash) acc.telegramApiHash = '';
-        if (!acc.telegramClientState) acc.telegramClientState = 'idle';
+        if (!usingLibrary && !acc.telegramClientState) acc.telegramClientState = 'idle';
         ensureTelegramConfig(acc);
       }
       if (forwardingType === 'telegram-to-telegram') {
         ensureTelegramConfig(acc);
-        if (acc.telegramConfig.listenerAccountType !== 'bot' && acc.telegramConfig.listenerAccountType !== 'client') {
+        if (libraryListenerType) {
+          acc.telegramConfig.listenerAccountType = libraryListenerType;
+        } else if (acc.telegramConfig.listenerAccountType !== 'bot' && acc.telegramConfig.listenerAccountType !== 'client') {
           acc.telegramConfig.listenerAccountType = listenerType;
         }
-        if (acc.telegramConfig.defaultSenderAccountType !== 'bot' && acc.telegramConfig.defaultSenderAccountType !== 'client') {
+        if (librarySenderType) {
+          acc.telegramConfig.defaultSenderAccountType = librarySenderType;
+        } else if (acc.telegramConfig.defaultSenderAccountType !== 'bot' && acc.telegramConfig.defaultSenderAccountType !== 'client') {
           acc.telegramConfig.defaultSenderAccountType = senderType;
         }
-        if (listenerType === 'bot' || listenerType === 'client') {
-          disableTelegramRoleAccounts(acc, 'listener', listenerType);
-        }
-        if (senderType === 'bot' || senderType === 'client') {
-          disableTelegramRoleAccounts(acc, 'sender', senderType);
-        }
-        if (listenerType === 'bot' || listenerType === 'client') {
-          ensureTelegramRoleAccount(acc, 'listener', listenerType);
-        }
-        if (senderType === 'bot' || senderType === 'client') {
-          ensureTelegramRoleAccount(acc, 'sender', senderType);
+        if (!usingLibrary) {
+          if (listenerType === 'bot' || listenerType === 'client') {
+            disableTelegramRoleAccounts(acc, 'listener', listenerType);
+          }
+          if (senderType === 'bot' || senderType === 'client') {
+            disableTelegramRoleAccounts(acc, 'sender', senderType);
+          }
+          if (listenerType === 'bot' || listenerType === 'client') {
+            ensureTelegramRoleAccount(acc, 'listener', listenerType);
+          }
+          if (senderType === 'bot' || senderType === 'client') {
+            ensureTelegramRoleAccount(acc, 'sender', senderType);
+          }
         }
       }
       if (forwardingType === 'discord-to-feishu') {
@@ -4576,6 +5385,11 @@
         proxyUrl: '',
         loginRequested: false,
         loginState: 'idle',
+        discordAccountId: '',
+        telegramListenerAccountId: '',
+        telegramSenderAccountId: '',
+        xAccountId: '',
+        truthSocialAccountId: '',
         showSourceIdentity: false,
         forwardingType: 'discord-to-discord', // 添加默认转发类型
         mappings: [],
@@ -5519,6 +6333,9 @@
 
     // 自动检查 Telegram Bot 连接状态（页面加载时调用）
     async function autoCheckTelegramBotStatus() {
+      if (Array.isArray(state.telegramAccounts) && state.telegramAccounts.length > 0) {
+        return;
+      }
       for (const acc of state.accounts) {
         // 检查是否有 Token
         if (!acc.telegramBotToken || acc.telegramBotToken.trim() === '') {
@@ -5560,6 +6377,9 @@
 
     // 自动检查 Telegram Client 连接状态（页面加载时调用）
     async function autoCheckTelegramClientStatus() {
+      if (Array.isArray(state.telegramAccounts) && state.telegramAccounts.length > 0) {
+        return;
+      }
       for (const acc of state.accounts) {
         const telegramMappings = acc.telegramConfig?.mappings || [];
         // 检查是否有任何Telegram相关的mapping（包括telegram-to-discord、discord-to-telegram、telegram-to-telegram）
@@ -6012,6 +6832,45 @@
       }
     }
 
+    function updateTelegramLibraryStatusElement(accountId, state, message) {
+      const badgeEl = document.getElementById(`lib-tg-badge-${accountId}`);
+      const msgEl = document.getElementById(`lib-tg-msg-${accountId}`);
+      const btnConnect = document.getElementById(`lib-tg-connect-${accountId}`);
+      const btnDisconnect = document.getElementById(`lib-tg-disconnect-${accountId}`);
+
+      const normalizedState = state || 'idle';
+      const displayLabels = {
+        online: '已连接',
+        idle: '未连接',
+        pending: '连接中',
+        connecting: '连接中',
+        disconnecting: '断开中',
+        error: '异常'
+      };
+      const displayState = displayLabels[normalizedState] || normalizedState;
+      const badgeState = normalizedState === 'disconnecting' ? 'pending' : normalizedState;
+
+      if (badgeEl) {
+        badgeEl.textContent = displayState;
+        badgeEl.className = `px-2 py-0.5 rounded-full ${getBadgeClass(badgeState)}`;
+      }
+      if (msgEl) {
+        msgEl.textContent = message || '';
+      }
+
+      if (btnConnect) {
+        const isPending = normalizedState === 'pending' || normalizedState === 'connecting' || normalizedState === 'disconnecting';
+        const isOnline = normalizedState === 'online';
+        btnConnect.disabled = isPending || isOnline;
+        btnConnect.className = `text-xs font-medium px-3 py-1.5 rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`;
+      }
+      if (btnDisconnect) {
+        const canDisconnect = normalizedState !== 'idle';
+        btnDisconnect.disabled = !canDisconnect;
+        btnDisconnect.className = `text-xs font-medium px-3 py-1.5 rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'hover:bg-slate-100'}`;
+      }
+    }
+
     function updateExternalStatusElement(kind, summary) {
       const badgeEl = document.getElementById(`external-${kind}-badge`);
       const pollEl = document.getElementById(`external-${kind}-poll`);
@@ -6269,6 +7128,34 @@
 
             updateAccountCardStatus(localAcc);
           });
+
+          if (Array.isArray(data.telegramAccounts)) {
+            if (!Array.isArray(state.telegramAccounts) || state.telegramAccounts.length !== data.telegramAccounts.length) {
+              state.telegramAccounts = data.telegramAccounts;
+              shouldRender = true;
+            } else {
+              data.telegramAccounts.forEach((remoteAcc) => {
+                const localAcc = state.telegramAccounts.find((acc) => acc.id === remoteAcc.id);
+                if (!localAcc) {
+                  state.telegramAccounts.push(remoteAcc);
+                  shouldRender = true;
+                  return;
+                }
+                const remoteState = remoteAcc.loginState || 'idle';
+                const remoteMessage = remoteAcc.loginMessage || '';
+                const stateChanged = remoteState !== localAcc.loginState || remoteMessage !== localAcc.loginMessage;
+                if (stateChanged) {
+                  localAcc.loginState = remoteState;
+                  localAcc.loginMessage = remoteMessage;
+                  localAcc.userInfo = remoteAcc.userInfo;
+                  updateTelegramLibraryStatusElement(remoteAcc.id, remoteState, remoteMessage);
+                }
+                if (typeof remoteAcc.enabled === 'boolean' && localAcc.enabled !== remoteAcc.enabled) {
+                  localAcc.enabled = remoteAcc.enabled;
+                }
+              });
+            }
+          }
 
           if (shouldRender) {
             if (isFormElementActive()) {

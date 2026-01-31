@@ -12,9 +12,10 @@ export async function POST(req: NextRequest) {
     const accountId = form.get("accountId");
     const telegramAccountId = form.get("telegramAccountId");
     const role = form.get("role");
+    const useLibrary = form.get("useLibrary") === "1" || form.get("useLibrary") === "true" || !accountId;
     const file = form.get("file");
 
-    if (!accountId || typeof accountId !== "string") {
+    if ((!accountId || typeof accountId !== "string") && !useLibrary) {
       return NextResponse.json({ error: "缺少 accountId" }, { status: 400 });
     }
     if (!file || typeof file === "string") {
@@ -22,6 +23,41 @@ export async function POST(req: NextRequest) {
     }
 
     const multi = await getMultiConfig();
+    if (useLibrary) {
+      if (!telegramAccountId || typeof telegramAccountId !== "string") {
+        return NextResponse.json({ error: "缺少 telegramAccountId" }, { status: 400 });
+      }
+      const buffer = Buffer.from(await (file as File).arrayBuffer());
+      if (buffer.length === 0) {
+        return NextResponse.json({ error: "Session 文件为空" }, { status: 400 });
+      }
+
+      const sessionDir = path.join(process.cwd(), ".data", "telegram_sessions");
+      await fs.mkdir(sessionDir, { recursive: true });
+      const sessionKey = telegramAccountId.trim();
+      const sessionPath = path.join(sessionDir, `${sessionKey}.session`);
+      await fs.writeFile(sessionPath, buffer);
+
+      if (!multi.telegramAccounts) multi.telegramAccounts = [];
+      let entry = multi.telegramAccounts.find((acc) => acc.id === telegramAccountId);
+      if (!entry) {
+        entry = {
+          id: telegramAccountId,
+          name: "Telegram Client",
+          type: "client",
+          token: "",
+          enabled: false,
+        };
+        multi.telegramAccounts.push(entry);
+      }
+      entry.sessionPath = sessionPath;
+      entry.sessionString = undefined;
+      (entry as any).sessionType = "file";
+
+      await saveMultiConfig(multi);
+      return NextResponse.json({ success: true, sessionPath });
+    }
+
     const account = multi.accounts.find((a) => a.id === accountId);
     if (!account) {
       return NextResponse.json({ error: "账号不存在" }, { status: 404 });

@@ -16,6 +16,7 @@ import {
   accountToLegacyConfig,
   ensureConfigFile,
   getConfigPath,
+  resolveMultiConfigForRuntime,
 } from "./config.js";
 import { getEnv } from "./env.js";
 import { SenderBot } from "./senderBot.js";
@@ -2888,7 +2889,8 @@ async function main() {
   await ensureConfigFile();
   await preloadWatermarkFonts();
 
-  const multi = await getMultiConfig();
+  const rawMulti = await getMultiConfig();
+  const multi = resolveMultiConfigForRuntime(rawMulti);
   currentConfig = multi;
 
   // 启动时自动连接所有已配置 loginRequested=true 的账号
@@ -3026,7 +3028,8 @@ async function main() {
         }
         
         if (latest) {
-          await reconcileAccounts(latest, logger);
+          const resolvedLatest = resolveMultiConfigForRuntime(latest);
+          await reconcileAccounts(resolvedLatest, logger);
         }
       } catch (e: any) {
         console.error("自动重载配置失败", e);

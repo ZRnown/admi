@@ -98,12 +98,75 @@ export async function POST(req: NextRequest) {
     const accountId = body?.accountId as string | undefined;
     const telegramAccountId = body?.telegramAccountId as string | undefined;
     const role = body?.role === "listener" || body?.role === "sender" ? body.role : undefined;
+    const useLibrary = body?.useLibrary === true || !accountId;
 
-    if (!accountId) {
+    if (!accountId && !useLibrary) {
       return NextResponse.json({ error: "缺少 accountId" }, { status: 400 });
     }
 
     const multi = await getMultiConfig();
+    if (useLibrary) {
+      if (!telegramAccountId) {
+        return NextResponse.json({ error: "缺少 telegramAccountId" }, { status: 400 });
+      }
+      const account = (multi.telegramAccounts || []).find((acc) => acc.id === telegramAccountId);
+      if (!account) {
+        return NextResponse.json({ error: "Telegram账号不存在" }, { status: 404 });
+      }
+      account.type = "client";
+      account.enabled = true;
+      if (role) {
+        account.role = role;
+      }
+      await saveMultiConfig(multi);
+
+      if (!account.apiId || !account.apiHash) {
+        return NextResponse.json(
+          { state: "error", message: "缺少 Telegram API ID 或 API Hash" },
+          { status: 400 },
+        );
+      }
+      if (!account.sessionString && !account.sessionPath) {
+        return NextResponse.json(
+          { state: "error", message: "缺少 Telegram Session（文件或字符串）" },
+          { status: 400 },
+        );
+      }
+
+      await triggerBotReload();
+      const status = await waitForStatus(telegramAccountId, 15000);
+      if (status) {
+        if (status.state === "online") {
+          const userInfo = status.userInfo || {};
+          const name = userInfo.username
+            ? `@${userInfo.username}`
+            : `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim();
+          return NextResponse.json({
+            state: "online",
+            message: name ? `连接成功: ${name}` : "连接成功",
+            userInfo: status.userInfo,
+          });
+        }
+        return NextResponse.json({
+          state: status.state,
+          message: status.message || "连接失败",
+        });
+      }
+
+      const currentStatus = await readTelegramStatus();
+      const currentAccountStatus = currentStatus[telegramAccountId];
+      if (currentAccountStatus) {
+        const normalizedState = currentAccountStatus.state || "pending";
+        return NextResponse.json({
+          state: normalizedState,
+          message: currentAccountStatus.message || "连接中...",
+          userInfo: currentAccountStatus.userInfo,
+        });
+      }
+
+      return NextResponse.json({ state: "pending", message: "连接中..." });
+    }
+
     const account = multi.accounts.find((a) => a.id === accountId);
 
     if (!account) {
