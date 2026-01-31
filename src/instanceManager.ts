@@ -93,8 +93,7 @@ class InstanceManagerClass {
       if (config.token) {
         const { key } = await connectionPool.acquireDiscord(
           config.token,
-          config.type,
-          config.proxyUrl
+          config.type
         );
         instance.listenerConnectionKey = key;
 
@@ -147,7 +146,7 @@ class InstanceManagerClass {
       // 为这个连接设置消息监听器
       const connection = connectionPool.getConnection(connectionKey);
       if (connection?.type === "discord" && connection.client) {
-        connection.client.on("messageCreate", async (message: any) => {
+        (connection.client as any).on("messageCreate", async (message: any) => {
           const handlers = this.messageHandlers.get(connectionKey);
           if (handlers) {
             for (const { instanceId, handler } of handlers) {

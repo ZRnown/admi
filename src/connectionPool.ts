@@ -10,8 +10,6 @@
 import { Client as SelfBotClient } from "discord.js-selfbot-v13";
 import { Client as BotClient, GatewayIntentBits, Partials } from "discord.js";
 import { createHash } from "crypto";
-import { ProxyAgent } from "proxy-agent";
-import { getEnv } from "./env.js";
 import { FileLogger } from "./logger.js";
 
 // Discord Client 类型
@@ -125,8 +123,7 @@ class ConnectionPoolManager {
    */
   async acquireDiscord(
     token: string,
-    clientType: "bot" | "selfbot",
-    proxyUrl?: string
+    clientType: "bot" | "selfbot"
   ): Promise<{ key: string; connection: DiscordConnection }> {
     const key = buildDiscordCredentialKey(token);
     const existing = this.connections.get(key) as DiscordConnection | undefined;
@@ -151,7 +148,7 @@ class ConnectionPoolManager {
     this.notifyListeners(key, connection);
 
     try {
-      const client = await this.createDiscordClient(clientType, token, proxyUrl);
+      const client = await this.createDiscordClient(clientType, token);
       connection.client = client;
       connection.status = "connected";
       connection.user = {
@@ -177,18 +174,14 @@ class ConnectionPoolManager {
    */
   private async createDiscordClient(
     clientType: "bot" | "selfbot",
-    token: string,
-    proxyUrl?: string
+    token: string
   ): Promise<DiscordClient> {
-    const proxy = proxyUrl || getEnv().PROXY_URL;
-    const agent = proxy ? new ProxyAgent(proxy) : undefined;
-
     if (clientType === "selfbot") {
       const client = new SelfBotClient({
         checkUpdate: false,
-        ws: agent ? { agent } : undefined,
-        http: agent ? { agent } : undefined,
-      });
+        patchVoice: false,
+        syncStatus: false,
+      } as any);
       await client.login(token);
       return client;
     } else {
@@ -200,8 +193,6 @@ class ConnectionPoolManager {
           GatewayIntentBits.DirectMessages,
         ],
         partials: [Partials.Channel, Partials.Message],
-        rest: agent ? { agent } : undefined,
-        ws: agent ? { agent } : undefined,
       });
       await client.login(token);
       return client;
