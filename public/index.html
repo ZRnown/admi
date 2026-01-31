@@ -115,8 +115,8 @@
   </div>
 
   <!-- 修改密码弹窗 -->
-  <div id="changePasswordModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeChangePasswordModal()">
-    <div class="rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-md mx-4" onclick="event.stopPropagation()">
+  <div id="changePasswordModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-md mx-4 bg-white">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold text-slate-900">修改账密</h2>
         <button onclick="closeChangePasswordModal()" class="text-slate-400 hover:text-slate-600">
@@ -158,8 +158,8 @@
   </div>
 
   <!-- 规则配置弹窗 -->
-  <div id="ruleConfigModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeRuleConfigModal()">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+  <div id="ruleConfigModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold text-slate-900">规则配置</h2>
         <button onclick="closeRuleConfigModal()" class="text-slate-400 hover:text-slate-600">
@@ -411,8 +411,8 @@
   </div>
 
   <!-- 账号库弹窗 -->
-  <div id="accountLibraryModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeAccountLibrary()">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-7xl w-[95vw] mx-4 max-h-[94vh] overflow-y-auto" onclick="event.stopPropagation()">
+  <div id="accountLibraryModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-7xl w-[95vw] mx-4 max-h-[94vh] overflow-y-auto">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold text-slate-900">账号库</h2>
         <button onclick="closeAccountLibrary()" class="text-slate-400 hover:text-slate-600">
@@ -466,8 +466,8 @@
   </div>
 
   <!-- 账号库编辑弹窗 -->
-  <div id="accountLibraryEditModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target === this) closeLibraryEdit()">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-6xl w-[92vw] mx-4 max-h-[94vh] overflow-y-auto" onclick="event.stopPropagation()">
+  <div id="accountLibraryEditModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-6xl w-[92vw] mx-4 max-h-[94vh] overflow-y-auto">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold text-slate-900">编辑账号</h2>
         <button onclick="closeLibraryEdit()" class="text-slate-400 hover:text-slate-600">
@@ -794,8 +794,8 @@
       return item?.name || 'TruthSocial账号';
     }
 
-    function getDiscordLibraryOptions(selectedId) {
-      const options = [`<option value="">未选择（使用实例配置）</option>`];
+    function getDiscordLibraryOptions(selectedId, skipEmpty = false) {
+      const options = skipEmpty ? [] : [`<option value="">未选择（使用实例配置）</option>`];
       (state.discordAccounts || []).forEach((item) => {
         if (!item?.id) return;
         options.push(
@@ -1291,13 +1291,13 @@
     let cachedChannels = {};
 
     // 获取 Discord 服务器列表
-    async function fetchDiscordGuilds(token) {
-      if (!token) return [];
+    async function fetchDiscordGuilds(accountId) {
+      if (!accountId) return [];
       try {
         const res = await fetch('/api/metadata/discord/guilds', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token })
+          body: JSON.stringify({ accountId })
         });
         if (!res.ok) return [];
         const data = await res.json();
@@ -1310,15 +1310,15 @@
     }
 
     // 获取 Discord 频道列表
-    async function fetchDiscordChannels(token, guildId) {
-      if (!token || !guildId) return [];
-      const cacheKey = `${token}:${guildId}`;
+    async function fetchDiscordChannels(accountId, guildId) {
+      if (!accountId || !guildId) return [];
+      const cacheKey = `${accountId}:${guildId}`;
       if (cachedChannels[cacheKey]) return cachedChannels[cacheKey];
       try {
         const res = await fetch('/api/metadata/discord/channels', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, guildId })
+          body: JSON.stringify({ accountId, guildId })
         });
         if (!res.ok) return [];
         const data = await res.json();
@@ -1945,7 +1945,11 @@
       const name = current.account?.name || '';
       removeLibraryAccount(kind, id);
       const newId = addLibraryAccount(nextKind, name);
-      showToast('账号类型已切换，请在列表中继续编辑', 'success');
+      if (newId) {
+        editingLibraryAccount = { kind: nextKind, id: newId };
+        renderAccountLibraryEditModal();
+        showToast('账号类型已切换', 'success');
+      }
       return newId;
     }
 
@@ -2348,7 +2352,7 @@
         <div class="grid gap-3 md:grid-cols-2">
           <div>
             <label class="block text-xs text-slate-600 mb-1">账号类型</label>
-            <select onchange="changeLibraryAccountType('${current.kind}', '${current.id}', this.value); closeLibraryEdit();"
+            <select onchange="changeLibraryAccountType('${current.kind}', '${current.id}', this.value)"
               class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="discord" ${current.kind === 'discord' ? 'selected' : ''}>Discord</option>
               <option value="telegram" ${current.kind === 'telegram' ? 'selected' : ''}>Telegram</option>
@@ -2369,20 +2373,14 @@
     }
 
     function renderAccountSelectors(acc, forwardingType) {
-      const needsDiscord = forwardingType === 'discord-to-discord' || forwardingType === 'discord-to-telegram' || forwardingType === 'discord-to-feishu';
+      const needsDiscordListener = forwardingType === 'discord-to-discord' || forwardingType === 'discord-to-telegram' || forwardingType === 'discord-to-feishu';
+      const needsDiscordSender = forwardingType === 'discord-to-discord';
       const needsTelegramListener = forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram';
       const needsTelegramSender = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram';
       const needsX = forwardingType === 'x-to-discord';
       const needsTruth = forwardingType === 'truthsocial-to-discord';
-      const discordStatusPending = acc.loginState === 'pending' || acc.loginState === 'connecting';
-      const discordStatusOnline = acc.loginState === 'online';
-      const discordLibraryAccount = (state.discordAccounts || []).find((item) => item.id === acc.discordAccountId);
-      const discordLibraryLabel = discordLibraryAccount ? getDiscordLibraryLabel(discordLibraryAccount) : '';
-      const discordLibraryUser = discordLibraryAccount
-        ? getLibraryAccountUsername({ kind: 'discord', id: discordLibraryAccount.id, account: discordLibraryAccount })
-        : '';
 
-      if (!needsDiscord && !needsTelegramListener && !needsTelegramSender && !needsX && !needsTruth) {
+      if (!needsDiscordListener && !needsDiscordSender && !needsTelegramListener && !needsTelegramSender && !needsX && !needsTruth) {
         return '';
       }
 
@@ -2390,30 +2388,26 @@
         <div class="border-t pt-4 border-slate-200">
           <h3 class="text-sm font-medium text-slate-800 mb-3">账号选择（全局账号库）</h3>
           <div class="grid gap-4 md:grid-cols-2">
-            ${needsDiscord ? `
+            ${needsDiscordListener ? `
               <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Discord 账号</label>
+                <label class="block text-sm font-medium text-slate-700 mb-1">${needsDiscordSender ? 'Discord 监听账号' : 'Discord 账号'}</label>
                 <select onchange="updateField('discordAccountId', this.value)"
                   class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   ${getDiscordLibraryOptions(acc.discordAccountId)}
                 </select>
-                ${acc.discordAccountId ? `
-                  <div class="mt-2 flex items-center justify-between text-xs text-slate-600">
-                    <span>Discord 账号：${escapeHtml(discordLibraryLabel || '未命名账号')}${discordLibraryUser ? ` (${escapeHtml(discordLibraryUser)})` : ''}</span>
-                    <div class="flex gap-2">
-                      <button id="btn-discord-login" onclick="requestLogin()" ${discordStatusPending || discordStatusOnline ? 'disabled' : ''}
-                        class="px-3 py-1 text-xs font-medium rounded-md ${discordStatusPending || discordStatusOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                        ${discordStatusPending ? '连接中...' : discordStatusOnline ? '已连接' : '连接'}
-                      </button>
-                      <button id="btn-discord-stop" onclick="requestStop()" ${(!discordStatusOnline && !discordStatusPending && acc.loginState !== 'error') ? 'disabled' : ''}
-                        class="px-3 py-1 text-xs font-medium rounded-md border border-slate-200 ${(!discordStatusOnline && !discordStatusPending && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                        断开
-                      </button>
-                    </div>
-                  </div>
-                ` : `
-                  <p class="text-xs text-slate-500 mt-1">未选择时使用实例中的 Discord Token（旧版配置）。</p>
-                `}
+                <p class="text-xs text-slate-500 mt-1">用于监听消息的账号</p>
+              </div>
+            ` : ''}
+
+            ${needsDiscordSender ? `
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Discord 发送账号（可选）</label>
+                <select onchange="updateField('discordSenderAccountId', this.value)"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="">使用 Webhook 发送</option>
+                  ${getDiscordLibraryOptions(acc.discordSenderAccountId, true)}
+                </select>
+                <p class="text-xs text-slate-500 mt-1">不选择则使用 Webhook 发送</p>
               </div>
             ` : ''}
 
@@ -3135,14 +3129,29 @@
             <h2 class="font-semibold text-slate-800">关键词触发（至少命中一个才转发）</h2>
           </div>
           <div class="p-6">
-            <div class="flex flex-wrap gap-2 mb-3">
-              ${(acc.blockedKeywords || []).map((k, idx) => `
-                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-sm border border-red-100">
-                  ${formatKeywordLabel(k)} <button onclick="removeKeyword('blockedKeywords', ${idx})" class="hover:text-red-800">✕</button>
-                </span>
-              `).join('')}
-              <input type="text" placeholder="输入关键词后回车；逗号或 & 表示同时包含（如：关键词A&关键词B）" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'blockedKeywords')"
-                class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-slate-700 mb-2">文字关键词</label>
+              <div class="flex flex-wrap gap-2 mb-3">
+                ${(acc.blockedKeywords || []).map((k, idx) => `
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-sm border border-red-100">
+                    ${formatKeywordLabel(k)} <button onclick="removeKeyword('blockedKeywords', ${idx})" class="hover:text-red-800">✕</button>
+                  </span>
+                `).join('')}
+                <input type="text" placeholder="输入关键词后回车；逗号或 & 表示同时包含" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'blockedKeywords')"
+                  class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+              </div>
+            </div>
+            <div class="border-t pt-4">
+              <label class="block text-sm font-medium text-slate-700 mb-2">OCR 触发关键词（图片文字命中才转发）</label>
+              <div class="flex flex-wrap gap-2 mb-3">
+                ${(acc.ocrTriggerKeywords || []).map((k, idx) => `
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm border border-emerald-100">
+                    ${formatKeywordLabel(k)} <button onclick="removeOCRKeyword('ocrTriggerKeywords', ${idx})" class="hover:text-emerald-900">✕</button>
+                  </span>
+                `).join('')}
+                <input type="text" placeholder="输入关键词后回车；逗号或 & 表示同时包含" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrTriggerKeywords', true)"
+                  class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
+              </div>
             </div>
           </div>
         </div>
@@ -3172,18 +3181,6 @@
                     </span>
                   `).join('')}
                   <input type="text" placeholder="输入屏蔽词后回车；逗号或 & 表示同时包含（如：关键词A&关键词B）" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrBlockedKeywords', true)"
-                    class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
-                </div>
-              </div>
-              <div class="pt-4 border-t border-slate-100">
-                <label class="block text-sm font-medium text-slate-700 mb-3">OCR 触发关键词（命中才转发；逗号或 & 表示同时包含）</label>
-                <div class="flex flex-wrap gap-2 mb-3">
-                  ${(acc.ocrTriggerKeywords || []).map((k, idx) => `
-                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm border border-emerald-100">
-                      ${formatKeywordLabel(k)} <button onclick="removeOCRKeyword('ocrTriggerKeywords', ${idx})" class="hover:text-emerald-900">✕</button>
-                    </span>
-                  `).join('')}
-                  <input type="text" placeholder="输入关键词后回车；逗号或 & 表示同时包含（如：关键词A&关键词B）" onkeydown="if(event.key==='Enter') handleKeywordEnter(this, 'ocrTriggerKeywords', true)"
                     class="flex-1 min-w-[120px] px-3 py-1 border-none focus:outline-none text-sm">
                 </div>
               </div>
@@ -3788,27 +3785,49 @@
     }
 
     function showToast(message, type = 'success') {
-      const colorClass = type === 'error'
-        ? 'bg-red-500'
-        : type === 'info'
-          ? 'bg-slate-700'
-          : 'bg-emerald-500';
+      const config = {
+        success: {
+          bg: 'bg-white',
+          border: 'border-emerald-200',
+          text: 'text-emerald-700',
+          icon: '✓',
+          iconBg: 'bg-emerald-100 text-emerald-600'
+        },
+        error: {
+          bg: 'bg-white',
+          border: 'border-red-200',
+          text: 'text-red-700',
+          icon: '✕',
+          iconBg: 'bg-red-100 text-red-600'
+        },
+        info: {
+          bg: 'bg-white',
+          border: 'border-slate-200',
+          text: 'text-slate-700',
+          icon: 'ℹ',
+          iconBg: 'bg-slate-100 text-slate-600'
+        }
+      };
+      const c = config[type] || config.success;
       const toast = document.createElement('div');
-      toast.className = `${colorClass} text-white px-4 py-2 rounded-lg shadow-lg transition-all duration-200`;
-      toast.textContent = message;
+      toast.className = `${c.bg} ${c.border} border ${c.text} px-4 py-3 rounded-xl shadow-lg flex items-center gap-3 transition-all duration-300 transform translate-x-0`;
+      toast.innerHTML = `
+        <span class="w-6 h-6 rounded-full ${c.iconBg} flex items-center justify-center text-sm font-bold">${c.icon}</span>
+        <span class="text-sm font-medium">${message}</span>
+      `;
       toast.setAttribute('role', 'status');
       const container = getToastContainer();
       container.appendChild(toast);
 
       setTimeout(() => {
-        toast.classList.add('opacity-0', 'translate-y-1');
-      }, 1800);
+        toast.classList.add('opacity-0', 'translate-x-4');
+      }, 2500);
       setTimeout(() => {
         toast.remove();
         if (container.childElementCount === 0) {
           container.remove();
         }
-      }, 2200);
+      }, 2800);
     }
 
     function copyToClipboard(text, type) {
