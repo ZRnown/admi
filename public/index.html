@@ -34,7 +34,7 @@
   </div>
 
   <!-- 主配置页面 -->
-  <div id="mainPage" class="max-w-[1400px] mx-auto space-y-8" style="display: none;">
+  <div id="mainPage" class="max-w-[98vw] mx-auto space-y-8 px-4" style="display: none;">
     <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-200">
       <div>
         <h1 class="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">转发狗</h1>
@@ -454,6 +454,7 @@
               </th>
               <th class="px-3 py-2">类型</th>
               <th class="px-3 py-2">名称</th>
+              <th class="px-3 py-2">用户名</th>
               <th class="px-3 py-2">状态</th>
               <th class="px-3 py-2">操作</th>
             </tr>
@@ -630,6 +631,47 @@
       if (badgeState === 'error') return 'bg-red-50 text-red-700';
       if (badgeState === 'pending' || badgeState === 'connecting') return 'bg-amber-50 text-amber-700';
       return 'bg-slate-100 text-slate-600';
+    }
+
+    // 实例状态徽章样式
+    function getInstanceStatusBadgeClass(acc) {
+      const state = acc?.loginState || 'idle';
+      if (state === 'online') return 'bg-emerald-50 text-emerald-700';
+      if (state === 'error') return 'bg-red-50 text-red-700';
+      if (state === 'pending' || state === 'connecting') return 'bg-amber-50 text-amber-700';
+      return 'bg-slate-100 text-slate-600';
+    }
+
+    // 实例状态标签
+    function getInstanceStatusLabel(acc) {
+      const state = acc?.loginState || 'idle';
+      const labels = {
+        'idle': '已停止',
+        'pending': '启动中...',
+        'connecting': '连接中...',
+        'online': '运行中',
+        'error': '错误'
+      };
+      return labels[state] || state;
+    }
+
+    // 启动实例
+    async function startInstance() {
+      const acc = getCurrentAccount();
+      if (!acc) return;
+      acc.loginRequested = true;
+      acc.loginNonce = (acc.loginNonce || 0) + 1;
+      await saveConfig();
+      renderUI();
+    }
+
+    // 停止实例
+    async function stopInstance() {
+      const acc = getCurrentAccount();
+      if (!acc) return;
+      acc.loginRequested = false;
+      await saveConfig();
+      renderUI();
     }
 
     function buildExternalStatusSummary(acc, kind) {
@@ -1626,6 +1668,62 @@
       return libraryUiState[key];
     }
 
+    function getAllowedLibraryKinds() {
+      if (!Array.isArray(state.enabledForwardingTypes) || state.enabledForwardingTypes.length === 0) {
+        return ['discord', 'telegram', 'x', 'truthsocial'];
+      }
+      const allowed = new Set();
+      state.enabledForwardingTypes.forEach((type) => {
+        if (type === 'discord-to-discord' || type === 'discord-to-feishu') {
+          allowed.add('discord');
+        } else if (type === 'discord-to-telegram') {
+          allowed.add('discord');
+          allowed.add('telegram');
+        } else if (type === 'telegram-to-discord') {
+          allowed.add('telegram');
+          allowed.add('discord');
+        } else if (type === 'telegram-to-telegram') {
+          allowed.add('telegram');
+          allowed.add('discord');
+        } else if (type === 'x-to-discord') {
+          allowed.add('x');
+          allowed.add('discord');
+        } else if (type === 'truthsocial-to-discord') {
+          allowed.add('truthsocial');
+          allowed.add('discord');
+        }
+      });
+      if (allowed.size === 0) {
+        return ['discord', 'telegram', 'x', 'truthsocial'];
+      }
+      return Array.from(allowed);
+    }
+
+    function isLibraryKindAllowed(kind) {
+      return getAllowedLibraryKinds().includes(kind);
+    }
+
+    function ensureLibraryFilterAllowed() {
+      if (libraryFilter === 'all') return;
+      if (!isLibraryKindAllowed(libraryFilter)) {
+        libraryFilter = 'all';
+      }
+    }
+
+    function syncLibraryAddTypeOptions() {
+      const select = document.getElementById('libraryAddType');
+      if (!select) return;
+      const allowed = getAllowedLibraryKinds();
+      const options = allowed.map((kind) => {
+        const label = getLibraryKindLabel(kind);
+        return `<option value="${kind}">${label}</option>`;
+      }).join('');
+      select.innerHTML = options;
+      if (!allowed.includes(select.value)) {
+        select.value = allowed[0] || '';
+      }
+    }
+
     function setLibraryLoginMode(kind, id, value) {
       const key = getLibraryUiKey(kind, id);
       if (!libraryUiState[key]) {
@@ -1644,6 +1742,14 @@
       return items;
     }
 
+    function getFilteredLibraryItems() {
+      const allowed = new Set(getAllowedLibraryKinds());
+      return getLibraryItems().filter((item) => allowed.has(item.kind)).filter((item) => {
+        if (libraryFilter === 'all') return true;
+        return item.kind === libraryFilter;
+      });
+    }
+
     function getLibraryKindLabel(kind) {
       switch (kind) {
         case 'discord':
@@ -1659,7 +1765,37 @@
       }
     }
 
+    function getLibraryAccountUsername(item) {
+      if (!item || !item.account) return '';
+      if (item.kind === 'telegram') {
+        const info = item.account.userInfo || {};
+        if (info.username) return `@${String(info.username)}`;
+        const name = [info.firstName, info.lastName].filter(Boolean).join(' ');
+        if (name) return name;
+        if (info.title) return String(info.title);
+        return '';
+      }
+      if (item.kind === 'discord') {
+        return String(item.account.username || item.account.userName || item.account.email || '');
+      }
+      if (item.kind === 'x') {
+        const name = String(item.account.loginUserName || '');
+        if (!name) return '';
+        return name.startsWith('@') ? name : `@${name}`;
+      }
+      if (item.kind === 'truthsocial') {
+        const name = String(item.account.username || '');
+        if (!name) return '';
+        return name.startsWith('@') ? name : `@${name}`;
+      }
+      return '';
+    }
+
     function addLibraryAccount(kind, name) {
+      if (!isLibraryKindAllowed(kind)) {
+        showToast('该账号类型未启用', 'error');
+        return '';
+      }
       let newId = '';
       if (kind === 'discord') {
         state.discordAccounts = state.discordAccounts || [];
@@ -1723,6 +1859,10 @@
       const select = document.getElementById('libraryAddType');
       const nameInput = document.getElementById('libraryAddName');
       const kind = select ? select.value : 'discord';
+      if (!kind) {
+        showToast('当前未启用可添加的账号类型', 'error');
+        return;
+      }
       const name = nameInput ? nameInput.value : '';
       const newId = addLibraryAccount(kind, name);
       if (nameInput) nameInput.value = '';
@@ -1757,6 +1897,10 @@
 
     function changeLibraryAccountType(kind, id, nextKind) {
       if (!nextKind || nextKind === kind) return;
+      if (!isLibraryKindAllowed(nextKind)) {
+        showToast('该账号类型未启用', 'error');
+        return;
+      }
       const items = getLibraryItems();
       const current = items.find((item) => item.kind === kind && item.id === id);
       if (!current) return;
@@ -2014,7 +2158,7 @@
         renderAccountLibraryModal();
         return;
       }
-      getLibraryItems().forEach((item) => {
+      getFilteredLibraryItems().forEach((item) => {
         librarySelection.add(getLibrarySelectionKey(item.kind, item.id));
       });
       renderAccountLibraryModal();
@@ -2066,6 +2210,10 @@
     }
 
     function setLibraryFilter(value) {
+      if (value !== 'all' && !isLibraryKindAllowed(value)) {
+        showToast('该账号类型未启用', 'error');
+        return;
+      }
       libraryFilter = value;
       renderAccountLibraryModal();
     }
@@ -2078,9 +2226,14 @@
         x: 'libraryFilterX',
         truthsocial: 'libraryFilterTruthsocial'
       };
+      const allowed = new Set(getAllowedLibraryKinds());
       Object.entries(mapping).forEach(([key, id]) => {
         const el = document.getElementById(id);
         if (!el) return;
+        if (key !== 'all' && !allowed.has(key)) {
+          el.className = 'hidden';
+          return;
+        }
         const active = libraryFilter === key;
         el.className = `px-2 py-1 rounded border border-slate-200 ${active ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-100'}`;
       });
@@ -2093,11 +2246,10 @@
       const selectAllEl = document.getElementById('accountLibrarySelectAll');
       const countEl = document.getElementById('accountLibrarySelectionCount');
       if (!tbody || !selectAllEl || !countEl) return;
+      syncLibraryAddTypeOptions();
+      ensureLibraryFilterAllowed();
       updateLibraryFilterButtons();
-      const items = getLibraryItems().filter((item) => {
-        if (libraryFilter === 'all') return true;
-        return item.kind === libraryFilter;
-      });
+      const items = getFilteredLibraryItems();
       const keys = items.map((item) => getLibrarySelectionKey(item.kind, item.id));
       let selectedCount = 0;
       librarySelection.forEach((key) => {
@@ -2114,7 +2266,7 @@
       if (items.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="5" class="text-center text-slate-400 text-sm py-6">暂无账号</td>
+            <td colspan="6" class="text-center text-slate-400 text-sm py-6">暂无账号</td>
           </tr>
         `;
         return;
@@ -2123,6 +2275,8 @@
         const key = getLibrarySelectionKey(item.kind, item.id);
         const typeLabel = getLibraryKindLabel(item.kind);
         const name = escapeHtml(item.account.name || '');
+        const usernameRaw = getLibraryAccountUsername(item);
+        const username = escapeHtml(usernameRaw || '—');
         const status = item.kind === 'telegram' ? (item.account.loginState || 'idle') : '—';
         return `
           <tr class="border-t border-slate-100">
@@ -2132,6 +2286,7 @@
             </td>
             <td class="px-3 py-3 text-sm text-slate-700">${typeLabel}</td>
             <td class="px-3 py-3 text-sm text-slate-700">${name || '未命名账号'}</td>
+            <td class="px-3 py-3 text-sm text-slate-700">${username}</td>
             <td class="px-3 py-3 text-xs text-slate-500">${status}</td>
             <td class="px-3 py-3 text-sm">
               <button onclick="openLibraryEdit('${item.kind}', '${item.id}')" class="text-xs text-indigo-600 hover:text-indigo-800">编辑</button>
@@ -2184,6 +2339,13 @@
       const needsTelegramSender = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram';
       const needsX = forwardingType === 'x-to-discord';
       const needsTruth = forwardingType === 'truthsocial-to-discord';
+      const discordStatusPending = acc.loginState === 'pending' || acc.loginState === 'connecting';
+      const discordStatusOnline = acc.loginState === 'online';
+      const discordLibraryAccount = (state.discordAccounts || []).find((item) => item.id === acc.discordAccountId);
+      const discordLibraryLabel = discordLibraryAccount ? getDiscordLibraryLabel(discordLibraryAccount) : '';
+      const discordLibraryUser = discordLibraryAccount
+        ? getLibraryAccountUsername({ kind: 'discord', id: discordLibraryAccount.id, account: discordLibraryAccount })
+        : '';
 
       if (!needsDiscord && !needsTelegramListener && !needsTelegramSender && !needsX && !needsTruth) {
         return '';
@@ -2200,7 +2362,23 @@
                   class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   ${getDiscordLibraryOptions(acc.discordAccountId)}
                 </select>
-                <p class="text-xs text-slate-500 mt-1">未选择时使用实例中的 Discord Token（旧版配置）。</p>
+                ${acc.discordAccountId ? `
+                  <div class="mt-2 flex items-center justify-between text-xs text-slate-600">
+                    <span>Discord 账号：${escapeHtml(discordLibraryLabel || '未命名账号')}${discordLibraryUser ? ` (${escapeHtml(discordLibraryUser)})` : ''}</span>
+                    <div class="flex gap-2">
+                      <button id="btn-discord-login" onclick="requestLogin()" ${discordStatusPending || discordStatusOnline ? 'disabled' : ''}
+                        class="px-3 py-1 text-xs font-medium rounded-md ${discordStatusPending || discordStatusOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                        ${discordStatusPending ? '连接中...' : discordStatusOnline ? '已连接' : '连接'}
+                      </button>
+                      <button id="btn-discord-stop" onclick="requestStop()" ${(!discordStatusOnline && !discordStatusPending && acc.loginState !== 'error') ? 'disabled' : ''}
+                        class="px-3 py-1 text-xs font-medium rounded-md border border-slate-200 ${(!discordStatusOnline && !discordStatusPending && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                        断开
+                      </button>
+                    </div>
+                  </div>
+                ` : `
+                  <p class="text-xs text-slate-500 mt-1">未选择时使用实例中的 Discord Token（旧版配置）。</p>
+                `}
               </div>
             ` : ''}
 
@@ -2211,7 +2389,6 @@
                   class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   ${getTelegramLibraryOptions(acc.telegramListenerAccountId)}
                 </select>
-                <p class="text-xs text-slate-500 mt-1">连接/断开请在账号库中操作。</p>
               </div>
             ` : ''}
 
@@ -2222,7 +2399,6 @@
                   class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   ${getTelegramLibraryOptions(acc.telegramSenderAccountId)}
                 </select>
-                <p class="text-xs text-slate-500 mt-1">连接/断开请在账号库中操作。</p>
               </div>
             ` : ''}
 
@@ -2447,6 +2623,28 @@
       };
       
       return `
+        <!-- 实例控制栏 -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <h2 class="font-semibold text-slate-800">${acc.name || '未命名实例'}</h2>
+              <span id="instance-status-badge" class="px-2 py-0.5 rounded-full text-xs ${getInstanceStatusBadgeClass(acc)}">${getInstanceStatusLabel(acc)}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="startInstance()" id="btn-start-instance"
+                class="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 hover:bg-green-500 text-white disabled:bg-green-300 disabled:cursor-not-allowed"
+                ${acc.loginState === 'online' || acc.loginState === 'pending' ? 'disabled' : ''}>
+                启动实例
+              </button>
+              <button onclick="stopInstance()" id="btn-stop-instance"
+                class="px-4 py-2 text-sm font-medium rounded-lg bg-red-600 hover:bg-red-500 text-white disabled:bg-red-300 disabled:cursor-not-allowed"
+                ${acc.loginState !== 'online' && acc.loginState !== 'pending' ? 'disabled' : ''}>
+                停止实例
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- 基础设置 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
@@ -2504,24 +2702,20 @@
               <div>
                 <label class="block text-sm font-medium text-slate-700 mb-1">Discord 连接</label>
                 <div class="flex flex-col gap-2">
-                  ${acc.discordAccountId ? `
-                    <div class="text-xs text-slate-500">
-                      当前使用账号库：${escapeHtml(getDiscordLibraryLabel((state.discordAccounts || []).find(item => item.id === acc.discordAccountId)))}
-                    </div>
-                  ` : `
+                  ${acc.discordAccountId ? '' : `
                     <input type="password" value="${acc.token || ''}" onchange="updateField('token', this.value)"
                       placeholder="OT..." class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
+                    <div class="flex gap-2">
+                      <button id="btn-discord-login" onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''}
+                        class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                        ${isPending ? '连接中...' : isOnline ? '已连接' : '连接'}
+                      </button>
+                      <button id="btn-discord-stop" onclick="requestStop()" ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'disabled' : ''}
+                        class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                        断开
+                      </button>
+                    </div>
                   `}
-                  <div class="flex gap-2">
-                    <button id="btn-discord-login" onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''}
-                      class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                      ${isPending ? '连接中...' : isOnline ? '已连接' : '连接'}
-                    </button>
-                    <button id="btn-discord-stop" onclick="requestStop()" ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'disabled' : ''}
-                      class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                      断开
-                    </button>
-                  </div>
                 </div>
                 <div class="text-xs text-slate-500 mt-1">
                   状态: <span id="status-discord-badge" class="px-2 py-0.5 rounded-full ${acc.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.loginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.loginState || 'idle'}</span>
@@ -3242,14 +3436,6 @@
             <span class="text-slate-300">${arrowIcon}</span>
             <input type="text" value="${m.targetChannelId || m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, '${forwardingType === 'discord-to-discord' ? 'targetWebhookUrl' : forwardingType === 'discord-to-feishu' ? 'targetChannelId' : 'targetChannelId'}', this.value)"
               placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
-            ${(forwardingType === 'discord-to-telegram') ? (librarySender ? `
-            <span class="text-xs text-slate-500">发送账号: ${escapeHtml(librarySenderLabel)}</span>
-            ` : `
-            <select onchange="updateMapping(${idx + startIdx}, 'senderAccountType', this.value)" class="w-36 px-2 py-1.5 rounded-lg border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="bot" ${senderType === 'bot' ? 'selected' : ''}>机器人（Bot Token）</option>
-              <option value="client" ${senderType === 'client' ? 'selected' : ''}>用户（Session）</option>
-            </select>
-            `) : ''}
             ${forwardingType === 'discord-to-discord' ? `
             <select onchange="updateMappingRelay(${idx + startIdx}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="">Webhook 默认</option>

@@ -476,6 +476,10 @@ export interface AccountConfig extends LegacyConfig {
   telegramSenderAccountId?: string;
   xAccountId?: string;
   truthSocialAccountId?: string;
+  // 新增：统一的监听/发送账号选择
+  listenerAccountId?: string;  // 监听账号ID（从账号库选择）
+  senderAccountId?: string;    // 发送账号ID（从账号库选择，或为空表示使用webhook）
+  senderType?: "account" | "webhook";  // 发送方式
   // OCR配置
   enableOCR?: boolean;
   ocrServerUrl?: string;
