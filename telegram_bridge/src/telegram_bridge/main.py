@@ -31,6 +31,7 @@ class TelegramBridgeService:
         # 状态文件路径
         base_dir = Path(__file__).resolve().parents[3]
         self.status_file = base_dir / ".data" / "telegram_status.json"
+        self.dialogs_cache_file = base_dir / ".data" / "telegram_dialogs_cache.json"
         self.status_file.parent.mkdir(parents=True, exist_ok=True)
 
         # 设置Discord发送器
@@ -96,6 +97,29 @@ class TelegramBridgeService:
             logger.debug(f"Telegram status updated: {account_id} -> {state}")
         except Exception as e:
             logger.error(f"Failed to write telegram status: {e}")
+
+    def _write_telegram_dialogs_cache(self, account_id: str, dialogs: list):
+        """写入Telegram对话缓存到文件"""
+        try:
+            # 读取现有缓存
+            cache_data = {}
+            if self.dialogs_cache_file.exists():
+                try:
+                    with open(self.dialogs_cache_file, "r", encoding="utf-8") as f:
+                        cache_data = json.load(f)
+                except Exception:
+                    pass
+
+            # 更新缓存
+            cache_data[account_id] = dialogs
+
+            # 写入文件
+            with open(self.dialogs_cache_file, "w", encoding="utf-8") as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+
+            logger.debug(f"Telegram dialogs cache updated: {account_id}")
+        except Exception as e:
+            logger.error(f"Failed to write telegram dialogs cache: {e}")
 
     @staticmethod
     def _format_telegram_display_name(user_info: dict) -> str:
@@ -230,6 +254,14 @@ class TelegramBridgeService:
             if result.get("success"):
                 user_info = result.get("user_info") or result.get("userInfo")
                 self._write_telegram_status(account_id, "online", "已连接", user_info)
+                # 获取并缓存对话列表
+                try:
+                    channels_result = await self.client_manager.get_channels(account_id)
+                    if channels_result.get("success"):
+                        dialogs = channels_result.get("channels", [])
+                        self._write_telegram_dialogs_cache(account_id, dialogs)
+                except Exception as e:
+                    logger.warning(f"Failed to cache dialogs for {account_id}: {e}")
             else:
                 error_msg = result.get("message") or result.get("error") or "连接失败"
                 self._write_telegram_status(account_id, "error", error_msg)
@@ -242,6 +274,14 @@ class TelegramBridgeService:
             if result.get("success"):
                 user_info = result.get("user_info") or result.get("userInfo")
                 self._write_telegram_status(account_id, "online", "已连接", user_info)
+                # 获取并缓存对话列表
+                try:
+                    channels_result = await self.bot_manager.get_channels(account_id)
+                    if channels_result.get("success"):
+                        dialogs = channels_result.get("channels", [])
+                        self._write_telegram_dialogs_cache(account_id, dialogs)
+                except Exception as e:
+                    logger.warning(f"Failed to cache bot dialogs for {account_id}: {e}")
             else:
                 error_msg = result.get("message") or result.get("error") or "连接失败"
                 self._write_telegram_status(account_id, "error", error_msg)

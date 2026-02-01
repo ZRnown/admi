@@ -23,10 +23,24 @@ export async function POST(request: NextRequest) {
     try {
       const data = await fs.readFile(cacheFile, "utf-8");
       const cache = JSON.parse(data);
-      const guilds = cache[accountId] || [];
-      return NextResponse.json({ guilds });
+      const accountData = cache[accountId];
+
+      // 兼容新旧格式
+      if (accountData && typeof accountData === 'object' && !Array.isArray(accountData)) {
+        // 新格式：{ user: {...}, guilds: [...] }
+        return NextResponse.json({
+          user: accountData.user || null,
+          guilds: accountData.guilds || [],
+        });
+      } else {
+        // 旧格式：直接是数组
+        return NextResponse.json({
+          user: null,
+          guilds: accountData || [],
+        });
+      }
     } catch {
-      return NextResponse.json({ guilds: [], message: "请先启动实例以获取服务器列表" });
+      return NextResponse.json({ user: null, guilds: [], message: "请先启动实例以获取服务器列表" });
     }
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

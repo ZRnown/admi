@@ -1055,6 +1055,9 @@ function dtoToDiscordLibraryAccount(
     password: typeof resolvedPassword === "string" && resolvedPassword.trim() ? resolvedPassword : undefined,
     totpSecret: typeof resolvedTotp === "string" && resolvedTotp.trim() ? resolvedTotp : undefined,
     proxyUrl: typeof dto.proxyUrl === "string" && dto.proxyUrl.trim() ? dto.proxyUrl.trim() : base.proxyUrl,
+    syncedUser: typeof dto.syncedUser === "object" && dto.syncedUser ? dto.syncedUser : base.syncedUser,
+    lastSyncTime:
+      typeof dto.lastSyncTime === "string" && dto.lastSyncTime.trim() ? dto.lastSyncTime.trim() : base.lastSyncTime,
   };
 }
 
@@ -1100,6 +1103,9 @@ function dtoToTelegramLibraryAccount(
     loginState: typeof dto.loginState === "string" ? dto.loginState : base.loginState,
     loginMessage: typeof dto.loginMessage === "string" ? dto.loginMessage : base.loginMessage,
     enabled: dto.enabled !== false,
+    syncedUser: typeof dto.syncedUser === "object" && dto.syncedUser ? dto.syncedUser : base.syncedUser,
+    lastSyncTime:
+      typeof dto.lastSyncTime === "string" && dto.lastSyncTime.trim() ? dto.lastSyncTime.trim() : base.lastSyncTime,
   };
 }
 

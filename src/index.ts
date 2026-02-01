@@ -96,6 +96,9 @@ const telegramLoginRequestFile = path.resolve(process.cwd(), ".data", "telegram_
 const telegramLoginResponseFile = path.resolve(process.cwd(), ".data", "telegram_login_response.json");
 const discordLoginRequestFile = path.resolve(process.cwd(), ".data", "discord_login_request.json");
 const discordLoginResponseFile = path.resolve(process.cwd(), ".data", "discord_login_response.json");
+const discordGuildsCacheFile = path.resolve(process.cwd(), ".data", "discord_guilds_cache.json");
+const discordChannelsCacheFile = path.resolve(process.cwd(), ".data", "discord_channels_cache.json");
+const telegramDialogsCacheFile = path.resolve(process.cwd(), ".data", "telegram_dialogs_cache.json");
 const ocrClients = new Map<string, { url: string; client: OCRClient }>();
 const translationSenders = new Map<string, { key: string; sender: SenderBot }>();
 const telegramReplyMap = new Map<string, string>();
@@ -863,6 +866,103 @@ async function writeStatusForAccount(accountId: string, state: string, message?:
     return;
   }
   await writeStatus(accountId, state, message);
+}
+
+// 写入 Discord 服务器/频道缓存
+async function writeDiscordGuildsCache(accountId: string, client: any) {
+  try {
+    if (!client?.guilds?.cache) return;
+
+    const guilds = Array.from(client.guilds.cache.values()).map((g: any) => ({
+      id: g.id,
+      name: g.name,
+      icon: g.icon,
+    }));
+
+    // 获取用户信息
+    const userInfo = client.user ? {
+      id: client.user.id,
+      username: client.user.username,
+      discriminator: client.user.discriminator,
+      tag: client.user.tag,
+      globalName: client.user.globalName,
+      avatar: client.user.avatar,
+    } : null;
+
+    // 读取现有缓存
+    let cache: Record<string, any> = {};
+    try {
+      const data = await fs.readFile(discordGuildsCacheFile, "utf-8");
+      cache = JSON.parse(data);
+    } catch {
+      // 文件不存在，使用空对象
+    }
+
+    // 更新缓存（包含用户信息和服务器列表）
+    cache[accountId] = {
+      user: userInfo,
+      guilds: guilds,
+    };
+    await fs.writeFile(discordGuildsCacheFile, JSON.stringify(cache, null, 2));
+
+    // 同时写入频道缓存
+    await writeDiscordChannelsCache(accountId, client);
+  } catch (e) {
+    console.error("写入 Discord 服务器缓存失败:", e);
+  }
+}
+
+async function writeDiscordChannelsCache(accountId: string, client: any) {
+  try {
+    if (!client?.guilds?.cache) return;
+
+    // 读取现有缓存
+    let cache: Record<string, any[]> = {};
+    try {
+      const data = await fs.readFile(discordChannelsCacheFile, "utf-8");
+      cache = JSON.parse(data);
+    } catch {
+      // 文件不存在，使用空对象
+    }
+
+    // 遍历所有服务器，写入频道
+    for (const guild of client.guilds.cache.values()) {
+      const key = `${accountId}:${guild.id}`;
+      const channels = Array.from((guild as any).channels?.cache?.values() || [])
+        .filter((ch: any) => ch.type === 0 || ch.type === 2 || ch.type === 4 || ch.type === 5)
+        .map((ch: any) => ({
+          id: ch.id,
+          name: ch.name,
+          type: ch.type,
+          parentId: ch.parentId,
+        }));
+      cache[key] = channels;
+    }
+
+    await fs.writeFile(discordChannelsCacheFile, JSON.stringify(cache, null, 2));
+  } catch (e) {
+    console.error("写入 Discord 频道缓存失败:", e);
+  }
+}
+
+// 写入 Telegram 对话缓存
+async function writeTelegramDialogsCache(accountId: string, dialogs: any[]) {
+  try {
+    // 读取现有缓存
+    let cache: Record<string, any[]> = {};
+    try {
+      const data = await fs.readFile(telegramDialogsCacheFile, "utf-8");
+      cache = JSON.parse(data);
+    } catch {
+      // 文件不存在，使用空对象
+    }
+
+    // 更新缓存
+    cache[accountId] = dialogs;
+    await fs.writeFile(telegramDialogsCacheFile, JSON.stringify(cache, null, 2));
+  } catch (e) {
+    console.error("写入 Telegram 对话缓存失败:", e);
+  }
 }
 
 function formatDiscordUserLabel(user: any): string {
@@ -2135,6 +2235,8 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
           buildDiscordLoginMessage((bot.client as any)?.user, "登录成功"),
         );
         await logger.info(`账号 "${account.name}" 登录成功（通过 ready 事件），已注册重连处理器`);
+        // 写入服务器/频道缓存
+        await writeDiscordGuildsCache(account.id, bot.client);
       }
     };
     (bot.client as any).once("clientReady", readyHandler);
@@ -2175,6 +2277,8 @@ async function startAccount(account: AccountConfig, logger: FileLogger) {
             buildDiscordLoginMessage((bot.client as any)?.user, "登录成功"),
           );
           await logger.info(`账号 "${account.name}" 登录成功（通过状态检查），已注册重连处理器`);
+          // 写入服务器/频道缓存
+          await writeDiscordGuildsCache(account.id, bot.client);
           // 标记 ready 已处理，防止 readyHandler 重复处理
           readyHandled = true;
         }
@@ -2414,6 +2518,8 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
           // 重连成功，重置计数
           currentRunningAfterReady.reconnectCount = 0;
           await logger.info(`账号 "${currentRunningAfterReady.account.name}" 重连成功，已注册重连处理器`);
+          // 写入服务器/频道缓存
+          await writeDiscordGuildsCache(accountId, currentRunningAfterReady.client);
         }
       };
       (client as any).once("clientReady", readyHandler);

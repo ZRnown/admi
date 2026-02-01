@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>转发狗</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Driver.js 新手教程 -->
+  <script src="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.css"/>
+  <!-- 自定义样式 -->
+  <link rel="stylesheet" href="/css/styles.css"/>
 </head>
 <body class="bg-white p-4 md:p-8 font-sans">
   <!-- 登录页面 -->
@@ -62,8 +67,11 @@
         <div class="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/60 p-4">
           <div class="flex flex-wrap gap-2" id="accountTabs"></div>
           <div class="flex flex-wrap items-center gap-2">
-            <button onclick="showHelp()" class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
-              <span>ℹ️</span> 使用说明
+            <button onclick="openAccountLibrary()" id="accountLibraryBtn" class="account-library-btn inline-flex items-center gap-1.5 text-sm">
+              <span>🗂️</span> 账号库
+            </button>
+            <button onclick="startTutorial()" id="tutorialBtn" class="inline-flex items-center gap-1 rounded-md border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-600 hover:bg-amber-50">
+              <span>📖</span> 新手教程
             </button>
             <button onclick="exportConfig()" class="inline-flex items-center gap-1 rounded-md border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50">
               <span>⬇️</span> 导出配置
@@ -71,36 +79,11 @@
             <button onclick="importConfig()" class="inline-flex items-center gap-1 rounded-md border border-green-200 px-3 py-1.5 text-xs font-medium text-green-600 hover:bg-green-50">
               <span>⬆️</span> 导入配置
             </button>
-            <button onclick="openAccountLibrary()" class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
-              <span>🗂️</span> 账号库
-            </button>
             <input type="file" id="importConfigFile" accept=".json" style="display:none" onchange="handleImportConfig(event)">
             <button onclick="removeAccount()" class="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
               删除当前实例
             </button>
           </div>
-        </div>
-        <div id="helpPanel" class="hidden border-b border-slate-100 bg-slate-50 px-6 py-4 text-sm leading-relaxed text-slate-600">
-          <button onclick="hideHelp()" class="float-right text-slate-400 hover:text-slate-600">✕</button>
-          <p class="font-semibold text-slate-800">使用说明</p>
-          <ul class="mt-2 list-disc space-y-1 pl-5">
-            <li>一个转发实例对应一个 Discord Token，可选择机器人 Token 或自用号 Token。</li>
-            <li>每个转发实例都可以单独配置转发规则、关键词、排除/替换规则。</li>
-            <li>转发时如需伪装为源用户，请勾选「使用源用户昵称和头像」（Discord→Telegram 仅使用昵称）。</li>
-            <li>排除关键词会直接删除命中的词，而不会阻止整条消息转发。</li>
-            <li>可以添加多个转发实例并行运行，后端会为每个实例独立登录并转发。</li>
-            <li class="mt-3 font-semibold text-slate-700">转发类型说明：</li>
-            <li class="pl-4">• Discord → Discord：填 Discord Token，规则中填写来源频道 ID 与目标 Webhook URL。</li>
-            <li class="pl-4">• Discord → Telegram：填 Discord Token + Telegram Bot Token，Bot 需在目标群/频道具备发消息权限，规则中填写 Discord 频道 ID 与 Telegram Chat ID。</li>
-            <li class="pl-4">• Telegram → Discord：填 Telegram API ID/Hash 并完成 Session 认证，规则中填写来源 Chat ID 或用户名（@xxx/xxx）与 Discord Webhook URL。</li>
-            <li class="pl-4">• Telegram → Telegram：填 Telegram Bot Token 与 API ID/Hash（用于接收与转发），规则中填写来源 Chat ID 与目标 Chat ID，可在规则内选择“机器人/用户”发送。</li>
-            <li class="pl-4">• Discord → 飞书：填 Discord Token，配置飞书 Webhook 或线程 ID，若需图片/视频转发请填写飞书 App ID/Secret 并开通相关权限。</li>
-            <li class="pl-4">• 限制可选类型：在 `.env` 设置 `ENABLED_FORWARDING_TYPES=discord-to-discord,discord-to-telegram` 等，留空表示全部可用。</li>
-            <li class="mt-3 font-semibold text-slate-700">关于 Token：</li>
-            <li class="pl-4">• 此 Token 与 Discord Bot Token 不同。</li>
-            <li class="pl-4">• 此 Token 在您更改密码时会发生变化。</li>
-            <li class="pl-4">• 如果启用了双因素认证（2FA），需要先禁用它才能获取 Token。</li>
-          </ul>
         </div>
       </div>
 
@@ -169,6 +152,39 @@
         </button>
       </div>
       <p class="text-sm text-slate-500 mb-4">配置此规则的过滤选项（优先级低于全局设置）</p>
+
+      <!-- 服务器/频道选择器 -->
+      <div id="ruleChannelSelector" class="border border-slate-200 rounded-lg p-4 mb-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-medium text-slate-800">快速选择频道</h3>
+          <button onclick="toggleChannelSelectorExpand()" class="text-xs text-indigo-600 hover:text-indigo-800">
+            <span id="channelSelectorToggleText">展开列表</span>
+          </button>
+        </div>
+        <div id="channelSelectorContent" class="hidden">
+          <div class="grid gap-3 md:grid-cols-3 mb-3">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">选择账号</label>
+              <select id="ruleAccountSelect" onchange="onRuleAccountChange(this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="">-- 请先添加Discord账号 --</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">选择服务器</label>
+              <select id="ruleGuildSelect" onchange="onRuleGuildChange(this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="">-- 请先选择账号 --</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">选择频道</label>
+              <select id="ruleChannelSelect" onchange="onRuleChannelSelect(this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="">-- 请先选择服务器 --</option>
+              </select>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">提示：请先在账号库中点击"同步数据"按钮获取服务器和频道列表</p>
+        </div>
+      </div>
 
       <div class="space-y-6">
         <!-- 超长消息处理（规则级别） -->
@@ -431,19 +447,22 @@
           </select>
           <input id="libraryAddName" type="text" placeholder="账号名称（可选）" class="rounded border border-slate-200 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none">
           <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 新建账号</button>
-          <div class="flex flex-wrap items-center gap-1 text-xs text-slate-500">
-            <button id="libraryFilterAll" onclick="setLibraryFilter('all')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">全部</button>
-            <button id="libraryFilterDiscord" onclick="setLibraryFilter('discord')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">Discord</button>
-            <button id="libraryFilterTelegram" onclick="setLibraryFilter('telegram')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">Telegram</button>
-            <button id="libraryFilterX" onclick="setLibraryFilter('x')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">X</button>
-            <button id="libraryFilterTruthsocial" onclick="setLibraryFilter('truthsocial')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">TruthSocial</button>
-          </div>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <button onclick="syncAllAccounts()" class="text-xs bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-md hover:bg-emerald-100">🔄 一键同步</button>
           <span id="accountLibrarySelectionCount">已选 0 个账号</span>
           <button onclick="removeSelectedLibraryAccounts()" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除选中</button>
           <button onclick="clearLibrarySelection()" class="text-xs border border-slate-200 text-slate-600 px-3 py-1.5 rounded-md hover:bg-slate-100">清空选择</button>
         </div>
+      </div>
+      <!-- 账号类型筛选 -->
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <span class="text-xs text-slate-500">筛选：</span>
+        <button id="libraryFilterAll" onclick="setLibraryFilter('all')" class="px-2 py-1 rounded border border-slate-200 bg-indigo-50 text-indigo-600">全部</button>
+        <button id="libraryFilterDiscord" onclick="setLibraryFilter('discord')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">Discord</button>
+        <button id="libraryFilterTelegram" onclick="setLibraryFilter('telegram')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">Telegram</button>
+        <button id="libraryFilterX" onclick="setLibraryFilter('x')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">X</button>
+        <button id="libraryFilterTruthsocial" onclick="setLibraryFilter('truthsocial')" class="px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100">TruthSocial</button>
       </div>
       <div class="border border-slate-200 rounded-lg overflow-hidden">
         <table class="min-w-full text-left text-sm">
@@ -465,6 +484,45 @@
     </div>
   </div>
 
+  <!-- 创建账号弹窗 -->
+  <div id="accountCreateModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-slate-900">创建账号</h2>
+        <button onclick="closeAccountCreateModal()" class="text-slate-400 hover:text-slate-600">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div id="accountCreateBody"></div>
+      <div class="mt-6 pt-4 border-t border-slate-200 flex justify-end gap-3">
+        <button onclick="closeAccountCreateModal()" class="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200">取消</button>
+        <button onclick="confirmCreateAccount()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">确认创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 同步进度弹窗 -->
+  <div id="syncProgressModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-md mx-4">
+      <div class="text-center">
+        <div class="mb-4">
+          <svg class="animate-spin h-10 w-10 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold text-slate-900 mb-2">正在同步数据</h3>
+        <p id="syncProgressText" class="text-sm text-slate-600 mb-4">准备中...</p>
+        <div class="w-full bg-slate-200 rounded-full h-2 mb-2">
+          <div id="syncProgressBar" class="bg-indigo-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <p id="syncProgressDetail" class="text-xs text-slate-500"></p>
+      </div>
+    </div>
+  </div>
+
   <!-- 账号库编辑弹窗 -->
   <div id="accountLibraryEditModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
     <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-6xl w-[92vw] mx-4 max-h-[94vh] overflow-y-auto">
@@ -477,6 +535,11 @@
         </button>
       </div>
       <div id="accountLibraryEditBody"></div>
+      <div class="mt-6 pt-4 border-t border-slate-200 flex justify-end gap-3">
+        <button onclick="closeLibraryEdit()" class="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200">
+          完成
+        </button>
+      </div>
     </div>
   </div>
 
@@ -487,25 +550,14 @@
         if (typeof crypto !== 'undefined' && crypto.randomUUID) {
           return crypto.randomUUID();
         }
-        if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.randomUUID) {
-          return globalThis.crypto.randomUUID();
-        }
-      } catch (e) {
-        // 降级方案
-      }
-      // 降级：使用时间戳 + 随机数
+      } catch (e) {}
       return `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    // HTML 转义函数，防止 XSS
+    // HTML 转义函数
     function escapeHtml(str) {
       if (typeof str !== 'string') return String(str);
-      return str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
     function formatKeywordLabel(value) {
@@ -582,41 +634,26 @@
     function getForwardingTypeLabel(type) {
       const value = type || 'discord-to-discord';
       switch (value) {
-        case 'discord-to-discord':
-          return 'Discord → Discord';
-        case 'discord-to-telegram':
-          return 'Discord → Telegram';
-        case 'telegram-to-discord':
-          return 'Telegram → Discord';
-        case 'telegram-to-telegram':
-          return 'Telegram → Telegram';
-        case 'discord-to-feishu':
-          return 'Discord → 飞书';
-        case 'x-to-discord':
-          return 'X → Discord';
-        case 'truthsocial-to-discord':
-          return 'TruthSocial → Discord';
-        default:
-          return value;
+        case 'discord-to-discord': return 'Discord → Discord';
+        case 'discord-to-telegram': return 'Discord → Telegram';
+        case 'telegram-to-discord': return 'Telegram → Discord';
+        case 'telegram-to-telegram': return 'Telegram → Telegram';
+        case 'discord-to-feishu': return 'Discord → 飞书';
+        case 'x-to-discord': return 'X → Discord';
+        case 'truthsocial-to-discord': return 'TruthSocial → Discord';
+        default: return value;
       }
     }
 
     function formatTime(value) {
       if (!value) return '—';
-      try {
-        return new Date(value).toLocaleString('zh-CN', { hour12: false });
-      } catch (e) {
-        return '—';
-      }
+      try { return new Date(value).toLocaleString('zh-CN', { hour12: false }); }
+      catch (e) { return '—'; }
     }
 
     const statusLabelMap = {
-      online: '已连接',
-      idle: '未连接',
-      pending: '连接中',
-      connecting: '连接中',
-      disconnecting: '断开中',
-      error: '异常'
+      online: '已连接', idle: '未连接', pending: '连接中',
+      connecting: '连接中', disconnecting: '断开中', error: '异常'
     };
 
     function getStatusLabel(state) {
@@ -633,7 +670,6 @@
       return 'bg-slate-100 text-slate-600';
     }
 
-    // 实例状态徽章样式
     function getInstanceStatusBadgeClass(acc) {
       const state = acc?.loginState || 'idle';
       if (state === 'online') return 'bg-emerald-50 text-emerald-700';
@@ -642,16 +678,9 @@
       return 'bg-slate-100 text-slate-600';
     }
 
-    // 实例状态标签
     function getInstanceStatusLabel(acc) {
       const state = acc?.loginState || 'idle';
-      const labels = {
-        'idle': '已停止',
-        'pending': '启动中...',
-        'connecting': '连接中...',
-        'online': '运行中',
-        'error': '错误'
-      };
+      const labels = { 'idle': '已停止', 'pending': '启动中...', 'connecting': '连接中...', 'online': '运行中', 'error': '错误' };
       return labels[state] || state;
     }
 
@@ -774,6 +803,7 @@
       };
     }
 
+    // ==================== 账号库标签函数 ====================
     function getDiscordLibraryLabel(item) {
       if (!item) return '未命名账号';
       const typeLabel = item.type === 'bot' ? '机器人' : '用户';
@@ -794,8 +824,9 @@
       return item?.name || 'TruthSocial账号';
     }
 
+    // ==================== 账号库选项函数 ====================
     function getDiscordLibraryOptions(selectedId, skipEmpty = false) {
-      const options = skipEmpty ? [] : [`<option value="">未选择（使用实例配置）</option>`];
+      const options = skipEmpty ? [] : [`<option value="">请选择账号</option>`];
       (state.discordAccounts || []).forEach((item) => {
         if (!item?.id) return;
         options.push(
@@ -806,7 +837,7 @@
     }
 
     function getTelegramLibraryOptions(selectedId, filterType) {
-      const options = [`<option value="">未选择</option>`];
+      const options = [`<option value="">请选择账号</option>`];
       (state.telegramAccounts || []).forEach((item) => {
         if (!item?.id) return;
         if (filterType && item.type !== filterType) return;
@@ -839,6 +870,7 @@
       return options.join('');
     }
 
+    // ==================== 账号库查询函数 ====================
     function getTelegramLibraryAccountById(accountId) {
       return (state.telegramAccounts || []).find((item) => item.id === accountId);
     }
@@ -951,7 +983,7 @@
       }, 0);
     });
 
-    // 检查登录状态
+    // ==================== 认证函数 ====================
     async function checkLoginStatus() {
       let authed = false;
       try {
@@ -967,7 +999,6 @@
       return authed;
     }
 
-    // 设置登录状态
     function setLoginStatus(loggedIn) {
       isLoggedIn = loggedIn;
       localStorage.setItem('isLoggedIn', loggedIn ? 'true' : 'false');
@@ -1037,7 +1068,7 @@
       autoCheckTelegramClientStatus();
     }
 
-    // 处理登录
+    // 登录处理函数
     async function handleLogin() {
       const username = document.getElementById('loginUsername').value.trim();
       const password = document.getElementById('loginPassword').value.trim();
@@ -1063,7 +1094,6 @@
         }
         setLoginStatus(true);
         errorEl.classList.add('hidden');
-        // 重新初始化以显示主页面
         await init();
       } catch (e) {
         console.error('登录失败', e);
@@ -1072,7 +1102,6 @@
       }
     }
 
-    // 处理退出登录
     async function handleLogout() {
       if (confirm('确定要退出登录吗？')) {
         try {
@@ -1087,7 +1116,7 @@
       }
     }
 
-    // 显示修改密码弹窗
+    // 密码管理函数
     function showChangePasswordModal() {
       const modal = document.getElementById('changePasswordModal');
       if (modal) {
@@ -1099,7 +1128,6 @@
       }
     }
 
-    // 关闭修改密码弹窗
     function closeChangePasswordModal() {
       const modal = document.getElementById('changePasswordModal');
       if (modal) {
@@ -1107,7 +1135,6 @@
       }
     }
 
-    // 保存新密码
     async function saveNewPassword() {
       const newUsername = document.getElementById('newUsername').value.trim();
       const newPassword = document.getElementById('newPassword').value.trim();
@@ -1126,15 +1153,12 @@
         return;
       }
 
-      // 更新配置
       state.loginUser = newUsername;
-      // 如果密码为空，保持原密码不变；否则更新为新密码
       if (newPassword) {
         state.loginPassword = newPassword;
       }
 
       try {
-        // 构建保存的数据
         const saveData = {
           accounts: state.accounts,
           activeId: state.activeId,
@@ -1146,11 +1170,10 @@
           truthSocialAccounts: state.truthSocialAccounts,
           enabledForwardingTypes: state.enabledForwardingTypes
         };
-        // 只有在新密码不为空时才更新密码
+
         if (newPassword) {
           saveData.loginPassword = state.loginPassword;
         } else {
-          // 如果密码为空，从当前配置中获取原密码
           const res = await fetch('/api/config');
           if (res.status === 401) {
             handleUnauthorized();
@@ -1160,7 +1183,6 @@
           saveData.loginPassword = data.loginPassword || state.loginPassword;
         }
 
-        // 直接调用 API 保存配置
         const saveRes = await fetch('/api/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1177,7 +1199,6 @@
           handleLogout();
         } else {
           alert('用户名修改成功！');
-          // 重新加载配置以更新显示
           await loadConfig();
         }
       } catch (e) {
@@ -1187,7 +1208,7 @@
       }
     }
 
-    // 加载配置
+    // ==================== 配置管理函数 ====================
     async function loadConfig() {
       try {
         const res = await fetch('/api/config?includeSecrets=1');
@@ -1200,14 +1221,7 @@
           return;
         }
         const data = await res.json();
-        console.log('加载配置成功:', data);
         if (Array.isArray(data?.accounts)) {
-          // 调试：检查加载的 telegramConfig
-          data.accounts.forEach((acc, idx) => {
-            if (acc.telegramConfig) {
-              console.log(`[DEBUG] 账号 ${idx} 加载的 telegramConfig:`, JSON.stringify(acc.telegramConfig, null, 2));
-            }
-          });
           state = {
             accounts: data.accounts,
             activeId: data.activeId || data.accounts[0]?.id || "",
@@ -1225,19 +1239,14 @@
         }
       } catch (e) {
         console.error('加载配置失败', e);
-        throw e; // 重新抛出错误，让 init 处理
+        throw e;
       }
     }
 
-    // 立即保存配置（无防抖，用于关键字段更新）
     async function saveConfigImmediate() {
       if (suspendAutoSave) return;
       isSaving = true;
       try {
-        const activeAcc = state.accounts.find(a => a.id === state.activeId);
-        if (activeAcc?.telegramConfig) {
-          console.log('[DEBUG] 立即保存 telegramConfig:', JSON.stringify(activeAcc.telegramConfig, null, 2));
-        }
         const res = await fetch('/api/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1250,7 +1259,6 @@
         if (!res.ok) {
           throw new Error(`保存失败: HTTP ${res.status}`);
         }
-        console.log('[DEBUG] 立即保存完成');
       } catch (e) {
         console.error('立即保存失败', e);
         alert('保存失败: ' + (e.message || e));
@@ -1260,17 +1268,12 @@
       }
     }
 
-    // 保存配置（防抖）
     async function saveConfig() {
       if (suspendAutoSave) return;
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
         if (suspendAutoSave) return;
         try {
-          const activeAcc = state.accounts.find(a => a.id === state.activeId);
-          if (activeAcc?.telegramConfig) {
-            console.log('[DEBUG] 保存 telegramConfig:', JSON.stringify(activeAcc.telegramConfig, null, 2));
-          }
           await fetch('/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1289,6 +1292,97 @@
     // 缓存服务器和频道列表
     let cachedGuilds = [];
     let cachedChannels = {};
+
+    // 全局规则填写模式 (manual: 手动输入, select: 从列表选择)
+    let globalRuleInputMode = 'manual';
+
+    // 获取规则填写模式（使用全局模式）
+    function getRuleInputMode(mappingKey, field) {
+      return globalRuleInputMode;
+    }
+
+    // 切换全局规则填写模式
+    function toggleGlobalRuleInputMode() {
+      globalRuleInputMode = globalRuleInputMode === 'manual' ? 'select' : 'manual';
+      render();
+    }
+
+    // 获取缓存的服务器选项HTML
+    function getCachedGuildsOptions(selectedId) {
+      if (!cachedGuilds || cachedGuilds.length === 0) {
+        return '<option value="">请先同步数据</option>';
+      }
+      let html = '<option value="">选择服务器</option>';
+      cachedGuilds.forEach(g => {
+        html += `<option value="${g.id}" ${g.id === selectedId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`;
+      });
+      return html;
+    }
+
+    // 获取缓存的频道选项HTML
+    function getCachedChannelsOptions(accountId, guildId, selectedId) {
+      const cacheKey = `${accountId}:${guildId}`;
+      const channels = cachedChannels[cacheKey] || [];
+      if (channels.length === 0) {
+        return '<option value="">请先选择服务器</option>';
+      }
+      let html = '<option value="">选择频道</option>';
+      channels.forEach(ch => {
+        const icon = ch.type === 0 ? '#' : ch.type === 2 ? '🔊' : '•';
+        html += `<option value="${ch.id}" ${ch.id === selectedId ? 'selected' : ''}>${icon} ${escapeHtml(ch.name)}</option>`;
+      });
+      return html;
+    }
+
+    // 选择服务器后加载频道列表
+    async function onGuildSelectForRule(accountId, guildId, channelSelectId) {
+      const channelSelect = document.getElementById(channelSelectId);
+      if (!channelSelect) return;
+
+      if (!guildId) {
+        channelSelect.innerHTML = '<option value="">请先选择服务器</option>';
+        return;
+      }
+
+      channelSelect.innerHTML = '<option value="">加载中...</option>';
+      await fetchDiscordChannels(accountId, guildId);
+      channelSelect.innerHTML = getCachedChannelsOptions(accountId, guildId, '');
+    }
+
+    // 生成来源频道输入UI（支持手动和选择两种模式，使用全局模式）
+    function renderSourceChannelInput(acc, m, idx, forwardingType, placeholder) {
+      const mappingKey = `${acc.id}:${forwardingType}:${idx}`;
+      const mode = globalRuleInputMode;
+      const accountId = acc.discordAccountId || '';
+      const isDiscordSource = forwardingType.startsWith('discord-');
+
+      // 只有 Discord 来源才支持选择模式
+      if (!isDiscordSource) {
+        return `<input type="text" value="${m.sourceChannelId || ''}"
+          onchange="updateMapping(${idx}, 'sourceChannelId', this.value)"
+          placeholder="${placeholder}"
+          class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
+      }
+
+      if (mode === 'manual') {
+        return `<input type="text" value="${m.sourceChannelId || ''}"
+          onchange="updateMapping(${idx}, 'sourceChannelId', this.value)"
+          placeholder="${placeholder}"
+          class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
+      } else {
+        const channelSelectId = `channel-select-${mappingKey}`;
+        return `<div class="flex items-center gap-1">
+          <select onchange="onGuildSelectForRule('${accountId}', this.value, '${channelSelectId}')"
+            class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+            ${getCachedGuildsOptions('')}
+          </select>
+          <select id="${channelSelectId}" onchange="updateMapping(${idx}, 'sourceChannelId', this.value)"
+            class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+            <option value="">选择频道</option>
+          </select>
+        </div>`;
+      }
+    }
 
     // 获取 Discord 服务器列表
     async function fetchDiscordGuilds(accountId) {
@@ -1327,6 +1421,427 @@
       } catch (e) {
         console.error('获取频道列表失败', e);
         return [];
+      }
+    }
+
+    // 获取 Discord 服务器/频道列表（账号库用）
+    async function fetchDiscordGuildsForLibrary(accountId) {
+      const container = document.getElementById(`discord-guilds-${accountId}`);
+      if (!container) return;
+
+      container.innerHTML = '<div class="text-slate-400">正在获取服务器列表...</div>';
+
+      try {
+        const res = await fetch('/api/metadata/discord/guilds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          container.innerHTML = `<div class="text-red-500">${escapeHtml(data.error)}</div>`;
+          return;
+        }
+
+        const guilds = data.guilds || [];
+        if (guilds.length === 0) {
+          container.innerHTML = '<div class="text-slate-400">未找到服务器，请确保账号已登录并启动实例</div>';
+          return;
+        }
+
+        // 渲染服务器列表
+        let html = '<div class="space-y-2">';
+        for (const guild of guilds) {
+          html += `
+            <div class="border border-slate-200 rounded p-2">
+              <div class="flex items-center justify-between">
+                <span class="font-medium text-slate-700">${escapeHtml(guild.name)}</span>
+                <span class="text-slate-400 font-mono">${guild.id}</span>
+              </div>
+              <button onclick="fetchDiscordChannelsForLibrary('${accountId}', '${guild.id}', this)"
+                class="mt-1 text-xs text-indigo-600 hover:text-indigo-800">展开频道列表</button>
+              <div id="discord-channels-${accountId}-${guild.id}" class="mt-2 hidden"></div>
+            </div>
+          `;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<div class="text-red-500">获取失败: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    // 获取 Discord 频道列表（账号库用）
+    async function fetchDiscordChannelsForLibrary(accountId, guildId, btn) {
+      const container = document.getElementById(`discord-channels-${accountId}-${guildId}`);
+      if (!container) return;
+
+      if (!container.classList.contains('hidden')) {
+        container.classList.add('hidden');
+        btn.textContent = '展开频道列表';
+        return;
+      }
+
+      container.classList.remove('hidden');
+      btn.textContent = '收起频道列表';
+      container.innerHTML = '<div class="text-slate-400">正在获取频道列表...</div>';
+
+      try {
+        const res = await fetch('/api/metadata/discord/channels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId, guildId })
+        });
+        const data = await res.json();
+
+        const channels = data.channels || [];
+        if (channels.length === 0) {
+          container.innerHTML = '<div class="text-slate-400 pl-2">无频道</div>';
+          return;
+        }
+
+        let html = '<div class="pl-2 space-y-1 border-l-2 border-slate-200">';
+        for (const ch of channels) {
+          const typeIcon = ch.type === 0 ? '#' : ch.type === 2 ? '🔊' : ch.type === 4 ? '📁' : '•';
+          html += `
+            <div class="flex items-center justify-between py-0.5">
+              <span class="text-slate-600">${typeIcon} ${escapeHtml(ch.name)}</span>
+              <span class="text-slate-400 font-mono">${ch.id}</span>
+            </div>
+          `;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<div class="text-red-500 pl-2">获取失败: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    // 获取 Telegram 群组/频道列表（账号库用）
+    async function fetchTelegramDialogsForLibrary(accountId) {
+      const container = document.getElementById(`telegram-dialogs-${accountId}`);
+      if (!container) return;
+
+      container.innerHTML = '<div class="text-slate-400">正在获取群组/频道列表...</div>';
+
+      try {
+        const res = await fetch('/api/metadata/telegram/dialogs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          container.innerHTML = `<div class="text-red-500">${escapeHtml(data.error)}</div>`;
+          return;
+        }
+
+        const dialogs = data.dialogs || [];
+        if (dialogs.length === 0) {
+          container.innerHTML = `<div class="text-slate-400">${data.message || '未找到群组/频道，请确保账号已登录'}</div>`;
+          return;
+        }
+
+        let html = '<div class="space-y-1">';
+        for (const d of dialogs) {
+          const typeIcon = d.type === 'channel' ? '📢' : d.type === 'group' ? '👥' : d.type === 'user' ? '👤' : '💬';
+          html += `
+            <div class="flex items-center justify-between py-1 border-b border-slate-100">
+              <span class="text-slate-600">${typeIcon} ${escapeHtml(d.name || d.title || '未知')}</span>
+              <span class="text-slate-400 font-mono">${d.id}</span>
+            </div>
+          `;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<div class="text-red-500">获取失败: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    // 检查 Discord 账号是否在运行中的实例中使用
+    function isDiscordAccountInUse(accountId) {
+      return state.accounts.some(acc => {
+        const isUsed = acc.discordAccountId === accountId || acc.discordSenderAccountId === accountId;
+        const isRunning = acc.loginState === 'online' || acc.loginState === 'connecting';
+        return isUsed && isRunning;
+      });
+    }
+
+    // 检查 Telegram 账号是否在运行中的实例中使用
+    function isTelegramAccountInUse(accountId) {
+      return state.accounts.some(acc => {
+        const tgConfig = acc.telegramConfig || {};
+        const isUsed = tgConfig.accountId === accountId || tgConfig.senderAccountId === accountId;
+        const isRunning = acc.loginState === 'online' || acc.loginState === 'connecting';
+        return isUsed && isRunning;
+      });
+    }
+
+    // 获取使用指定账号的实例名称列表
+    function getInstancesUsingAccount(kind, accountId) {
+      return state.accounts.filter(acc => {
+        if (kind === 'discord') {
+          return acc.discordAccountId === accountId || acc.discordSenderAccountId === accountId;
+        } else if (kind === 'telegram') {
+          const tgConfig = acc.telegramConfig || {};
+          return tgConfig.accountId === accountId || tgConfig.senderAccountId === accountId;
+        }
+        return false;
+      }).map(acc => acc.name || '未命名实例');
+    }
+
+    // 同步 Discord 账号数据（服务器和频道列表）
+    async function syncDiscordAccountData(accountId) {
+      showToast('正在同步 Discord 数据...', 'info');
+      const result = await syncDiscordAccountDataOnly(accountId);
+      if (!result.success) {
+        showToast(result.error || '同步失败', 'error');
+        return;
+      }
+      await fetchDiscordGuildsForLibrary(accountId);
+      await fetchDiscordGuilds(accountId);
+      showToast(`Discord 数据同步完成（${result.guildsCount || 0} 个服务器）`, 'success');
+    }
+
+    // 同步 Telegram 账号数据（群组和频道列表）
+    async function syncTelegramAccountData(accountId) {
+      // 检查账号是否在运行中的实例中使用
+      const isInUse = isTelegramAccountInUse(accountId);
+      const instances = getInstancesUsingAccount('telegram', accountId);
+
+      if (!isInUse && instances.length > 0) {
+        showToast(`请先启动实例「${instances[0]}」以同步数据`, 'warning');
+      } else if (!isInUse && instances.length === 0) {
+        showToast('此账号未被任何实例使用，请先在实例中选择此账号', 'warning');
+      }
+
+      showToast('正在同步 Telegram 数据...', 'info');
+      await fetchTelegramDialogsForLibrary(accountId);
+
+      if (isInUse) {
+        showToast('Telegram 数据同步完成', 'success');
+      }
+    }
+
+    // 显示同步进度弹窗
+    function showSyncProgress(text, detail, percent) {
+      const modal = document.getElementById('syncProgressModal');
+      const textEl = document.getElementById('syncProgressText');
+      const detailEl = document.getElementById('syncProgressDetail');
+      const barEl = document.getElementById('syncProgressBar');
+
+      if (modal) modal.classList.remove('hidden');
+      if (textEl) textEl.textContent = text;
+      if (detailEl) detailEl.textContent = detail || '';
+      if (barEl) barEl.style.width = `${percent}%`;
+    }
+
+    // 隐藏同步进度弹窗
+    function hideSyncProgress() {
+      const modal = document.getElementById('syncProgressModal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    // 同步单个 Discord 账号数据（主动登录获取数据）
+    async function syncDiscordAccountDataOnly(accountId) {
+      try {
+        // 从账号库获取账号信息
+        let account = (state.discordAccounts || []).find(a => a.id === accountId);
+        if (!account) {
+          return { success: false, error: '账号不存在' };
+        }
+
+        // 获取 token（如无 token 则尝试邮箱密码登录）
+        let token = account.token;
+        if (!token) {
+          const hasPasswordLogin = account.email && account.password;
+          if (!hasPasswordLogin) {
+            return { success: false, error: '账号未配置 Token 或邮箱密码' };
+          }
+          const loginRes = await fetch('/api/account/discord-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              discordAccountId: account.id,
+              useLibrary: true,
+              mode: 'password',
+              email: account.email,
+              password: account.password,
+              totpSecret: account.totpSecret || undefined,
+              autoLogin: false
+            })
+          });
+          const loginData = await loginRes.json().catch(() => ({}));
+          if (!loginRes.ok) {
+            return { success: false, error: loginData?.error || '登录失败' };
+          }
+          await loadConfig();
+          render();
+          account = (state.discordAccounts || []).find(a => a.id === accountId);
+          token = account?.token;
+          if (!token) {
+            return { success: false, error: '登录成功但未获取到 Token' };
+          }
+        }
+
+        console.log('[同步] 正在同步 Discord 账号:', account.name || accountId);
+
+        // 调用同步 API
+        const res = await fetch('/api/metadata/discord/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accountId,
+            token,
+            type: account.type || 'bot'
+          })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          console.error('[同步] Discord 账号同步失败:', data.error);
+          return { success: false, error: data.error };
+        }
+
+        // 更新账号库中的用户信息
+        if (data.user) {
+          account.syncedUser = data.user;
+          account.lastSyncTime = new Date().toISOString();
+          await saveConfigImmediate();
+          render();
+        }
+
+        console.log('[同步] Discord 账号同步成功:', data.guildsCount, '个服务器');
+
+        return {
+          success: true,
+          user: data.user,
+          guildsCount: data.guildsCount || 0
+        };
+      } catch (e) {
+        console.error('[同步] Discord 账号同步失败:', e);
+        return { success: false, error: e.message };
+      }
+    }
+
+    // 同步单个 Telegram 账号数据（不依赖 DOM）
+    async function syncTelegramAccountDataOnly(accountId) {
+      try {
+        const res = await fetch('/api/metadata/telegram/dialogs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          console.error('同步 Telegram 账号失败:', data.error);
+          return { success: false, error: data.error };
+        }
+
+        // 更新账号库中的用户信息
+        if (data.user) {
+          const account = (state.telegramAccounts || []).find(a => a.id === accountId);
+          if (account) {
+            account.syncedUser = data.user;
+            account.lastSyncTime = new Date().toISOString();
+            await saveConfigImmediate();
+            render();
+          }
+        }
+
+        return {
+          success: true,
+          user: data.user,
+          dialogsCount: (data.dialogs || []).length
+        };
+      } catch (e) {
+        console.error('同步 Telegram 账号失败:', e);
+        return { success: false, error: e.message };
+      }
+    }
+
+    // 一键同步所有账号数据
+    async function syncAllAccounts() {
+      console.log('[同步] 开始同步所有账号');
+      const discordAccounts = state.discordAccounts || [];
+      const telegramAccounts = state.telegramAccounts || [];
+      const total = discordAccounts.length + telegramAccounts.length;
+
+      console.log('[同步] Discord账号数量:', discordAccounts.length);
+      console.log('[同步] Telegram账号数量:', telegramAccounts.length);
+
+      if (total === 0) {
+        showToast('暂无账号可同步', 'warning');
+        return;
+      }
+
+      console.log('[同步] 显示进度弹窗');
+      showSyncProgress('准备同步...', `共 ${total} 个账号`, 0);
+
+      let successCount = 0;
+      let current = 0;
+      const results = [];
+
+      // 同步 Discord 账号
+      for (const acc of discordAccounts) {
+        current++;
+        const percent = Math.round((current / total) * 100);
+        showSyncProgress(
+          `正在同步 Discord 账号...`,
+          `${acc.name || 'Discord账号'} (${current}/${total})`,
+          percent
+        );
+
+        const result = await syncDiscordAccountDataOnly(acc.id);
+        if (result.success) {
+          successCount++;
+          results.push({
+            type: 'discord',
+            name: acc.name,
+            user: result.user,
+            count: result.guildsCount
+          });
+        }
+      }
+
+      // 同步 Telegram 账号
+      for (const acc of telegramAccounts) {
+        current++;
+        const percent = Math.round((current / total) * 100);
+        showSyncProgress(
+          `正在同步 Telegram 账号...`,
+          `${acc.name || 'Telegram账号'} (${current}/${total})`,
+          percent
+        );
+
+        const result = await syncTelegramAccountDataOnly(acc.id);
+        if (result.success) {
+          successCount++;
+          results.push({
+            type: 'telegram',
+            name: acc.name,
+            user: result.user,
+            count: result.dialogsCount
+          });
+        }
+      }
+
+      hideSyncProgress();
+
+      // 刷新账号库显示
+      if (document.getElementById('accountLibraryModal') &&
+          !document.getElementById('accountLibraryModal').classList.contains('hidden')) {
+        renderAccountLibraryList();
+      }
+
+      if (successCount === total) {
+        showToast(`同步完成：${successCount} 个账号全部成功`, 'success');
+      } else {
+        showToast(`同步完成：${successCount}/${total} 个账号成功`, successCount > 0 ? 'warning' : 'error');
       }
     }
 
@@ -1806,6 +2321,14 @@
     function getLibraryAccountUsername(item) {
       if (!item || !item.account) return '';
       if (item.kind === 'telegram') {
+        // 优先使用同步的用户信息
+        const syncedUser = item.account.syncedUser;
+        if (syncedUser) {
+          if (syncedUser.username) return `@${String(syncedUser.username)}`;
+          const name = [syncedUser.firstName, syncedUser.lastName].filter(Boolean).join(' ');
+          if (name) return name;
+        }
+        // 回退到旧的 userInfo
         const info = item.account.userInfo || {};
         if (info.username) return `@${String(info.username)}`;
         const name = [info.firstName, info.lastName].filter(Boolean).join(' ');
@@ -1814,6 +2337,19 @@
         return '';
       }
       if (item.kind === 'discord') {
+        // 优先使用同步的用户信息
+        const syncedUser = item.account.syncedUser;
+        if (syncedUser) {
+          if (syncedUser.tag) return syncedUser.tag;
+          if (syncedUser.username) {
+            if (syncedUser.discriminator && syncedUser.discriminator !== '0') {
+              return `${syncedUser.username}#${syncedUser.discriminator}`;
+            }
+            return syncedUser.username;
+          }
+          if (syncedUser.globalName) return syncedUser.globalName;
+        }
+        // 回退到旧字段
         return String(item.account.username || item.account.userName || item.account.email || '');
       }
       if (item.kind === 'x') {
@@ -1894,19 +2430,295 @@
     }
 
     function addLibraryAccountFromSelect() {
-      const select = document.getElementById('libraryAddType');
-      const nameInput = document.getElementById('libraryAddName');
-      const kind = select ? select.value : 'discord';
+      // 获取当前选择的账号类型
+      const typeSelect = document.getElementById('libraryAddType');
+      const kind = typeSelect ? typeSelect.value : 'discord';
+
       if (!kind) {
-        showToast('当前未启用可添加的账号类型', 'error');
+        showToast('请选择账号类型', 'error');
         return;
       }
-      const name = nameInput ? nameInput.value : '';
-      const newId = addLibraryAccount(kind, name);
-      if (nameInput) nameInput.value = '';
-      if (newId) {
-        openLibraryEdit(kind, newId);
+
+      // 打开创建弹窗
+      openAccountCreateModal(kind);
+    }
+
+    // 创建账号弹窗的当前类型
+    let createAccountKind = 'discord';
+
+    function openAccountCreateModal(kind) {
+      createAccountKind = kind || 'discord';
+      const modal = document.getElementById('accountCreateModal');
+      if (modal) modal.classList.remove('hidden');
+      renderAccountCreateForm();
+    }
+
+    function closeAccountCreateModal() {
+      const modal = document.getElementById('accountCreateModal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function onCreateAccountTypeChange(newKind) {
+      createAccountKind = newKind;
+      renderAccountCreateForm();
+    }
+
+    function renderAccountCreateForm() {
+      const body = document.getElementById('accountCreateBody');
+      if (!body) return;
+
+      const kindLabels = { discord: 'Discord', telegram: 'Telegram', x: 'X', truthsocial: 'TruthSocial' };
+
+      let fieldsHtml = '';
+      if (createAccountKind === 'discord') {
+        fieldsHtml = renderDiscordCreateFields();
+      } else if (createAccountKind === 'telegram') {
+        fieldsHtml = renderTelegramCreateFields();
+      } else if (createAccountKind === 'x') {
+        fieldsHtml = renderXCreateFields();
+      } else if (createAccountKind === 'truthsocial') {
+        fieldsHtml = renderTruthCreateFields();
       }
+
+      body.innerHTML = `
+        <div class="grid gap-4 md:grid-cols-2">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">账号类型</label>
+            <select id="createKindSelect" onchange="onCreateAccountTypeChange(this.value)"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <option value="discord" ${createAccountKind === 'discord' ? 'selected' : ''}>Discord</option>
+              <option value="telegram" ${createAccountKind === 'telegram' ? 'selected' : ''}>Telegram</option>
+              <option value="x" ${createAccountKind === 'x' ? 'selected' : ''}>X</option>
+              <option value="truthsocial" ${createAccountKind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">账号名称</label>
+            <input id="createAccountName" type="text" placeholder="输入账号名称"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+          </div>
+        </div>
+        <div class="mt-4">
+          ${fieldsHtml}
+        </div>
+      `;
+    }
+
+    function renderDiscordCreateFields() {
+      return `
+        <div class="grid gap-4 md:grid-cols-2">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Discord 账号类型</label>
+            <select id="createDiscordType"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <option value="bot">机器人账号</option>
+              <option value="selfbot">用户账号</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">登录方式</label>
+            <select id="createDiscordLoginMode" onchange="onCreateDiscordLoginModeChange(this.value)"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <option value="token">Token</option>
+              <option value="password">账号密码</option>
+            </select>
+          </div>
+        </div>
+        <div id="createDiscordTokenFields" class="mt-4">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Token</label>
+          <input id="createDiscordToken" type="password" placeholder="输入 Discord Token"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+        </div>
+        <div id="createDiscordPasswordFields" class="hidden mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">邮箱</label>
+            <input id="createDiscordEmail" type="text" placeholder="输入邮箱"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
+            <input id="createDiscordPassword" type="password" placeholder="输入密码"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+          </div>
+        </div>
+      `;
+    }
+
+    function onCreateDiscordLoginModeChange(mode) {
+      const tokenFields = document.getElementById('createDiscordTokenFields');
+      const passwordFields = document.getElementById('createDiscordPasswordFields');
+      if (mode === 'token') {
+        if (tokenFields) tokenFields.classList.remove('hidden');
+        if (passwordFields) passwordFields.classList.add('hidden');
+      } else {
+        if (tokenFields) tokenFields.classList.add('hidden');
+        if (passwordFields) passwordFields.classList.remove('hidden');
+      }
+    }
+
+    function renderTelegramCreateFields() {
+      return `
+        <div class="grid gap-4 md:grid-cols-2">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Telegram 账号类型</label>
+            <select id="createTelegramType" onchange="onCreateTelegramTypeChange(this.value)"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <option value="bot">机器人账号</option>
+              <option value="client">用户账号</option>
+            </select>
+          </div>
+          <div id="createTelegramLoginModeField" class="hidden">
+            <label class="block text-sm font-medium text-slate-700 mb-1">登录方式</label>
+            <select id="createTelegramLoginMode" onchange="onCreateTelegramLoginModeChange(this.value)"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              <option value="session">Session</option>
+              <option value="phone">手机号登录</option>
+            </select>
+          </div>
+        </div>
+        <div id="createTelegramBotFields" class="mt-4">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Bot Token</label>
+          <input id="createTelegramToken" type="password" placeholder="输入 Bot Token"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+        </div>
+        <div id="createTelegramClientFields" class="hidden">
+          <div class="mt-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">API ID</label>
+              <input id="createTelegramApiId" type="number" placeholder="输入 API ID"
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">API Hash</label>
+              <input id="createTelegramApiHash" type="password" placeholder="输入 API Hash"
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+          <div id="createTelegramPhoneFields" class="hidden mt-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">手机号</label>
+              <input id="createTelegramPhone" type="text" placeholder="输入手机号（含国际区号）"
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">2FA 密码（可选）</label>
+              <input id="createTelegram2FA" type="password" placeholder="如有 2FA 请填写"
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+          <div id="createTelegramSessionFields" class="mt-4">
+            <label class="block text-sm font-medium text-slate-700 mb-1">Session 字符串（可选）</label>
+            <textarea id="createTelegramSession" rows="2" placeholder="输入 Session 字符串"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    function onCreateTelegramTypeChange(type) {
+      const botFields = document.getElementById('createTelegramBotFields');
+      const clientFields = document.getElementById('createTelegramClientFields');
+      const loginModeField = document.getElementById('createTelegramLoginModeField');
+      if (type === 'bot') {
+        if (botFields) botFields.classList.remove('hidden');
+        if (clientFields) clientFields.classList.add('hidden');
+        if (loginModeField) loginModeField.classList.add('hidden');
+      } else {
+        if (botFields) botFields.classList.add('hidden');
+        if (clientFields) clientFields.classList.remove('hidden');
+        if (loginModeField) loginModeField.classList.remove('hidden');
+      }
+    }
+
+    function onCreateTelegramLoginModeChange(mode) {
+      const phoneFields = document.getElementById('createTelegramPhoneFields');
+      const sessionFields = document.getElementById('createTelegramSessionFields');
+      if (mode === 'phone') {
+        if (phoneFields) phoneFields.classList.remove('hidden');
+        if (sessionFields) sessionFields.classList.add('hidden');
+      } else {
+        if (phoneFields) phoneFields.classList.add('hidden');
+        if (sessionFields) sessionFields.classList.remove('hidden');
+      }
+    }
+
+    function renderXCreateFields() {
+      return `
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Cookie</label>
+          <textarea id="createXCookie" rows="3" placeholder="输入 X Cookie"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+        </div>
+      `;
+    }
+
+    function renderTruthCreateFields() {
+      return `
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Cookie</label>
+          <textarea id="createTruthCookie" rows="3" placeholder="输入 TruthSocial Cookie"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+        </div>
+      `;
+    }
+
+    function confirmCreateAccount() {
+      const name = document.getElementById('createAccountName')?.value?.trim() || '';
+      const kind = createAccountKind;
+
+      if (!name) {
+        showToast('请输入账号名称', 'error');
+        return;
+      }
+
+      const newId = genId();
+      let account = { id: newId, name };
+
+      if (kind === 'discord') {
+        const type = document.getElementById('createDiscordType')?.value || 'bot';
+        const loginMode = document.getElementById('createDiscordLoginMode')?.value || 'token';
+        account = { ...account, type };
+        if (loginMode === 'token') {
+          account.token = document.getElementById('createDiscordToken')?.value?.trim() || '';
+        } else {
+          account.email = document.getElementById('createDiscordEmail')?.value?.trim() || '';
+          account.password = document.getElementById('createDiscordPassword')?.value?.trim() || '';
+        }
+        if (!state.discordAccounts) state.discordAccounts = [];
+        state.discordAccounts.push(account);
+      } else if (kind === 'telegram') {
+        const type = document.getElementById('createTelegramType')?.value || 'bot';
+        account = { ...account, type };
+        if (type === 'bot') {
+          account.token = document.getElementById('createTelegramToken')?.value?.trim() || '';
+        } else {
+          account.apiId = document.getElementById('createTelegramApiId')?.value || '';
+          account.apiHash = document.getElementById('createTelegramApiHash')?.value?.trim() || '';
+          const loginMode = document.getElementById('createTelegramLoginMode')?.value || 'session';
+          if (loginMode === 'phone') {
+            account.phoneNumber = document.getElementById('createTelegramPhone')?.value?.trim() || '';
+            account.twoFactorPassword = document.getElementById('createTelegram2FA')?.value?.trim() || '';
+          } else {
+            account.sessionString = document.getElementById('createTelegramSession')?.value?.trim() || '';
+            account.sessionType = account.sessionString ? 'string' : 'file';
+          }
+        }
+        if (!state.telegramAccounts) state.telegramAccounts = [];
+        state.telegramAccounts.push(account);
+      } else if (kind === 'x') {
+        account.cookie = document.getElementById('createXCookie')?.value?.trim() || '';
+        if (!state.xAccounts) state.xAccounts = [];
+        state.xAccounts.push(account);
+      } else if (kind === 'truthsocial') {
+        account.cookie = document.getElementById('createTruthCookie')?.value?.trim() || '';
+        if (!state.truthSocialAccounts) state.truthSocialAccounts = [];
+        state.truthSocialAccounts.push(account);
+      }
+
+      saveConfig();
+      closeAccountCreateModal();
+      renderAccountLibraryModal();
+      showToast('账号创建成功', 'success');
     }
 
     function updateLibraryAccountField(kind, id, field, value) {
@@ -1921,7 +2733,38 @@
       }
     }
 
-    function removeLibraryAccount(kind, id) {
+    // 获取账号库账号的显示名称
+    function getLibraryAccountDisplayName(kind, id) {
+      const kindLabels = { discord: 'Discord', telegram: 'Telegram', x: 'X', truthsocial: 'Truth Social' };
+      let account = null;
+      if (kind === 'discord') {
+        account = (state.discordAccounts || []).find(a => a.id === id);
+      } else if (kind === 'telegram') {
+        account = (state.telegramAccounts || []).find(a => a.id === id);
+      } else if (kind === 'x') {
+        account = (state.xAccounts || []).find(a => a.id === id);
+      } else if (kind === 'truthsocial') {
+        account = (state.truthSocialAccounts || []).find(a => a.id === id);
+      }
+      const name = account?.name || '未命名账号';
+      return `${name} (${kindLabels[kind] || kind})`;
+    }
+
+    // 获取使用指定账号库账号的实例数量
+    function countInstancesUsingLibraryAccount(kind, id) {
+      return state.accounts.filter(acc => {
+        if (kind === 'discord') {
+          return acc.discordAccountId === id || acc.discordSenderAccountId === id;
+        } else if (kind === 'telegram') {
+          const tgConfig = acc.telegramConfig || {};
+          return tgConfig.accountId === id || tgConfig.senderAccountId === id;
+        }
+        return false;
+      }).length;
+    }
+
+    // 执行实际的删除操作
+    function doRemoveLibraryAccount(kind, id) {
       if (kind === 'discord') {
         removeDiscordLibraryAccount(id);
       } else if (kind === 'telegram') {
@@ -1931,6 +2774,28 @@
       } else if (kind === 'truthsocial') {
         removeTruthLibraryAccount(id);
       }
+    }
+
+    // 删除账号库账号（带确认弹窗）
+    function removeLibraryAccount(kind, id) {
+      const displayName = getLibraryAccountDisplayName(kind, id);
+      const usageCount = countInstancesUsingLibraryAccount(kind, id);
+
+      let message = `确定要删除账号「${displayName}」吗？`;
+      if (usageCount > 0) {
+        message += `\n\n⚠️ 警告：此账号正在被 ${usageCount} 个实例使用，删除后这些实例将无法正常工作。`;
+      }
+
+      showConfirmModal(
+        '确认删除账号',
+        message,
+        () => {
+          doRemoveLibraryAccount(kind, id);
+          showToast('账号已删除', 'success');
+        },
+        '确认删除',
+        'bg-red-600 hover:bg-red-700'
+      );
     }
 
     function changeLibraryAccountType(kind, id, nextKind) {
@@ -1943,7 +2808,7 @@
       const current = items.find((item) => item.kind === kind && item.id === id);
       if (!current) return;
       const name = current.account?.name || '';
-      removeLibraryAccount(kind, id);
+      doRemoveLibraryAccount(kind, id);
       const newId = addLibraryAccount(nextKind, name);
       if (newId) {
         editingLibraryAccount = { kind: nextKind, id: newId };
@@ -1997,6 +2862,18 @@
                 class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">账号密码登录获取 Token</button>
             </div>
             `}
+          </div>
+          <div class="mt-4 border-t border-slate-200 pt-4">
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-xs text-slate-600">服务器/频道列表</label>
+              <button onclick="syncDiscordAccountData('${account.id}')"
+                class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">
+                同步数据
+              </button>
+            </div>
+            <div id="discord-guilds-${account.id}" class="text-xs text-slate-500 max-h-64 overflow-y-auto">
+              点击"同步数据"获取该账号的服务器和频道列表
+            </div>
           </div>
         `;
       }
@@ -2088,6 +2965,18 @@
           <div class="text-xs text-slate-500 mt-2">
             状态: <span id="lib-tg-badge-${account.id}" class="px-2 py-0.5 rounded-full ${getBadgeClass(account.loginState || 'idle')}">${account.loginState || 'idle'}</span>
             <span id="lib-tg-msg-${account.id}" class="ml-2">${escapeHtml(account.loginMessage || '')}</span>
+          </div>
+          <div class="mt-4 border-t border-slate-200 pt-4">
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-xs text-slate-600">群组/频道列表</label>
+              <button onclick="syncTelegramAccountData('${account.id}')"
+                class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">
+                同步数据
+              </button>
+            </div>
+            <div id="telegram-dialogs-${account.id}" class="text-xs text-slate-500 max-h-64 overflow-y-auto">
+              点击"同步数据"获取该账号的群组和频道列表
+            </div>
           </div>
         `;
       }
@@ -2213,15 +3102,43 @@
         showToast('请先选择账号', 'error');
         return;
       }
+
+      const count = librarySelection.size;
       const items = getLibraryItems();
+
+      // 计算有多少账号正在被使用
+      let usedCount = 0;
       items.forEach((item) => {
         const key = getLibrarySelectionKey(item.kind, item.id);
         if (librarySelection.has(key)) {
-          removeLibraryAccount(item.kind, item.id);
+          if (countInstancesUsingLibraryAccount(item.kind, item.id) > 0) {
+            usedCount++;
+          }
         }
       });
-      librarySelection.clear();
-      renderAccountLibraryModal();
+
+      let message = `确定要删除选中的 ${count} 个账号吗？`;
+      if (usedCount > 0) {
+        message += `\n\n⚠️ 警告：其中 ${usedCount} 个账号正在被实例使用，删除后相关实例将无法正常工作。`;
+      }
+
+      showConfirmModal(
+        '确认批量删除',
+        message,
+        () => {
+          items.forEach((item) => {
+            const key = getLibrarySelectionKey(item.kind, item.id);
+            if (librarySelection.has(key)) {
+              doRemoveLibraryAccount(item.kind, item.id);
+            }
+          });
+          librarySelection.clear();
+          renderAccountLibraryModal();
+          showToast(`已删除 ${count} 个账号`, 'success');
+        },
+        '确认删除',
+        'bg-red-600 hover:bg-red-700'
+      );
     }
 
     function openAccountLibrary() {
@@ -2305,7 +3222,10 @@
       if (items.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="6" class="text-center text-slate-400 text-sm py-6">暂无账号</td>
+            <td colspan="6" class="text-center py-8">
+              <div class="text-slate-400 text-sm mb-3">暂无账号</div>
+              <p class="text-xs text-slate-500 mb-4">请先添加账号才能使用转发功能</p>
+            </td>
           </tr>
         `;
         return;
@@ -2317,6 +3237,8 @@
         const usernameRaw = getLibraryAccountUsername(item);
         const username = escapeHtml(usernameRaw || '—');
         const status = item.kind === 'telegram' ? (item.account.loginState || 'idle') : '—';
+        const showSync = item.kind === 'discord' || item.kind === 'telegram';
+        const syncFn = item.kind === 'discord' ? 'syncDiscordAccountData' : 'syncTelegramAccountData';
         return `
           <tr class="border-t border-slate-100">
             <td class="px-3 py-3">
@@ -2328,8 +3250,9 @@
             <td class="px-3 py-3 text-sm text-slate-700">${username}</td>
             <td class="px-3 py-3 text-xs text-slate-500">${status}</td>
             <td class="px-3 py-3 text-sm">
-              <button onclick="openLibraryEdit('${item.kind}', '${item.id}')" class="text-xs text-indigo-600 hover:text-indigo-800">编辑</button>
-              <button onclick="removeLibraryAccount('${item.kind}', '${item.id}')" class="ml-3 text-xs text-red-600 hover:text-red-800">删除</button>
+              ${showSync ? `<button onclick="${syncFn}('${item.id}')" class="text-xs text-emerald-600 hover:text-emerald-800">同步</button>` : ''}
+              <button onclick="openLibraryEdit('${item.kind}', '${item.id}')" class="ml-2 text-xs text-indigo-600 hover:text-indigo-800">编辑</button>
+              <button onclick="removeLibraryAccount('${item.kind}', '${item.id}')" class="ml-2 text-xs text-red-600 hover:text-red-800">删除</button>
             </td>
           </tr>
         `;
@@ -2386,7 +3309,7 @@
 
       return `
         <div class="border-t pt-4 border-slate-200">
-          <h3 class="text-sm font-medium text-slate-800 mb-3">账号选择（全局账号库）</h3>
+          <h3 class="text-sm font-medium text-slate-800 mb-3">账号选择</h3>
           <div class="grid gap-4 md:grid-cols-2">
             ${needsDiscordListener ? `
               <div>
@@ -2710,49 +3633,7 @@
 
             
 
-            ${forwardingType === 'discord-to-discord' && !acc.discordAccountId ? `
-            <!-- Discord→Discord 账号类型选择 -->
-            <div class="border-t pt-4 border-slate-200">
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">账号类型</label>
-                <select onchange="updateField('type', this.value)"
-                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                  <option value="selfbot" ${acc.type === 'selfbot' ? 'selected' : ''}>用户 Token（SelfBot）</option>
-                  <option value="bot" ${acc.type === 'bot' ? 'selected' : ''}>机器人 Token</option>
-                </select>
-              </div>
-            </div>
-            ` : ''}
 
-
-            <!-- Discord Token (所有Discord相关类型都需要) -->
-            ${(forwardingType === 'discord-to-discord' || forwardingType === 'discord-to-telegram' || forwardingType === 'discord-to-feishu') ? `
-            <div class="border-t pt-4 border-slate-200">
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Discord 连接</label>
-                <div class="flex flex-col gap-2">
-                  ${acc.discordAccountId ? '' : `
-                    <input type="password" value="${acc.token || ''}" onchange="updateField('token', this.value)"
-                      placeholder="OT..." class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
-                    <div class="flex gap-2">
-                      <button id="btn-discord-login" onclick="requestLogin()" ${isPending || isOnline ? 'disabled' : ''}
-                        class="px-3 py-1.5 text-xs font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                        ${isPending ? '连接中...' : isOnline ? '已连接' : '连接'}
-                      </button>
-                      <button id="btn-discord-stop" onclick="requestStop()" ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'disabled' : ''}
-                        class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${(!isOnline && !isPending && acc.loginState !== 'error') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                        断开
-                      </button>
-                    </div>
-                  `}
-                </div>
-                <div class="text-xs text-slate-500 mt-1">
-                  状态: <span id="status-discord-badge" class="px-2 py-0.5 rounded-full ${acc.loginState === 'online' ? 'bg-emerald-50 text-emerald-700' : acc.loginState === 'error' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-600'}">${acc.loginState || 'idle'}</span>
-                  <span id="status-discord-msg" class="ml-2">${acc.loginMessage || ''}</span>
-                </div>
-              </div>
-            </div>
-            ` : ''}
 
             
 
@@ -2904,24 +3785,38 @@
         <!-- 转发规则 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
-            <h2 class="font-semibold text-slate-800">
-              ${forwardingType === 'discord-to-discord' ? 'Discord 转发规则' :
-                forwardingType === 'discord-to-telegram' ? 'Discord → Telegram 转发规则' :
-                forwardingType === 'telegram-to-discord' ? 'Telegram → Discord 转发规则' :
-                forwardingType === 'telegram-to-telegram' ? 'Telegram → Telegram 转发规则' :
-                forwardingType === 'discord-to-feishu' ? 'Discord → 飞书 转发规则' :
-                forwardingType === 'x-to-discord' ? 'X → Discord 转发规则' :
-                'TruthSocial → Discord 转发规则'}
-            </h2>
-            <p class="text-xs text-slate-500 mt-1">
-              ${forwardingType === 'discord-to-discord' ? '配置Discord频道之间的转发映射关系' :
-                forwardingType === 'discord-to-telegram' ? '配置Discord消息转发到Telegram频道的映射关系' :
-                forwardingType === 'telegram-to-discord' ? '配置Telegram消息转发到Discord频道的映射关系' :
-                forwardingType === 'telegram-to-telegram' ? '配置Telegram消息转发到Telegram频道的映射关系' :
-                forwardingType === 'discord-to-feishu' ? '配置Discord消息转发到飞书的映射关系' :
-                forwardingType === 'x-to-discord' ? '配置 X 平台内容转发到 Discord 的规则' :
+            <div class="flex items-center justify-between">
+              <div>
+                <h2 class="font-semibold text-slate-800">
+                  ${forwardingType === 'discord-to-discord' ? 'Discord 转发规则' :
+                    forwardingType === 'discord-to-telegram' ? 'Discord → Telegram 转发规则' :
+                    forwardingType === 'telegram-to-discord' ? 'Telegram → Discord 转发规则' :
+                    forwardingType === 'telegram-to-telegram' ? 'Telegram → Telegram 转发规则' :
+                    forwardingType === 'discord-to-feishu' ? 'Discord → 飞书 转发规则' :
+                    forwardingType === 'x-to-discord' ? 'X → Discord 转发规则' :
+                    'TruthSocial → Discord 转发规则'}
+                </h2>
+                <p class="text-xs text-slate-500 mt-1">
+                  ${forwardingType === 'discord-to-discord' ? '配置Discord频道之间的转发映射关系' :
+                    forwardingType === 'discord-to-telegram' ? '配置Discord消息转发到Telegram频道的映射关系' :
+                    forwardingType === 'telegram-to-discord' ? '配置Telegram消息转发到Discord频道的映射关系' :
+                    forwardingType === 'telegram-to-telegram' ? '配置Telegram消息转发到Telegram频道的映射关系' :
+                    forwardingType === 'discord-to-feishu' ? '配置Discord消息转发到飞书的映射关系' :
+                    forwardingType === 'x-to-discord' ? '配置 X 平台内容转发到 Discord 的规则' :
                 '配置 TruthSocial 内容转发到 Discord 的规则'}
-            </p>
+                </p>
+              </div>
+              <!-- 全局规则填写模式切换 -->
+              ${forwardingType.startsWith('discord-') ? `
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-500">来源频道填写方式：</span>
+                <button onclick="toggleGlobalRuleInputMode()"
+                  class="px-3 py-1.5 text-xs rounded-lg transition-colors ${globalRuleInputMode === 'manual' ? 'bg-slate-100 text-slate-700' : 'bg-indigo-100 text-indigo-700'}">
+                  ${globalRuleInputMode === 'manual' ? '手动输入 ID' : '从列表选择'}
+                </button>
+              </div>
+              ` : ''}
+            </div>
           </div>
 
 
@@ -3463,8 +4358,7 @@
         return `
         <div class="flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
           <div class="flex gap-3 items-center flex-wrap">
-            <input type="text" value="${m.sourceChannelId || ''}" onchange="updateMapping(${idx + startIdx}, 'sourceChannelId', this.value)"
-              placeholder="${sourcePlaceholder}" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            ${renderSourceChannelInput(acc, m, idx + startIdx, forwardingType, sourcePlaceholder)}
             <span class="text-slate-300">${arrowIcon}</span>
             <input type="text" value="${m.targetChannelId || m.targetWebhookUrl || ''}" onchange="updateMapping(${idx + startIdx}, '${forwardingType === 'discord-to-discord' ? 'targetWebhookUrl' : forwardingType === 'discord-to-feishu' ? 'targetChannelId' : 'targetChannelId'}', this.value)"
               placeholder="${targetPlaceholder}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">
@@ -3772,13 +4666,13 @@
       `).join('');
     }
 
+    // ==================== Toast 通知系统 ====================
     function getToastContainer() {
       let container = document.getElementById('toastContainer');
       if (!container) {
         container = document.createElement('div');
         container.id = 'toastContainer';
-        container.className = 'fixed top-4 right-4 z-50 flex flex-col gap-2';
-        container.setAttribute('aria-live', 'polite');
+        container.className = 'fixed top-4 right-4 z-[9999] flex flex-col gap-2';
         document.body.appendChild(container);
       }
       return container;
@@ -3806,6 +4700,13 @@
           text: 'text-slate-700',
           icon: 'ℹ',
           iconBg: 'bg-slate-100 text-slate-600'
+        },
+        warning: {
+          bg: 'bg-white',
+          border: 'border-amber-200',
+          text: 'text-amber-700',
+          icon: '⚠',
+          iconBg: 'bg-amber-100 text-amber-600'
         }
       };
       const c = config[type] || config.success;
@@ -3835,7 +4736,6 @@
         showToast(`${type}已复制到剪贴板`, 'success');
       }).catch(err => {
         console.error('复制失败:', err);
-        // 降级到传统方法
         const textArea = document.createElement('textarea');
         textArea.value = text;
         document.body.appendChild(textArea);
@@ -5878,6 +6778,8 @@
       }
 
       document.getElementById('ruleConfigError').classList.add('hidden');
+      // 初始化频道选择器
+      initRuleChannelSelector();
       document.getElementById('ruleConfigModal').classList.remove('hidden');
     }
 
@@ -5886,6 +6788,137 @@
       currentRuleConfigIndex = -1;
       currentRuleConfigType = '';
     }
+
+    // 频道选择器相关函数
+    let cachedGuildsData = {};
+    let cachedChannelsData = {};
+
+    function toggleChannelSelectorExpand() {
+      const content = document.getElementById('channelSelectorContent');
+      const toggleText = document.getElementById('channelSelectorToggleText');
+      if (content.classList.contains('hidden')) {
+        content.classList.remove('hidden');
+        toggleText.textContent = '收起列表';
+        // 展开时初始化账号选择器
+        initRuleAccountSelector();
+      } else {
+        content.classList.add('hidden');
+        toggleText.textContent = '展开列表';
+      }
+    }
+
+    // 初始化账号选择器
+    function initRuleAccountSelector() {
+      const accountSelect = document.getElementById('ruleAccountSelect');
+      const guildSelect = document.getElementById('ruleGuildSelect');
+      const channelSelect = document.getElementById('ruleChannelSelect');
+
+      // 重置选择器
+      guildSelect.innerHTML = '<option value="">-- 请先选择账号 --</option>';
+      channelSelect.innerHTML = '<option value="">-- 请先选择服务器 --</option>';
+
+      // 获取账号库中的 Discord 账号
+      const discordAccounts = state.discordAccounts || [];
+      if (discordAccounts.length === 0) {
+        accountSelect.innerHTML = '<option value="">-- 请先添加Discord账号 --</option>';
+        return;
+      }
+
+      accountSelect.innerHTML = '<option value="">-- 选择账号 --</option>' +
+        discordAccounts.map(acc => {
+          const label = acc.syncedUser?.tag || acc.syncedUser?.username || acc.name || '未命名账号';
+          return `<option value="${acc.id}">${escapeHtml(label)}</option>`;
+        }).join('');
+    }
+
+    // 账号选择变化时加载服务器列表
+    async function onRuleAccountChange(accountId) {
+      const guildSelect = document.getElementById('ruleGuildSelect');
+      const channelSelect = document.getElementById('ruleChannelSelect');
+
+      // 重置选择器
+      channelSelect.innerHTML = '<option value="">-- 请先选择服务器 --</option>';
+
+      if (!accountId) {
+        guildSelect.innerHTML = '<option value="">-- 请先选择账号 --</option>';
+        return;
+      }
+
+      guildSelect.innerHTML = '<option value="">-- 加载中... --</option>';
+
+      // 从缓存获取服务器列表
+      try {
+        const res = await fetch('/api/metadata/discord/guilds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId })
+        });
+        const data = await res.json();
+        const guilds = data.guilds || [];
+
+        if (guilds.length === 0) {
+          guildSelect.innerHTML = '<option value="">-- 请先同步此账号数据 --</option>';
+          return;
+        }
+
+        cachedGuildsData[accountId] = guilds;
+        guildSelect.innerHTML = '<option value="">-- 选择服务器 --</option>' +
+          guilds.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+      } catch (e) {
+        guildSelect.innerHTML = '<option value="">-- 获取失败，请先同步 --</option>';
+      }
+    }
+
+    async function initRuleChannelSelector() {
+      // 已废弃，改用 initRuleAccountSelector
+      initRuleAccountSelector();
+    }
+
+    async function onRuleGuildChange(guildId) {
+      const channelSelect = document.getElementById('ruleChannelSelect');
+      const accountSelect = document.getElementById('ruleAccountSelect');
+
+      if (!guildId) {
+        channelSelect.innerHTML = '<option value="">-- 请先选择服务器 --</option>';
+        return;
+      }
+
+      // 使用用户选择的账号，而不是实例中的账号
+      const discordAccountId = accountSelect?.value;
+      if (!discordAccountId) {
+        channelSelect.innerHTML = '<option value="">-- 请先选择账号 --</option>';
+        return;
+      }
+
+      channelSelect.innerHTML = '<option value="">-- 加载中... --</option>';
+
+      try {
+        const res = await fetch('/api/metadata/discord/channels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: discordAccountId, guildId })
+        });
+        const data = await res.json();
+        const channels = data.channels || [];
+
+        if (channels.length === 0) {
+          channelSelect.innerHTML = '<option value="">-- 无可用频道 --</option>';
+          return;
+        }
+
+        const textChannels = channels.filter(c => c.type === 0 || c.type === 5);
+        channelSelect.innerHTML = '<option value="">-- 选择频道 --</option>' +
+          textChannels.map(c => `<option value="${c.id}"># ${escapeHtml(c.name)}</option>`).join('');
+      } catch (e) {
+        channelSelect.innerHTML = '<option value="">-- 获取失败 --</option>';
+      }
+    }
+
+    function onRuleChannelSelect(channelId) {
+      if (!channelId) return;
+      showToast(`已选择频道 ID: ${channelId}，请复制到源频道输入框`, 'info');
+    }
+
 
     async function saveRuleConfig() {
       if (currentRuleConfigIndex < 0) return;
@@ -7608,14 +8641,147 @@
       render();
     }
 
-    function showHelp() {
-      document.getElementById('helpPanel').classList.remove('hidden');
+    // ==================== 新手教程函数 ====================
+    function startTutorial() {
+      const driver = window.driver.js.driver;
+
+      const driverObj = driver({
+        showProgress: true,
+        animate: true,
+        allowClose: true,
+        overlayClickNext: false,
+        stagePadding: 10,
+        popoverClass: 'driverjs-theme',
+        nextBtnText: '下一步',
+        prevBtnText: '上一步',
+        doneBtnText: '完成教程',
+        progressText: '{{current}} / {{total}}',
+        steps: [
+          {
+            popover: {
+              title: '欢迎使用转发狗！',
+              description: '<div class="text-left"><p>转发狗是一款强大的消息转发工具，支持：</p><ul class="list-disc pl-4 mt-2 space-y-1"><li>Discord ↔ Discord</li><li>Discord ↔ Telegram</li><li>Telegram ↔ Telegram</li><li>Discord → 飞书</li><li>X/TruthSocial → Discord</li></ul><p class="mt-2">让我们开始配置吧！</p></div>',
+              side: 'center',
+              align: 'center'
+            }
+          },
+          {
+            element: '#accountLibraryBtn',
+            popover: {
+              title: '第一步：配置账号库',
+              description: '账号库是所有转发功能的基础。<br><br><b>👆 请点击「账号库」按钮继续</b>',
+              side: 'bottom',
+              align: 'start',
+              showButtons: ['close']
+            },
+            onHighlightStarted: () => {
+              const btn = document.getElementById('accountLibraryBtn');
+              if (btn) {
+                btn._tutorialClickHandler = () => {
+                  openAccountLibrary();
+                  setTimeout(() => driverObj.moveNext(), 300);
+                };
+                btn.addEventListener('click', btn._tutorialClickHandler, { once: true });
+              }
+            },
+            onDeselected: () => {
+              const btn = document.getElementById('accountLibraryBtn');
+              if (btn && btn._tutorialClickHandler) {
+                btn.removeEventListener('click', btn._tutorialClickHandler);
+              }
+            }
+          },
+          {
+            element: '#libraryAddType',
+            popover: {
+              title: '选择账号类型',
+              description: '在这里选择要添加的账号类型：Discord、Telegram、X 或 TruthSocial。',
+              side: 'bottom',
+              align: 'start'
+            },
+            onHighlightStarted: () => {
+              if (!document.getElementById('accountLibraryModal')?.classList.contains('hidden') === false) {
+                openAccountLibrary();
+              }
+            }
+          },
+          {
+            element: 'button[onclick="addLibraryAccountFromSelect()"]',
+            popover: {
+              title: '新建账号',
+              description: '输入账号名称后，点击此按钮创建新账号。创建后会弹出编辑窗口，填写账号凭证信息。',
+              side: 'bottom',
+              align: 'start'
+            }
+          },
+          {
+            element: 'button[onclick="syncAllAccounts()"]',
+            popover: {
+              title: '一键同步',
+              description: '添加账号后，点击此按钮同步所有账号的数据。同步后可以直接从列表选择频道，无需手动输入 ID。',
+              side: 'bottom',
+              align: 'start'
+            }
+          },
+          {
+            popover: {
+              title: '账号类型说明',
+              description: '<div class="text-left"><p class="font-semibold mb-2">支持的账号类型：</p><ul class="list-disc pl-4 space-y-1"><li><b>Discord Bot</b>：机器人账号，推荐使用</li><li><b>Discord 用户</b>：Selfbot 模式</li><li><b>Telegram Bot</b>：从 @BotFather 获取</li><li><b>Telegram 用户</b>：需要 API ID/Hash</li></ul></div>',
+              side: 'center',
+              align: 'center'
+            }
+          },
+          {
+            element: '#accountTabs',
+            popover: {
+              title: '转发实例',
+              description: '每个实例是一个独立的转发配置。您可以创建多个实例来管理不同的转发任务，每个实例可以使用不同的账号和规则。',
+              side: 'bottom',
+              align: 'start'
+            }
+          },
+          {
+            element: '#tutorialBtn',
+            popover: {
+              title: '新手教程',
+              description: '随时点击这个按钮可以重新查看新手教程，帮助您快速上手。',
+              side: 'bottom',
+              align: 'start'
+            }
+          },
+          {
+            element: 'button[onclick="exportConfig()"]',
+            popover: {
+              title: '导入导出配置',
+              description: '使用导入/导出功能可以备份您的配置，或在不同设备间迁移配置。导出的文件包含所有账号和规则信息。',
+              side: 'bottom',
+              align: 'start'
+            }
+          },
+          {
+            element: '#configForm',
+            popover: {
+              title: '配置表单',
+              description: '这是主要的配置区域。在这里您可以设置转发类型、账号信息、转发规则、关键词过滤等所有功能。',
+              side: 'top',
+              align: 'center'
+            }
+          },
+          {
+            popover: {
+              title: '教程完成！',
+              description: '<div class="text-left"><p>恭喜您完成了新手教程！</p><p class="mt-2">快速开始步骤：</p><ol class="list-decimal pl-4 mt-1 space-y-1"><li>打开账号库，添加账号</li><li>同步账号数据</li><li>选择转发类型</li><li>添加转发规则</li><li>启动实例</li></ol><p class="mt-2 text-sm text-slate-500">随时点击"新手教程"按钮可以重新查看。祝您使用愉快！</p></div>',
+              side: 'center',
+              align: 'center'
+            }
+          }
+        ]
+      });
+
+      driverObj.drive();
     }
 
-    function hideHelp() {
-      document.getElementById('helpPanel').classList.add('hidden');
-    }
-
+    // ==================== 配置导入导出函数 ====================
     async function exportConfig() {
       try {
         const res = await fetch('/api/config?includeSecrets=1');
@@ -7655,7 +8821,6 @@
         const text = await file.text();
         const importedConfig = JSON.parse(text);
 
-        // 验证配置格式
         if (!importedConfig.accounts || !Array.isArray(importedConfig.accounts)) {
           alert('配置文件格式错误：缺少 accounts 数组');
           return;
@@ -7665,7 +8830,6 @@
           return;
         }
 
-        // 发送到后端
         const res = await fetch('/api/config', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -7691,7 +8855,6 @@
         if (!reloadScheduled) {
           suspendAutoSave = prevSuspend;
         }
-        // 清空文件输入，允许再次选择同一文件
         event.target.value = '';
       }
     }
@@ -8160,5 +9323,21 @@
       </div>
     </div>
   </div>
+
+  <!-- JS 模块暂时禁用，待完善后再启用
+  <script src="/js/utils.js"></script>
+  <script src="/js/toast.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/config.js"></script>
+  <script src="/js/account-library.js"></script>
+  <script src="/js/telegram.js"></script>
+  <script src="/js/discord.js"></script>
+  <script src="/js/status-polling.js"></script>
+  <script src="/js/watermark.js"></script>
+  <script src="/js/rule-config.js"></script>
+  <script src="/js/render.js"></script>
+  <script src="/js/tutorial.js"></script>
+  <script src="/js/app.js"></script>
+  -->
 </body>
 </html>

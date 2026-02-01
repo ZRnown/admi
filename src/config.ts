@@ -68,6 +68,8 @@ export interface TelegramAccountConfig {
   loginState?: string;
   loginMessage?: string;
   enabled?: boolean;
+  syncedUser?: Record<string, any>;
+  lastSyncTime?: string;
 }
 
 export interface DiscordAccountLibrary {
@@ -79,6 +81,8 @@ export interface DiscordAccountLibrary {
   password?: string;
   totpSecret?: string;
   proxyUrl?: string;
+  syncedUser?: Record<string, any>;
+  lastSyncTime?: string;
 }
 
 export interface XAccountLibrary {
