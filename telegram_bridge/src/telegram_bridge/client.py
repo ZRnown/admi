@@ -478,7 +478,7 @@ class TelegramClientManager:
                                 await self.session_manager.save_session_string(account_id, session_string)
 
                             client = TelegramClient(
-                                session_string,
+                                StringSession(session_string),
                                 account.api_id,
                                 account.api_hash,
                                 proxy=account.proxy_url

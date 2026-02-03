@@ -373,7 +373,11 @@ interface FrontendAccount {
   };
 }
 
-interface FrontendDiscordAccountLibrary extends DiscordAccountLibrary {}
+interface FrontendDiscordAccountLibrary
+  extends Omit<DiscordAccountLibrary, "guildsCount" | "channelsCount"> {
+  guildsCount?: number | string;
+  channelsCount?: number | string;
+}
 
 interface FrontendTelegramAccountLibrary extends Omit<TelegramAccountConfig, "apiId"> {
   apiId?: number | string;
