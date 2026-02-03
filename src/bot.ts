@@ -36,6 +36,206 @@ export type Client<Ready extends boolean = boolean> =
   | SelfBotClient<Ready>
   | BotClient<Ready>;
 
+export interface BridgeDiscordMessagePayload {
+  accountId?: string;
+  id: string;
+  channelId: string;
+  guildId?: string;
+  content?: string;
+  createdTimestamp?: number;
+  type?: number;
+  system?: boolean;
+  webhookId?: string | null;
+  author?: {
+    id?: string;
+    username?: string;
+    displayName?: string;
+    tag?: string;
+    bot?: boolean;
+    avatarUrl?: string;
+  };
+  member?: {
+    displayName?: string;
+    roles?: Array<{ id: string; name?: string }>;
+  };
+  attachments?: Array<{
+    id?: string;
+    url?: string;
+    filename?: string;
+    contentType?: string;
+    size?: number;
+    width?: number;
+    height?: number;
+  }>;
+  embeds?: any[];
+  mentions?: {
+    users?: Array<{ id: string; username?: string; displayName?: string }>;
+    roles?: Array<{ id: string; name?: string }>;
+    channels?: Array<{ id: string; name?: string }>;
+  };
+  reference?: {
+    messageId?: string | null;
+    channelId?: string | null;
+  } | null;
+  referenceMessage?: {
+    id?: string;
+    content?: string | null;
+    createdTimestamp?: number | null;
+    author?: {
+      id?: string;
+      username?: string;
+      displayName?: string;
+      avatarUrl?: string | null;
+    };
+    member?: {
+      displayName?: string | null;
+    };
+    attachments?: Array<{
+      id?: string;
+      url?: string;
+      filename?: string;
+      contentType?: string;
+      size?: number;
+      width?: number;
+      height?: number;
+    }>;
+    embeds?: any[];
+  };
+}
+
+function buildBridgeMessage(payload: BridgeDiscordMessagePayload): any {
+  const authorAvatarUrl = payload.author?.avatarUrl || undefined;
+  const attachments = new Map<string, any>();
+  for (const att of payload.attachments || []) {
+    if (!att) continue;
+    const key = att.id || att.url || att.filename || `att_${attachments.size}`;
+    attachments.set(key, {
+      id: key,
+      url: att.url,
+      proxyURL: att.url,
+      name: att.filename,
+      contentType: att.contentType,
+      size: att.size,
+      width: att.width,
+      height: att.height,
+    });
+  }
+
+  const users = new Map<string, any>();
+  const roles = new Map<string, any>();
+  const channels = new Map<string, any>();
+  for (const user of payload.mentions?.users || []) {
+    if (!user?.id) continue;
+    users.set(user.id, {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName || user.username,
+    });
+  }
+  for (const role of payload.mentions?.roles || []) {
+    if (!role?.id) continue;
+    roles.set(role.id, {
+      id: role.id,
+      name: role.name || role.id,
+    });
+  }
+  for (const channel of payload.mentions?.channels || []) {
+    if (!channel?.id) continue;
+    const channelObj: any = {
+      id: channel.id,
+      name: channel.name || channel.id,
+    };
+    channelObj.fetch = async () => channelObj;
+    channels.set(channel.id, channelObj);
+  }
+
+  const roleCache = new Map<string, any>();
+  for (const role of payload.member?.roles || []) {
+    if (!role?.id) continue;
+    roleCache.set(role.id, { id: role.id, name: role.name || role.id });
+  }
+
+  const author = {
+    id: payload.author?.id,
+    username: payload.author?.username,
+    tag: payload.author?.tag || payload.author?.username,
+    bot: payload.author?.bot,
+    avatarUrl: authorAvatarUrl,
+    displayAvatarURL: () => authorAvatarUrl,
+    avatarURL: () => authorAvatarUrl,
+  };
+
+  let referenceMessage: any = undefined;
+  if (payload.referenceMessage) {
+    const refAttachments = new Map<string, any>();
+    for (const att of payload.referenceMessage.attachments || []) {
+      if (!att) continue;
+      const key = att.id || att.url || att.filename || `ref_att_${refAttachments.size}`;
+      refAttachments.set(key, {
+        id: key,
+        url: att.url,
+        proxyURL: att.url,
+        name: att.filename,
+        contentType: att.contentType,
+        size: att.size,
+        width: att.width,
+        height: att.height,
+      });
+    }
+    const refAuthorAvatarUrl = payload.referenceMessage.author?.avatarUrl || undefined;
+    referenceMessage = {
+      id: payload.referenceMessage.id,
+      content: payload.referenceMessage.content || "",
+      author: {
+        id: payload.referenceMessage.author?.id,
+        username: payload.referenceMessage.author?.username,
+        tag: payload.referenceMessage.author?.username,
+        displayName: payload.referenceMessage.author?.displayName || payload.referenceMessage.author?.username,
+        avatarUrl: refAuthorAvatarUrl,
+        displayAvatarURL: () => refAuthorAvatarUrl,
+        avatarURL: () => refAuthorAvatarUrl,
+      },
+      member: {
+        displayName: payload.referenceMessage.member?.displayName || payload.referenceMessage.author?.displayName,
+      },
+      attachments: refAttachments,
+      embeds: payload.referenceMessage.embeds || [],
+      createdTimestamp: payload.referenceMessage.createdTimestamp || undefined,
+    };
+  }
+
+  const built = {
+    id: payload.id,
+    channelId: payload.channelId,
+    content: payload.content || "",
+    author,
+    member: {
+      displayName: payload.member?.displayName || payload.author?.displayName,
+      roles: { cache: roleCache },
+    },
+    attachments,
+    embeds: payload.embeds || [],
+    mentions: {
+      users,
+      channels,
+      roles,
+    },
+    reference: payload.reference?.messageId
+      ? { messageId: payload.reference.messageId, channelId: payload.reference.channelId }
+      : undefined,
+    createdTimestamp: payload.createdTimestamp,
+    webhookId: payload.webhookId,
+    system: payload.system,
+    type: payload.type ?? 0,
+  } as any;
+
+  if (referenceMessage) {
+    built.fetchReference = async () => referenceMessage;
+  }
+
+  return built;
+}
+
 function getStatsAccountId(config: any): string {
   if (config && typeof config.id === "string" && config.id.trim()) {
     return config.id.trim();
@@ -334,6 +534,8 @@ export class Bot {
   private feishuSendersBySource?: Map<string, FeishuSender>;
   config: Config;
   client: Client;
+  // 记录频道最近活跃时间（用于主备模式）
+  private static channelActivity = new Map<string, number>();
   // 源消息ID -> 目标消息ID映射（用于构建目标内跳转链接）
   // 使用带大小限制的 Map，防止内存无限增长
   private sourceToTarget = new Map<string, { channelId: string; messageId: string; timestamp: number }>();
@@ -371,7 +573,7 @@ export class Bot {
     senderBot: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot[]>,
     feishuSendersBySource?: Map<string, FeishuSender>,
-    options?: { sharedClient?: boolean },
+    options?: { sharedClient?: boolean; externalMessageSource?: boolean },
   ) {
     this.config = config;
     this.senderBot = senderBot;
@@ -393,53 +595,56 @@ export class Bot {
       }
     }
 
-    const shouldResetListeners = options?.sharedClient !== true;
+    const externalMessageSource = options?.externalMessageSource === true;
+    const shouldResetListeners = options?.sharedClient !== true && !externalMessageSource;
     if (shouldResetListeners) {
       // 移除所有旧的事件监听器，避免重复注册
-      (this.client as any).removeAllListeners("ready");
-      (this.client as any).removeAllListeners("error");
-      (this.client as any).removeAllListeners("shardError");
-      (this.client as any).removeAllListeners("warn");
-      (this.client as any).removeAllListeners("messageCreate");
+      (this.client as any).removeAllListeners?.("ready");
+      (this.client as any).removeAllListeners?.("error");
+      (this.client as any).removeAllListeners?.("shardError");
+      (this.client as any).removeAllListeners?.("warn");
+      (this.client as any).removeAllListeners?.("messageCreate");
     }
 
-    // 使用 clientReady 替代 ready（Discord.js v15 兼容）
-    const readyHandler = (clientArg: Client<true>) => {
-      const msg = `Logged into Discord as @${clientArg.user?.tag}!`;
-      console.log(msg);
-      this.logger.info(msg);
-    };
-    // 同时监听 ready 和 clientReady 以兼容不同版本
-    (this.client as any).on("clientReady", readyHandler);
-    (this.client as any).on("ready", readyHandler);
+    if (!externalMessageSource) {
+      // 使用 clientReady 替代 ready（Discord.js v15 兼容）
+      const readyHandler = (clientArg: Client<true>) => {
+        const msg = `Logged into Discord as @${clientArg.user?.tag}!`;
+        console.log(msg);
+        this.logger.info(msg);
+      };
+      // 同时监听 ready 和 clientReady 以兼容不同版本
+      (this.client as any).on?.("clientReady", readyHandler);
+      (this.client as any).on?.("ready", readyHandler);
 
-    // 监听客户端错误，避免 ECONNRESET 直接导致进程崩溃
-    const errorHandler = (err: any) => {
-      this.logger.error(`client error: ${String(err?.stack || err)}`);
-    };
-    const shardErrorHandler = (err: any) => {
-      this.logger.error(`shard error: ${String(err?.stack || err)}`);
-    };
-    const warnHandler = (info: any) => {
-      this.logger.debug(`client warn: ${String(info)}`);
-    };
-    (this.client as any).on("error", errorHandler);
-    (this.client as any).on?.("shardError", shardErrorHandler);
-    (this.client as any).on("warn", warnHandler);
+      // 监听客户端错误，避免 ECONNRESET 直接导致进程崩溃
+      const errorHandler = (err: any) => {
+        this.logger.error(`client error: ${String(err?.stack || err)}`);
+      };
+      const shardErrorHandler = (err: any) => {
+        this.logger.error(`shard error: ${String(err?.stack || err)}`);
+      };
+      const warnHandler = (info: any) => {
+        this.logger.debug(`client warn: ${String(info)}`);
+      };
+      (this.client as any).on?.("error", errorHandler);
+      (this.client as any).on?.("shardError", shardErrorHandler);
+      (this.client as any).on?.("warn", warnHandler);
 
-    const messageHandler = async (message: Message) => {
-      // 简化监听器：所有处理逻辑都在 processAndSend 中
-      await this.processAndSend(message);
-    };
-    (this.client as any).on("messageCreate", messageHandler);
+      const messageHandler = async (message: Message) => {
+        // 简化监听器：所有处理逻辑都在 processAndSend 中
+        await this.processAndSend(message);
+      };
+      (this.client as any).on?.("messageCreate", messageHandler);
 
-    this.attachedListeners = {
-      readyHandler,
-      errorHandler,
-      shardErrorHandler,
-      warnHandler,
-      messageHandler,
-    };
+      this.attachedListeners = {
+        readyHandler,
+        errorHandler,
+        shardErrorHandler,
+        warnHandler,
+        messageHandler,
+      };
+    }
 
     // 定期保存映射（每 5 分钟保存一次，只在数据变动时保存）
     this.saveMappingTimer = setInterval(() => {
@@ -523,6 +728,21 @@ export class Bot {
     this.logger.info("runtime config updated: channelWebhooks / blockedKeywords / OCR 已刷新");
   }
 
+  setSelfUser(user?: { id?: string; username?: string; tag?: string; displayName?: string }) {
+    if (!user) return;
+    const tag = user.tag || user.username || user.displayName;
+    (this.client as any).user = {
+      id: user.id,
+      username: user.username || user.displayName,
+      tag,
+    };
+  }
+
+  async handleExternalMessage(payload: BridgeDiscordMessagePayload) {
+    const message = buildBridgeMessage(payload);
+    await this.processAndSend(message);
+  }
+
   private getSendersForChannel(channelId: string): SenderBot[] {
     return this.senderBotsBySource?.get(channelId) || [];
   }
@@ -601,6 +821,11 @@ export class Bot {
     watermark?: WatermarkConfig;
     watermarkSecondary?: WatermarkConfig;
     watermarks?: WatermarkConfig[];
+    standbyMode?: {
+      enabled: boolean;
+      mainChannelId: string;
+      cooldownSeconds: number;
+    };
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
@@ -643,6 +868,7 @@ export class Bot {
         watermark: undefined,
         watermarkSecondary: undefined,
         watermarks: undefined,
+        standbyMode: undefined,
       };
     }
     return {
@@ -677,6 +903,7 @@ export class Bot {
       watermark: rule.watermark,
       watermarkSecondary: rule.watermarkSecondary,
       watermarks: rule.watermarks,
+      standbyMode: rule.standbyMode,
     };
   }
 
@@ -780,6 +1007,9 @@ export class Bot {
       await this.loadMapping();
     }
 
+    // 记录频道活跃时间（主备模式）
+    Bot.channelActivity.set(message.channelId, Date.now());
+
     // 快速检查：路由映射是否存在，不存在则快速返回
     const sendersForThis = this.getSendersForChannel(message.channelId);
     const feishuSenderForThis = this.getFeishuSenderForChannel(message.channelId);
@@ -824,6 +1054,26 @@ export class Bot {
 
     // 获取规则级别配置（提前获取，用于过滤与OCR检查）
     const ruleConfig = this.getRuleLevelConfig(message.channelId);
+    if (ruleConfig.standbyMode?.enabled && ruleConfig.standbyMode.mainChannelId) {
+      const mainId = ruleConfig.standbyMode.mainChannelId;
+      if (mainId && mainId !== message.channelId) {
+        const cooldownMs = Math.max(1, ruleConfig.standbyMode.cooldownSeconds || 60) * 1000;
+        const lastMainTime = Bot.channelActivity.get(mainId) || 0;
+        const timeDiff = Date.now() - lastMainTime;
+        if (lastMainTime > 0 && timeDiff < cooldownMs) {
+          const remaining = ((cooldownMs - timeDiff) / 1000).toFixed(1);
+          this.logger.info(
+            `[STANDBY] 跳过备用频道消息: 主频道(${mainId})在 ${remaining}s 内活跃 (阈值 ${ruleConfig.standbyMode.cooldownSeconds || 60}s)`,
+          );
+          return;
+        }
+        if (lastMainTime > 0) {
+          this.logger.info(
+            `[STANDBY] 触发备用频道转发: 主频道已静默 ${(timeDiff / 1000).toFixed(0)}s`,
+          );
+        }
+      }
+    }
     const caseInsensitive = this.config.caseInsensitiveKeywords ?? true;
     const stripEnglish = this.config.stripEnglish === true || ruleConfig.stripEnglish === true;
     const stripChinese = this.config.stripChinese === true || ruleConfig.stripChinese === true;
@@ -1236,7 +1486,10 @@ export class Bot {
     let ctaLine: string | undefined;
     if (message.reference) {
       try {
-        const ref = await message.fetchReference();
+        if (typeof (message as any).fetchReference !== "function") {
+          throw new Error("fetchReference unavailable");
+        }
+        const ref = await (message as any).fetchReference();
         const mappedEntry = this.sourceToTarget.get(ref.id);
         let mapped = mappedEntry ? { channelId: mappedEntry.channelId, messageId: mappedEntry.messageId } : undefined;
         // 不重发，改为：若无映射，尝试在目标历史中扫描已有消息并建立映射
@@ -1289,8 +1542,13 @@ export class Bot {
           replyContentForStyle2 = ref.content || (ref.attachments?.size > 0 ? "[附件]" : ref.embeds?.length > 0 ? "[嵌入信息]" : "");
         }
       } catch (err) {
-        console.error(err);
-        this.logger.error(`fetchReference failed: ${String(err)}`);
+        const msg = String(err);
+        if (msg.includes("fetchReference unavailable")) {
+          // 外部消息源无法获取引用消息时，跳过回复映射
+        } else {
+          console.error(err);
+          this.logger.error(`fetchReference failed: ${msg}`);
+        }
       }
     }
 
@@ -1778,6 +2036,10 @@ export class Bot {
   // 在目标频道历史消息中尝试解析出某个 sourceId 的映射
   private async tryResolveMappingFromTarget(sourceId: string, senderForThis?: SenderBot): Promise<{ channelId: string; messageId: string } | undefined> {
     try {
+      const clientAny = this.client as any;
+      if (!clientAny || !clientAny.channels || typeof clientAny.channels.fetch !== "function") {
+        return undefined;
+      }
       let configured: string[] = [];
       if (this.config.historyScan?.channels && this.config.historyScan.channels.length > 0) {
         configured = this.config.historyScan.channels;
@@ -1888,13 +2150,17 @@ export class Bot {
 
     for (const channel of channels) {
       try {
-        const fetchedChannel = await channel.fetch();
-
-        text = text.replace(
-          `<#${channel.id}>`,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          `#${(fetchedChannel as any).name}`
-        );
+        const anyChannel: any = channel as any;
+        if (anyChannel?.name) {
+          text = text.replace(`<#${channel.id}>`, `#${anyChannel.name}`);
+          continue;
+        }
+        if (typeof anyChannel?.fetch === "function") {
+          const fetchedChannel = await anyChannel.fetch();
+          text = text.replace(`<#${channel.id}>`, `#${(fetchedChannel as any).name}`);
+          continue;
+        }
+        text = text.replace(`<#${channel.id}>`, `#${channel.id}`);
       } catch (e) {
         this.logger.error(`renderMentions failed to fetch channel: ${String(e)}`);
       }

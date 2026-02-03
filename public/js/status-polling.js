@@ -56,6 +56,36 @@ function startStatusPolling() {
           }
         }
 
+        // 更新 Telegram Bot 状态
+        const botHoldUntil = getDisconnectHold(`telegram-bot:${localAcc.id}`);
+        const remoteBotState = remoteAcc.telegramBotState || 'idle';
+        const remoteBotMessage = remoteAcc.telegramBotMessage || '';
+        if (shouldApplyRemoteState(localAcc.telegramBotState, remoteBotState, botHoldUntil)) {
+          const botChanged = remoteBotState !== localAcc.telegramBotState || remoteBotMessage !== localAcc.telegramBotMessage;
+          if (botChanged) {
+            localAcc.telegramBotState = remoteBotState;
+            localAcc.telegramBotMessage = remoteBotMessage;
+            if (isActive) {
+              updateStatusElement('telegram-bot', remoteBotState, remoteBotMessage);
+            }
+          }
+        }
+
+        // 更新 Telegram Client 状态
+        const clientHoldUntil = getDisconnectHold(`telegram-client:${localAcc.id}`);
+        const remoteClientState = remoteAcc.telegramClientState || 'idle';
+        const remoteClientMessage = remoteAcc.telegramClientMessage || '';
+        if (shouldApplyRemoteState(localAcc.telegramClientState, remoteClientState, clientHoldUntil)) {
+          const clientChanged = remoteClientState !== localAcc.telegramClientState || remoteClientMessage !== localAcc.telegramClientMessage;
+          if (clientChanged) {
+            localAcc.telegramClientState = remoteClientState;
+            localAcc.telegramClientMessage = remoteClientMessage;
+            if (isActive) {
+              updateStatusElement('telegram-client', remoteClientState, remoteClientMessage);
+            }
+          }
+        }
+
         // 更新账号卡片状态
         updateAccountCardStatus(localAcc);
       });

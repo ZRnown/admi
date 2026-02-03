@@ -50,8 +50,10 @@ export class TelegramBridgeManager extends EventEmitter {
         process.env.PYTHON,
         process.env.PYTHON_BIN,
         process.env.PYTHON_EXECUTABLE,
-        'python3',
-        'python',
+        "python3.11",
+        "python3.10",
+        "python3",
+        "python",
       ].filter(Boolean) as string[];
       const pythonBin = pythonCandidates.find((bin) => {
         const result = spawnSync(bin, ['-V'], { stdio: 'ignore' });
@@ -292,3 +294,225 @@ export class TelegramBridgeManager extends EventEmitter {
 
 // 创建全局实例
 export const telegramBridgeManager = new TelegramBridgeManager();
+
+export class DiscordBridgeManager extends EventEmitter {
+  private process: ChildProcess | null = null;
+  private processInfo: ProcessInfo | null = null;
+  private restartAttempts = 0;
+  private maxRestartAttempts = 5;
+  private restartDelay = 5000;
+  private isShuttingDown = false;
+
+  async start(): Promise<{ success: boolean; message: string; pid?: number }> {
+    try {
+      if (this.process && !this.process.killed) {
+        return { success: false, message: "进程已在运行中" };
+      }
+
+      const bridgePath = path.join(process.cwd(), "discord_bridge");
+      const srcPath = path.join(bridgePath, "src");
+      const mainScript = path.join(bridgePath, "src", "discord_bridge", "main.py");
+
+      try {
+        await fs.access(mainScript);
+      } catch {
+        return { success: false, message: "Discord Bridge主程序不存在" };
+      }
+
+      const pythonCandidates = [
+        process.env.PYTHON,
+        process.env.PYTHON_BIN,
+        process.env.PYTHON_EXECUTABLE,
+        "python3.11",
+        "python3.10",
+        "python3",
+        "python",
+      ].filter(Boolean) as string[];
+      const pythonBin = pythonCandidates.find((bin) => {
+        const result = spawnSync(bin, ["-V"], { stdio: "ignore" });
+        return !result.error;
+      });
+      if (!pythonBin) {
+        return { success: false, message: "未找到可用的Python可执行文件，请安装python3或设置PYTHON环境变量" };
+      }
+
+      this.process = spawn(pythonBin, ["-B", "-m", "discord_bridge.main"], {
+        cwd: srcPath,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPATH: path.join(bridgePath, "src") },
+      });
+
+      if (!this.process.pid) {
+        return { success: false, message: "无法启动进程" };
+      }
+
+      this.processInfo = {
+        pid: this.process.pid,
+        startTime: Date.now(),
+        status: "running",
+        restartCount: this.restartAttempts,
+        lastRestartTime: Date.now(),
+      };
+
+      this.setupProcessListeners();
+      this.restartAttempts = 0;
+
+      this.emit("started", this.processInfo);
+      console.log(`[ProcessManager] Discord Bridge started with PID: ${this.process.pid}`);
+
+      return { success: true, message: "Discord Bridge启动成功", pid: this.process.pid };
+    } catch (error: any) {
+      console.error(`[ProcessManager] Failed to start Discord Bridge: ${error.message}`);
+      return { success: false, message: `启动失败: ${error.message}` };
+    }
+  }
+
+  async stop(): Promise<{ success: boolean; message: string }> {
+    try {
+      this.isShuttingDown = true;
+
+      if (!this.process || this.process.killed) {
+        return { success: false, message: "进程未在运行" };
+      }
+
+      this.process.kill("SIGTERM");
+
+      const timeout = setTimeout(() => {
+        if (this.process && !this.process.killed) {
+          console.log("[ProcessManager] Force killing process...");
+          this.process.kill("SIGKILL");
+        }
+      }, 10000);
+
+      return new Promise((resolve) => {
+        if (this.process) {
+          this.process.on("exit", (code) => {
+            clearTimeout(timeout);
+            this.process = null;
+            if (this.processInfo) {
+              this.processInfo.status = "stopped";
+            }
+            this.emit("stopped", code);
+            console.log(`[ProcessManager] Discord Bridge stopped with code: ${code}`);
+            resolve({ success: true, message: "Discord Bridge已停止" });
+          });
+
+          this.process.on("error", (error) => {
+            clearTimeout(timeout);
+            console.error(`[ProcessManager] Error stopping process: ${error.message}`);
+            resolve({ success: false, message: `停止失败: ${error.message}` });
+          });
+        } else {
+          clearTimeout(timeout);
+          resolve({ success: false, message: "进程不存在" });
+        }
+      });
+    } catch (error: any) {
+      console.error(`[ProcessManager] Failed to stop Discord Bridge: ${error.message}`);
+      return { success: false, message: `停止失败: ${error.message}` };
+    }
+  }
+
+  async restart(): Promise<{ success: boolean; message: string }> {
+    console.log("[ProcessManager] Restarting Discord Bridge...");
+    const stopResult = await this.stop();
+    if (!stopResult.success) {
+      return stopResult;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return await this.start();
+  }
+
+  getStatus(): ProcessInfo | null {
+    if (!this.processInfo) return null;
+    if (this.process && !this.process.killed) {
+      try {
+        const usage = process.memoryUsage();
+        this.processInfo.memoryUsage = usage.heapUsed;
+        this.processInfo.cpuUsage = 0;
+      } catch {
+        // ignore
+      }
+    }
+    return { ...this.processInfo };
+  }
+
+  isRunning(): boolean {
+    return this.process !== null && !this.process.killed && this.processInfo?.status === "running";
+  }
+
+  private setupProcessListeners(): void {
+    if (!this.process) return;
+
+    this.process.on("exit", (code, signal) => {
+      console.log(`[ProcessManager] Process exited with code ${code}, signal ${signal}`);
+
+      if (this.processInfo) {
+        this.processInfo.status = "stopped";
+      }
+      this.process = null;
+
+      this.emit("exited", code, signal);
+
+      if (!this.isShuttingDown && this.restartAttempts < this.maxRestartAttempts) {
+        console.log(`[ProcessManager] Auto-restarting in ${this.restartDelay}ms...`);
+        setTimeout(async () => {
+          if (!this.isShuttingDown) {
+            this.restartAttempts++;
+            await this.start();
+          }
+        }, this.restartDelay);
+      }
+    });
+
+    this.process.on("error", (error) => {
+      console.error(`[ProcessManager] Process error: ${error.message}`);
+
+      if (this.processInfo) {
+        this.processInfo.status = "error";
+        this.processInfo.errorMessage = error.message;
+      }
+
+      this.emit("error", error);
+    });
+
+    if (this.process.stdout) {
+      this.process.stdout.on("data", (data) => {
+        console.log(`[DiscordBridge] ${data.toString().trim()}`);
+        this.emit("stdout", data);
+      });
+    }
+
+    if (this.process.stderr) {
+      this.process.stderr.on("data", (data) => {
+        console.error(`[DiscordBridge] ${data.toString().trim()}`);
+        this.emit("stderr", data);
+      });
+    }
+  }
+
+  sendMessage(message: string): boolean {
+    if (!this.process || !this.process.stdin) {
+      return false;
+    }
+    try {
+      this.process.stdin.write(message + "\n");
+      return true;
+    } catch (error) {
+      console.error(`[ProcessManager] Failed to send message: ${error}`);
+      return false;
+    }
+  }
+
+  async cleanup(): Promise<void> {
+    this.isShuttingDown = true;
+    await this.stop();
+    this.removeAllListeners();
+  }
+
+  getProcess(): ChildProcess | null {
+    return this.process;
+  }
+}
+
+export const discordBridgeManager = new DiscordBridgeManager();

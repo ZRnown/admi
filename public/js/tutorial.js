@@ -57,10 +57,10 @@ function startTutorial() {
       },
       // 步骤 3: 账号库 - 添加账号
       {
-        element: '#libraryAddType',
+        element: '#libraryFilterSelect',
         popover: {
-          title: '选择账号类型',
-          description: '在这里选择要添加的账号类型：Discord、Telegram、X 或 TruthSocial。',
+          title: '筛选账号类型',
+          description: '在这里筛选当前列表显示的账号类型。',
           side: 'bottom',
           align: 'start'
         },
@@ -75,7 +75,7 @@ function startTutorial() {
         element: 'button[onclick="addLibraryAccountFromSelect()"]',
         popover: {
           title: '新建账号',
-          description: '输入账号名称后，点击此按钮创建新账号。创建后会弹出编辑窗口，填写账号凭证信息。',
+          description: '点击此按钮创建新账号。创建后会弹出编辑窗口，填写账号凭证信息（备注可选）。',
           side: 'bottom',
           align: 'start'
         }
@@ -86,6 +86,16 @@ function startTutorial() {
         popover: {
           title: '一键同步',
           description: '添加账号后，点击此按钮同步所有账号的数据。同步后可以直接从列表选择频道，无需手动输入 ID。',
+          side: 'bottom',
+          align: 'start'
+        }
+      },
+      // 步骤 6: 账号库 - 同步信息
+      {
+        element: '#librarySyncInfoHeader',
+        popover: {
+          title: '查看同步信息',
+          description: '同步完成后，在表格「同步数据」列点击即可查看服务器/频道数量和上次同步时间，并可进入详情列表。',
           side: 'bottom',
           align: 'start'
         }
@@ -105,6 +115,16 @@ function startTutorial() {
         popover: {
           title: '转发实例',
           description: '每个实例是一个独立的转发配置。您可以创建多个实例来管理不同的转发任务，每个实例可以使用不同的账号和规则。',
+          side: 'bottom',
+          align: 'start'
+        }
+      },
+      // 步骤 8: 规则填写模式
+      {
+        element: '#ruleInputModeToggle',
+        popover: {
+          title: '规则填写模式',
+          description: '支持两种模式：<br>• 列表选择：从已同步的服务器/频道中选择<br>• 手动输入：直接填写频道 ID<br>建议先同步账号后使用列表选择。',
           side: 'bottom',
           align: 'start'
         }

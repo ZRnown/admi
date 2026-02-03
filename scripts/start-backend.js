@@ -39,6 +39,7 @@ function gracefulShutdown(signal) {
   try {
     log('SHUTDOWN', '正在清理 Python 僵尸进程...', colors.yellow);
     execSync('pkill -f "python.*telegram_bridge" || true');
+    execSync('pkill -f "python.*discord_bridge" || true');
   } catch (e) {
     // 忽略错误
   }

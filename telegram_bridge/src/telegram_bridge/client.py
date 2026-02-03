@@ -161,7 +161,7 @@ class TelegramClientManager:
             # 清除所有缓存
             if account_id in self._account_configs:
                 del self._account_configs[account_id]
-            if account_id in self._watched_chats:
+            if hasattr(self, "_watched_chats") and account_id in self._watched_chats:
                 del self._watched_chats[account_id]
             if account_id in self._entity_cache:
                 del self._entity_cache[account_id]
@@ -383,7 +383,7 @@ class TelegramClientManager:
         cache = self._entity_cache.setdefault(account_id, {})
         cache[sender_id] = time.time()
 
-    async def connect(self, account: TelegramAccount | Dict[str, Any]) -> Dict[str, Any]:
+    async def connect(self, account: Union[TelegramAccount, Dict[str, Any]]) -> Dict[str, Any]:
         """连接Telegram客户端"""
         raw_account_id = None
         client = None
@@ -874,12 +874,19 @@ class TelegramClientManager:
                         channel_type = "group"
                 elif isinstance(entity, Chat):
                     channel_type = "group"
+                elif isinstance(entity, User):
+                    channel_type = "private"
                 else:
-                    continue  # 跳过私聊
+                    continue  # 跳过不支持的类型
 
+                title = getattr(entity, "title", None)
+                if not title and isinstance(entity, User):
+                    title = " ".join(filter(None, [entity.first_name, entity.last_name]))
+                    if not title and getattr(entity, "username", None):
+                        title = f"@{entity.username}"
                 channel = TelegramChannel(
                     id=str(entity.id),
-                    title=entity.title or "Unknown",
+                    title=title or "Unknown",
                     type=channel_type,
                     username=getattr(entity, 'username', None),
                     member_count=getattr(entity, 'participants_count', None)
@@ -1239,7 +1246,7 @@ class TelegramClientManager:
             logger.debug(f"Failed to download media for message {getattr(message, 'id', None)}: {e}")
             return None
 
-    async def update_config(self, accounts: List[TelegramAccount | Dict[str, Any]]):
+    async def update_config(self, accounts: List[Union[TelegramAccount, Dict[str, Any]]]):
         """更新配置"""
         from .telegram_types import TelegramAccount as TelegramAccountModel
         normalized = [

@@ -41,14 +41,7 @@ export async function POST(req: NextRequest) {
       if (!multi.telegramAccounts) multi.telegramAccounts = [];
       let entry = multi.telegramAccounts.find((acc) => acc.id === telegramAccountId);
       if (!entry) {
-        entry = {
-          id: telegramAccountId,
-          name: "Telegram Client",
-          type: "client",
-          token: "",
-          enabled: false,
-        };
-        multi.telegramAccounts.push(entry);
+        return NextResponse.json({ error: "Telegram账号不存在" }, { status: 404 });
       }
       entry.sessionPath = sessionPath;
       entry.sessionString = undefined;
@@ -88,7 +81,7 @@ export async function POST(req: NextRequest) {
       if (!entry) {
         entry = {
           id: telegramAccountId,
-          name: role === "listener" ? "Telegram Listener" : role === "sender" ? "Telegram Sender" : "Telegram Client",
+          name: "",
           type: "client",
           token: "",
           enabled: false,

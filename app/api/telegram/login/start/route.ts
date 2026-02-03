@@ -60,23 +60,13 @@ export async function POST(req: NextRequest) {
 
     const multi = await getMultiConfig();
     if (useLibrary) {
-      const libraryId = telegramAccountId || randomUUID();
+      if (!telegramAccountId) {
+        return NextResponse.json({ error: "缺少 telegramAccountId" }, { status: 400 });
+      }
       if (!multi.telegramAccounts) multi.telegramAccounts = [];
-      let targetAccount = multi.telegramAccounts.find((acc) => acc.id === libraryId);
+      let targetAccount = multi.telegramAccounts.find((acc) => acc.id === telegramAccountId);
       if (!targetAccount) {
-        targetAccount = {
-          id: libraryId,
-          name: "Telegram Client",
-          type: "client",
-          token: "",
-          apiId,
-          apiHash,
-          phoneNumber,
-          twoFactorPassword,
-          sessionType: "string",
-          enabled: true,
-        } as any;
-        multi.telegramAccounts.push(targetAccount);
+        return NextResponse.json({ error: "Telegram账号不存在" }, { status: 404 });
       } else {
         targetAccount.type = "client";
         targetAccount.apiId = apiId;
@@ -127,7 +117,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "登录失败，未返回 loginId" }, { status: 500 });
       }
 
-      return NextResponse.json({ success: true, loginId, telegramAccountId: libraryId });
+      return NextResponse.json({ success: true, loginId, telegramAccountId });
     }
 
     const account = multi.accounts.find((a) => a.id === accountId);
@@ -143,12 +133,12 @@ export async function POST(req: NextRequest) {
       account.telegramConfig.accounts = [];
     }
 
-    let targetAccount = account.telegramConfig.accounts.find((acc) => acc.id === clientAccountId);
-    if (!targetAccount) {
-      targetAccount = {
-        id: clientAccountId,
-        name: "Telegram Client",
-        type: "client",
+      let targetAccount = account.telegramConfig.accounts.find((acc) => acc.id === clientAccountId);
+      if (!targetAccount) {
+        targetAccount = {
+          id: clientAccountId,
+          name: "",
+          type: "client",
         token: "",
         apiId,
         apiHash,

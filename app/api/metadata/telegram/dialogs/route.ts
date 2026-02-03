@@ -18,10 +18,11 @@ export async function POST(request: NextRequest) {
 
     // 读取缓存的对话列表（由 Telegram Bridge 写入）
     const cacheFile = path.join(process.cwd(), ".data", "telegram_dialogs_cache.json");
-    const statusFile = path.join(process.cwd(), ".data", "status.json");
+    const statusFile = path.join(process.cwd(), ".data", "telegram_status.json");
 
     let dialogs: any[] = [];
     let user: any = null;
+    let updatedAt: string | undefined = undefined;
 
     // 读取对话列表
     try {
@@ -44,15 +45,31 @@ export async function POST(request: NextRequest) {
       // 文件不存在
     }
 
+    try {
+      const stat = await fs.stat(cacheFile);
+      updatedAt = stat.mtime.toISOString();
+    } catch {
+      // ignore
+    }
+    try {
+      const stat = await fs.stat(statusFile);
+      if (!updatedAt || stat.mtime.getTime() > new Date(updatedAt).getTime()) {
+        updatedAt = stat.mtime.toISOString();
+      }
+    } catch {
+      // ignore
+    }
+
     if (dialogs.length === 0 && !user) {
       return NextResponse.json({
         user: null,
         dialogs: [],
+        updatedAt,
         message: "请先启动实例并连接 Telegram 账号以获取对话列表"
       });
     }
 
-    return NextResponse.json({ user, dialogs });
+    return NextResponse.json({ user, dialogs, updatedAt });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

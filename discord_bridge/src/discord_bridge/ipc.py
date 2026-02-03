@@ -8,7 +8,6 @@ import json
 import sys
 from typing import Dict, Any, Callable, Optional
 from loguru import logger
-from .telegram_types import IPCMessage, IPCRequest, IPCResponse, IPCNotification
 
 
 class IPCServer:
@@ -26,9 +25,7 @@ class IPCServer:
 
         # 使用stdio进行通信
         loop = asyncio.get_event_loop()
-        # Increase line limit to handle large JSON payloads (e.g., large configs/session strings)
-        # Some configs/channels lists can exceed 10MB; allow larger payloads to avoid read errors.
-        self._reader = asyncio.StreamReader(limit=50 * 1024 * 1024)
+        self._reader = asyncio.StreamReader()
         reader_protocol = asyncio.StreamReaderProtocol(self._reader)
         await loop.connect_read_pipe(lambda: reader_protocol, sys.stdin)
 
@@ -100,12 +97,10 @@ class IPCServer:
             # 解析消息
             if "method" in message_data and "id" in message_data:
                 # 请求消息
-                request = IPCRequest(**message_data)
-                await self._handle_request(request)
+                await self._handle_request(message_data)
             elif "method" in message_data:
                 # 通知消息
-                notification = IPCNotification(**message_data)
-                await self._handle_notification(notification)
+                await self._handle_notification(message_data)
             else:
                 logger.warning(f"Invalid message format: {message_data}")
 
@@ -114,14 +109,14 @@ class IPCServer:
             # 发送错误响应
             await self._send_error_response(message_data.get("id"), -32600, "Invalid Request")
 
-    async def _handle_request(self, request: IPCRequest):
+    async def _handle_request(self, request: Dict[str, Any]):
         """处理请求消息"""
         try:
-            method = request.method
-            params = request.params or {}
+            method = request.get("method")
+            params = request.get("params") or {}
 
-            if method not in self.handlers:
-                await self._send_error_response(request.id, -32601, f"Method not found: {method}")
+            if not method or method not in self.handlers:
+                await self._send_error_response(request.get("id"), -32601, f"Method not found: {method}")
                 return
 
             # 调用处理器
@@ -132,19 +127,19 @@ class IPCServer:
                 result = handler(params)
 
             # 发送成功响应
-            await self._send_response(request.id, result)
+            await self._send_response(request.get("id"), result)
 
         except Exception as e:
-            logger.error(f"Error handling request {request.id}: {e}")
-            await self._send_error_response(request.id, -32603, str(e))
+            logger.error(f"Error handling request {request.get('id')}: {e}")
+            await self._send_error_response(request.get("id"), -32603, str(e))
 
-    async def _handle_notification(self, notification: IPCNotification):
+    async def _handle_notification(self, notification: Dict[str, Any]):
         """处理通知消息"""
         try:
-            method = notification.method
-            params = notification.params or {}
+            method = notification.get("method")
+            params = notification.get("params") or {}
 
-            if method not in self.handlers:
+            if not method or method not in self.handlers:
                 logger.warning(f"Notification method not found: {method}")
                 return
 
@@ -158,35 +153,20 @@ class IPCServer:
         except Exception as e:
             logger.error(f"Error handling notification: {e}")
 
-    async def _send_response(self, request_id: str, result: Any):
+    async def _send_response(self, request_id: Optional[str], result: Any):
         """发送响应消息"""
-        response = IPCResponse(
-            id=request_id,
-            result=result
-        )
+        response = {"id": request_id, "result": result, "error": None}
+        await self._send_message(response)
 
-        await self._send_message(response.dict())
-
-    async def _send_error_response(self, request_id: str, code: int, message: str):
+    async def _send_error_response(self, request_id: Optional[str], code: int, message: str):
         """发送错误响应"""
-        response = IPCResponse(
-            id=request_id,
-            error={
-                "code": code,
-                "message": message
-            }
-        )
-
-        await self._send_message(response.dict())
+        response = {"id": request_id, "error": {"code": code, "message": message}}
+        await self._send_message(response)
 
     async def send_notification(self, method: str, params: Dict[str, Any]):
         """发送通知消息"""
-        notification = IPCNotification(
-            method=method,
-            params=params
-        )
-
-        await self._send_message(notification.dict())
+        notification = {"method": method, "params": params}
+        await self._send_message(notification)
 
     async def _send_message(self, message: Dict[str, Any]):
         """发送消息到stdout"""
@@ -217,32 +197,23 @@ class IPCClient:
         self.request_id += 1
         request_id = str(self.request_id)
 
-        request = IPCRequest(
-            id=request_id,
-            method=method,
-            params=params or {}
-        )
-
-        # 发送请求
-        await self._send_message(request.dict())
+        request = {"id": request_id, "method": method, "params": params or {}}
+        await self._send_message(request)
 
         # 等待响应
         while True:
             response_data = await self._receive_message()
             if response_data.get("id") == request_id:
-                response = IPCResponse(**response_data)
-                if response.error:
-                    raise Exception(f"RPC Error {response.error['code']}: {response.error['message']}")
-                return response.result
+                if response_data.get("error"):
+                    raise Exception(
+                        f"RPC Error {response_data['error']['code']}: {response_data['error']['message']}"
+                    )
+                return response_data.get("result")
 
     async def notify(self, method: str, params: Optional[Dict[str, Any]] = None):
         """发送通知"""
-        notification = IPCNotification(
-            method=method,
-            params=params or {}
-        )
-
-        await self._send_message(notification.dict())
+        notification = {"method": method, "params": params or {}}
+        await self._send_message(notification)
 
     async def _send_message(self, message: Dict[str, Any]):
         """发送消息"""

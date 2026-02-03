@@ -52,6 +52,7 @@ function findRepoRoot(startDir: string): string | null {
 export interface TelegramAccountConfig {
   id: string;
   name: string;
+  remark?: string;
   type: 'client' | 'bot';  // client = 用户客户端, bot = 机器人
   token: string;           // Bot Token 或 API Hash (client)
   sessionPath?: string;    // Session文件路径 (仅client)
@@ -70,11 +71,13 @@ export interface TelegramAccountConfig {
   enabled?: boolean;
   syncedUser?: Record<string, any>;
   lastSyncTime?: string;
+  dialogsCount?: number;
 }
 
 export interface DiscordAccountLibrary {
   id: string;
   name: string;
+  remark?: string;
   type: "bot" | "selfbot";
   token?: string;
   email?: string;
@@ -83,11 +86,14 @@ export interface DiscordAccountLibrary {
   proxyUrl?: string;
   syncedUser?: Record<string, any>;
   lastSyncTime?: string;
+  guildsCount?: number;
+  channelsCount?: number;
 }
 
 export interface XAccountLibrary {
   id: string;
   name: string;
+  remark?: string;
   apiKey?: string;
   apiBaseUrl?: string;
   loginCookie?: string;
@@ -101,6 +107,7 @@ export interface XAccountLibrary {
 export interface TruthSocialAccountLibrary {
   id: string;
   name: string;
+  remark?: string;
   username?: string;
   password?: string;
 }
@@ -108,6 +115,7 @@ export interface TruthSocialAccountLibrary {
 export interface TelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;     // 源频道ID
+  sourceGuildId?: string;      // Discord来源服务器ID（用于discord-to-telegram）
   targetChannelId: string;     // 目标频道ID
   type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
   note?: string;
@@ -144,6 +152,7 @@ export interface FrontendTelegramAccount {
 export interface FrontendTelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;
+  sourceGuildId?: string;
   targetChannelId: string;
   type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
   note?: string;
@@ -254,12 +263,18 @@ export interface RuleLevelConfig {
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
   scheduledBroadcast?: ScheduledBroadcastConfig;
+  standbyMode?: {
+    enabled: boolean;
+    mainChannelId: string;
+    cooldownSeconds: number;
+  };
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
 export interface DiscordMappingRule extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;
+  sourceGuildId?: string;
   targetWebhookUrl: string;
   note?: string;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
@@ -463,6 +478,8 @@ export interface AccountConfig extends LegacyConfig {
   proxyUrl?: string;
   channelFeishuWebhooks?: Record<string, FeishuTargetConfig>;
   feishuRuleConfigs?: Record<string, RuleLevelConfig>;
+  feishuSourceGuildMap?: Record<string, string>;
+  feishuSourceChannelNameMap?: Record<string, string>;
   restartNonce?: number;
   /**
    * 前端显式点击登录后置为 true；仅 loginRequested=true 的账号会实际登录
@@ -644,11 +661,9 @@ function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
   const mode: FeishuTargetMode = raw.mode === "thread" ? "thread" : "webhook";
   if (mode === "thread") {
     const threadId = typeof raw.threadId === "string" ? raw.threadId.trim() : "";
-    if (!threadId) return null;
     return { mode: "thread", threadId };
   }
   const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
-  if (!webhookUrl) return null;
   return { mode: "webhook", webhookUrl };
 }
 
@@ -780,6 +795,24 @@ function normalizeScheduledBroadcastConfig(raw: any): ScheduledBroadcastConfig |
   };
 }
 
+function normalizeStandbyMode(raw: any): RuleLevelConfig["standbyMode"] | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const mainChannelId = typeof raw.mainChannelId === "string" ? raw.mainChannelId.trim() : "";
+  const cooldownSeconds =
+    typeof raw.cooldownSeconds === "number"
+      ? raw.cooldownSeconds
+      : typeof raw.cooldownSeconds === "string" && raw.cooldownSeconds.trim() && !isNaN(Number(raw.cooldownSeconds))
+        ? Number(raw.cooldownSeconds)
+        : 60;
+  const enabled = raw.enabled === true;
+  if (!enabled && !mainChannelId) return undefined;
+  return {
+    enabled,
+    mainChannelId,
+    cooldownSeconds: Number.isFinite(cooldownSeconds) ? cooldownSeconds : 60,
+  };
+}
+
 function normalizeRuleConfig(raw: any): RuleLevelConfig {
   if (!raw || typeof raw !== "object") {
     return {
@@ -808,12 +841,14 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermarkSecondary: undefined,
       watermarks: undefined,
       scheduledBroadcast: undefined,
+      standbyMode: undefined,
     };
   }
   const watermark = normalizeWatermarkConfig(raw.watermark);
   const watermarkSecondary = normalizeWatermarkConfig(raw.watermarkSecondary);
   const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(raw.watermarks), watermark, watermarkSecondary);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(raw.scheduledBroadcast);
+  const standbyMode = normalizeStandbyMode(raw.standbyMode);
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
     mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
@@ -861,30 +896,91 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermarkSecondary,
     watermarks,
     scheduledBroadcast,
+    standbyMode,
   };
+}
+
+const TELEGRAM_PLACEHOLDER_NAMES = new Set([
+  "Telegram Account",
+  "Telegram账号",
+  "Telegram 账号",
+  "Telegram 发送账号",
+  "Telegram 监听账号",
+]);
+
+function isTelegramPlaceholderName(rawName: unknown): boolean {
+  if (typeof rawName !== "string") return false;
+  const trimmed = rawName.trim();
+  if (!trimmed) return false;
+  return TELEGRAM_PLACEHOLDER_NAMES.has(trimmed);
+}
+
+function sanitizeTelegramAccountName(rawName: unknown): string {
+  if (typeof rawName !== "string") return "";
+  const trimmed = rawName.trim();
+  if (!trimmed) return "";
+  if (isTelegramPlaceholderName(trimmed)) return "";
+  return trimmed;
+}
+
+function hasTelegramCredentials(acc: any): boolean {
+  if (!acc || typeof acc !== "object") return false;
+  const token = typeof acc.token === "string" ? acc.token.trim() : "";
+  const apiHash = typeof acc.apiHash === "string" ? acc.apiHash.trim() : "";
+  const apiId =
+    typeof acc.apiId === "number"
+      ? Number.isFinite(acc.apiId)
+      : typeof acc.apiId === "string"
+        ? acc.apiId.trim().length > 0
+        : false;
+  const sessionPath = typeof acc.sessionPath === "string" ? acc.sessionPath.trim() : "";
+  const sessionString = typeof acc.sessionString === "string" ? acc.sessionString.trim() : "";
+  const phone = typeof acc.phoneNumber === "string" ? acc.phoneNumber.trim() : "";
+  return Boolean(token || apiHash || apiId || sessionPath || sessionString || phone);
+}
+
+function isTelegramAutoPlaceholderAccount(acc: any): boolean {
+  if (!acc || typeof acc !== "object") return false;
+  if (hasTelegramCredentials(acc)) return false;
+  const name = typeof acc.name === "string" ? acc.name.trim() : "";
+  const id = typeof acc.id === "string" ? acc.id : "";
+  const role = acc.role;
+  const idLooksAuto = /_tg_(listener|sender)_/i.test(id);
+  const roleLooksAuto = role === "listener" || role === "sender";
+  const nameLooksAuto = isTelegramPlaceholderName(name);
+  return idLooksAuto || roleLooksAuto || nameLooksAuto;
 }
 
 function normalizeTelegramAccountList(raw: any): TelegramAccountConfig[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map((acc: any) => ({
-    id: typeof acc.id === "string" ? acc.id : randomUUID(),
-    name: typeof acc.name === "string" ? acc.name : "Telegram Account",
-    type: acc.type === "bot" ? "bot" : "client",
-    token: typeof acc.token === "string" ? acc.token : "",
-    sessionPath: typeof acc.sessionPath === "string" ? acc.sessionPath : undefined,
-    sessionString: typeof acc.sessionString === "string" ? acc.sessionString : undefined,
-    apiId: typeof acc.apiId === "number" ? acc.apiId : undefined,
-    apiHash: typeof acc.apiHash === "string" ? acc.apiHash : undefined,
-    phoneNumber: typeof acc.phoneNumber === "string" ? acc.phoneNumber : undefined,
-    twoFactorPassword: typeof acc.twoFactorPassword === "string" ? acc.twoFactorPassword : undefined,
-    role: acc.role === "listener" || acc.role === "sender" ? acc.role : undefined,
-    sessionType: acc.sessionType === "string" ? "string" : acc.sessionType === "file" ? "file" : undefined,
-    loginRequested: acc.loginRequested === true,
-    loginNonce: typeof acc.loginNonce === "number" ? acc.loginNonce : undefined,
-    loginState: typeof acc.loginState === "string" ? acc.loginState : "idle",
-    loginMessage: typeof acc.loginMessage === "string" ? acc.loginMessage : "",
-    enabled: acc.enabled !== false
-  }));
+  return raw
+    .map((acc: any): TelegramAccountConfig => {
+      const normalizedType: "bot" | "client" = acc?.type === "bot" ? "bot" : "client";
+      return {
+        id: typeof acc.id === "string" ? acc.id : randomUUID(),
+        name: sanitizeTelegramAccountName(acc.name),
+        remark: typeof acc.remark === "string" && acc.remark.trim() ? acc.remark.trim() : undefined,
+        type: normalizedType,
+        token: typeof acc.token === "string" ? acc.token : "",
+        sessionPath: typeof acc.sessionPath === "string" ? acc.sessionPath : undefined,
+        sessionString: typeof acc.sessionString === "string" ? acc.sessionString : undefined,
+        apiId: typeof acc.apiId === "number" ? acc.apiId : undefined,
+        apiHash: typeof acc.apiHash === "string" ? acc.apiHash : undefined,
+        phoneNumber: typeof acc.phoneNumber === "string" ? acc.phoneNumber : undefined,
+        twoFactorPassword: typeof acc.twoFactorPassword === "string" ? acc.twoFactorPassword : undefined,
+        role: acc.role === "listener" || acc.role === "sender" ? acc.role : undefined,
+        sessionType: acc.sessionType === "string" ? "string" : acc.sessionType === "file" ? "file" : undefined,
+        loginRequested: acc.loginRequested === true,
+        loginNonce: typeof acc.loginNonce === "number" ? acc.loginNonce : undefined,
+        loginState: typeof acc.loginState === "string" ? acc.loginState : "idle",
+        loginMessage: typeof acc.loginMessage === "string" ? acc.loginMessage : "",
+        enabled: acc.enabled !== false,
+        syncedUser: acc.syncedUser && typeof acc.syncedUser === "object" ? acc.syncedUser : undefined,
+        lastSyncTime: typeof acc.lastSyncTime === "string" ? acc.lastSyncTime : undefined,
+        dialogsCount: typeof acc.dialogsCount === "number" ? acc.dialogsCount : undefined,
+      };
+    })
+    .filter((acc) => !isTelegramAutoPlaceholderAccount(acc));
 }
 
 function normalizeDiscordAccountLibrary(raw: any): DiscordAccountLibrary[] {
@@ -895,12 +991,17 @@ function normalizeDiscordAccountLibrary(raw: any): DiscordAccountLibrary[] {
       return {
         id: typeof item.id === "string" && item.id.trim() ? item.id : randomUUID(),
         name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "Discord 账号",
+        remark: typeof item.remark === "string" && item.remark.trim() ? item.remark.trim() : undefined,
         type: item.type === "bot" ? "bot" : "selfbot",
         token: typeof item.token === "string" ? item.token : undefined,
         email: typeof item.email === "string" ? item.email : undefined,
         password: typeof item.password === "string" ? item.password : undefined,
         totpSecret: typeof item.totpSecret === "string" ? item.totpSecret : undefined,
         proxyUrl: typeof item.proxyUrl === "string" && item.proxyUrl.trim() ? item.proxyUrl.trim() : undefined,
+        syncedUser: item.syncedUser && typeof item.syncedUser === "object" ? item.syncedUser : undefined,
+        lastSyncTime: typeof item.lastSyncTime === "string" ? item.lastSyncTime : undefined,
+        guildsCount: typeof item.guildsCount === "number" ? item.guildsCount : undefined,
+        channelsCount: typeof item.channelsCount === "number" ? item.channelsCount : undefined,
       };
     })
     .filter(Boolean) as DiscordAccountLibrary[];
@@ -1210,6 +1311,18 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
       }
     }
   }
+  const feishuSourceGuildMap: Record<string, string> =
+    input?.feishuSourceGuildMap && typeof input.feishuSourceGuildMap === "object"
+      ? Object.fromEntries(
+          Object.entries(input.feishuSourceGuildMap).map(([key, value]) => [String(key), String(value || "").trim()]),
+        )
+      : {};
+  const feishuSourceChannelNameMap: Record<string, string> =
+    input?.feishuSourceChannelNameMap && typeof input.feishuSourceChannelNameMap === "object"
+      ? Object.fromEntries(
+          Object.entries(input.feishuSourceChannelNameMap).map(([key, value]) => [String(key), String(value || "").trim()]),
+        )
+      : {};
   const feishuRuleConfigs = normalizeRuleConfigs(input?.feishuRuleConfigs);
 
   // 兼容旧版单个 botRelayToken，升级为 botRelays
@@ -1299,6 +1412,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         return {
           id: typeof m.id === "string" ? m.id : randomUUID(),
           sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
+          sourceGuildId: typeof m.sourceGuildId === "string" ? m.sourceGuildId : undefined,
           targetWebhookUrl: typeof m.targetWebhookUrl === "string" ? m.targetWebhookUrl : "",
           note: typeof m.note === "string" ? m.note : undefined,
           translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,
@@ -1346,6 +1460,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           watermarkSecondary,
           watermarks,
           scheduledBroadcast: normalizeScheduledBroadcastConfig(m.scheduledBroadcast),
+          standbyMode: normalizeStandbyMode(m.standbyMode),
         };
       })
     : [];
@@ -1377,6 +1492,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           return {
             id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
             sourceChannelId: typeof mapping.sourceChannelId === "string" ? mapping.sourceChannelId : "",
+            sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
             targetChannelId: rawTarget,
             type: normalizedType,
             note: typeof mapping.note === "string" ? mapping.note : undefined,
@@ -1423,6 +1539,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             watermarkSecondary,
             watermarks,
             scheduledBroadcast,
+            standbyMode: normalizeStandbyMode(mapping.standbyMode),
           };
         })
       : [],
@@ -1460,6 +1577,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     mappings,
     channelFeishuWebhooks,
     feishuRuleConfigs,
+    feishuSourceGuildMap,
+    feishuSourceChannelNameMap,
     enableFeishuForward: input?.enableFeishuForward === true,
     enableDiscordForward: input?.enableDiscordForward !== false,
     feishuAppId: typeof input?.feishuAppId === "string" && input.feishuAppId.trim() ? input.feishuAppId.trim() : undefined,
@@ -1631,93 +1750,7 @@ function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; cha
     }
   }
 
-  if (telegramAccounts.length === 0) {
-    for (const account of config.accounts) {
-      const sourceAccounts = Array.isArray(account.telegramConfig?.accounts)
-        ? account.telegramConfig?.accounts
-        : [];
-      for (const tgAccount of sourceAccounts) {
-        if (!tgAccount || !tgAccount.id) continue;
-        if (!telegramIdSet.has(tgAccount.id)) {
-          telegramAccounts.push({ ...tgAccount });
-          telegramIdSet.add(tgAccount.id);
-          changed = true;
-        }
-      }
-
-      const hasLegacyBot = typeof account.telegramBotToken === "string" && account.telegramBotToken.trim();
-      if (hasLegacyBot && !telegramIdSet.has(`${account.id}_bot`)) {
-        const botEntry: TelegramAccountConfig = {
-          id: `${account.id}_bot`,
-          name: `${account.name || "Telegram"} Bot`,
-          type: "bot",
-          token: account.telegramBotToken || "",
-          apiId: account.telegramApiId,
-          apiHash: account.telegramApiHash,
-          sessionType: account.sessionType,
-          enabled: false,
-        };
-        telegramAccounts.push(botEntry);
-        telegramIdSet.add(botEntry.id);
-        changed = true;
-      }
-
-      const hasLegacyClient =
-        (account.telegramSessionPath || account.telegramSessionString) &&
-        account.telegramApiId &&
-        account.telegramApiHash;
-      if (hasLegacyClient && !telegramIdSet.has(account.id)) {
-        const clientEntry: TelegramAccountConfig = {
-          id: account.id,
-          name: account.name || "Telegram Client",
-          type: "client",
-          token: account.telegramApiHash || "",
-          sessionPath: account.telegramSessionPath,
-          sessionString: account.telegramSessionString,
-          apiId: account.telegramApiId,
-          apiHash: account.telegramApiHash,
-          sessionType: account.sessionType,
-          enabled: false,
-        };
-        telegramAccounts.push(clientEntry);
-        telegramIdSet.add(clientEntry.id);
-        changed = true;
-      }
-
-      if (!account.telegramListenerAccountId) {
-        const listener =
-          sourceAccounts.find((item) => item?.role === "listener") ||
-          sourceAccounts.find((item) => item?.type === "client") ||
-          sourceAccounts[0];
-        if (listener?.id) {
-          account.telegramListenerAccountId = listener.id;
-          changed = true;
-        } else if (hasLegacyClient) {
-          account.telegramListenerAccountId = account.id;
-          changed = true;
-        } else if (hasLegacyBot) {
-          account.telegramListenerAccountId = `${account.id}_bot`;
-          changed = true;
-        }
-      }
-      if (!account.telegramSenderAccountId) {
-        const sender =
-          sourceAccounts.find((item) => item?.role === "sender") ||
-          sourceAccounts.find((item) => item?.type === "bot") ||
-          sourceAccounts[0];
-        if (sender?.id) {
-          account.telegramSenderAccountId = sender.id;
-          changed = true;
-        } else if (hasLegacyBot) {
-          account.telegramSenderAccountId = `${account.id}_bot`;
-          changed = true;
-        } else if (hasLegacyClient) {
-          account.telegramSenderAccountId = account.id;
-          changed = true;
-        }
-      }
-    }
-  }
+  // Telegram 账号库不再自动创建，完全由用户手动维护。
 
   if (xAccounts.length === 0) {
     for (const account of config.accounts) {
@@ -1800,6 +1833,20 @@ export async function getMultiConfig(): Promise<MultiConfig> {
   const envForwardingTypes = parseEnvForwardingTypes(getEnv().ENABLED_FORWARDING_TYPES);
   const effectiveForwardingTypes = envForwardingTypes;
   if (Array.isArray(raw?.accounts)) {
+    const rawTelegramAccounts = Array.isArray(raw.telegramAccounts) ? raw.telegramAccounts : [];
+    const hadTelegramLibraryPlaceholders = rawTelegramAccounts.some(
+      (acc: any) => isTelegramAutoPlaceholderAccount(acc) || isTelegramPlaceholderName(acc?.name),
+    );
+    let hadTelegramConfigPlaceholders = false;
+    for (const acc of raw.accounts) {
+      const tgAccounts = acc?.telegramConfig?.accounts;
+      if (Array.isArray(tgAccounts)) {
+        if (tgAccounts.some((item: any) => isTelegramAutoPlaceholderAccount(item) || isTelegramPlaceholderName(item?.name))) {
+          hadTelegramConfigPlaceholders = true;
+          break;
+        }
+      }
+    }
     const accounts = raw.accounts.map((acc: any, idx: number) =>
       normalizeAccount(acc, idx === 0 ? "默认账号" : `账号${idx + 1}`),
     );
@@ -1819,6 +1866,18 @@ export async function getMultiConfig(): Promise<MultiConfig> {
 
     // 迁移配置到最新版本
     const migratedAccounts = migrateAccountsToLatest(accounts, version);
+    const telegramIdSet = new Set(telegramAccounts.map((acc) => acc.id));
+    let clearedTelegramRefs = false;
+    migratedAccounts.forEach((account) => {
+      if (account.telegramListenerAccountId && !telegramIdSet.has(account.telegramListenerAccountId)) {
+        account.telegramListenerAccountId = "";
+        clearedTelegramRefs = true;
+      }
+      if (account.telegramSenderAccountId && !telegramIdSet.has(account.telegramSenderAccountId)) {
+        account.telegramSenderAccountId = "";
+        clearedTelegramRefs = true;
+      }
+    });
     const config = {
       accounts: migratedAccounts,
       activeId: active,
@@ -1834,11 +1893,18 @@ export async function getMultiConfig(): Promise<MultiConfig> {
     };
 
     const libraryResult = ensureAccountLibraries(config);
-    const shouldSave = version !== CONFIG_VERSION || libraryResult.changed;
+    const shouldSave =
+      version !== CONFIG_VERSION ||
+      libraryResult.changed ||
+      hadTelegramLibraryPlaceholders ||
+      hadTelegramConfigPlaceholders ||
+      clearedTelegramRefs;
     // 如果版本有更新或迁移了账号库，保存配置
     if (shouldSave) {
       await saveMultiConfig(libraryResult.config);
-      console.log(`Migrated config from version ${version} to ${CONFIG_VERSION}`);
+      if (version !== CONFIG_VERSION) {
+        console.log(`Migrated config from version ${version} to ${CONFIG_VERSION}`);
+      }
     }
 
     const restrictedAccounts = applyForwardingTypeRestrictions(migratedAccounts, effectiveForwardingTypes);

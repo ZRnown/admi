@@ -190,7 +190,7 @@ export async function POST(req: NextRequest) {
     if (!targetAccount) {
       targetAccount = {
         id: clientAccountId,
-        name: role === "listener" ? "Telegram Listener" : role === "sender" ? "Telegram Sender" : "Telegram Client",
+        name: "",
         type: "client" as const,
         token: "",
         apiId: allowLegacyFallback ? account.telegramApiId : undefined,

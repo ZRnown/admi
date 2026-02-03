@@ -26,11 +26,35 @@ async function ensureDataDir() {
   }
 }
 
+function stripBotPrefix(token: string) {
+  const trimmed = token.trim();
+  if (trimmed.toLowerCase().startsWith("bot ")) {
+    return trimmed.slice(4).trim();
+  }
+  return trimmed;
+}
+
+function buildAuthCandidates(token: string, type?: string) {
+  const trimmed = token.trim();
+  const stripped = stripBotPrefix(trimmed);
+  const candidates: string[] = [];
+
+  if (type === "bot") {
+    candidates.push(trimmed.toLowerCase().startsWith("bot ") ? trimmed : `Bot ${trimmed}`);
+    if (stripped) candidates.push(stripped);
+  } else {
+    if (stripped) candidates.push(stripped);
+    candidates.push(trimmed.toLowerCase().startsWith("bot ") ? trimmed : `Bot ${trimmed}`);
+  }
+
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
 // Discord API 请求
 async function discordFetch(endpoint: string, token: string) {
   const res = await fetch(`${DISCORD_API}${endpoint}`, {
     headers: {
-      Authorization: token.startsWith("Bot ") ? token : token,
+      Authorization: token,
       "Content-Type": "application/json",
     },
   });
@@ -73,13 +97,28 @@ export async function POST(request: NextRequest) {
 
     await ensureDataDir();
 
-    // 根据账号类型添加前缀
-    const authToken = type === "bot" ? `Bot ${token}` : token;
+    const authCandidates = buildAuthCandidates(String(token), type);
+    if (authCandidates.length === 0) {
+      return NextResponse.json({ error: "缺少有效 token 参数" }, { status: 400 });
+    }
 
     // 获取用户信息
     let user = null;
+    let authToken = "";
+    let lastError: any = null;
     try {
-      user = await getCurrentUser(authToken);
+      for (const candidate of authCandidates) {
+        try {
+          user = await getCurrentUser(candidate);
+          authToken = candidate;
+          break;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      if (!user || !authToken) {
+        throw lastError || new Error("invalid token");
+      }
     } catch (e: any) {
       return NextResponse.json({
         error: "获取用户信息失败，请检查 Token 是否正确",
@@ -152,6 +191,7 @@ export async function POST(request: NextRequest) {
         tag: user.discriminator === "0" ? user.username : `${user.username}#${user.discriminator}`,
       },
       guilds: formattedGuilds,
+      updatedAt: new Date().toISOString(),
     };
 
     // 更新频道缓存

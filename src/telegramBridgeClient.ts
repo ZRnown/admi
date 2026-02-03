@@ -77,6 +77,10 @@ export class TelegramBridgeClient extends EventEmitter {
   private process: any; // ChildProcess
   private pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>;
   private messageBuffer: string = "";
+  private stdoutHandler?: (data: Buffer) => void;
+  private stderrHandler?: (data: Buffer) => void;
+  private errorHandler?: (error: Error) => void;
+  private exitHandler?: (code: number) => void;
 
   constructor(process: any) {
     super();
@@ -85,26 +89,27 @@ export class TelegramBridgeClient extends EventEmitter {
     this._setupIPC();
   }
 
+  isForProcess(process: any): boolean {
+    return this.process === process;
+  }
+
   private _setupIPC() {
     if (!this.process || !this.process.stdout || !this.process.stdin) {
       throw new Error("Telegram Bridge process is not initialized");
     }
 
     // 监听来自 Bridge 的消息
-    this.process.stdout.on("data", (data: Buffer) => {
+    this.stdoutHandler = (data: Buffer) => {
       this._handleData(data.toString("utf-8"));
-    });
-
-    this.process.stderr.on("data", (data: Buffer) => {
+    };
+    this.stderrHandler = () => {
       // stderr 已由进程管理器统一输出，这里避免重复日志
-    });
-
-    this.process.on("error", (error: Error) => {
+    };
+    this.errorHandler = (error: Error) => {
       console.error("[Telegram Bridge Process Error]", error);
       this.emit("error", error);
-    });
-
-    this.process.on("exit", (code: number) => {
+    };
+    this.exitHandler = (code: number) => {
       console.log(`[Telegram Bridge] Process exited with code ${code}`);
       this.emit("exit", code);
       // 拒绝所有等待的请求
@@ -112,7 +117,12 @@ export class TelegramBridgeClient extends EventEmitter {
         reject(new Error("Telegram Bridge process exited"));
       }
       this.pendingRequests.clear();
-    });
+    };
+
+    this.process.stdout.on("data", this.stdoutHandler);
+    this.process.stderr.on("data", this.stderrHandler);
+    this.process.on("error", this.errorHandler);
+    this.process.on("exit", this.exitHandler);
   }
 
   private _handleData(data: string) {
@@ -206,8 +216,8 @@ export class TelegramBridgeClient extends EventEmitter {
   /**
    * 连接 Telegram Bot
    */
-  async connectBot(accountId: string, token: string): Promise<any> {
-    return this._sendRequest("connectBot", { accountId, token });
+  async connectBot(account: any): Promise<any> {
+    return this._sendRequest("connectBot", account);
   }
 
   /**
@@ -279,5 +289,17 @@ export class TelegramBridgeClient extends EventEmitter {
   destroy() {
     this.removeAllListeners();
     this.pendingRequests.clear();
+    if (this.process?.stdout && this.stdoutHandler) {
+      this.process.stdout.off("data", this.stdoutHandler);
+    }
+    if (this.process?.stderr && this.stderrHandler) {
+      this.process.stderr.off("data", this.stderrHandler);
+    }
+    if (this.process && this.errorHandler) {
+      this.process.off("error", this.errorHandler);
+    }
+    if (this.process && this.exitHandler) {
+      this.process.off("exit", this.exitHandler);
+    }
   }
 }

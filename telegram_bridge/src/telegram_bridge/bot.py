@@ -230,7 +230,7 @@ class TelegramBotManager:
         cache = self._entity_cache.setdefault(account_id, {})
         cache[sender_id] = time.time()
 
-    async def connect(self, account: TelegramAccount | Dict[str, Any]) -> Dict[str, Any]:
+    async def connect(self, account: Union[TelegramAccount, Dict[str, Any]]) -> Dict[str, Any]:
         """连接Telegram机器人"""
         raw_account_id = None
         try:
@@ -595,7 +595,7 @@ class TelegramBotManager:
             }
 
     async def get_channels(self, account_id: str) -> Dict[str, Any]:
-        """获取机器人可访问的频道列表"""
+        """获取机器人可访问的频道列表 - 使用 Bot API getUpdates"""
         try:
             if account_id not in self.bots:
                 return {
@@ -604,39 +604,50 @@ class TelegramBotManager:
                     "message": "Bot not connected"
                 }
 
-            bot = self.bots[account_id]
+            token = self.bot_tokens.get(account_id)
+            if not token:
+                return {
+                    "success": False,
+                    "error": "TOKEN_NOT_FOUND",
+                    "message": "Bot token not found"
+                }
 
-            # 机器人只能访问已添加的频道
-            # 这里简化处理，返回机器人所在的对话
-            dialogs = await bot.get_dialogs()
-
+            # 使用 Bot API getUpdates 获取最近的更新，从中提取群组信息
             channels = []
-            for dialog in dialogs:
-                entity = dialog.entity
+            seen_chat_ids = set()
 
-                if isinstance(entity, Channel):
-                    channel_type = "channel"
-                    if entity.megagroup:
-                        channel_type = "supergroup"
-                    elif entity.gigagroup:
-                        channel_type = "group"
-                elif isinstance(entity, Chat):
-                    channel_type = "group"
-                else:
-                    continue  # 跳过私聊
+            try:
+                url = f"https://api.telegram.org/bot{token}/getUpdates"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, params={"limit": 100}) as resp:
+                        data = await resp.json()
+                        if data.get("ok"):
+                            for update in data.get("result", []):
+                                # 从消息中提取聊天信息
+                                message = update.get("message") or update.get("channel_post")
+                                if message and message.get("chat"):
+                                    chat = message["chat"]
+                                    chat_id = chat.get("id")
+                                    if chat_id and chat_id not in seen_chat_ids:
+                                        seen_chat_ids.add(chat_id)
+                                        chat_type = chat.get("type", "private")
+                                        channel = TelegramChannel(
+                                            id=str(chat_id),
+                                            title=chat.get("title") or chat.get("first_name") or "Unknown",
+                                            type=chat_type,
+                                            username=chat.get("username"),
+                                            member_count=None
+                                        )
+                                        channels.append(channel.dict())
+            except Exception as e:
+                logger.warning(f"Failed to get updates via Bot API: {e}")
 
-                channel = TelegramChannel(
-                    id=str(entity.id),
-                    title=entity.title or "Unknown",
-                    type=channel_type,
-                    username=getattr(entity, 'username', None),
-                    member_count=getattr(entity, 'participants_count', None)
-                )
-                channels.append(channel.dict())
-
+            # 如果没有从 getUpdates 获取到数据，返回空列表但标记成功
+            # 机器人需要先在群组中收到消息才能获取群组列表
             return {
                 "success": True,
-                "channels": channels
+                "channels": channels,
+                "note": "机器人只能获取最近有消息的群组。如果列表为空，请先在群组中发送消息。"
             }
 
         except Exception as e:
@@ -1040,7 +1051,7 @@ class TelegramBotManager:
             logger.debug(f"Failed to download media for message {getattr(message, 'id', None)}: {e}")
             return None
 
-    async def update_config(self, accounts: List[TelegramAccount | Dict[str, Any]]):
+    async def update_config(self, accounts: List[Union[TelegramAccount, Dict[str, Any]]]):
         """更新配置"""
         from .telegram_types import TelegramAccount as TelegramAccountModel
         normalized = [

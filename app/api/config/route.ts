@@ -230,6 +230,7 @@ function normalizeTelegramMessage(state: string, message?: string): string {
 interface FrontendMapping {
   id: string;
   sourceChannelId: string;
+  sourceGuildId?: string;
   targetWebhookUrl: string;
   note?: string;
   // 是否开启翻译
@@ -307,6 +308,8 @@ interface FrontendAccount {
   botRelays?: Array<{ id: string; name: string; token: string; loginState?: string; loginMessage?: string }>;
   channelRelayMap?: Record<string, string>;
   channelFeishuWebhooks?: Record<string, FeishuTargetConfig>;
+  feishuSourceGuildMap?: Record<string, string>;
+  feishuSourceChannelNameMap?: Record<string, string>;
   enableFeishuForward?: boolean;
   enableDiscordForward?: boolean;
   feishuAppId?: string;
@@ -408,11 +411,9 @@ function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
   if (!raw || typeof raw !== "object") return null;
   if (raw.mode === "thread") {
     const threadId = typeof raw.threadId === "string" ? raw.threadId.trim() : "";
-    if (!threadId) return null;
     return { mode: "thread", threadId };
   }
   const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
-  if (!webhookUrl) return null;
   return { mode: "webhook", webhookUrl };
 }
 
@@ -794,6 +795,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
       mappings.push({
         id: savedRule.id || channelId,
         sourceChannelId: channelId,
+        sourceGuildId: typeof savedRule.sourceGuildId === "string" ? savedRule.sourceGuildId : undefined,
         targetWebhookUrl: String(savedRule.targetWebhookUrl),
         note: savedRule.note || account.channelNotes?.[channelId],
         translateDirection: !account.enableTranslation
@@ -893,6 +895,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     botRelays: account.botRelays || [],
     channelRelayMap: account.channelRelayMap || {},
     channelFeishuWebhooks: normalizeFeishuTargets(account.channelFeishuWebhooks),
+    feishuSourceGuildMap: (account as any).feishuSourceGuildMap || {},
+    feishuSourceChannelNameMap: (account as any).feishuSourceChannelNameMap || {},
     enableFeishuForward: account.enableFeishuForward === true,
     enableDiscordForward: account.enableDiscordForward !== false,
     feishuAppId: account.feishuAppId || "",
@@ -1045,10 +1049,23 @@ function dtoToDiscordLibraryAccount(
   const resolvedToken = resolveSecretValue(dto.token, base.token);
   const resolvedPassword = resolveSecretValue(dto.password, base.password);
   const resolvedTotp = resolveSecretValue(dto.totpSecret, base.totpSecret);
+  const guildsCount =
+    typeof dto.guildsCount === "number"
+      ? dto.guildsCount
+      : typeof dto.guildsCount === "string" && dto.guildsCount.trim() && !isNaN(Number(dto.guildsCount))
+        ? Number(dto.guildsCount)
+        : base.guildsCount;
+  const channelsCount =
+    typeof dto.channelsCount === "number"
+      ? dto.channelsCount
+      : typeof dto.channelsCount === "string" && dto.channelsCount.trim() && !isNaN(Number(dto.channelsCount))
+        ? Number(dto.channelsCount)
+        : base.channelsCount;
   return {
     ...base,
     id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
     name: typeof dto.name === "string" && dto.name.trim() ? dto.name.trim() : base.name,
+    remark: typeof dto.remark === "string" && dto.remark.trim() ? dto.remark.trim() : base.remark,
     type: dto.type === "bot" ? "bot" : "selfbot",
     token: typeof resolvedToken === "string" && resolvedToken.trim() ? resolvedToken : undefined,
     email: typeof dto.email === "string" && dto.email.trim() ? dto.email.trim() : base.email,
@@ -1058,6 +1075,8 @@ function dtoToDiscordLibraryAccount(
     syncedUser: typeof dto.syncedUser === "object" && dto.syncedUser ? dto.syncedUser : base.syncedUser,
     lastSyncTime:
       typeof dto.lastSyncTime === "string" && dto.lastSyncTime.trim() ? dto.lastSyncTime.trim() : base.lastSyncTime,
+    guildsCount,
+    channelsCount,
   };
 }
 
@@ -1067,7 +1086,7 @@ function dtoToTelegramLibraryAccount(
 ): TelegramAccountConfig {
   const base: TelegramAccountConfig = fallback ?? {
     id: randomUUID(),
-    name: "Telegram Account",
+    name: "",
     type: "client",
     token: "",
   };
@@ -1081,10 +1100,17 @@ function dtoToTelegramLibraryAccount(
       : typeof dto.apiId === "string" && dto.apiId.trim() && !isNaN(Number(dto.apiId))
         ? Number(dto.apiId)
         : base.apiId;
+  const dialogsCount =
+    typeof dto.dialogsCount === "number"
+      ? dto.dialogsCount
+      : typeof dto.dialogsCount === "string" && dto.dialogsCount.trim() && !isNaN(Number(dto.dialogsCount))
+        ? Number(dto.dialogsCount)
+        : base.dialogsCount;
   return {
     ...base,
     id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
     name: typeof dto.name === "string" && dto.name.trim() ? dto.name.trim() : base.name,
+    remark: typeof dto.remark === "string" && dto.remark.trim() ? dto.remark.trim() : base.remark,
     type: dto.type === "bot" ? "bot" : "client",
     token: typeof resolvedToken === "string" ? resolvedToken : "",
     sessionPath: typeof dto.sessionPath === "string" && dto.sessionPath.trim() ? dto.sessionPath.trim() : base.sessionPath,
@@ -1106,6 +1132,7 @@ function dtoToTelegramLibraryAccount(
     syncedUser: typeof dto.syncedUser === "object" && dto.syncedUser ? dto.syncedUser : base.syncedUser,
     lastSyncTime:
       typeof dto.lastSyncTime === "string" && dto.lastSyncTime.trim() ? dto.lastSyncTime.trim() : base.lastSyncTime,
+    dialogsCount,
   };
 }
 
@@ -1122,6 +1149,7 @@ function dtoToXLibraryAccount(dto: FrontendXAccountLibrary, fallback?: XAccountL
     ...base,
     id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
     name: typeof dto.name === "string" && dto.name.trim() ? dto.name.trim() : base.name,
+    remark: typeof dto.remark === "string" && dto.remark.trim() ? dto.remark.trim() : base.remark,
     apiKey: typeof resolvedApiKey === "string" && resolvedApiKey.trim() ? resolvedApiKey : base.apiKey,
     apiBaseUrl: typeof dto.apiBaseUrl === "string" && dto.apiBaseUrl.trim() ? dto.apiBaseUrl.trim() : base.apiBaseUrl,
     loginCookie:
@@ -1153,6 +1181,7 @@ function dtoToTruthLibraryAccount(
     ...base,
     id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
     name: typeof dto.name === "string" && dto.name.trim() ? dto.name.trim() : base.name,
+    remark: typeof dto.remark === "string" && dto.remark.trim() ? dto.remark.trim() : base.remark,
     username: typeof dto.username === "string" && dto.username.trim() ? dto.username.trim() : base.username,
     password: typeof resolvedPassword === "string" && resolvedPassword.trim() ? resolvedPassword : base.password,
   };
@@ -1256,6 +1285,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         savedMappings.push({
           id: mapping.id || randomUUID(),
           sourceChannelId: key,
+          sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
           targetWebhookUrl: String(mapping.targetWebhookUrl),
           note: mapping.note,
           translateDirection: mapping.translateDirection,
@@ -1298,6 +1328,18 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     }
   }
   const channelFeishuWebhooks = normalizeFeishuTargets(dto.channelFeishuWebhooks);
+  const feishuSourceGuildMap =
+    dto.feishuSourceGuildMap && typeof dto.feishuSourceGuildMap === "object"
+      ? Object.fromEntries(
+          Object.entries(dto.feishuSourceGuildMap).map(([key, value]) => [String(key), String(value || "").trim()]),
+        )
+      : base.feishuSourceGuildMap || {};
+  const feishuSourceChannelNameMap =
+    dto.feishuSourceChannelNameMap && typeof dto.feishuSourceChannelNameMap === "object"
+      ? Object.fromEntries(
+          Object.entries(dto.feishuSourceChannelNameMap).map(([key, value]) => [String(key), String(value || "").trim()]),
+        )
+      : base.feishuSourceChannelNameMap || {};
   const mergedTelegramConfig = mergeTelegramConfig(
     dto.telegramConfig && typeof dto.telegramConfig === "object" ? dto.telegramConfig : undefined,
     base.telegramConfig,
@@ -1379,6 +1421,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     channelWebhooks,
     mappings: savedMappings,
     channelFeishuWebhooks,
+    feishuSourceGuildMap,
+    feishuSourceChannelNameMap,
     feishuRuleConfigs,
     enableFeishuForward: dto.enableFeishuForward === true,
     enableDiscordForward: dto.enableDiscordForward !== false,
