@@ -118,6 +118,20 @@ let telegramLoginProcessing = false;
 let telegramSyncProcessing = false;
 let discordLoginProcessing = false;
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_TIMEOUT`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function isExternalForwardingType(type?: string): boolean {
   return typeof type === "string" && EXTERNAL_FORWARDING_TYPES.has(type);
 }
@@ -2289,7 +2303,11 @@ async function processDiscordLoginRequest(logger: FileLogger) {
           ...(totpSecret ? { TOTPKey: totpSecret } : {}),
         } as any);
         try {
-          const token = await (client as any).passLogin(email, password);
+          const token = await withTimeout(
+            (client as any).passLogin(email, password),
+            45000,
+            "DISCORD_LOGIN",
+          );
           const resolvedToken = typeof token === "string" && token.trim() ? token.trim() : (client as any).token;
           if (resolvedToken) {
             result = { success: true, token: resolvedToken };

@@ -83,13 +83,16 @@ export async function POST(req: NextRequest) {
         ),
       );
 
-      const response = await waitForLoginResponse(requestId, 25000);
+      const response = await waitForLoginResponse(requestId, 40000);
       if (!response) {
         return NextResponse.json({ error: "登录确认超时" }, { status: 504 });
       }
 
       if (!response.success) {
-        return NextResponse.json({ error: response.error || response?.result?.message || "登录失败" }, { status: 400 });
+        const detail = response?.result?.message || response?.message;
+        const error =
+          response?.error && detail ? `${response.error}: ${detail}` : response?.error || detail || "登录失败";
+        return NextResponse.json({ error }, { status: 400 });
       }
 
       const sessionString = response?.result?.sessionString;
@@ -149,13 +152,16 @@ export async function POST(req: NextRequest) {
       ),
     );
 
-    const response = await waitForLoginResponse(requestId, 25000);
+    const response = await waitForLoginResponse(requestId, 40000);
     if (!response) {
       return NextResponse.json({ error: "登录确认超时" }, { status: 504 });
     }
 
     if (!response.success) {
-      return NextResponse.json({ error: response.error || response?.result?.message || "登录失败" }, { status: 400 });
+      const detail = response?.result?.message || response?.message;
+      const error =
+        response?.error && detail ? `${response.error}: ${detail}` : response?.error || detail || "登录失败";
+      return NextResponse.json({ error }, { status: 400 });
     }
 
     const sessionString = response?.result?.sessionString;

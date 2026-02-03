@@ -729,19 +729,43 @@
       return 'bg-slate-100 text-slate-600';
     }
 
+    function resolveTelegramInstanceState(acc, type) {
+      if (hasTelegramLibrarySelection(acc)) {
+        const ids = [];
+        if (type === 'telegram-to-discord') {
+          if (acc.telegramListenerAccountId) ids.push(acc.telegramListenerAccountId);
+        } else if (type === 'discord-to-telegram') {
+          if (acc.telegramSenderAccountId) ids.push(acc.telegramSenderAccountId);
+        } else if (type === 'telegram-to-telegram') {
+          if (acc.telegramListenerAccountId) ids.push(acc.telegramListenerAccountId);
+          if (acc.telegramSenderAccountId) ids.push(acc.telegramSenderAccountId);
+        }
+        const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+        if (uniqueIds.length === 0) return 'idle';
+        const states = uniqueIds.map((id) => (getTelegramLibraryStatus(id)?.state || 'idle'));
+        if (states.includes('error')) return 'error';
+        if (states.some((s) => s === 'pending' || s === 'connecting' || s === 'disconnecting')) return 'pending';
+        if (states.includes('online')) return 'online';
+        return 'idle';
+      }
+
+      if (type === 'telegram-to-discord') {
+        return acc?.telegramClientState || 'idle';
+      }
+      const botState = acc?.telegramBotState || 'idle';
+      const clientState = acc?.telegramClientState || 'idle';
+      const states = [botState, clientState];
+      return states.includes('error') ? 'error'
+        : states.some(s => s === 'pending' || s === 'connecting' || s === 'disconnecting') ? 'pending'
+        : states.includes('online') ? 'online' : 'idle';
+    }
+
     function getInstanceStatusBadgeClass(acc) {
       const type = acc?.forwardingType || 'discord-to-discord';
       let state = 'idle';
 
-      if (type === 'telegram-to-discord') {
-        state = acc?.telegramClientState || 'idle';
-      } else if (type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
-        const botState = acc?.telegramBotState || 'idle';
-        const clientState = acc?.telegramClientState || 'idle';
-        const states = [botState, clientState];
-        state = states.includes('error') ? 'error'
-          : states.some(s => s === 'pending' || s === 'connecting' || s === 'disconnecting') ? 'pending'
-          : states.includes('online') ? 'online' : 'idle';
+      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+        state = resolveTelegramInstanceState(acc, type);
       } else {
         state = acc?.loginState || 'idle';
       }
@@ -754,15 +778,8 @@
 
     function getInstanceState(acc) {
       const type = acc?.forwardingType || 'discord-to-discord';
-      if (type === 'telegram-to-discord') {
-        return acc?.telegramClientState || 'idle';
-      } else if (type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
-        const botState = acc?.telegramBotState || 'idle';
-        const clientState = acc?.telegramClientState || 'idle';
-        const states = [botState, clientState];
-        return states.includes('error') ? 'error'
-          : states.some(s => s === 'pending' || s === 'connecting' || s === 'disconnecting') ? 'pending'
-          : states.includes('online') ? 'online' : 'idle';
+      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+        return resolveTelegramInstanceState(acc, type);
       }
       return acc?.loginState || 'idle';
     }
@@ -771,22 +788,8 @@
       const type = acc?.forwardingType || 'discord-to-discord';
       let state = 'idle';
 
-      if (type === 'telegram-to-discord') {
-        state = acc?.telegramClientState || 'idle';
-      } else if (type === 'telegram-to-telegram') {
-        const botState = acc?.telegramBotState || 'idle';
-        const clientState = acc?.telegramClientState || 'idle';
-        const states = [botState, clientState];
-        state = states.includes('error') ? 'error'
-          : states.some(s => s === 'pending' || s === 'connecting' || s === 'disconnecting') ? 'pending'
-          : states.includes('online') ? 'online' : 'idle';
-      } else if (type === 'discord-to-telegram') {
-        const botState = acc?.telegramBotState || 'idle';
-        const clientState = acc?.telegramClientState || 'idle';
-        const states = [botState, clientState];
-        state = states.includes('error') ? 'error'
-          : states.some(s => s === 'pending' || s === 'connecting' || s === 'disconnecting') ? 'pending'
-          : states.includes('online') ? 'online' : 'idle';
+      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+        state = resolveTelegramInstanceState(acc, type);
       } else {
         state = acc?.loginState || 'idle';
       }
@@ -795,28 +798,122 @@
       return labels[state] || state;
     }
 
+    function getTelegramLibraryTargetsForInstance(acc, type) {
+      const targets = [];
+      if (!acc) return targets;
+      if (type === 'discord-to-telegram') {
+        if (acc.telegramSenderAccountId) {
+          targets.push({ id: acc.telegramSenderAccountId, role: 'sender' });
+        }
+      } else if (type === 'telegram-to-discord') {
+        if (acc.telegramListenerAccountId) {
+          targets.push({ id: acc.telegramListenerAccountId, role: 'listener' });
+        }
+      } else if (type === 'telegram-to-telegram') {
+        if (acc.telegramListenerAccountId) {
+          targets.push({ id: acc.telegramListenerAccountId, role: 'listener' });
+        }
+        if (acc.telegramSenderAccountId) {
+          targets.push({ id: acc.telegramSenderAccountId, role: 'sender' });
+        }
+      }
+      const unique = [];
+      const seen = new Set();
+      targets.forEach((item) => {
+        if (!item.id || seen.has(item.id)) return;
+        seen.add(item.id);
+        unique.push(item);
+      });
+      return unique;
+    }
+
+    async function connectTelegramLibraryAccountSilent(accountId, role) {
+      const entry = getTelegramLibraryAccountById(accountId);
+      if (!entry) return { success: false, message: '未找到 Telegram 账号' };
+      const endpoint = entry.type === 'bot' ? '/api/telegram/bot/connect' : '/api/telegram/client/connect';
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ telegramAccountId: entry.id, useLibrary: true, role })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return { success: false, message: data?.message || data?.error || '连接失败' };
+        }
+        return { success: true, message: data?.message || '连接成功' };
+      } catch (e) {
+        return { success: false, message: e?.message || '连接失败' };
+      }
+    }
+
+    async function disconnectTelegramLibraryAccountSilent(accountId) {
+      const entry = getTelegramLibraryAccountById(accountId);
+      if (!entry) return { success: false, message: '未找到 Telegram 账号' };
+      const endpoint = entry.type === 'bot' ? '/api/telegram/bot/disconnect' : '/api/telegram/client/disconnect';
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ telegramAccountId: entry.id, useLibrary: true })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return { success: false, message: data?.message || data?.error || '断开失败' };
+        }
+        return { success: true, message: data?.message || '已断开' };
+      } catch (e) {
+        return { success: false, message: e?.message || '断开失败' };
+      }
+    }
+
     // 启动实例
     async function startInstance() {
       const acc = getActiveAccount();
       if (!acc) return;
-      acc.loginRequested = true;
-      acc.loginNonce = (acc.loginNonce || 0) + 1;
       const type = acc.forwardingType || 'discord-to-discord';
-      if (type === 'telegram-to-discord') {
-        acc.telegramClientState = 'pending';
-        acc.telegramClientMessage = '启动中...';
-        setConnectHold(`tg-client:${acc.id}`);
-      } else if (type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
-        acc.telegramBotState = 'pending';
-        acc.telegramClientState = 'pending';
-        acc.telegramBotMessage = '启动中...';
-        acc.telegramClientMessage = '启动中...';
-        setConnectHold(`tg-bot:${acc.id}`);
-        setConnectHold(`tg-client:${acc.id}`);
-      } else {
+      const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
+      const usingLibrary = hasTelegramLibrarySelection(acc);
+      const targets = getTelegramLibraryTargetsForInstance(acc, type);
+      if (requiresTelegram && usingLibrary && targets.length === 0) {
+        showToast('请先选择 Telegram 账号', 'error');
+        render();
+        return;
+      }
+      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
+      if (needsDiscord) {
+        acc.loginRequested = true;
+        acc.loginNonce = (acc.loginNonce || 0) + 1;
         acc.loginState = 'pending';
         acc.loginMessage = '启动中...';
         setConnectHold(`discord:${acc.id}`);
+      } else {
+        acc.loginRequested = false;
+      }
+
+      if (requiresTelegram) {
+        if (type === 'telegram-to-discord') {
+          acc.telegramClientState = 'pending';
+          acc.telegramClientMessage = '启动中...';
+          setConnectHold(`tg-client:${acc.id}`);
+        } else {
+          acc.telegramBotState = 'pending';
+          acc.telegramClientState = 'pending';
+          acc.telegramBotMessage = '启动中...';
+          acc.telegramClientMessage = '启动中...';
+          setConnectHold(`tg-bot:${acc.id}`);
+          setConnectHold(`tg-client:${acc.id}`);
+        }
+        if (usingLibrary) {
+          targets.forEach(({ id }) => {
+            const entry = getTelegramLibraryAccountById(id);
+            if (entry) {
+              entry.loginState = 'pending';
+              entry.loginMessage = '启动中...';
+            }
+          });
+          await Promise.allSettled(targets.map((item) => connectTelegramLibraryAccountSilent(item.id, item.role)));
+        }
       }
       render();
       await saveConfigImmediate();
@@ -827,20 +924,39 @@
     async function stopInstance() {
       const acc = getActiveAccount();
       if (!acc) return;
-      acc.loginRequested = false;
-      acc.loginNonce = (acc.loginNonce || 0) + 1;
       const type = acc.forwardingType || 'discord-to-discord';
-      if (type === 'telegram-to-discord') {
-        acc.telegramClientState = 'disconnecting';
-        acc.telegramClientMessage = '正在停止...';
-      } else if (type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
-        acc.telegramBotState = 'disconnecting';
-        acc.telegramClientState = 'disconnecting';
-        acc.telegramBotMessage = '正在停止...';
-        acc.telegramClientMessage = '正在停止...';
-      } else {
+      const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
+      const usingLibrary = hasTelegramLibrarySelection(acc);
+      const targets = getTelegramLibraryTargetsForInstance(acc, type);
+      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
+      if (needsDiscord) {
+        acc.loginRequested = false;
+        acc.loginNonce = (acc.loginNonce || 0) + 1;
         acc.loginState = 'disconnecting';
         acc.loginMessage = '正在停止...';
+      } else {
+        acc.loginRequested = false;
+      }
+      if (requiresTelegram) {
+        if (type === 'telegram-to-discord') {
+          acc.telegramClientState = 'disconnecting';
+          acc.telegramClientMessage = '正在停止...';
+        } else {
+          acc.telegramBotState = 'disconnecting';
+          acc.telegramClientState = 'disconnecting';
+          acc.telegramBotMessage = '正在停止...';
+          acc.telegramClientMessage = '正在停止...';
+        }
+        if (usingLibrary && targets.length) {
+          targets.forEach(({ id }) => {
+            const entry = getTelegramLibraryAccountById(id);
+            if (entry) {
+              entry.loginState = 'disconnecting';
+              entry.loginMessage = '正在停止...';
+            }
+          });
+          await Promise.allSettled(targets.map((item) => disconnectTelegramLibraryAccountSilent(item.id)));
+        }
       }
       render();
       await saveConfigImmediate();
@@ -1493,6 +1609,8 @@
     let cachedChannels = {};
     let cachedGuildsAccountId = '';
     let cachedGuildsLoading = false;
+    let cachedGuildsFetchedAt = 0;
+    const GUILD_FETCH_COOLDOWN_MS = 15000;
 
     // 缓存 Telegram 对话列表
     let cachedTelegramDialogs = {};  // { accountId: dialogs[] }
@@ -1521,6 +1639,35 @@
     // 切换全局规则填写模式
     function toggleGlobalRuleInputMode() {
       setGlobalRuleInputMode(globalRuleInputMode === 'manual' ? 'select' : 'manual');
+    }
+
+    function shouldFetchDiscordGuilds(accountId) {
+      if (!accountId) return false;
+      if (cachedGuildsAccountId && cachedGuildsAccountId !== accountId) {
+        cachedGuilds = [];
+        cachedGuildsAccountId = accountId;
+        cachedGuildsFetchedAt = 0;
+        return true;
+      }
+      if (cachedGuildsLoading) return false;
+      if (cachedGuildsFetchedAt && Date.now() - cachedGuildsFetchedAt < GUILD_FETCH_COOLDOWN_MS) {
+        return false;
+      }
+      return cachedGuilds.length === 0;
+    }
+
+    function requestDiscordGuilds(accountId) {
+      if (!shouldFetchDiscordGuilds(accountId)) return;
+      cachedGuildsLoading = true;
+      cachedGuildsAccountId = accountId;
+      fetchDiscordGuilds(accountId)
+        .then(() => {
+          cachedGuildsLoading = false;
+          render();
+        })
+        .catch(() => {
+          cachedGuildsLoading = false;
+        });
     }
 
     // 获取缓存的服务器选项HTML
@@ -1652,7 +1799,10 @@
         }
       }
 
-      channelSelect.innerHTML = getCachedChannelsOptions(accountId, guildId, '');
+      const latestSelect = document.getElementById(channelSelectId);
+      if (latestSelect) {
+        latestSelect.innerHTML = getCachedChannelsOptions(accountId, guildId, '');
+      }
     }
 
     // 生成来源频道输入UI（支持手动和选择两种模式，使用全局模式）
@@ -1695,17 +1845,8 @@
         const savedGuildId = m.sourceGuildId || '';
         const savedChannelId = m.sourceChannelId || '';
 
-        if (discordAccountId && (!cachedGuilds.length || cachedGuildsAccountId !== discordAccountId) && !cachedGuildsLoading) {
-          cachedGuildsLoading = true;
-          cachedGuildsAccountId = discordAccountId;
-          fetchDiscordGuilds(discordAccountId)
-            .then(() => {
-              cachedGuildsLoading = false;
-              render();
-            })
-            .catch(() => {
-              cachedGuildsLoading = false;
-            });
+        if (discordAccountId) {
+          requestDiscordGuilds(discordAccountId);
         }
 
         // 如果有已保存的服务器ID，自动加载频道列表
@@ -1926,12 +2067,18 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ accountId })
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+          cachedGuildsFetchedAt = Date.now();
+          return [];
+        }
         const data = await res.json();
         cachedGuilds = data.guilds || [];
+        cachedGuildsAccountId = accountId;
+        cachedGuildsFetchedAt = Date.now();
         return cachedGuilds;
       } catch (e) {
         console.error('获取服务器列表失败', e);
+        cachedGuildsFetchedAt = Date.now();
         return [];
       }
     }
@@ -3654,7 +3801,9 @@
         }, 20000);
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data?.error) {
-          throw new Error(data?.error || data?.message || '验证码发送失败');
+          const detail = data?.message || data?.detail || '';
+          const error = data?.error && detail ? `${data.error}: ${detail}` : data?.error || detail || '验证码发送失败';
+          throw new Error(error);
         }
         createTelegramLoginId = data.loginId || '';
         entry.loginNonce = createTelegramLoginId;
@@ -5969,15 +6118,8 @@
           const mappingKey = `feishu:${idx + startIdx}`;
 
           // 加载服务器列表
-          if (discordAccountId && (!cachedGuilds.length || cachedGuildsAccountId !== discordAccountId) && !cachedGuildsLoading) {
-            cachedGuildsLoading = true;
-            cachedGuildsAccountId = discordAccountId;
-            fetchDiscordGuilds(discordAccountId).then(() => {
-              cachedGuildsLoading = false;
-              render();
-            }).catch(() => {
-              cachedGuildsLoading = false;
-            });
+          if (discordAccountId) {
+            requestDiscordGuilds(discordAccountId);
           }
 
           // 加载频道列表
@@ -6704,7 +6846,8 @@
         }
         await loadConfig();
         render();
-        showToast('Token 已保存', 'success');
+        showToast('Token 已保存，正在同步账号信息...', 'success');
+        await syncDiscordAccountData(accountId);
       } catch (e) {
         showToast('登录失败: ' + (e?.message || e), 'error');
       }
@@ -6808,7 +6951,9 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          showToast(data?.error || '验证码请求失败', 'error');
+          const detail = data?.message || data?.detail || '';
+          const error = data?.error && detail ? `${data.error}: ${detail}` : data?.error || detail || '验证码请求失败';
+          showToast(error, 'error');
           return;
         }
         entry.loginNonce = data.loginId;
