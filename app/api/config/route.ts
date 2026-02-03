@@ -379,8 +379,9 @@ interface FrontendDiscordAccountLibrary
   channelsCount?: number | string;
 }
 
-interface FrontendTelegramAccountLibrary extends Omit<TelegramAccountConfig, "apiId"> {
+interface FrontendTelegramAccountLibrary extends Omit<TelegramAccountConfig, "apiId" | "dialogsCount"> {
   apiId?: number | string;
+  dialogsCount?: number | string;
   loginState?: string;
   loginMessage?: string;
   userInfo?: any;
