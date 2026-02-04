@@ -155,55 +155,104 @@ class DiscordAccountSession:
         self.task = asyncio.create_task(self._run())
 
     async def _run(self) -> None:
-        try:
-            # 为所有共享账号发送连接中状态
-            for acc_id in self.shared_accounts.keys():
-                await self.ipc.send_notification(
-                    "discord_status",
-                    {"accountId": acc_id, "state": "connecting"},
-                )
-            # 启动客户端并等待 ready（超时则报错）
-            client_task = asyncio.create_task(self.client.start(self.token))
-            ready_task = asyncio.create_task(self.ready_event.wait())
-            done, pending = await asyncio.wait(
-                {client_task, ready_task},
-                timeout=self.login_timeout_seconds,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+        max_retries = 3
+        retry_delay = 2  # 秒
+        last_error = None
 
-            if ready_task in done:
-                # 登录成功，保持运行
+        for attempt in range(max_retries):
+            try:
+                # 为所有共享账号发送连接中状态
+                for acc_id in self.shared_accounts.keys():
+                    await self.ipc.send_notification(
+                        "discord_status",
+                        {"accountId": acc_id, "state": "connecting"},
+                    )
+
+                # 重试时重新创建客户端
+                if attempt > 0:
+                    logger.info(f"Retry {attempt + 1}/{max_retries} for account {self.account_id}")
+                    await asyncio.sleep(retry_delay)
+                    # 重新初始化客户端
+                    if self.client:
+                        try:
+                            await self.client.close()
+                        except Exception:
+                            pass
+                    self._build_client()
+                    self.ready_event = asyncio.Event()
+
+                # 启动客户端并等待 ready（超时则报错）
+                client_task = asyncio.create_task(self.client.start(self.token))
+                ready_task = asyncio.create_task(self.ready_event.wait())
+                done, pending = await asyncio.wait(
+                    {client_task, ready_task},
+                    timeout=self.login_timeout_seconds,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if ready_task in done:
+                    # 登录成功，保持运行
+                    try:
+                        await client_task
+                    finally:
+                        if not ready_task.done():
+                            ready_task.cancel()
+                    return
+
+                # 客户端提前结束（登录失败）
+                if client_task in done:
+                    exc = client_task.exception()
+                    raise exc or RuntimeError("DISCORD_LOGIN_FAILED")
+
+                # 超时
                 try:
-                    await client_task
-                finally:
-                    if not ready_task.done():
-                        ready_task.cancel()
+                    await self.client.close()
+                except Exception:
+                    pass
+                client_task.cancel()
+                raise RuntimeError(f"DISCORD_LOGIN_TIMEOUT({self.login_timeout_seconds}s)")
+
+            except Exception as exc:
+                last_error = exc
+                error_str = str(exc)
+                # 检查是否是可重试的错误（如 sequence 错误）
+                is_retryable = (
+                    "sequence" in error_str.lower() or
+                    "'NoneType' object has no attribute" in error_str or
+                    "connection" in error_str.lower()
+                )
+
+                if is_retryable and attempt < max_retries - 1:
+                    logger.warning(
+                        f"Discord account {self.account_id} encountered retryable error: {exc}, retrying..."
+                    )
+                    continue
+
+                # 不可重试或已达最大重试次数，发送错误状态
+                for acc_id in self.shared_accounts.keys():
+                    await self.ipc.send_notification(
+                        "discord_status",
+                        {
+                            "accountId": acc_id,
+                            "state": "error",
+                            "error": str(exc),
+                        },
+                    )
+                logger.error(f"Discord account {self.account_id} failed to start: {exc}")
                 return
 
-            # 客户端提前结束（登录失败）
-            if client_task in done:
-                exc = client_task.exception()
-                raise exc or RuntimeError("DISCORD_LOGIN_FAILED")
-
-            # 超时
-            try:
-                await self.client.close()
-            except Exception:
-                pass
-            client_task.cancel()
-            raise RuntimeError(f"DISCORD_LOGIN_TIMEOUT({self.login_timeout_seconds}s)")
-        except Exception as exc:
-            # 为所有共享账号发送错误状态
+        # 所有重试都失败
+        if last_error:
             for acc_id in self.shared_accounts.keys():
                 await self.ipc.send_notification(
                     "discord_status",
                     {
                         "accountId": acc_id,
                         "state": "error",
-                        "error": str(exc),
+                        "error": str(last_error),
                     },
                 )
-            logger.error(f"Discord account {self.account_id} failed to start: {exc}")
+            logger.error(f"Discord account {self.account_id} failed after {max_retries} retries: {last_error}")
 
     async def stop(self) -> None:
         if self.client:

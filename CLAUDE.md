@@ -134,7 +134,7 @@ cd discord_bridge && pip install -e . && python -m discord_bridge
 
 ## 注意事项
 
-- Bot 使用 `discord.js-selfbot-v13`（自用号）和 `discord.js`（机器人）双客户端
+- Discord selfbot 连接由 Discord Bridge (Python) 处理，Bot 类型使用 `discord.js`
 - Telegram Bridge 需要 Python 3.8+ 环境
 - 配置变更会触发热重载，无需重启 Bot
 - OCR 服务器运行在端口 9003

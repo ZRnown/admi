@@ -6,16 +6,16 @@
  * - 项目启动时自动登录所有账号库中的账号
  * - 账号连接与实例无关，只要在库里且有 Token 就保持在线
  * - 实例只是规则的挂载/卸载，不影响账号连接
+ * - Selfbot 类型的账号由 Discord Bridge (Python) 处理
  */
 
-import { Client as SelfBotClient } from "discord.js-selfbot-v13";
 import { Client as BotClient, GatewayIntentBits, Partials } from "discord.js";
 import { EventEmitter } from "events";
 import { FileLogger } from "./logger.js";
 import type { DiscordAccountLibrary } from "./config.js";
 
-// Discord Client 类型
-export type DiscordClient = SelfBotClient | BotClient;
+// Discord Client 类型（仅支持 Bot）
+export type DiscordClient = BotClient;
 
 // 连接状态
 export type AccountStatus = "online" | "connecting" | "error" | "offline";
@@ -124,24 +124,24 @@ export class GlobalDiscordManager extends EventEmitter {
   async connect(config: DiscordAccountLibrary) {
     if (this.accounts.has(config.id)) return;
 
+    // Selfbot 类型的账号由 Discord Bridge (Python) 处理，不在 Node.js 端创建客户端
+    if (config.type !== "bot") {
+      this.logger?.info(`[AccountManager] 账号 ${config.name} 是 selfbot 类型，由 Discord Bridge 处理`);
+      return;
+    }
+
     this.logger?.info(`[AccountManager] 正在连接账号: ${config.name}`);
     await this.updateStatus(config.id, "connecting", "正在登录...");
 
-    const client = config.type === "bot"
-      ? new BotClient({
-          intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.MessageContent,
-            GatewayIntentBits.DirectMessages,
-          ],
-          partials: [Partials.Channel, Partials.Message],
-        })
-      : new SelfBotClient({
-          checkUpdate: false,
-          patchVoice: false,
-          syncStatus: false
-        } as any);
+    const client = new BotClient({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
+      ],
+      partials: [Partials.Channel, Partials.Message],
+    });
 
     const session: ConnectedAccount = {
       client,

@@ -1,4 +1,3 @@
-import { Client as SelfBotClient } from "discord.js-selfbot-v13";
 import { Client as BotClient, GatewayIntentBits, Partials } from "discord.js";
 import { promises as fs } from "fs";
 import { watch, stat } from "node:fs";
@@ -2577,38 +2576,8 @@ async function processDiscordLoginRequest(logger: FileLogger) {
 
     let result: any = null;
     if (request.action === "password") {
-      const email = request.params?.email;
-      const password = request.params?.password;
-      const totpSecret = request.params?.totpSecret;
-      if (!email || !password) {
-        result = { success: false, error: "MISSING_CREDENTIALS" };
-      } else {
-        const client = new SelfBotClient({
-          checkUpdate: false,
-          patchVoice: false,
-          syncStatus: false,
-          ...(totpSecret ? { TOTPKey: totpSecret } : {}),
-        } as any);
-        try {
-          const token = await withTimeout(
-            (client as any).passLogin(email, password),
-            120000,
-            "DISCORD_LOGIN",
-          );
-          const resolvedToken = typeof token === "string" && token.trim() ? token.trim() : (client as any).token;
-          if (resolvedToken) {
-            result = { success: true, token: resolvedToken };
-          } else {
-            result = { success: false, error: "TOKEN_NOT_FOUND" };
-          }
-        } catch (e: any) {
-          result = { success: false, error: String(e?.message || e) };
-        } finally {
-          try {
-            await (client as any).destroy();
-          } catch {}
-        }
-      }
+      // 密码登录功能已移除，请使用 Token 登录
+      result = { success: false, error: "PASSWORD_LOGIN_NOT_SUPPORTED", message: "密码登录功能已移除，请使用 Token 登录" };
     } else {
       result = { success: false, error: "UNKNOWN_ACTION" };
     }
@@ -2864,20 +2833,9 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
           partials: [Partials.Channel, Partials.Message, Partials.User],
         }) as any;
       } else {
-        // User Token (Selfbot) 配置 - 重连时使用相同配置
-        try {
-          client = new SelfBotClient({
-            checkUpdate: false,
-            patchVoice: false,
-            syncStatus: false,  // 不同步状态，减少数据包
-            // 注意：暂时移除 makeCache 配置，确保能正常登录
-          } as any);
-        } catch (e) {
-          client = new SelfBotClient({
-            checkUpdate: false,
-            patchVoice: false,
-          } as any);
-        }
+        // Selfbot 类型的账号由 Discord Bridge (Python) 处理，不在 Node.js 端重连
+        await logger.info(`账号 "${currentRunning.account.name}" 是 selfbot 类型，重连由 Discord Bridge 处理`);
+        return;
       }
       
       // 重新创建 Bot 实例
@@ -2888,15 +2846,6 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       currentRunning.client = client;
       currentRunning.bot = bot;
       currentRunning.isLoggingIn = true;
-      
-      // 添加调试日志（仅对 User Token）
-      if (currentRunning.account.type === "selfbot") {
-        (client as any).on("debug", (info: string) => {
-          if (!info.includes("Heartbeat") && !info.includes("heartbeat")) {
-            logger.debug(`[DEBUG ${currentRunning.account.name}] ${info}`);
-          }
-        });
-      }
 
       // 在 ready 事件中注册重连处理器，避免重连过程中的临时断开事件
       // 同时监听 ready 和 clientReady 以兼容不同版本

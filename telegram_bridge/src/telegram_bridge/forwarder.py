@@ -300,7 +300,14 @@ class TelegramSender:
 
             logger.info(f"TelegramSender.send_message: account_id={account_id}, type={account_type}, chat_id={chat_id}")
 
-            if account_type == "client" and self.client_manager:
+            # 将枚举类型转换为字符串进行比较
+            account_type_str = str(account_type).lower()
+            if "client" in account_type_str:
+                account_type_str = "client"
+            elif "bot" in account_type_str:
+                account_type_str = "bot"
+
+            if account_type_str == "client" and self.client_manager:
                 if account_id not in self.client_manager.clients:
                     logger.error(f"Client {account_id} not connected. Available clients: {list(self.client_manager.clients.keys())}")
                     return {
@@ -311,7 +318,7 @@ class TelegramSender:
                 return await self.client_manager.send_message(
                     account_id, chat_id, text, attachments, parse_mode, reply_to_message_id, watermark
                 )
-            elif account_type == "bot" and self.bot_manager:
+            elif account_type_str == "bot" and self.bot_manager:
                 if account_id not in self.bot_manager.bots:
                     logger.error(f"Bot {account_id} not connected. Available bots: {list(self.bot_manager.bots.keys())}")
                     return {

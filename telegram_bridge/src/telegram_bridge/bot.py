@@ -728,7 +728,7 @@ class TelegramBotManager:
             }
 
     async def get_channels(self, account_id: str) -> Dict[str, Any]:
-        """获取机器人可访问的频道列表 - 使用 Bot API getUpdates"""
+        """获取机器人可访问的频道列表 - 优先使用 Telethon get_dialogs，回退到 Bot API"""
         try:
             if account_id not in self.bots:
                 return {
@@ -745,41 +745,88 @@ class TelegramBotManager:
                     "message": "Bot token not found"
                 }
 
-            # 使用 Bot API getUpdates 获取最近的更新，从中提取群组信息
             channels = []
             seen_chat_ids = set()
             note_parts: List[str] = []
 
-            try:
-                url = f"https://api.telegram.org/bot{token}/getUpdates"
-                session = self._get_http_session()
-                async with session.get(url, params={"limit": 100}) as resp:
-                    data = await resp.json()
-                    if data.get("ok"):
-                        for update in data.get("result", []):
-                            # 从消息中提取聊天信息
-                            message = update.get("message") or update.get("channel_post")
-                            if message and message.get("chat"):
-                                chat = message["chat"]
-                                chat_id = chat.get("id")
-                                if chat_id and chat_id not in seen_chat_ids:
-                                    seen_chat_ids.add(chat_id)
-                                    chat_type = chat.get("type", "private")
-                                    channel = TelegramChannel(
-                                        id=str(chat_id),
-                                        title=chat.get("title") or chat.get("first_name") or "Unknown",
-                                        type=chat_type,
-                                        username=chat.get("username"),
-                                        member_count=None
-                                    )
-                                    channels.append(channel.dict())
-                    else:
-                        error_msg = data.get("description", "Unknown error")
-                        logger.warning(f"Bot API getUpdates error: {error_msg}")
-                        if "webhook" in str(error_msg).lower():
-                            note_parts.append("检测到该机器人已配置 Webhook，getUpdates 无法读取对话列表。请先删除 Webhook 再同步。")
-            except Exception as e:
-                logger.warning(f"Failed to get updates via Bot API: {e}")
+            # 方法1: 优先使用 Telethon 的 get_dialogs（更可靠）
+            bot = self.bots.get(account_id)
+            if bot and bot.is_connected():
+                try:
+                    dialogs = await bot.get_dialogs()
+                    for dialog in dialogs:
+                        entity = dialog.entity
+                        chat_id = entity.id
+                        if chat_id in seen_chat_ids:
+                            continue
+                        seen_chat_ids.add(chat_id)
+
+                        # 确定类型
+                        if isinstance(entity, Channel):
+                            if entity.megagroup:
+                                chat_type = "supergroup"
+                            elif entity.gigagroup:
+                                chat_type = "group"
+                            else:
+                                chat_type = "channel"
+                        elif isinstance(entity, Chat):
+                            chat_type = "group"
+                        elif isinstance(entity, User):
+                            chat_type = "private"
+                        else:
+                            chat_type = "unknown"
+
+                        # 获取标题
+                        title = getattr(entity, "title", None)
+                        if not title and isinstance(entity, User):
+                            title = " ".join(filter(None, [entity.first_name, entity.last_name]))
+                            if not title and getattr(entity, "username", None):
+                                title = f"@{entity.username}"
+
+                        channel = TelegramChannel(
+                            id=str(chat_id),
+                            title=title or "Unknown",
+                            type=chat_type,
+                            username=getattr(entity, 'username', None),
+                            member_count=getattr(entity, 'participants_count', None)
+                        )
+                        channels.append(channel.dict())
+
+                    logger.info(f"Got {len(channels)} dialogs via Telethon for bot {account_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to get dialogs via Telethon: {e}")
+
+            # 方法2: 如果 Telethon 没有获取到，回退到 Bot API getUpdates
+            if not channels:
+                try:
+                    url = f"https://api.telegram.org/bot{token}/getUpdates"
+                    session = self._get_http_session()
+                    async with session.get(url, params={"limit": 100}) as resp:
+                        data = await resp.json()
+                        if data.get("ok"):
+                            for update in data.get("result", []):
+                                message = update.get("message") or update.get("channel_post")
+                                if message and message.get("chat"):
+                                    chat = message["chat"]
+                                    chat_id = chat.get("id")
+                                    if chat_id and chat_id not in seen_chat_ids:
+                                        seen_chat_ids.add(chat_id)
+                                        chat_type = chat.get("type", "private")
+                                        channel = TelegramChannel(
+                                            id=str(chat_id),
+                                            title=chat.get("title") or chat.get("first_name") or "Unknown",
+                                            type=chat_type,
+                                            username=chat.get("username"),
+                                            member_count=None
+                                        )
+                                        channels.append(channel.dict())
+                        else:
+                            error_msg = data.get("description", "Unknown error")
+                            logger.warning(f"Bot API getUpdates error: {error_msg}")
+                            if "webhook" in str(error_msg).lower():
+                                note_parts.append("检测到该机器人已配置 Webhook。")
+                except Exception as e:
+                    logger.warning(f"Failed to get updates via Bot API: {e}")
 
             # 检查 Webhook 状态（用于提示）
             try:
@@ -791,18 +838,17 @@ class TelegramBotManager:
                         info = data.get("result", {}) or {}
                         webhook_url = info.get("url")
                         if webhook_url:
-                            note_parts.append("检测到该机器人已配置 Webhook，getUpdates 无法读取对话列表。请先删除 Webhook 再同步。")
+                            note_parts.append("检测到该机器人已配置 Webhook，部分功能可能受限。")
             except Exception:
                 pass
 
-            # 如果没有从 getUpdates 获取到数据，返回空列表但标记成功
-            # 机器人需要先在群组中收到消息才能获取群组列表
             if not channels:
-                note_parts.append("机器人只能获取最近有消息的群组。如果列表为空，请先在群组中发送消息。")
+                note_parts.append("未获取到对话列表。请确保机器人已被添加到群组或有用户私聊过机器人。")
+
             return {
                 "success": True,
                 "channels": channels,
-                "note": " ".join(note_parts) if note_parts else "机器人只能获取最近有消息的群组。如果列表为空，请先在群组中发送消息。"
+                "note": " ".join(note_parts) if note_parts else None
             }
 
         except Exception as e:
@@ -827,6 +873,14 @@ class TelegramBotManager:
         try:
             logger.info(f"BotManager.send_message: account_id={account_id}, chat_id={chat_id}, message_len={len(message) if message else 0}, attachments_count={len(attachments) if attachments else 0}")
 
+            # 检查 chat_id 是否有效
+            if chat_id is None:
+                return {
+                    "success": False,
+                    "error": "INVALID_CHAT_ID",
+                    "message": "Chat ID is None"
+                }
+
             if account_id not in self.bots:
                 return {
                     "success": False,
@@ -845,9 +899,10 @@ class TelegramBotManager:
 
             # 如果有附件，使用对应的 API 发送
             if attachments and len(attachments) > 0:
-                logger.info(f"Sending media with {len(attachments)} attachments")
+                logger.info(f"Sending media with {len(attachments)} attachments, watermark={watermark is not None}")
                 has_local = any(att.get("localPath") or att.get("path") for att in attachments)
-                if has_local:
+                # 如果有水印或有本地文件，使用 _send_media_attachment（需要下载图片来应用水印）
+                if has_local or watermark:
                     bot = self.bots.get(account_id)
                     if bot:
                         return await self._send_media_attachment(

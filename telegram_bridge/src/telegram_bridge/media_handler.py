@@ -226,6 +226,22 @@ class MediaHandler:
             发送结果
         """
         try:
+            logger.info(f"upload_to_telegram called: media_path={media_path}, media_type={media_type}")
+            # 检查必要参数
+            if client_or_bot is None:
+                return {
+                    "success": False,
+                    "error": "CLIENT_NOT_PROVIDED",
+                    "message": "Telegram client or bot is None"
+                }
+
+            if chat_id is None:
+                return {
+                    "success": False,
+                    "error": "CHAT_ID_NOT_PROVIDED",
+                    "message": "Chat ID is None"
+                }
+
             if not media_path.exists():
                 return {
                     "success": False,
@@ -244,12 +260,45 @@ class MediaHandler:
 
             # 根据媒体类型发送
             if media_type == "photo":
+                # 将 PNG 转换为 JPEG 以避免 Telethon 的 has_transparency_data 兼容性问题
+                send_path = media_path
+                logger.info(f"Preparing to send photo: {media_path}, suffix={media_path.suffix}")
+                if media_path.suffix.lower() == '.png':
+                    try:
+                        from PIL import Image
+                        logger.info(f"Converting PNG to JPEG: {media_path}")
+                        img = Image.open(media_path)
+                        jpeg_path = media_path.with_suffix('.jpg')
+                        # 转换为 RGB（移除透明通道）
+                        if img.mode in ('RGBA', 'LA', 'P'):
+                            background = Image.new('RGB', img.size, (255, 255, 255))
+                            if img.mode == 'P':
+                                img = img.convert('RGBA')
+                            background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                            img = background
+                        else:
+                            img = img.convert('RGB')
+                        img.save(jpeg_path, 'JPEG', quality=95)
+                        img.close()
+                        send_path = jpeg_path
+                        logger.info(f"Successfully converted PNG to JPEG: {jpeg_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to convert PNG to JPEG: {e}, using original")
+
+                logger.info(f"Sending photo via send_file: {send_path}")
                 result = await client_or_bot.send_file(
                     chat_id,
-                    media_path,
+                    str(send_path),  # 确保传递字符串路径
                     caption=caption if caption else None,
                     reply_to=reply_to_message_id
                 )
+
+                # 清理转换后的临时文件
+                if send_path != media_path:
+                    try:
+                        send_path.unlink(missing_ok=True)
+                    except:
+                        pass
             elif media_type == "video":
                 result = await client_or_bot.send_file(
                     chat_id,
@@ -335,6 +384,19 @@ class MediaHandler:
                 media_type = "photo"
             if attachment.get("isVideo"):
                 media_type = "video"
+
+            # 根据文件扩展名判断媒体类型（作为后备）
+            filename = attachment.get("filename", "")
+            if filename:
+                ext = filename.lower().split(".")[-1] if "." in filename else ""
+                if ext in ("png", "jpg", "jpeg", "gif", "webp", "bmp"):
+                    media_type = "photo"
+                elif ext in ("mp4", "mov", "webm", "mkv", "avi"):
+                    media_type = "video"
+                elif ext in ("mp3", "wav", "ogg", "flac", "m4a"):
+                    media_type = "audio"
+
+            logger.info(f"process_discord_attachment: contentType={content_type}, isImage={attachment.get('isImage')}, filename={filename}, media_type={media_type}")
 
             # 下载文件
             filename = attachment.get("filename", f"attachment_{hash(url) % 10000}")
@@ -448,15 +510,20 @@ class MediaHandler:
 
     async def _apply_watermark(self, file_path: Path, watermark: Optional[Any]):
         if not watermark:
+            logger.debug(f"No watermark config provided for {file_path}")
             return
         if isinstance(watermark, list):
+            logger.info(f"Applying {len(watermark)} watermarks to {file_path}")
             for item in watermark:
                 await self._apply_watermark(file_path, item)
             return
         if not isinstance(watermark, dict):
+            logger.warning(f"Invalid watermark config type: {type(watermark)}")
             return
         if watermark.get("enabled") is False:
+            logger.debug(f"Watermark disabled in config")
             return
+        logger.info(f"Applying watermark to {file_path}: {watermark}")
         mode = str(watermark.get("mode") or "").strip().lower()
         pattern = str(watermark.get("pattern") or "").strip().lower()
         tile_gap = int(watermark.get("tileGap") or 40)

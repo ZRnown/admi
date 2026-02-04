@@ -1,12 +1,11 @@
 import {
-  AnyChannel,
-  Client as SelfBotClient,
+  Client as BotClient,
   Message,
   PartialMessage,
   Role,
-  User
-} from "discord.js-selfbot-v13";
-import { Client as BotClient } from "discord.js";
+  User,
+  Channel as AnyChannel,
+} from "discord.js";
 
 import { Config, WatermarkConfig } from "./config.js";
 import { formatSize } from "./format.js";
@@ -32,9 +31,7 @@ const VIDEO_EXT_RE = /\.(mp4|mov|webm|mkv|avi|flv)(?:$|[?#])/i;
 const AUDIO_EXT_RE = /\.(mp3|wav|ogg|flac|m4a|aac)(?:$|[?#])/i;
 const DOCUMENT_EXT_RE = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(?:$|[?#])/i;
 
-export type Client<Ready extends boolean = boolean> =
-  | SelfBotClient<Ready>
-  | BotClient<Ready>;
+export type Client<Ready extends boolean = boolean> = BotClient<Ready>;
 
 export interface BridgeDiscordMessagePayload {
   accountId?: string;

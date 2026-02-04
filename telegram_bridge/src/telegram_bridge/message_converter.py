@@ -328,6 +328,7 @@ class DiscordToTelegramConverter(MessageConverter):
                 "reply_to_message_id": discord_message.get("replyToMessageId"),
                 "attachments": attachments,
                 "watermark": watermark_payload,
+                "watermarks": watermark_payload if isinstance(watermark_payload, list) else ([watermark_payload] if watermark_payload else None),
             }
 
             return telegram_message

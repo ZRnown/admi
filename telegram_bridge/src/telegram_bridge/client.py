@@ -1021,6 +1021,14 @@ class TelegramClientManager:
     ) -> Dict[str, Any]:
         """发送消息"""
         try:
+            # 检查 chat_id 是否有效
+            if chat_id is None:
+                return {
+                    "success": False,
+                    "error": "INVALID_CHAT_ID",
+                    "message": "Chat ID is None"
+                }
+
             if account_id not in self.clients:
                 return {
                     "success": False,
