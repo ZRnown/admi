@@ -6,7 +6,7 @@ import https from "node:https";
 import { ProxyAgent } from "proxy-agent";
 import { createHash } from "crypto";
 import { getEnv } from "./env";
-import type { AccountConfig, MultiConfig, TruthSocialForwardingRule, XForwardingRule } from "./config";
+import type { AccountConfig, MultiConfig, TruthSocialForwardingRule, XForwardingRule, XStreamMode } from "./config";
 import { SenderBot } from "./senderBot";
 import { FileLogger } from "./logger";
 import { clampPercent, getLanguageRatio } from "./languageFilter";
@@ -16,7 +16,12 @@ import { recordForwardStat } from "./forwardStats";
 const STATE_FILE = path.resolve(process.cwd(), ".data", "external_forward_state.json");
 const STATUS_FILE = path.resolve(process.cwd(), ".data", "external_forward_status.json");
 const DEFAULT_X_BASE_URL = "https://api.twitterapi.io";
+const X_WEBSOCKET_URL = "wss://ws.twitterapi.io/twitter/tweet/websocket";
 const DEFAULT_POLL_INTERVAL_SECONDS = 60;
+const DEFAULT_X_STREAM_MODE: XStreamMode = "poll";
+const X_RULE_TAG_PREFIX = "admi:x:";
+const X_RULE_MIN_INTERVAL_SECONDS = 100;
+const X_WS_RECONNECT_SECONDS = 90;
 
 type ExternalSourceType = "x" | "truthsocial";
 type ExternalForwardingType = "x-to-discord" | "truthsocial-to-discord";
@@ -46,6 +51,11 @@ type ExternalRunningAccount = {
   timers: Map<string, NodeJS.Timeout>;
   senderCache: Map<string, SenderBot>;
   inFlight: Set<string>;
+  ws?: any;
+  wsReconnectTimer?: NodeJS.Timeout;
+  xMode?: XStreamMode;
+  xRuleById?: Map<string, XForwardingRule>;
+  xRuleByTag?: Map<string, XForwardingRule>;
 };
 
 const runningAccounts = new Map<string, ExternalRunningAccount>();
@@ -324,10 +334,110 @@ async function requestJson(url: URL, headers: Record<string, string>, proxyUrl?:
   });
 }
 
+async function requestJsonPost(
+  url: URL,
+  headers: Record<string, string>,
+  body: any,
+  proxyUrl?: string,
+): Promise<any> {
+  const isHttps = url.protocol === "https:";
+  const lib = isHttps ? https : http;
+  const agent = proxyUrl ? new ProxyAgent(proxyUrl as any) : undefined;
+  const payload = JSON.stringify(body ?? {});
+  const requestHeaders = {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(payload),
+    ...headers,
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = lib.request(
+      url,
+      {
+        method: "POST",
+        headers: requestHeaders,
+        agent,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data);
+            resolve(json);
+          } catch (e) {
+            reject(new Error(`响应解析失败: ${String(e)}`));
+          }
+        });
+      },
+    );
+    req.on("error", (err) => reject(err));
+    req.setTimeout(20000, () => {
+      req.destroy();
+      reject(new Error("请求超时"));
+    });
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function requestJsonDelete(
+  url: URL,
+  headers: Record<string, string>,
+  body: any,
+  proxyUrl?: string,
+): Promise<any> {
+  const isHttps = url.protocol === "https:";
+  const lib = isHttps ? https : http;
+  const agent = proxyUrl ? new ProxyAgent(proxyUrl as any) : undefined;
+  const payload = JSON.stringify(body ?? {});
+  const requestHeaders = {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(payload),
+    ...headers,
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = lib.request(
+      url,
+      {
+        method: "DELETE",
+        headers: requestHeaders,
+        agent,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data);
+            resolve(json);
+          } catch (e) {
+            reject(new Error(`响应解析失败: ${String(e)}`));
+          }
+        });
+      },
+    );
+    req.on("error", (err) => reject(err));
+    req.setTimeout(20000, () => {
+      req.destroy();
+      reject(new Error("请求超时"));
+    });
+    req.write(payload);
+    req.end();
+  });
+}
+
 function extractXItems(payload: any): any[] {
   if (!payload) return [];
   if (Array.isArray(payload.tweets)) return payload.tweets;
   if (Array.isArray(payload.data?.tweets)) return payload.data.tweets;
+  if (payload.tweet) return [payload.tweet];
+  if (payload.data?.tweet) return [payload.data.tweet];
   if (Array.isArray(payload.data)) return payload.data;
   return [];
 }
@@ -358,9 +468,22 @@ function getTweetUserName(tweet: any, fallback?: string): string | undefined {
     tweet?.user?.userName ||
     tweet?.user?.username ||
     tweet?.user?.handle ||
+    tweet?.author?.username ||
+    tweet?.author?.userName ||
     tweet?.user_name ||
     fallback
   );
+}
+
+function getTweetUserId(tweet: any): string | undefined {
+  return (
+    tweet?.user?.id ||
+    tweet?.user?.id_str ||
+    tweet?.user_id ||
+    tweet?.userId ||
+    tweet?.author_id ||
+    tweet?.author?.id
+  )?.toString();
 }
 
 function isTweetReply(tweet: any): boolean {
@@ -383,6 +506,163 @@ function isTweetRetweet(tweet: any): boolean {
     return referenced.some((item) => item?.type === "retweeted");
   }
   return false;
+}
+
+function resolveXStreamMode(account: AccountConfig): XStreamMode {
+  return account.xConfig?.mode === "websocket" ? "websocket" : DEFAULT_X_STREAM_MODE;
+}
+
+function buildXRuleTag(accountId: string, ruleId: string): string {
+  const tag = `${X_RULE_TAG_PREFIX}${accountId}:${ruleId}`;
+  return tag.length > 200 ? tag.slice(0, 200) : tag;
+}
+
+function buildXRuleValue(rule: XForwardingRule): string | undefined {
+  const handle = rule.sourceUserName ? rule.sourceUserName.replace(/^@+/, "") : "";
+  if (handle) return `from:${handle}`;
+  if (rule.sourceUserId) return `from:${rule.sourceUserId}`;
+  return undefined;
+}
+
+function getXRuleIntervalSeconds(rule: XForwardingRule, account: AccountConfig): number {
+  const interval = getPollIntervalSeconds(rule.pollIntervalSeconds, account.xConfig?.pollIntervalSeconds);
+  return Math.max(X_RULE_MIN_INTERVAL_SECONDS, interval);
+}
+
+async function syncXWebsocketRules(
+  account: AccountConfig,
+  running: ExternalRunningAccount,
+  logger: FileLogger,
+): Promise<void> {
+  const mappings = account.xConfig?.mappings || [];
+  running.xRuleById = new Map();
+  running.xRuleByTag = new Map();
+  if (mappings.length === 0) return;
+
+  const apiKey = account.xConfig?.apiKey;
+  if (!apiKey) {
+    for (const rule of mappings) {
+      updateRuleStatus("x", account.id, rule.id, { lastError: "缺少 X API Key", lastErrorAt: Date.now() });
+    }
+    logger.error(`[X->Discord] 账号 ${account.name || account.id} 缺少 X API Key`);
+    return;
+  }
+
+  const baseUrl = account.xConfig?.apiBaseUrl || DEFAULT_X_BASE_URL;
+  const headers = { "x-api-key": apiKey };
+  let existingRules: any[] = [];
+  try {
+    const payload = await requestJson(new URL("/oapi/tweet_filter/get_rules", baseUrl), headers, account.proxyUrl);
+    existingRules = Array.isArray(payload?.rules) ? payload.rules : [];
+  } catch (e: any) {
+    logger.error(`[X->Discord] 获取 WebSocket 规则失败: ${String(e?.message || e)}`);
+    for (const rule of mappings) {
+      updateRuleStatus("x", account.id, rule.id, {
+        lastError: String(e?.message || e),
+        lastErrorAt: Date.now(),
+      });
+    }
+  }
+
+  const existingByTag = new Map<string, any>();
+  for (const rule of existingRules) {
+    if (rule?.tag) existingByTag.set(String(rule.tag), rule);
+  }
+
+  const desiredTags = new Set<string>();
+  for (const rule of mappings) {
+    const tag = buildXRuleTag(account.id, rule.id);
+    const value = buildXRuleValue(rule);
+    if (!value) {
+      logger.error(`[X->Discord] 规则 ${rule.id} 缺少用户名或用户ID，无法创建 WebSocket 过滤规则`);
+      updateRuleStatus("x", account.id, rule.id, { lastError: "规则缺少用户名/用户ID", lastErrorAt: Date.now() });
+      continue;
+    }
+
+    desiredTags.add(tag);
+    const intervalSeconds = getXRuleIntervalSeconds(rule, account);
+    const existing = existingByTag.get(tag);
+    let ruleId = existing?.rule_id || existing?.ruleId;
+    if (existing) {
+      const existingValue = existing.value || existing.rule_value;
+      const existingInterval = Number(existing.interval_seconds ?? existing.intervalSeconds ?? 0);
+      const needsUpdate =
+        existingValue !== value || (Number.isFinite(existingInterval) && Math.round(existingInterval) !== intervalSeconds);
+      if (needsUpdate && ruleId) {
+        try {
+          const payload = await requestJsonPost(
+            new URL("/oapi/tweet_filter/update_rule", baseUrl),
+            headers,
+            {
+              rule_id: ruleId,
+              tag,
+              value,
+              interval_seconds: intervalSeconds,
+              is_effect: 1,
+            },
+            account.proxyUrl,
+          );
+          ruleId = payload?.rule_id || payload?.ruleId || ruleId;
+        } catch (e: any) {
+          logger.error(`[X->Discord] 更新 WebSocket 规则失败(${tag}): ${String(e?.message || e)}`);
+          updateRuleStatus("x", account.id, rule.id, {
+            lastError: String(e?.message || e),
+            lastErrorAt: Date.now(),
+          });
+        }
+      }
+    } else {
+      try {
+        const payload = await requestJsonPost(
+          new URL("/oapi/tweet_filter/add_rule", baseUrl),
+          headers,
+          { tag, value, interval_seconds: intervalSeconds },
+          account.proxyUrl,
+        );
+        ruleId = payload?.rule_id || payload?.ruleId || ruleId;
+      } catch (e: any) {
+        logger.error(`[X->Discord] 新增 WebSocket 规则失败(${tag}): ${String(e?.message || e)}`);
+        updateRuleStatus("x", account.id, rule.id, {
+          lastError: String(e?.message || e),
+          lastErrorAt: Date.now(),
+        });
+      }
+    }
+
+    if (ruleId) {
+      running.xRuleById?.set(String(ruleId), rule);
+    }
+    running.xRuleByTag?.set(tag, rule);
+  }
+
+  for (const rule of existingRules) {
+    const tag = String(rule?.tag || "");
+    if (!tag.startsWith(`${X_RULE_TAG_PREFIX}${account.id}:`)) continue;
+    if (desiredTags.has(tag)) continue;
+    const ruleId = rule?.rule_id || rule?.ruleId;
+    if (!ruleId) continue;
+    try {
+      await requestJsonDelete(
+        new URL("/oapi/tweet_filter/delete_rule", baseUrl),
+        headers,
+        { rule_id: ruleId },
+        account.proxyUrl,
+      );
+    } catch (e: any) {
+      logger.error(`[X->Discord] 删除 WebSocket 规则失败(${tag}): ${String(e?.message || e)}`);
+    }
+  }
+}
+
+function matchXRulesForTweet(rules: XForwardingRule[], tweet: any): XForwardingRule[] {
+  const userId = getTweetUserId(tweet);
+  const userName = getTweetUserName(tweet);
+  const normalizedName = userName ? userName.toLowerCase() : "";
+  return rules.filter((rule) => {
+    if (rule.sourceUserId && userId && rule.sourceUserId === userId) return true;
+    if (rule.sourceUserName && normalizedName && rule.sourceUserName.toLowerCase() === normalizedName) return true;
+    return false;
+  });
 }
 
 async function forwardXRule(account: AccountConfig, rule: XForwardingRule, running: ExternalRunningAccount, logger: FileLogger) {
@@ -506,6 +786,171 @@ async function forwardSingleTweet(
   logger.info(`${logPrefix} 转发成功: ${tweetId}`);
   recordForwardStat(account.id, "x-to-discord");
   return true;
+}
+
+async function handleXWebsocketPayload(
+  account: AccountConfig,
+  running: ExternalRunningAccount,
+  logger: FileLogger,
+  payload: any,
+) {
+  if (!payload) return;
+  const eventType = String(payload.event_type || payload.eventType || payload.type || "").toLowerCase();
+  if (eventType === "connected") {
+    logger.info(`[X->Discord] WebSocket 已连接 (${account.name || account.id})`);
+    const now = Date.now();
+    (account.xConfig?.mappings || []).forEach((rule) => {
+      updateRuleStatus("x", account.id, rule.id, { lastSuccessAt: now, lastError: "", lastErrorAt: undefined });
+    });
+    return;
+  }
+  if (eventType === "ping") {
+    return;
+  }
+
+  const tweets = extractXItems(payload);
+  if (tweets.length === 0) return;
+  const ruleId = payload.rule_id || payload.ruleId;
+  const ruleTag = payload.rule_tag || payload.ruleTag || payload.tag;
+  let taggedRules: XForwardingRule[] = [];
+  if (ruleId && running.xRuleById?.has(String(ruleId))) {
+    taggedRules = [running.xRuleById.get(String(ruleId))!];
+  } else if (ruleTag && running.xRuleByTag?.has(String(ruleTag))) {
+    taggedRules = [running.xRuleByTag.get(String(ruleTag))!];
+  }
+
+  const allRules = account.xConfig?.mappings || [];
+  for (const tweet of tweets) {
+    const candidates = taggedRules.length > 0 ? taggedRules : matchXRulesForTweet(allRules, tweet);
+    if (candidates.length === 0) continue;
+    for (const rule of candidates) {
+      const tweetId = getTweetId(tweet);
+      if (!tweetId) continue;
+      const lastSeen = getLastSeen("x", account.id, rule.id);
+      if (lastSeen && lastSeen === tweetId) continue;
+      updateRuleStatus("x", account.id, rule.id, { lastPollAt: Date.now(), lastSuccessAt: Date.now(), lastError: "", lastErrorAt: undefined });
+      let forwarded = false;
+      try {
+        forwarded = await forwardSingleTweet(account, rule, running, logger, tweet);
+      } catch (e: any) {
+        logger.error(`[X->Discord] WebSocket 转发失败: ${String(e?.message || e)}`);
+        updateRuleStatus("x", account.id, rule.id, { lastError: String(e?.message || e), lastErrorAt: Date.now() });
+      }
+      if (forwarded) {
+        updateRuleStatus("x", account.id, rule.id, {
+          lastForwardAt: Date.now(),
+          lastItemId: tweetId,
+        });
+      }
+      setLastSeen("x", account.id, rule.id, tweetId);
+    }
+  }
+}
+
+function scheduleXWebsocketReconnect(
+  account: AccountConfig,
+  running: ExternalRunningAccount,
+  logger: FileLogger,
+  reason: string,
+) {
+  if (!runningAccounts.has(account.id)) return;
+  if (running.wsReconnectTimer) return;
+  running.wsReconnectTimer = setTimeout(() => {
+    running.wsReconnectTimer = undefined;
+    if (!runningAccounts.has(account.id)) return;
+    connectXWebsocket(account, running, logger);
+  }, X_WS_RECONNECT_SECONDS * 1000);
+  logger.error(`[X->Discord] WebSocket 断开(${reason})，${X_WS_RECONNECT_SECONDS}s 后重连`);
+}
+
+function connectXWebsocket(account: AccountConfig, running: ExternalRunningAccount, logger: FileLogger) {
+  const apiKey = account.xConfig?.apiKey;
+  if (!apiKey) {
+    const now = Date.now();
+    (account.xConfig?.mappings || []).forEach((rule) => {
+      updateRuleStatus("x", account.id, rule.id, { lastError: "缺少 X API Key", lastErrorAt: now });
+    });
+    logger.error(`[X->Discord] 无法建立 WebSocket：缺少 X API Key`);
+    return;
+  }
+
+  const WebSocketCtor = (globalThis as any).WebSocket;
+  if (!WebSocketCtor) {
+    const now = Date.now();
+    (account.xConfig?.mappings || []).forEach((rule) => {
+      updateRuleStatus("x", account.id, rule.id, { lastError: "当前 Node 不支持 WebSocket", lastErrorAt: now });
+    });
+    logger.error(`[X->Discord] 当前 Node 不支持 WebSocket`);
+    return;
+  }
+
+  try {
+    if (running.ws) {
+      try {
+        running.ws.close();
+      } catch {}
+      running.ws = undefined;
+    }
+    const ws = new WebSocketCtor(X_WEBSOCKET_URL, {
+      headers: { "x-api-key": apiKey },
+    });
+    running.ws = ws;
+
+    ws.onopen = () => {
+      logger.info(`[X->Discord] WebSocket 已建立连接`);
+    };
+
+    ws.onmessage = (event: any) => {
+      const raw =
+        typeof event?.data === "string"
+          ? event.data
+          : Buffer.isBuffer(event?.data)
+            ? event.data.toString("utf-8")
+            : event?.data instanceof ArrayBuffer
+              ? Buffer.from(event.data).toString("utf-8")
+              : "";
+      if (!raw) return;
+      let payload: any;
+      try {
+        payload = JSON.parse(raw);
+      } catch (e) {
+        logger.error(`[X->Discord] WebSocket 消息解析失败: ${String(e)}`);
+        return;
+      }
+      handleXWebsocketPayload(account, running, logger, payload).catch(() => {});
+    };
+
+    ws.onerror = (err: any) => {
+      const message = String(err?.message || err);
+      logger.error(`[X->Discord] WebSocket 错误: ${message}`);
+      (account.xConfig?.mappings || []).forEach((rule) => {
+        updateRuleStatus("x", account.id, rule.id, { lastError: message, lastErrorAt: Date.now() });
+      });
+      running.ws = undefined;
+      scheduleXWebsocketReconnect(account, running, logger, "error");
+    };
+
+    ws.onclose = (event: any) => {
+      const code = event?.code ? `code=${event.code}` : "unknown";
+      running.ws = undefined;
+      scheduleXWebsocketReconnect(account, running, logger, code);
+    };
+  } catch (e: any) {
+    logger.error(`[X->Discord] WebSocket 初始化失败: ${String(e?.message || e)}`);
+    (account.xConfig?.mappings || []).forEach((rule) => {
+      updateRuleStatus("x", account.id, rule.id, { lastError: String(e?.message || e), lastErrorAt: Date.now() });
+    });
+  }
+}
+
+async function startXWebsocketAccount(account: AccountConfig, running: ExternalRunningAccount, logger: FileLogger) {
+  const mappings = account.xConfig?.mappings || [];
+  if (mappings.length === 0) {
+    logger.error(`[X->Discord] 账号 ${account.name || account.id} 未配置任何 X 转发规则`);
+    return;
+  }
+  await syncXWebsocketRules(account, running, logger);
+  connectXWebsocket(account, running, logger);
 }
 
 function extractTruthStatuses(payload: any): any[] {
@@ -740,6 +1185,18 @@ function stopRunningAccount(accountId: string) {
     clearInterval(timer);
   }
   running.timers.clear();
+  if (running.wsReconnectTimer) {
+    clearTimeout(running.wsReconnectTimer);
+    running.wsReconnectTimer = undefined;
+  }
+  if (running.ws) {
+    try {
+      running.ws.close();
+    } catch {}
+    running.ws = undefined;
+  }
+  running.xRuleById?.clear();
+  running.xRuleByTag?.clear();
   running.senderCache.clear();
   running.inFlight.clear();
   runningAccounts.delete(accountId);
@@ -760,6 +1217,13 @@ async function startExternalAccount(account: AccountConfig, logger: FileLogger) 
     const mappings = account.xConfig?.mappings || [];
     if (mappings.length === 0) {
       logger.error(`[X->Discord] 账号 ${account.name || account.id} 未配置任何 X 转发规则`);
+      return;
+    }
+    const mode = resolveXStreamMode(account);
+    running.xMode = mode;
+    if (mode === "websocket") {
+      await startXWebsocketAccount(account, running, logger);
+      logger.info(`[X->Discord] 已启用 WebSocket 模式 (${mappings.length} 条规则)`);
       return;
     }
     for (const rule of mappings) {

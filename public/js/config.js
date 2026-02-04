@@ -26,7 +26,6 @@ async function loadConfig() {
         enabledForwardingTypes: data.enabledForwardingTypes || null,
         discordAccounts: Array.isArray(data.discordAccounts) ? data.discordAccounts : [],
         telegramAccounts: Array.isArray(data.telegramAccounts) ? data.telegramAccounts : [],
-        xAccounts: Array.isArray(data.xAccounts) ? data.xAccounts : [],
         truthSocialAccounts: Array.isArray(data.truthSocialAccounts) ? data.truthSocialAccounts : [],
       };
     } else {

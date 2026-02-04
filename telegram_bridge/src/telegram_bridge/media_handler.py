@@ -52,7 +52,21 @@ class MediaHandler:
         self.temp_dir = Path(tempfile.gettempdir()) / "telegram_bridge_media"
         self.temp_dir.mkdir(exist_ok=True)
         self.default_font_path: Optional[str] = None
+        self._http_session: Optional[aiohttp.ClientSession] = None
         self._ensure_default_font()
+
+    def _get_http_session(self) -> aiohttp.ClientSession:
+        if self._http_session and not self._http_session.closed:
+            return self._http_session
+        timeout = aiohttp.ClientTimeout(total=30, connect=8)
+        connector = aiohttp.TCPConnector(limit=16, ttl_dns_cache=300, keepalive_timeout=30)
+        self._http_session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+        return self._http_session
+
+    async def close(self):
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
+        self._http_session = None
 
     def _ensure_default_font(self):
         try:
@@ -143,46 +157,46 @@ class MediaHandler:
             下载的文件路径，如果失败返回None
         """
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to download media: HTTP {response.status}")
-                        return None
+            session = self._get_http_session()
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status != 200:
+                    logger.error(f"Failed to download media: HTTP {response.status}")
+                    return None
 
-                    # 检查文件大小
-                    content_length = response.headers.get('Content-Length')
-                    if content_length and int(content_length) > self.max_file_size:
-                        logger.error(f"File too large: {content_length} bytes")
-                        return None
+                # 检查文件大小
+                content_length = response.headers.get('Content-Length')
+                if content_length and int(content_length) > self.max_file_size:
+                    logger.error(f"File too large: {content_length} bytes")
+                    return None
 
-                    # 生成文件名
-                    if not filename:
-                        content_disposition = response.headers.get('Content-Disposition', '')
-                        if 'filename=' in content_disposition:
-                            filename = content_disposition.split('filename=')[-1].strip('";')
-                        else:
-                            # 从URL提取文件名
-                            filename = url.split('/')[-1].split('?')[0]
-                            if not filename:
-                                filename = f"media_{hash(url) % 10000}"
+                # 生成文件名
+                if not filename:
+                    content_disposition = response.headers.get('Content-Disposition', '')
+                    if 'filename=' in content_disposition:
+                        filename = content_disposition.split('filename=')[-1].strip('";')
+                    else:
+                        # 从URL提取文件名
+                        filename = url.split('/')[-1].split('?')[0]
+                        if not filename:
+                            filename = f"media_{hash(url) % 10000}"
 
-                    # 创建临时文件
-                    file_path = self.temp_dir / filename
+                # 创建临时文件
+                file_path = self.temp_dir / filename
 
-                    # 下载文件
-                    downloaded_size = 0
-                    with open(file_path, 'wb') as f:
-                        async for chunk in response.content.iter_chunked(8192):
-                            if downloaded_size + len(chunk) > self.max_file_size:
-                                logger.error(f"File too large during download: {downloaded_size + len(chunk)} bytes")
-                                file_path.unlink(missing_ok=True)
-                                return None
+                # 下载文件
+                downloaded_size = 0
+                with open(file_path, 'wb') as f:
+                    async for chunk in response.content.iter_chunked(8192):
+                        if downloaded_size + len(chunk) > self.max_file_size:
+                            logger.error(f"File too large during download: {downloaded_size + len(chunk)} bytes")
+                            file_path.unlink(missing_ok=True)
+                            return None
 
-                            f.write(chunk)
-                            downloaded_size += len(chunk)
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
 
-                    logger.info(f"Downloaded media file: {file_path} ({downloaded_size} bytes)")
-                    return file_path
+                logger.info(f"Downloaded media file: {file_path} ({downloaded_size} bytes)")
+                return file_path
 
         except Exception as e:
             logger.error(f"Failed to download media from {url}: {e}")

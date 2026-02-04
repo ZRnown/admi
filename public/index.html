@@ -177,31 +177,6 @@
           </div>
         </div>
 
-        <!-- 主备模式配置 -->
-        <div id="ruleStandbySection" class="hidden border border-indigo-100 bg-indigo-50/30 rounded-lg p-4">
-          <h3 class="font-medium text-indigo-900 mb-3 flex items-center gap-2">🚦 主备/双活模式</h3>
-          <div class="space-y-3">
-            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" id="ruleStandbyEnabled" class="h-4 w-4 rounded border-slate-300" onchange="toggleRuleStandbyConfig()">
-              启用备用频道模式（此规则作为备用/B 路）
-            </label>
-            <div id="ruleStandbyConfigBody" class="w-full space-y-3 opacity-50 pointer-events-none transition-opacity">
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">主频道 ID（A 路）</label>
-                <input type="text" id="ruleStandbyMainId" placeholder="填写主频道的 Channel ID"
-                  class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none font-mono">
-                <p class="text-[10px] text-slate-500 mt-1">当主频道有消息时，备用频道消息将保持静默。</p>
-              </div>
-              <div>
-                <label class="block text-xs text-slate-600 mb-1">静默判定时间（秒）</label>
-                <input type="number" id="ruleStandbyCooldown" value="60" min="1"
-                  class="w-28 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <p class="text-[10px] text-slate-500 mt-1">主频道在过去 X 秒内活跃，则备用频道不转发。</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- 显示源用户选项 -->
         <div class="border border-slate-200 rounded-lg p-4">
           <label class="inline-flex items-center gap-2 text-sm text-slate-700">
@@ -402,6 +377,30 @@
           <button onclick="addRuleReplacement()" class="text-xs bg-slate-50 text-slate-700 px-2 py-1 rounded-md hover:bg-slate-100 mt-2">+ 添加替换规则</button>
         </div>
 
+        <!-- 主备模式配置 -->
+        <div id="ruleStandbySection" class="hidden border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-3">主备/双活模式</h3>
+          <div class="space-y-3">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" id="ruleStandbyEnabled" class="h-4 w-4 rounded border-slate-300" onchange="toggleRuleStandbyConfig()">
+              启用备用频道模式（此规则作为备用/B 路）
+            </label>
+            <div id="ruleStandbyConfigBody" class="w-full space-y-3 opacity-50 pointer-events-none transition-opacity">
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">主频道（A 路）</label>
+                <div id="ruleStandbyMainInput" class="w-full"></div>
+                <p class="text-[10px] text-slate-500 mt-1">当主频道有消息时，备用频道消息将保持静默。</p>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">静默判定时间（秒）</label>
+                <input type="number" id="ruleStandbyCooldown" value="60" min="1"
+                  class="w-28 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <p class="text-[10px] text-slate-500 mt-1">主频道在过去 X 秒内活跃，则备用频道不转发。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div id="ruleConfigError" class="hidden text-sm text-red-500"></div>
 
         <div class="flex gap-2 pt-2">
@@ -443,6 +442,7 @@
           <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 新建账号</button>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <button onclick="startSelectedLibraryAccounts()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">▶ 启动选中</button>
           <button id="librarySyncAllBtn" onclick="syncAllAccounts()" class="text-xs bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-md hover:bg-emerald-100">🔄 一键同步</button>
           <span id="accountLibrarySelectionCount">已选 0 个账号</span>
           <button onclick="removeSelectedLibraryAccounts()" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除选中</button>
@@ -459,6 +459,7 @@
               <th class="px-3 py-2">类型</th>
               <th class="px-3 py-2">备注</th>
               <th class="px-3 py-2">用户名</th>
+              <th class="px-3 py-2">状态</th>
               <th id="librarySyncInfoHeader" class="px-3 py-2">同步数据</th>
               <th class="px-3 py-2">操作</th>
             </tr>
@@ -722,14 +723,15 @@
 
     function getBadgeClass(state) {
       const normalized = state || 'idle';
-      const badgeState = normalized === 'disconnecting' ? 'pending' : normalized;
-      if (badgeState === 'online') return 'bg-emerald-50 text-emerald-700';
-      if (badgeState === 'error') return 'bg-red-50 text-red-700';
-      if (badgeState === 'pending' || badgeState === 'connecting') return 'bg-amber-50 text-amber-700';
+      if (normalized === 'online') return 'bg-emerald-50 text-emerald-700';
+      if (normalized === 'error') return 'bg-red-50 text-red-700';
+      if (normalized === 'disconnecting') return 'bg-orange-50 text-orange-700';
+      if (normalized === 'pending' || normalized === 'connecting') return 'bg-amber-50 text-amber-700';
       return 'bg-slate-100 text-slate-600';
     }
 
     function resolveTelegramInstanceState(acc, type) {
+      if (!isTelegramForwardEnabled(acc)) return 'idle';
       if (hasTelegramLibrarySelection(acc)) {
         const ids = [];
         if (type === 'telegram-to-discord') {
@@ -744,7 +746,8 @@
         if (uniqueIds.length === 0) return 'idle';
         const states = uniqueIds.map((id) => (getTelegramLibraryStatus(id)?.state || 'idle'));
         if (states.includes('error')) return 'error';
-        if (states.some((s) => s === 'pending' || s === 'connecting' || s === 'disconnecting')) return 'pending';
+        if (states.some((s) => s === 'disconnecting')) return 'disconnecting';
+        if (states.some((s) => s === 'pending' || s === 'connecting')) return 'pending';
         if (states.includes('online')) return 'online';
         return 'idle';
       }
@@ -756,22 +759,29 @@
       const clientState = acc?.telegramClientState || 'idle';
       const states = [botState, clientState];
       return states.includes('error') ? 'error'
-        : states.some(s => s === 'pending' || s === 'connecting' || s === 'disconnecting') ? 'pending'
+        : states.some(s => s === 'disconnecting') ? 'disconnecting'
+        : states.some(s => s === 'pending' || s === 'connecting') ? 'pending'
         : states.includes('online') ? 'online' : 'idle';
     }
 
-    function getInstanceStatusBadgeClass(acc) {
-      const type = acc?.forwardingType || 'discord-to-discord';
-      let state = 'idle';
-
-      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
-        state = resolveTelegramInstanceState(acc, type);
-      } else {
-        state = acc?.loginState || 'idle';
+    function resolveDiscordInstanceState(acc, type) {
+      if (!acc) return 'idle';
+      const state = normalizeDiscordInstanceState(acc.loginState || 'idle');
+      if (type === 'discord-to-discord' && acc.enableDiscordForward === false) {
+        return 'idle';
       }
+      if (type === 'discord-to-feishu' && acc.enableFeishuForward !== true) {
+        return 'idle';
+      }
+      return state;
+    }
+
+    function getInstanceStatusBadgeClass(acc) {
+      const state = getInstanceState(acc);
 
       if (state === 'online') return 'bg-emerald-50 text-emerald-700';
       if (state === 'error') return 'bg-red-50 text-red-700';
+      if (state === 'disconnecting') return 'bg-orange-50 text-orange-700';
       if (state === 'pending' || state === 'connecting') return 'bg-amber-50 text-amber-700';
       return 'bg-slate-100 text-slate-600';
     }
@@ -781,20 +791,15 @@
       if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
         return resolveTelegramInstanceState(acc, type);
       }
-      return acc?.loginState || 'idle';
+      if (type === 'x-to-discord' || type === 'truthsocial-to-discord') {
+        return acc?.loginState || 'idle';
+      }
+      return resolveDiscordInstanceState(acc, type);
     }
 
     function getInstanceStatusLabel(acc) {
-      const type = acc?.forwardingType || 'discord-to-discord';
-      let state = 'idle';
-
-      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
-        state = resolveTelegramInstanceState(acc, type);
-      } else {
-        state = acc?.loginState || 'idle';
-      }
-
-      const labels = { 'idle': '已停止', 'pending': '启动中...', 'connecting': '连接中...', 'online': '运行中', 'error': '错误' };
+      const state = getInstanceState(acc);
+      const labels = { 'idle': '已停止', 'pending': '启动中...', 'connecting': '连接中...', 'disconnecting': '停止中...', 'online': '运行中', 'error': '错误' };
       return labels[state] || state;
     }
 
@@ -839,11 +844,11 @@
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          return { success: false, message: data?.message || data?.error || '连接失败' };
+          return { success: false, message: data?.message || data?.error || '连接失败', state: data?.state };
         }
-        return { success: true, message: data?.message || '连接成功' };
+        return { success: true, message: data?.message || '连接成功', state: data?.state };
       } catch (e) {
-        return { success: false, message: e?.message || '连接失败' };
+        return { success: false, message: e?.message || '连接失败', state: undefined };
       }
     }
 
@@ -859,11 +864,65 @@
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          return { success: false, message: data?.message || data?.error || '断开失败' };
+          return { success: false, message: data?.message || data?.error || '断开失败', state: data?.state };
         }
-        return { success: true, message: data?.message || '已断开' };
+        return { success: true, message: data?.message || '已断开', state: data?.state };
       } catch (e) {
-        return { success: false, message: e?.message || '断开失败' };
+        return { success: false, message: e?.message || '断开失败', state: undefined };
+      }
+    }
+
+    async function connectTelegramLibraryAccount(accountId, role) {
+      const entry = getTelegramLibraryAccountById(accountId);
+      if (!entry) {
+        showToast('未找到 Telegram 账号', 'error');
+        return;
+      }
+      const holdKey = `tg-lib:${accountId}`;
+      clearDisconnectHold(holdKey);
+      setConnectHold(holdKey);
+      entry.loginState = 'connecting';
+      entry.loginMessage = '正在连接...';
+      updateTelegramLibraryStatusElement(accountId, entry.loginState, entry.loginMessage);
+      const result = await connectTelegramLibraryAccountSilent(accountId, role);
+      if (result.success) {
+        const nextState = result.state || 'pending';
+        entry.loginState = nextState;
+        entry.loginMessage = result.message || '连接成功';
+        updateTelegramLibraryStatusElement(accountId, entry.loginState, entry.loginMessage);
+        showToast(entry.loginMessage, 'success');
+      } else {
+        entry.loginState = 'error';
+        entry.loginMessage = result.message || '连接失败';
+        updateTelegramLibraryStatusElement(accountId, entry.loginState, entry.loginMessage);
+        showToast(entry.loginMessage, 'error');
+      }
+    }
+
+    async function disconnectTelegramLibraryAccount(accountId) {
+      const entry = getTelegramLibraryAccountById(accountId);
+      if (!entry) {
+        showToast('未找到 Telegram 账号', 'error');
+        return;
+      }
+      const holdKey = `tg-lib:${accountId}`;
+      clearConnectHold(holdKey);
+      setDisconnectHold(holdKey);
+      entry.loginState = 'disconnecting';
+      entry.loginMessage = '正在断开...';
+      updateTelegramLibraryStatusElement(accountId, entry.loginState, entry.loginMessage);
+      const result = await disconnectTelegramLibraryAccountSilent(accountId);
+      if (result.success) {
+        const nextState = result.state || 'idle';
+        entry.loginState = nextState;
+        entry.loginMessage = result.message || '已断开';
+        updateTelegramLibraryStatusElement(accountId, entry.loginState, entry.loginMessage);
+        showToast(entry.loginMessage, 'success');
+      } else {
+        entry.loginState = 'error';
+        entry.loginMessage = result.message || '断开失败';
+        updateTelegramLibraryStatusElement(accountId, entry.loginState, entry.loginMessage);
+        showToast(entry.loginMessage, 'error');
       }
     }
 
@@ -871,48 +930,93 @@
     async function startInstance() {
       const acc = getActiveAccount();
       if (!acc) return;
+      const currentState = getInstanceState(acc);
+      if (currentState === 'online' || currentState === 'pending' || currentState === 'connecting') {
+        return;
+      }
       const type = acc.forwardingType || 'discord-to-discord';
       const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
       const usingLibrary = hasTelegramLibrarySelection(acc);
+      const discordLibraryId = acc.discordAccountId || acc.discordSenderAccountId;
+      const usingDiscordLibrary = Boolean(discordLibraryId);
       const targets = getTelegramLibraryTargetsForInstance(acc, type);
       if (requiresTelegram && usingLibrary && targets.length === 0) {
         showToast('请先选择 Telegram 账号', 'error');
         render();
         return;
       }
+      if (requiresTelegram && usingLibrary) {
+        const offlineTargets = targets.filter(({ id }) => {
+          const status = getTelegramLibraryStatus(id);
+          return status.state !== 'online';
+        });
+        if (offlineTargets.length > 0) {
+          const labels = offlineTargets
+            .map(({ id }) => getTelegramLibraryAccountById(id)?.name || id)
+            .filter(Boolean)
+            .join('、');
+          showToast(`请先在账号库连接 Telegram 账号${labels ? `：${labels}` : ''}`, 'error');
+          render();
+          return;
+        }
+      }
       const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
       if (needsDiscord) {
-        acc.loginRequested = true;
-        acc.loginNonce = (acc.loginNonce || 0) + 1;
-        acc.loginState = 'pending';
-        acc.loginMessage = '启动中...';
-        setConnectHold(`discord:${acc.id}`);
+        if (usingDiscordLibrary) {
+          if (!discordLibraryId) {
+            showToast('请先选择 Discord 账号', 'error');
+            render();
+            return;
+          }
+          const status = getDiscordLibraryStatus(discordLibraryId);
+          if (status.state !== 'online') {
+            const label = getDiscordLibraryDisplayName(discordLibraryId);
+            showToast(`请先在账号库连接 Discord 账号${label ? `：${label}` : ''}`, 'error');
+            render();
+            return;
+          }
+          if (!acc.loginRequested) {
+            acc.loginRequested = true;
+            acc.loginNonce = (acc.loginNonce || 0) + 1;
+            acc.loginState = 'pending';
+            acc.loginMessage = '启动中...';
+            setConnectHold(`discord:${acc.id}`);
+          }
+        } else {
+          acc.loginRequested = true;
+          acc.loginNonce = (acc.loginNonce || 0) + 1;
+          acc.loginState = 'pending';
+          acc.loginMessage = '启动中...';
+          setConnectHold(`discord:${acc.id}`);
+        }
       } else {
         acc.loginRequested = false;
       }
 
+      if (type === 'discord-to-discord') {
+        acc.enableDiscordForward = true;
+      }
+      if (type === 'discord-to-feishu') {
+        acc.enableFeishuForward = true;
+      }
+
       if (requiresTelegram) {
-        if (type === 'telegram-to-discord') {
-          acc.telegramClientState = 'pending';
-          acc.telegramClientMessage = '启动中...';
-          setConnectHold(`tg-client:${acc.id}`);
-        } else {
-          acc.telegramBotState = 'pending';
-          acc.telegramClientState = 'pending';
-          acc.telegramBotMessage = '启动中...';
-          acc.telegramClientMessage = '启动中...';
-          setConnectHold(`tg-bot:${acc.id}`);
-          setConnectHold(`tg-client:${acc.id}`);
-        }
-        if (usingLibrary) {
-          targets.forEach(({ id }) => {
-            const entry = getTelegramLibraryAccountById(id);
-            if (entry) {
-              entry.loginState = 'pending';
-              entry.loginMessage = '启动中...';
-            }
-          });
-          await Promise.allSettled(targets.map((item) => connectTelegramLibraryAccountSilent(item.id, item.role)));
+        ensureTelegramConfig(acc);
+        acc.telegramConfig.enableTelegramForward = true;
+        acc.enableForwarding = true;
+        if (!usingLibrary) {
+          if (type === 'telegram-to-discord') {
+            acc.telegramClientState = 'pending';
+            acc.telegramClientMessage = '启动中...';
+            setConnectHold(`tg-client:${acc.id}`);
+          } else {
+            acc.telegramBotState = 'pending';
+            acc.telegramClientState = 'pending';
+            acc.telegramBotMessage = '启动中...';
+            acc.telegramClientMessage = '启动中...';
+            setConnectHold(`tg-bot:${acc.id}`);
+            setConnectHold(`tg-client:${acc.id}`);
+          }
         }
       }
       render();
@@ -924,38 +1028,45 @@
     async function stopInstance() {
       const acc = getActiveAccount();
       if (!acc) return;
+      const currentState = getInstanceState(acc);
+      if (currentState === 'idle') {
+        return;
+      }
       const type = acc.forwardingType || 'discord-to-discord';
       const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
       const usingLibrary = hasTelegramLibrarySelection(acc);
-      const targets = getTelegramLibraryTargetsForInstance(acc, type);
       const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
       if (needsDiscord) {
-        acc.loginRequested = false;
-        acc.loginNonce = (acc.loginNonce || 0) + 1;
-        acc.loginState = 'disconnecting';
-        acc.loginMessage = '正在停止...';
+        const usingDiscordLibrary = Boolean(acc.discordAccountId || acc.discordSenderAccountId);
+        if (!usingDiscordLibrary) {
+          acc.loginRequested = false;
+          acc.loginNonce = (acc.loginNonce || 0) + 1;
+          acc.loginState = 'disconnecting';
+          acc.loginMessage = '正在停止...';
+        }
       } else {
         acc.loginRequested = false;
       }
+      if (type === 'discord-to-discord') {
+        acc.enableDiscordForward = false;
+      }
+      if (type === 'discord-to-feishu') {
+        acc.enableFeishuForward = false;
+      }
       if (requiresTelegram) {
-        if (type === 'telegram-to-discord') {
-          acc.telegramClientState = 'disconnecting';
-          acc.telegramClientMessage = '正在停止...';
-        } else {
-          acc.telegramBotState = 'disconnecting';
-          acc.telegramClientState = 'disconnecting';
-          acc.telegramBotMessage = '正在停止...';
-          acc.telegramClientMessage = '正在停止...';
-        }
-        if (usingLibrary && targets.length) {
-          targets.forEach(({ id }) => {
-            const entry = getTelegramLibraryAccountById(id);
-            if (entry) {
-              entry.loginState = 'disconnecting';
-              entry.loginMessage = '正在停止...';
-            }
-          });
-          await Promise.allSettled(targets.map((item) => disconnectTelegramLibraryAccountSilent(item.id)));
+        ensureTelegramConfig(acc);
+        acc.telegramConfig.enableTelegramForward = false;
+        acc.enableForwarding = false;
+        if (!usingLibrary) {
+          if (type === 'telegram-to-discord') {
+            acc.telegramClientState = 'disconnecting';
+            acc.telegramClientMessage = '正在停止...';
+          } else {
+            acc.telegramBotState = 'disconnecting';
+            acc.telegramClientState = 'disconnecting';
+            acc.telegramBotMessage = '正在停止...';
+            acc.telegramClientMessage = '正在停止...';
+          }
         }
       }
       render();
@@ -1004,6 +1115,98 @@
       };
     }
 
+    function getDiscordLibraryDisplayName(accountId) {
+      if (!accountId) return '未选择';
+      const entry = getDiscordLibraryAccountById(accountId);
+      return entry ? getDiscordLibraryLabel(entry) : accountId;
+    }
+
+    function getTelegramLibraryDisplayName(accountId) {
+      if (!accountId) return '未选择';
+      const entry = getTelegramLibraryAccountById(accountId);
+      return entry ? getTelegramLibraryLabel(entry) : accountId;
+    }
+
+    function getTruthLibraryDisplayName(accountId) {
+      if (!accountId) return '未选择';
+      const entry = (state.truthSocialAccounts || []).find((item) => item.id === accountId);
+      return entry ? getTruthLibraryLabel(entry) : accountId;
+    }
+
+    function buildAccountDetailItem(label, state) {
+      const normalizedState = state || 'idle';
+      const badgeState = normalizedState === 'disconnecting' ? 'pending' : normalizedState;
+      const statusLabel = getStatusLabel(normalizedState);
+      return `
+        <span class="inline-flex items-center gap-1 text-[11px]">
+          <span class="text-slate-500">${escapeHtml(label)}</span>
+          <span class="px-1.5 py-0.5 rounded-full text-[10px] ${getBadgeClass(badgeState)}">${escapeHtml(statusLabel)}</span>
+        </span>
+      `;
+    }
+
+    function buildAccountDetailHtml(acc, type, summary) {
+      const parts = [];
+      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
+      if (needsDiscord) {
+        if (acc.discordAccountId) {
+          const name = getDiscordLibraryDisplayName(acc.discordAccountId);
+          const status = getDiscordLibraryStatus(acc.discordAccountId).state || normalizeDiscordInstanceState(acc.loginState || 'idle');
+          parts.push(buildAccountDetailItem(`Discord监听:${name}`, status));
+        } else {
+          parts.push(buildAccountDetailItem('Discord监听:未选择', 'idle'));
+        }
+        if (acc.discordSenderAccountId) {
+          const name = getDiscordLibraryDisplayName(acc.discordSenderAccountId);
+          const status = getDiscordLibraryStatus(acc.discordSenderAccountId).state || normalizeDiscordInstanceState(acc.loginState || 'idle');
+          parts.push(buildAccountDetailItem(`Discord发送:${name}`, status));
+        }
+      }
+
+      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+        if (hasTelegramLibrarySelection(acc)) {
+          const targets = getTelegramLibraryTargetsForInstance(acc, type);
+          if (targets.length === 0) {
+            parts.push(buildAccountDetailItem('TG账号:未选择', 'idle'));
+          } else {
+            targets.forEach(({ id, role }) => {
+              const status = getTelegramLibraryStatus(id);
+              const name = getTelegramLibraryDisplayName(id);
+              const roleLabel = role === 'sender' ? 'TG发送' : role === 'listener' ? 'TG监听' : 'Telegram';
+              parts.push(buildAccountDetailItem(`${roleLabel}:${name}`, status.state));
+            });
+          }
+        } else if (type === 'telegram-to-discord') {
+          const state = acc.telegramClientState || 'idle';
+          parts.push(buildAccountDetailItem('TG监听:Client', state));
+        } else {
+          const botState = acc.telegramBotState || 'idle';
+          const clientState = acc.telegramClientState || 'idle';
+          parts.push(buildAccountDetailItem('TG发送:Bot', botState));
+          parts.push(buildAccountDetailItem('TG监听:Client', clientState));
+        }
+      }
+
+      if (type === 'x-to-discord') {
+        const firstRule = (acc.xConfig?.mappings || [])[0] || {};
+        const handle = firstRule.sourceUserName
+          ? `@${firstRule.sourceUserName}`
+          : firstRule.sourceUserId
+            ? `ID:${firstRule.sourceUserId}`
+            : '未设置';
+        const state = summary?.state || 'idle';
+        parts.push(buildAccountDetailItem(`X:${handle}`, state));
+      }
+
+      if (type === 'truthsocial-to-discord') {
+        const name = getTruthLibraryDisplayName(acc.truthSocialAccountId);
+        const state = summary?.state || 'idle';
+        parts.push(buildAccountDetailItem(`Truth:${name}`, state));
+      }
+
+      return parts.filter(Boolean).join('<span class="text-slate-300"> / </span>');
+    }
+
     function buildAccountCardSummary(acc) {
       const type = acc.forwardingType || 'discord-to-discord';
       if (type === 'x-to-discord' || type === 'truthsocial-to-discord') {
@@ -1023,44 +1226,60 @@
           state: summary.state,
           badgeLabel: summary.badgeLabel,
           message,
-          sub
+          sub,
+          detailHtml: buildAccountDetailHtml(acc, type, summary)
         };
       }
-      if (type === 'telegram-to-discord') {
-        const state = acc.telegramClientState || 'idle';
-        return {
-          state,
-          badgeLabel: getStatusLabel(state),
-          message: acc.telegramClientMessage || '',
-          sub: 'Telegram Client'
-        };
-      }
-      if (type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+        const state = resolveTelegramInstanceState(acc, type);
+        const usingLibrary = hasTelegramLibrarySelection(acc);
+        if (usingLibrary) {
+          const targets = getTelegramLibraryTargetsForInstance(acc, type);
+          const message = targets.length > 0
+            ? targets.map(({ id, role }) => {
+                const status = getTelegramLibraryStatus(id);
+                const name = getTelegramLibraryAccountById(id)?.name || id;
+                const roleLabel = role === 'sender' ? '发送' : role === 'listener' ? '监听' : '账号';
+                return `${roleLabel}:${name} ${getStatusLabel(status.state)}`;
+              }).join(' / ')
+            : '未选择账号';
+          const subLabel = type === 'discord-to-telegram' ? 'Telegram 账号库' : 'Telegram 账号库';
+          return {
+            state,
+            badgeLabel: getStatusLabel(state),
+            message,
+            sub: subLabel,
+            detailHtml: buildAccountDetailHtml(acc, type)
+          };
+        }
+        if (type === 'telegram-to-discord') {
+          return {
+            state,
+            badgeLabel: getStatusLabel(state),
+            message: acc.telegramClientMessage || '',
+            sub: 'Telegram Client',
+            detailHtml: buildAccountDetailHtml(acc, type)
+          };
+        }
         const botState = acc.telegramBotState || 'idle';
         const clientState = acc.telegramClientState || 'idle';
-        const states = [botState, clientState];
-        const state = states.includes('error')
-          ? 'error'
-          : states.some((item) => item === 'pending' || item === 'connecting' || item === 'disconnecting')
-            ? 'pending'
-            : states.includes('online')
-              ? 'online'
-              : 'idle';
-        const subLabel = type === 'discord-to-telegram' ? 'Discord → Telegram' : 'Telegram 监听/发送';
         const message = `Bot:${getStatusLabel(botState)} / Client:${getStatusLabel(clientState)}`;
+        const subLabel = type === 'discord-to-telegram' ? 'Discord → Telegram' : 'Telegram 监听/发送';
         return {
           state,
           badgeLabel: getStatusLabel(state),
           message,
-          sub: subLabel
+          sub: subLabel,
+          detailHtml: buildAccountDetailHtml(acc, type)
         };
       }
-      const state = acc.loginState || 'idle';
+      const state = getInstanceState(acc);
       return {
         state,
         badgeLabel: getStatusLabel(state),
         message: acc.loginMessage || '',
-        sub: ''
+        sub: '',
+        detailHtml: buildAccountDetailHtml(acc, type)
       };
     }
 
@@ -1094,12 +1313,6 @@
       return `${labelBase}${remark} [${typeLabel}]`;
     }
 
-    function getXLibraryLabel(item) {
-      const base = item?.name || item?.loginUserName || 'X账号';
-      const remark = item?.remark ? ` [${item.remark}]` : '';
-      return `${base}${remark}`;
-    }
-
     function getTruthLibraryLabel(item) {
       const base = item?.name || item?.username || 'TruthSocial账号';
       const remark = item?.remark ? ` [${item.remark}]` : '';
@@ -1130,17 +1343,6 @@
       return options.join('');
     }
 
-    function getXLibraryOptions(selectedId) {
-      const options = [`<option value="">未选择</option>`];
-      (state.xAccounts || []).forEach((item) => {
-        if (!item?.id) return;
-        options.push(
-          `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(getXLibraryLabel(item))}</option>`
-        );
-      });
-      return options.join('');
-    }
-
     function getTruthLibraryOptions(selectedId) {
       const options = [`<option value="">未选择</option>`];
       (state.truthSocialAccounts || []).forEach((item) => {
@@ -1153,6 +1355,10 @@
     }
 
     // ==================== 账号库查询函数 ====================
+    function getDiscordLibraryAccountById(accountId) {
+      return (state.discordAccounts || []).find((item) => item.id === accountId);
+    }
+
     function getTelegramLibraryAccountById(accountId) {
       return (state.telegramAccounts || []).find((item) => item.id === accountId);
     }
@@ -1671,11 +1877,12 @@
     }
 
     // 获取缓存的服务器选项HTML
-    function getCachedGuildsOptions(selectedId) {
+    function getCachedGuildsOptions(selectedId, selectedLabel) {
       if (!cachedGuilds || cachedGuilds.length === 0) {
-        // 修复：如果缓存为空但有选中的ID，显示加载状态而不是空，防止UI重置
+        // 修复：如果缓存为空但有选中的ID，显示保存的名称或加载状态
         if (selectedId) {
-          return `<option value="${selectedId}" selected>加载中... (${selectedId})</option>`;
+          const label = selectedLabel ? escapeHtml(selectedLabel) : `加载中... (${selectedId})`;
+          return `<option value="${selectedId}" selected>${label}</option>`;
         }
         return '<option value="">选择服务器</option>';
       }
@@ -1685,7 +1892,8 @@
       });
       // 修复：如果选中的ID不在列表中（可能由其他账号可见），保留它
       if (selectedId && !cachedGuilds.some(g => g.id === selectedId)) {
-        html += `<option value="${selectedId}" selected>未知服务器 (${selectedId})</option>`;
+        const label = selectedLabel ? escapeHtml(selectedLabel) : `未知服务器 (${selectedId})`;
+        html += `<option value="${selectedId}" selected>${label}</option>`;
       }
       return html;
     }
@@ -1767,16 +1975,25 @@
 
     // 选择服务器后加载频道列表
     const discordAutoSyncAttempted = new Set();
+    const discordAutoSyncOnLogin = new Set();
+    const discordAutoSyncInFlight = new Set();
 
     async function onGuildSelectForRule(accountId, guildId, channelSelectId, mappingIdx) {
       console.log('[DEBUG] onGuildSelectForRule called:', { accountId, guildId, channelSelectId, mappingIdx });
       const channelSelect = document.getElementById(channelSelectId);
       if (!channelSelect) return;
 
-      // 保存选择的服务器ID到规则中
+      // 保存选择的服务器ID和名称到规则中
       if (typeof mappingIdx === 'number') {
         console.log('[DEBUG] Saving sourceGuildId:', guildId, 'to mapping index:', mappingIdx);
         updateMapping(mappingIdx, 'sourceGuildId', guildId || '');
+        // 保存服务器名称
+        if (guildId) {
+          const guild = cachedGuilds.find(g => g.id === guildId);
+          updateMapping(mappingIdx, 'sourceGuildName', guild ? guild.name : '');
+        } else {
+          updateMapping(mappingIdx, 'sourceGuildName', '');
+        }
       } else {
         console.log('[DEBUG] mappingIdx is not a number:', typeof mappingIdx, mappingIdx);
       }
@@ -1841,8 +2058,9 @@
           placeholder="${placeholder}"
           class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
       } else {
-        // 获取已保存的服务器ID和频道ID
+        // 获取已保存的服务器ID、名称和频道ID
         const savedGuildId = m.sourceGuildId || '';
+        const savedGuildName = m.sourceGuildName || '';
         const savedChannelId = m.sourceChannelId || '';
 
         if (discordAccountId) {
@@ -1878,7 +2096,7 @@
         return `<div class="flex items-center gap-1">
           <select id="${guildSelectId}" onchange="onGuildSelectForRule('${discordAccountId}', this.value, '${channelSelectId}', ${idx})"
             class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-            ${getCachedGuildsOptions(savedGuildId)}
+            ${getCachedGuildsOptions(savedGuildId, savedGuildName)}
           </select>
           <select id="${channelSelectId}" onchange="updateMappingWithGuild(${idx}, 'sourceChannelId', this.value, '${guildSelectId}')"
             class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
@@ -2247,7 +2465,7 @@
 
         const guilds = data.guilds || [];
         if (guilds.length === 0) {
-          container.innerHTML = '<div class="text-slate-400">未找到服务器，请确保账号已登录并启动实例</div>';
+          container.innerHTML = '<div class="text-slate-400">未找到服务器，请确保账号已登录并完成同步</div>';
           return;
         }
 
@@ -2477,9 +2695,18 @@
         // 获取 token（如无 token 则尝试邮箱密码登录）
         let token = account.token;
         if (!token) {
+          const isBot = account.type === 'bot';
+          const ui = getLibraryUiState('discord', account.id, account);
+          const loginMode = isBot ? 'token' : (ui.loginMode === 'password' ? 'password' : 'token');
+          if (isBot) {
+            return { success: false, error: '机器人账号仅支持 Token 登录' };
+          }
+          if (loginMode !== 'password') {
+            return { success: false, error: '请先填写 Token' };
+          }
           const hasPasswordLogin = account.email && account.password;
           if (!hasPasswordLogin) {
-            return { success: false, error: '账号未配置 Token 或邮箱密码' };
+            return { success: false, error: '请先填写邮箱和密码' };
           }
           const loginRes = await fetch('/api/account/discord-login', {
             method: 'POST',
@@ -2562,6 +2789,24 @@
       }
     }
 
+    async function autoSyncDiscordAfterLogin(accountId) {
+      if (!accountId) return;
+      if (discordAutoSyncInFlight.has(accountId) || isLibrarySyncing('discord', accountId)) return;
+      discordAutoSyncInFlight.add(accountId);
+      try {
+        const result = await syncDiscordAccountDataOnly(accountId);
+        if (result?.success) {
+          await fetchDiscordGuildsForLibrary(accountId);
+          await fetchDiscordGuilds(accountId);
+          showToast(`Discord 账号已登录，已自动同步（${result.guildsCount || 0} 个服务器）`, 'success');
+        } else if (result?.error) {
+          showToast(result.error || '自动同步失败', 'error');
+        }
+      } finally {
+        discordAutoSyncInFlight.delete(accountId);
+      }
+    }
+
     // 同步单个 Telegram 账号数据（不依赖 DOM）
     async function syncTelegramAccountDataOnly(accountId) {
       try {
@@ -2571,10 +2816,24 @@
         }
         let res;
         try {
+          const payloadAccount = {
+            id: account.id,
+            name: account.name || 'Telegram',
+            type: account.type || (account.token && !account.sessionString && !account.sessionPath ? 'bot' : 'client'),
+            token: account.token,
+            sessionPath: account.sessionPath,
+            sessionString: account.sessionString,
+            sessionType: account.sessionType,
+            apiId: account.apiId,
+            apiHash: account.apiHash,
+            phoneNumber: account.phoneNumber,
+            twoFactorPassword: account.twoFactorPassword,
+            proxyUrl: account.proxyUrl
+          };
           res = await fetchWithTimeout('/api/metadata/telegram/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accountId })
+            body: JSON.stringify({ accountId, account: payloadAccount })
           }, 60000);
         } catch (e) {
           return { success: false, error: '同步超时(60s)，请稍后重试或检查后端日志' };
@@ -2813,6 +3072,7 @@
                   <input type="password" value="${escapeHtml(item.token || '')}" onchange="updateDiscordLibraryField('${item.id}', 'token', this.value)"
                     placeholder="可直接填写 Token" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
                 </div>
+                ${item.type === 'bot' ? '' : `
                 <div>
                   <label class="block text-xs text-slate-600 mb-1">邮箱（可选）</label>
                   <input type="text" value="${escapeHtml(item.email || '')}" onchange="updateDiscordLibraryField('${item.id}', 'email', this.value)"
@@ -2828,9 +3088,10 @@
                   <input type="password" value="${escapeHtml(item.totpSecret || '')}" onchange="updateDiscordLibraryField('${item.id}', 'totpSecret', this.value)"
                     class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                 </div>
+                `}
               </div>
               <div class="flex flex-wrap gap-2 mt-3">
-                <button onclick="loginDiscordLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">邮箱密码登录获取 Token</button>
+                ${item.type === 'bot' ? '' : `<button onclick="loginDiscordLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">邮箱密码登录获取 Token</button>`}
                 <button onclick="removeDiscordLibraryAccount('${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
               </div>
             </div>
@@ -2853,6 +3114,12 @@
                 <div class="text-sm font-medium text-slate-800">${escapeHtml(getTelegramLibraryLabel(item))}</div>
                 <button onclick="removeTelegramLibraryAccount('${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
               </div>
+              <div class="mt-2 flex items-center gap-2 text-xs">
+                <span id="lib-tg-inline-badge-${item.id}" class="px-2 py-0.5 rounded-full text-xs ${getBadgeClass((item.loginState || 'idle') === 'disconnecting' ? 'pending' : (item.loginState || 'idle'))}">
+                  ${getStatusLabel(item.loginState || 'idle')}
+                </span>
+                <span id="lib-tg-inline-msg-${item.id}" class="text-slate-500">${escapeHtml(item.loginMessage || '')}</span>
+              </div>
               <div class="grid gap-3 md:grid-cols-2 mt-3">
                 <div>
                   <label class="block text-xs text-slate-600 mb-1">名称</label>
@@ -2874,7 +3141,7 @@
                   <label class="block text-xs text-slate-600 mb-1">Bot Token</label>
                   <input type="password" value="${escapeHtml(item.token || '')}" onchange="updateTelegramLibraryField('${item.id}', 'token', this.value)"
                     class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
-                  <p class="text-xs text-slate-500 mt-2">启动实例时自动连接</p>
+                  <p class="text-xs text-slate-500 mt-2">请先在账号库连接，实例启停不会自动登录/断开</p>
                 </div>
               ` : `
                 <div class="grid gap-3 md:grid-cols-2 mt-3">
@@ -2923,70 +3190,8 @@
                   <input type="text" id="tg-login-code-${item.id}" placeholder="验证码" class="w-28 rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
                   <button onclick="confirmTelegramLibraryLogin('${item.id}')" class="text-xs border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-100">确认登录</button>
                 </div>
-                <p class="text-xs text-slate-500 mt-2">启动实例时自动连接</p>
+                <p class="text-xs text-slate-500 mt-2">请先在账号库连接，实例启停不会自动登录/断开</p>
               `}
-            </div>
-          `).join('')}
-        </div>
-      `;
-    }
-
-    function renderXLibrarySection() {
-      const items = state.xAccounts || [];
-      return `
-        <div>
-          <div class="flex items-center justify-between">
-            <h3 class="text-sm font-medium text-slate-800">X / Twitter 账号库</h3>
-            <button onclick="addXLibraryAccount()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加账号</button>
-          </div>
-          ${items.length === 0 ? `<p class="text-xs text-slate-400 mt-2">暂无账号</p>` : items.map((item) => `
-            <div class="mt-3 border border-slate-200 rounded-lg p-4">
-              <div class="grid gap-3 md:grid-cols-2">
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">名称</label>
-                  <input type="text" value="${escapeHtml(item.name || '')}" onchange="updateXLibraryField('${item.id}', 'name', this.value)"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">API Base URL</label>
-                  <input type="text" value="${escapeHtml(item.apiBaseUrl || '')}" onchange="updateXLibraryField('${item.id}', 'apiBaseUrl', this.value)"
-                    placeholder="https://api.twitterapi.io" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div class="md:col-span-2">
-                  <label class="block text-xs text-slate-600 mb-1">API Key</label>
-                  <input type="password" value="${escapeHtml(item.apiKey || '')}" onchange="updateXLibraryField('${item.id}', 'apiKey', this.value)"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div class="md:col-span-2">
-                  <label class="block text-xs text-slate-600 mb-1">Login Cookie</label>
-                  <input type="password" value="${escapeHtml(item.loginCookie || '')}" onchange="updateXLibraryField('${item.id}', 'loginCookie', this.value)"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">用户名</label>
-                  <input type="text" value="${escapeHtml(item.loginUserName || '')}" onchange="updateXLibraryField('${item.id}', 'loginUserName', this.value)"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">邮箱</label>
-                  <input type="text" value="${escapeHtml(item.loginEmail || '')}" onchange="updateXLibraryField('${item.id}', 'loginEmail', this.value)"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">密码</label>
-                  <input type="password" value="${escapeHtml(item.loginPassword || '')}" onchange="updateXLibraryField('${item.id}', 'loginPassword', this.value)"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-                <div>
-                  <label class="block text-xs text-slate-600 mb-1">2FA 密钥</label>
-                  <input type="password" value="${escapeHtml(item.loginTotpSecret || '')}" onchange="updateXLibraryField('${item.id}', 'loginTotpSecret', this.value)"
-                    class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                </div>
-              </div>
-              <div class="flex flex-wrap gap-2 mt-3">
-                <button onclick="loginXLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">邮箱密码登录获取 Cookie</button>
-                <button onclick="removeXLibraryAccount('${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
-              </div>
             </div>
           `).join('')}
         </div>
@@ -3173,6 +3378,7 @@
 
     function inferLibraryLoginMode(kind, account) {
       if (kind === 'discord') {
+        if (account?.type === 'bot') return 'token';
         if (account?.email || account?.password) return 'password';
         return 'token';
       }
@@ -3181,9 +3387,6 @@
         if (account?.phoneNumber) return 'phone';
         if (account?.sessionString || account?.sessionPath) return 'session';
         return 'phone';
-      }
-      if (kind === 'x') {
-        return account?.loginCookie ? 'cookie' : 'password';
       }
       if (kind === 'truthsocial') {
         return 'password';
@@ -3203,7 +3406,7 @@
 
     function getAllowedLibraryKinds() {
       if (!Array.isArray(state.enabledForwardingTypes) || state.enabledForwardingTypes.length === 0) {
-        return ['discord', 'telegram', 'x', 'truthsocial'];
+        return ['discord', 'telegram', 'truthsocial'];
       }
       const allowed = new Set();
       state.enabledForwardingTypes.forEach((type) => {
@@ -3218,16 +3421,13 @@
         } else if (type === 'telegram-to-telegram') {
           allowed.add('telegram');
           allowed.add('discord');
-        } else if (type === 'x-to-discord') {
-          allowed.add('x');
-          allowed.add('discord');
         } else if (type === 'truthsocial-to-discord') {
           allowed.add('truthsocial');
           allowed.add('discord');
         }
       });
       if (allowed.size === 0) {
-        return ['discord', 'telegram', 'x', 'truthsocial'];
+        return ['discord', 'telegram', 'truthsocial'];
       }
       return Array.from(allowed);
     }
@@ -3248,6 +3448,14 @@
       if (!libraryUiState[key]) {
         libraryUiState[key] = {};
       }
+      if (kind === 'discord') {
+        const account = getDiscordLibraryAccountById(id);
+        if (account?.type === 'bot') {
+          libraryUiState[key].loginMode = 'token';
+          render();
+          return;
+        }
+      }
       libraryUiState[key].loginMode = value;
       render();
     }
@@ -3256,7 +3464,6 @@
       const items = [];
       (state.discordAccounts || []).forEach((acc) => items.push({ kind: 'discord', id: acc.id, account: acc }));
       (state.telegramAccounts || []).forEach((acc) => items.push({ kind: 'telegram', id: acc.id, account: acc }));
-      (state.xAccounts || []).forEach((acc) => items.push({ kind: 'x', id: acc.id, account: acc }));
       (state.truthSocialAccounts || []).forEach((acc) => items.push({ kind: 'truthsocial', id: acc.id, account: acc }));
       return items;
     }
@@ -3278,8 +3485,6 @@
           return 'Discord';
         case 'telegram':
           return 'Telegram';
-        case 'x':
-          return 'X';
         case 'truthsocial':
           return 'TruthSocial';
         default:
@@ -3322,11 +3527,6 @@
         const fallback = String(item.account.username || item.account.userName || item.account.email || '');
         return fallback || item.account.name || '';
       }
-      if (item.kind === 'x') {
-        const name = String(item.account.loginUserName || '');
-        if (!name) return '';
-        return name.startsWith('@') ? name : `@${name}`;
-      }
       if (item.kind === 'truthsocial') {
         const name = String(item.account.username || '');
         if (!name) return '';
@@ -3351,7 +3551,8 @@
           type: 'selfbot',
           token: '',
           email: '',
-          password: ''
+          password: '',
+          loginEnabled: true
         });
       } else if (kind === 'telegram') {
         state.telegramAccounts = state.telegramAccounts || [];
@@ -3370,22 +3571,6 @@
           sessionPath: '',
           sessionString: '',
           enabled: false
-        });
-      } else if (kind === 'x') {
-        state.xAccounts = state.xAccounts || [];
-        newId = genId();
-        state.xAccounts.push({
-          id: newId,
-          name: name || '',
-          remark: remark || '',
-          apiKey: '',
-          apiBaseUrl: '',
-          loginCookie: '',
-          loginUserName: '',
-          loginEmail: '',
-          loginPassword: '',
-          loginTotpSecret: '',
-          loginProxy: ''
         });
       } else if (kind === 'truthsocial') {
         state.truthSocialAccounts = state.truthSocialAccounts || [];
@@ -3462,7 +3647,7 @@
       const body = document.getElementById('accountCreateBody');
       if (!body) return;
 
-      const kindLabels = { discord: 'Discord', telegram: 'Telegram', x: 'X', truthsocial: 'TruthSocial' };
+      const kindLabels = { discord: 'Discord', telegram: 'Telegram', truthsocial: 'TruthSocial' };
       const allowedKinds = getAllowedLibraryKinds();
       if (!allowedKinds.includes(createAccountKind)) {
         createAccountKind = allowedKinds[0] || 'discord';
@@ -3473,8 +3658,6 @@
         fieldsHtml = renderDiscordCreateFields();
       } else if (createAccountKind === 'telegram') {
         fieldsHtml = renderTelegramCreateFields();
-      } else if (createAccountKind === 'x') {
-        fieldsHtml = renderXCreateFields();
       } else if (createAccountKind === 'truthsocial') {
         fieldsHtml = renderTruthCreateFields();
       }
@@ -3501,8 +3684,8 @@
         </div>
       `;
       if (createAccountKind === 'discord') {
-        const mode = document.getElementById('createDiscordLoginMode')?.value || 'token';
-        onCreateDiscordLoginModeChange(mode);
+        const type = document.getElementById('createDiscordType')?.value || 'selfbot';
+        onCreateDiscordTypeChange(type);
       }
       if (createAccountKind === 'telegram') {
         const type = document.getElementById('createTelegramType')?.value || 'client';
@@ -3536,13 +3719,13 @@
         <div class="grid gap-4 md:grid-cols-2">
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1">Discord 账号类型</label>
-            <select id="createDiscordType"
+            <select id="createDiscordType" onchange="onCreateDiscordTypeChange(this.value)"
               class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="selfbot">用户账号</option>
               <option value="bot">机器人账号</option>
             </select>
           </div>
-          <div>
+          <div id="createDiscordLoginModeWrap">
             <label class="block text-sm font-medium text-slate-700 mb-1">登录方式</label>
             <select id="createDiscordLoginMode" onchange="onCreateDiscordLoginModeChange(this.value)"
               class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
@@ -3574,6 +3757,12 @@
     function onCreateDiscordLoginModeChange(mode) {
       const tokenFields = document.getElementById('createDiscordTokenFields');
       const passwordFields = document.getElementById('createDiscordPasswordFields');
+      const type = document.getElementById('createDiscordType')?.value || 'selfbot';
+      if (type === 'bot') {
+        if (tokenFields) tokenFields.classList.remove('hidden');
+        if (passwordFields) passwordFields.classList.add('hidden');
+        return;
+      }
       if (mode === 'token') {
         if (tokenFields) tokenFields.classList.remove('hidden');
         if (passwordFields) passwordFields.classList.add('hidden');
@@ -3581,6 +3770,19 @@
         if (tokenFields) tokenFields.classList.add('hidden');
         if (passwordFields) passwordFields.classList.remove('hidden');
       }
+    }
+
+    function onCreateDiscordTypeChange(type) {
+      const loginWrap = document.getElementById('createDiscordLoginModeWrap');
+      const loginSelect = document.getElementById('createDiscordLoginMode');
+      if (type === 'bot') {
+        if (loginWrap) loginWrap.classList.add('hidden');
+        if (loginSelect) loginSelect.value = 'token';
+        onCreateDiscordLoginModeChange('token');
+        return;
+      }
+      if (loginWrap) loginWrap.classList.remove('hidden');
+      onCreateDiscordLoginModeChange(loginSelect?.value || 'token');
     }
 
     function renderTelegramCreateFields() {
@@ -3822,16 +4024,6 @@
       }
     }
 
-    function renderXCreateFields() {
-      return `
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Cookie</label>
-          <textarea id="createXCookie" rows="3" placeholder="输入 X Cookie"
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
-        </div>
-      `;
-    }
-
     function renderTruthCreateFields() {
       return `
         <div>
@@ -3898,9 +4090,6 @@
         } else if (kind === 'telegram') {
           if (!state.telegramAccounts) state.telegramAccounts = [];
           state.telegramAccounts.push(account);
-        } else if (kind === 'x') {
-          if (!state.xAccounts) state.xAccounts = [];
-          state.xAccounts.push(account);
         } else if (kind === 'truthsocial') {
           if (!state.truthSocialAccounts) state.truthSocialAccounts = [];
           state.truthSocialAccounts.push(account);
@@ -3917,13 +4106,20 @@
       try {
         if (kind === 'discord') {
           const type = document.getElementById('createDiscordType')?.value || 'selfbot';
-          const loginMode = document.getElementById('createDiscordLoginMode')?.value || 'token';
+          let loginMode = document.getElementById('createDiscordLoginMode')?.value || 'token';
           account.type = type;
+          if (type === 'bot') {
+            loginMode = 'token';
+          }
           if (loginMode === 'token') {
             account.token = document.getElementById('createDiscordToken')?.value?.trim() || '';
+            account.email = '';
+            account.password = '';
+            account.totpSecret = '';
           } else {
             account.email = document.getElementById('createDiscordEmail')?.value?.trim() || '';
             account.password = document.getElementById('createDiscordPassword')?.value?.trim() || '';
+            account.token = '';
           }
         } else if (kind === 'telegram') {
           account.type = telegramType;
@@ -3943,8 +4139,6 @@
               account.sessionType = 'string';
             }
           }
-        } else if (kind === 'x') {
-          account.cookie = document.getElementById('createXCookie')?.value?.trim() || '';
         } else if (kind === 'truthsocial') {
           account.cookie = document.getElementById('createTruthCookie')?.value?.trim() || '';
         }
@@ -3992,12 +4186,6 @@
           if (syncResult.success) {
             await fetchTelegramDialogsForLibrary(newId);
           }
-        } else if (kind === 'x') {
-          const entry = (state.xAccounts || []).find(a => a.id === newId);
-          if (entry && (!entry.name || entry.name === 'X账号') && entry.loginUserName) {
-            entry.name = entry.loginUserName.startsWith('@') ? entry.loginUserName : `@${entry.loginUserName}`;
-            await saveConfigImmediate();
-          }
         } else if (kind === 'truthsocial') {
           const entry = (state.truthSocialAccounts || []).find(a => a.id === newId);
           if (entry && (!entry.name || entry.name === 'TruthSocial账号') && entry.username) {
@@ -4030,8 +4218,6 @@
         updateDiscordLibraryField(id, field, value);
       } else if (kind === 'telegram') {
         updateTelegramLibraryField(id, field, value);
-      } else if (kind === 'x') {
-        updateXLibraryField(id, field, value);
       } else if (kind === 'truthsocial') {
         updateTruthLibraryField(id, field, value);
       }
@@ -4039,14 +4225,12 @@
 
     // 获取账号库账号的显示名称
     function getLibraryAccountDisplayName(kind, id) {
-      const kindLabels = { discord: 'Discord', telegram: 'Telegram', x: 'X', truthsocial: 'Truth Social' };
+      const kindLabels = { discord: 'Discord', telegram: 'Telegram', truthsocial: 'Truth Social' };
       let account = null;
       if (kind === 'discord') {
         account = (state.discordAccounts || []).find(a => a.id === id);
       } else if (kind === 'telegram') {
         account = (state.telegramAccounts || []).find(a => a.id === id);
-      } else if (kind === 'x') {
-        account = (state.xAccounts || []).find(a => a.id === id);
       } else if (kind === 'truthsocial') {
         account = (state.truthSocialAccounts || []).find(a => a.id === id);
       }
@@ -4069,14 +4253,48 @@
       }).length;
     }
 
+    function normalizeDiscordInstanceState(state) {
+      if (!state || state === 'stopped') return 'idle';
+      return state;
+    }
+
+    function getDiscordLibraryStatus(accountId) {
+      const library = getDiscordLibraryAccountById(accountId);
+      const loginEnabled = library?.loginEnabled !== false;
+      const libraryState = normalizeDiscordInstanceState(library?.loginState || 'idle');
+      const libraryMessage = library?.loginMessage || '';
+      let state = libraryState;
+      let message = libraryMessage;
+
+      if (!loginEnabled) {
+        state = 'idle';
+        message = '未启用';
+      } else if (libraryState === 'pending' || libraryState === 'connecting') {
+        message = '正在登录';
+      } else if (libraryState === 'online') {
+        const displayName = library
+          ? (getLibraryAccountUsername({ kind: 'discord', id: accountId, account: library }) || library.name || '')
+          : '';
+        message = displayName ? `已连接: ${displayName}` : (libraryMessage || '已连接');
+      } else if (!message) {
+        message = '未登录';
+      }
+
+      return {
+        state,
+        message,
+        total: 0,
+        online: state === 'online' ? 1 : 0,
+        loginEnabled
+      };
+    }
+
     // 执行实际的删除操作
     function doRemoveLibraryAccount(kind, id) {
       if (kind === 'discord') {
         removeDiscordLibraryAccount(id);
       } else if (kind === 'telegram') {
         removeTelegramLibraryAccount(id);
-      } else if (kind === 'x') {
-        removeXLibraryAccount(id);
       } else if (kind === 'truthsocial') {
         removeTruthLibraryAccount(id);
       }
@@ -4128,7 +4346,8 @@
     function renderLibraryAccountFields(kind, account) {
       const ui = getLibraryUiState(kind, account.id, account);
       if (kind === 'discord') {
-        const loginMode = ui.loginMode === 'password' ? 'password' : 'token';
+        const isBot = account.type === 'bot';
+        const loginMode = isBot ? 'token' : (ui.loginMode === 'password' ? 'password' : 'token');
         return `
           <div class="grid gap-3 md:grid-cols-2">
             <div>
@@ -4139,6 +4358,7 @@
                 <option value="bot" ${account.type === 'bot' ? 'selected' : ''}>机器人账号</option>
               </select>
             </div>
+            ${isBot ? '' : `
             <div>
               <label class="block text-xs text-slate-600 mb-1">登录方式</label>
               <select onchange="setLibraryLoginMode('discord', '${account.id}', this.value)"
@@ -4147,6 +4367,7 @@
                 <option value="password" ${loginMode === 'password' ? 'selected' : ''}>账号密码</option>
               </select>
             </div>
+            `}
             ${loginMode === 'token' ? `
             <div class="md:col-span-2">
               <label class="block text-xs text-slate-600 mb-1">Token</label>
@@ -4261,64 +4482,7 @@
           </div>
           `}
           `}
-          <p class="text-xs text-slate-500 mt-3">启动实例时自动连接</p>
-        `;
-      }
-
-      if (kind === 'x') {
-        const loginMode = ui.loginMode === 'cookie' ? 'cookie' : 'password';
-        return `
-          <div class="grid gap-3 md:grid-cols-2">
-            <div>
-              <label class="block text-xs text-slate-600 mb-1">API Base URL</label>
-              <input type="text" value="${escapeHtml(account.apiBaseUrl || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'apiBaseUrl', this.value)"
-                placeholder="https://api.twitterapi.io" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
-            </div>
-            <div>
-              <label class="block text-xs text-slate-600 mb-1">API Key</label>
-              <input type="password" value="${escapeHtml(account.apiKey || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'apiKey', this.value)"
-                class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
-            </div>
-            <div class="md:col-span-2">
-              <label class="block text-xs text-slate-600 mb-1">登录方式</label>
-              <select onchange="setLibraryLoginMode('x', '${account.id}', this.value)"
-                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <option value="cookie" ${loginMode === 'cookie' ? 'selected' : ''}>Cookie</option>
-                <option value="password" ${loginMode === 'password' ? 'selected' : ''}>账号密码</option>
-              </select>
-            </div>
-            ${loginMode === 'cookie' ? `
-            <div class="md:col-span-2">
-              <label class="block text-xs text-slate-600 mb-1">Login Cookie</label>
-              <input type="password" value="${escapeHtml(account.loginCookie || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginCookie', this.value)"
-                class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
-            </div>
-            ` : `
-            <div>
-              <label class="block text-xs text-slate-600 mb-1">用户名</label>
-              <input type="text" value="${escapeHtml(account.loginUserName || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginUserName', this.value)"
-                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-            </div>
-            <div>
-              <label class="block text-xs text-slate-600 mb-1">邮箱</label>
-              <input type="text" value="${escapeHtml(account.loginEmail || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginEmail', this.value)"
-                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-            </div>
-            <div>
-              <label class="block text-xs text-slate-600 mb-1">密码</label>
-              <input type="password" value="${escapeHtml(account.loginPassword || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginPassword', this.value)"
-                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-            </div>
-            <div>
-              <label class="block text-xs text-slate-600 mb-1">2FA 密钥（可选）</label>
-              <input type="password" value="${escapeHtml(account.loginTotpSecret || '')}" onchange="updateLibraryAccountField('x', '${account.id}', 'loginTotpSecret', this.value)"
-                class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-            </div>
-            <div class="md:col-span-2">
-              <button onclick="loginXLibrary('${account.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">账号密码登录获取 Cookie</button>
-            </div>
-            `}
-          </div>
+          <p class="text-xs text-slate-500 mt-3">请先在账号库连接，实例启停不会自动登录/断开</p>
         `;
       }
 
@@ -4434,6 +4598,190 @@
         '确认删除',
         'bg-red-600 hover:bg-red-700'
       );
+    }
+
+    function updateDiscordLibraryStatusElement(accountId) {
+      const badgeEl = document.getElementById(`lib-discord-badge-${accountId}`);
+      const msgEl = document.getElementById(`lib-discord-msg-${accountId}`);
+      const btnConnect = document.getElementById(`lib-discord-connect-${accountId}`);
+      const btnDisconnect = document.getElementById(`lib-discord-disconnect-${accountId}`);
+
+      const status = getDiscordLibraryStatus(accountId);
+      const normalizedState = status.state || 'idle';
+      const displayState = getStatusLabel(normalizedState);
+      const badgeState = normalizedState === 'disconnecting' ? 'pending' : normalizedState;
+
+      if (badgeEl) {
+        badgeEl.textContent = displayState;
+        badgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
+      }
+      if (msgEl) {
+        msgEl.textContent = status.message || '';
+      }
+
+      const isPending = normalizedState === 'pending' || normalizedState === 'connecting' || normalizedState === 'disconnecting';
+      const isOnline = normalizedState === 'online';
+      const canConnect = !isPending && (normalizedState === 'idle' || normalizedState === 'error');
+      const canDisconnect = status.loginEnabled !== false && normalizedState !== 'idle' && normalizedState !== 'disconnecting';
+
+      if (btnConnect) {
+        btnConnect.disabled = !canConnect;
+        btnConnect.className = `ml-2 text-xs font-medium px-2.5 py-1 rounded-md ${!canConnect ? 'bg-indigo-300 text-white cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`;
+      }
+      if (btnDisconnect) {
+        btnDisconnect.disabled = !canDisconnect;
+        btnDisconnect.className = `ml-2 text-xs font-medium px-2.5 py-1 rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'hover:bg-slate-100'}`;
+      }
+    }
+
+    async function ensureDiscordLibraryToken(account) {
+      if (!account) return { ok: false, error: '账号不存在' };
+      if (account.token) return { ok: true };
+      const isBot = account.type === 'bot';
+      const ui = getLibraryUiState('discord', account.id, account);
+      const loginMode = isBot ? 'token' : (ui.loginMode === 'password' ? 'password' : 'token');
+      if (isBot) {
+        return { ok: false, error: '机器人账号仅支持 Token 登录' };
+      }
+      if (loginMode === 'token') {
+        return { ok: false, error: '请先填写 Token' };
+      }
+      if (!account.email || !account.password) {
+        return { ok: false, error: '请先填写邮箱和密码' };
+      }
+      try {
+        const res = await fetch('/api/account/discord-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            discordAccountId: account.id,
+            useLibrary: true,
+            mode: 'password',
+            email: account.email,
+            password: account.password,
+            totpSecret: account.totpSecret || undefined,
+            autoLogin: false
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return { ok: false, error: data?.error || '登录失败' };
+        }
+        await loadConfig();
+        render();
+        const refreshed = getDiscordLibraryAccountById(account.id);
+        if (!refreshed?.token) {
+          return { ok: false, error: '登录成功但未获取到 Token' };
+        }
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e?.message || '登录失败' };
+      }
+    }
+
+    async function connectDiscordLibraryAccounts(accountIds) {
+      const uniqueIds = Array.from(new Set(accountIds.filter(Boolean)));
+      if (uniqueIds.length === 0) return false;
+      let changed = false;
+      for (const id of uniqueIds) {
+        let account = getDiscordLibraryAccountById(id);
+        if (!account) {
+          showToast('未找到 Discord 账号', 'error');
+          continue;
+        }
+        const status = getDiscordLibraryStatus(id);
+        if (status.state === 'online' || status.state === 'pending' || status.state === 'connecting') {
+          showToast('账号已在登录/已连接', 'info');
+          continue;
+        }
+        const tokenResult = await ensureDiscordLibraryToken(account);
+        if (!tokenResult.ok) {
+          account.loginEnabled = true;
+          account.loginState = 'error';
+          account.loginMessage = tokenResult.error || '登录失败';
+          updateDiscordLibraryStatusElement(account.id);
+          showToast(account.loginMessage, 'error');
+          changed = true;
+          continue;
+        }
+        account = getDiscordLibraryAccountById(id) || account;
+        account.loginEnabled = true;
+        account.loginState = 'connecting';
+        account.loginMessage = '正在登录...';
+        setConnectHold(`discord-lib:${account.id}`);
+        updateDiscordLibraryStatusElement(account.id);
+        changed = true;
+      }
+      if (!changed) {
+        return false;
+      }
+      render();
+      await saveConfigImmediate();
+      return true;
+    }
+
+    async function disconnectDiscordLibraryAccounts(accountIds) {
+      const uniqueIds = Array.from(new Set(accountIds.filter(Boolean)));
+      if (uniqueIds.length === 0) return false;
+      const targets = uniqueIds
+        .map((id) => getDiscordLibraryAccountById(id))
+        .filter(Boolean);
+      if (targets.length === 0) {
+        showToast('未找到 Discord 账号', 'error');
+        return false;
+      }
+      let changed = false;
+      targets.forEach((account) => {
+        const status = getDiscordLibraryStatus(account.id);
+        if (status.state === 'idle' && status.loginEnabled === false) {
+          return;
+        }
+        account.loginEnabled = false;
+        account.loginState = 'disconnecting';
+        account.loginMessage = '正在断开...';
+        setDisconnectHold(`discord-lib:${account.id}`);
+        updateDiscordLibraryStatusElement(account.id);
+        changed = true;
+      });
+      if (!changed) {
+        showToast('账号未启动', 'info');
+        return false;
+      }
+      render();
+      await saveConfigImmediate();
+      return true;
+    }
+
+    async function connectDiscordLibraryAccount(accountId) {
+      if (!accountId) return;
+      await connectDiscordLibraryAccounts([accountId]);
+    }
+
+    async function disconnectDiscordLibraryAccount(accountId) {
+      if (!accountId) return;
+      await disconnectDiscordLibraryAccounts([accountId]);
+    }
+
+    async function startSelectedLibraryAccounts() {
+      if (librarySelection.size === 0) {
+        showToast('请先选择账号', 'error');
+        return;
+      }
+      const items = getLibraryItems().filter((item) => librarySelection.has(getLibrarySelectionKey(item.kind, item.id)));
+      const discordIds = items.filter(i => i.kind === 'discord').map(i => i.id);
+      const telegramIds = items.filter(i => i.kind === 'telegram').map(i => i.id);
+      let didAction = false;
+      if (discordIds.length > 0) {
+        const ok = await connectDiscordLibraryAccounts(discordIds);
+        if (ok) didAction = true;
+      }
+      for (const id of telegramIds) {
+        didAction = true;
+        await connectTelegramLibraryAccount(id);
+      }
+      if (!didAction) {
+        showToast('选中的账号不支持启动', 'error');
+      }
     }
 
     function openAccountLibrary() {
@@ -4825,7 +5173,7 @@
       if (items.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="6" class="text-center py-8">
+                <td colspan="7" class="text-center py-8">
               <div class="text-slate-400 text-sm mb-3">暂无账号</div>
               <p class="text-xs text-slate-500 mb-4">请先添加账号才能使用转发功能</p>
             </td>
@@ -4843,6 +5191,39 @@
         const showSync = item.kind === 'discord' || item.kind === 'telegram';
         const syncFn = item.kind === 'discord' ? 'syncDiscordAccountData' : 'syncTelegramAccountData';
         const syncing = showSync ? isLibrarySyncing(item.kind, item.id) : false;
+        const isTelegram = item.kind === 'telegram';
+        const isDiscord = item.kind === 'discord';
+        const discordStatus = isDiscord ? getDiscordLibraryStatus(item.id) : null;
+        const statusState = isTelegram
+          ? (item.account.loginState || 'idle')
+          : isDiscord
+            ? (discordStatus?.state || 'idle')
+            : 'idle';
+        const statusLabel = isTelegram || isDiscord ? getStatusLabel(statusState) : '—';
+        const statusMessage = isTelegram
+          ? (item.account.loginMessage || '')
+          : isDiscord
+            ? (discordStatus?.message || '')
+            : '';
+        const statusBadgeState = statusState === 'disconnecting' ? 'pending' : statusState;
+        const statusHtml = isTelegram
+          ? `<div class="flex flex-col gap-1">
+              <span id="lib-tg-badge-${item.id}" class="px-2 py-0.5 rounded-full text-xs ${getBadgeClass(statusBadgeState)}">${statusLabel}</span>
+              <span id="lib-tg-msg-${item.id}" class="text-[10px] text-slate-400">${escapeHtml(statusMessage)}</span>
+            </div>`
+          : isDiscord
+            ? `<div class="flex flex-col gap-1">
+              <span id="lib-discord-badge-${item.id}" class="px-2 py-0.5 rounded-full text-xs ${getBadgeClass(statusBadgeState)}">${statusLabel}</span>
+              <span id="lib-discord-msg-${item.id}" class="text-[10px] text-slate-400">${escapeHtml(statusMessage)}</span>
+            </div>`
+            : `<span class="text-slate-400">—</span>`;
+        const isPending = statusState === 'pending' || statusState === 'connecting' || statusState === 'disconnecting';
+        const isOnline = statusState === 'online';
+        const discordLoginEnabled = isDiscord ? discordStatus?.loginEnabled !== false : false;
+        const canConnect = isDiscord ? (!isPending && (statusState === 'idle' || statusState === 'error')) : false;
+        const canDisconnect = isDiscord
+          ? (discordLoginEnabled && statusState !== 'idle' && statusState !== 'disconnecting')
+          : statusState !== 'idle';
         const syncInfo = (() => {
           if (item.kind === 'discord') {
             const guildsCount = Number.isFinite(item.account.guildsCount) ? item.account.guildsCount : null;
@@ -4871,6 +5252,7 @@
             <td class="px-3 py-3 text-sm text-slate-700">${typeLabel}</td>
             <td class="px-3 py-3 text-sm text-slate-700">${remark}</td>
             <td class="px-3 py-3 text-sm text-slate-700">${username}</td>
+            <td class="px-3 py-3 text-xs text-slate-500">${statusHtml}</td>
             <td class="px-3 py-3 text-xs text-slate-500">
               ${syncInfoBtn}<div>${syncInfo}</div>
               ${syncTimeLabel ? `<div class="text-[10px] text-slate-400 mt-0.5">上次: ${syncTimeLabel}</div>` : ''}${syncInfoBtnClose}
@@ -4888,6 +5270,30 @@
                         同步中
                       </span>`
                     : '同步'}
+                </button>
+              ` : ''}
+              ${isDiscord ? `
+                <button id="lib-discord-connect-${item.id}" onclick="connectDiscordLibraryAccount('${item.id}')"
+                  class="ml-2 text-xs font-medium px-2.5 py-1 rounded-md ${!canConnect || isOnline ? 'bg-indigo-300 text-white cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500'}"
+                  ${!canConnect || isOnline ? 'disabled' : ''}>
+                  连接
+                </button>
+                <button id="lib-discord-disconnect-${item.id}" onclick="disconnectDiscordLibraryAccount('${item.id}')"
+                  class="ml-2 text-xs font-medium px-2.5 py-1 rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'hover:bg-slate-100'}"
+                  ${!canDisconnect ? 'disabled' : ''}>
+                  断开
+                </button>
+              ` : ''}
+              ${isTelegram ? `
+                <button id="lib-tg-connect-${item.id}" onclick="connectTelegramLibraryAccount('${item.id}')"
+                  class="ml-2 text-xs font-medium px-2.5 py-1 rounded-md ${isPending || isOnline ? 'bg-indigo-300 text-white cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500'}"
+                  ${isPending || isOnline ? 'disabled' : ''}>
+                  连接
+                </button>
+                <button id="lib-tg-disconnect-${item.id}" onclick="disconnectTelegramLibraryAccount('${item.id}')"
+                  class="ml-2 text-xs font-medium px-2.5 py-1 rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'hover:bg-slate-100'}"
+                  ${!canDisconnect ? 'disabled' : ''}>
+                  断开
                 </button>
               ` : ''}
               <button onclick="openLibraryEdit('${item.kind}', '${item.id}')" class="ml-2 text-xs text-indigo-600 hover:text-indigo-800">编辑</button>
@@ -4918,7 +5324,6 @@
               class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="discord" ${current.kind === 'discord' ? 'selected' : ''}>Discord</option>
               <option value="telegram" ${current.kind === 'telegram' ? 'selected' : ''}>Telegram</option>
-              <option value="x" ${current.kind === 'x' ? 'selected' : ''}>X</option>
               <option value="truthsocial" ${current.kind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>
             </select>
           </div>
@@ -4939,11 +5344,10 @@
       const needsDiscordSender = forwardingType === 'discord-to-discord';
       const needsTelegramListener = forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram';
       const needsTelegramSender = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram';
-      const needsX = forwardingType === 'x-to-discord';
       const needsTruth = forwardingType === 'truthsocial-to-discord';
 
-      if (!needsDiscordListener && !needsDiscordSender && !needsTelegramListener && !needsTelegramSender && !needsX && !needsTruth) {
-        return item.account.name || '';
+      if (!needsDiscordListener && !needsDiscordSender && !needsTelegramListener && !needsTelegramSender && !needsTruth) {
+        return '';
       }
 
       return `
@@ -4981,17 +5385,6 @@
               </div>
             ` : ''}
 
-            ${needsX ? `
-              <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">X 账号</label>
-                <select onchange="updateField('xAccountId', this.value)"
-                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                  ${getXLibraryOptions(acc.xAccountId)}
-                </select>
-                <p class="text-xs text-slate-500 mt-1">请选择用于拉取推文的 X 账号。</p>
-              </div>
-            ` : ''}
-
             ${needsTruth ? `
               <div>
                 <label class="block text-sm font-medium text-slate-700 mb-1">TruthSocial 账号</label>
@@ -5020,6 +5413,8 @@
       const renderExternalStatusSection = (kind) => {
         const summary = buildExternalStatusSummary(acc, kind);
         const title = kind === 'x' ? 'X / Twitter' : 'Truth Social';
+        const isWebsocket = kind === 'x' && acc.xConfig?.mode === 'websocket';
+        const pollLabel = isWebsocket ? '最近消息' : '最近拉取';
         return `
         <div class="border-t pt-4 border-slate-200">
           <div class="flex items-center justify-between mb-2">
@@ -5032,13 +5427,62 @@
           </div>
           <div class="flex flex-wrap items-center gap-3 text-xs text-slate-600">
             状态: <span id="external-${kind}-badge" class="px-2 py-0.5 rounded-full ${getBadgeClass(summary.state)}">${summary.badgeLabel}</span>
-            <span id="external-${kind}-poll">最近拉取: ${summary.lastPollLabel}</span>
+            <span id="external-${kind}-poll">${pollLabel}: ${summary.lastPollLabel}</span>
             <span id="external-${kind}-forward">最近转发: ${summary.lastForwardLabel}</span>
           </div>
           <div id="external-${kind}-error" class="text-xs ${summary.lastError ? 'text-red-500' : 'text-slate-400'} mt-2">
             ${summary.lastError ? `错误: ${escapeHtml(summary.lastError)}` : '暂无错误'}
           </div>
           <p class="text-xs text-slate-500 mt-2">已配置规则: ${summary.ruleCount} 条</p>
+        </div>
+      `;
+      };
+
+      const renderXInstanceConfig = () => {
+        if (forwardingType !== 'x-to-discord') return '';
+        ensureXConfig(acc);
+        const apiKeyValue = acc.xConfig?.apiKey || '';
+        const apiBaseUrlValue = acc.xConfig?.apiBaseUrl || '';
+        const xMode = acc.xConfig?.mode === 'websocket' ? 'websocket' : 'poll';
+        const isWebsocket = xMode === 'websocket';
+        const quickMapping = (acc.xConfig?.mappings || [])[0] || {};
+        const sourceUserName = quickMapping.sourceUserName || '';
+        const targetWebhookUrl = quickMapping.targetWebhookUrl || '';
+        return `
+        <div class="border-t pt-4 border-slate-200">
+          <h3 class="text-sm font-medium text-slate-800 mb-3">X 监听配置</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">API Key</label>
+              <input type="password" value="${escapeHtml(apiKeyValue)}" onchange="updateXConfigField('apiKey', this.value)"
+                placeholder="输入 X API Key" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">API Base URL（可选）</label>
+              <input type="text" value="${escapeHtml(apiBaseUrlValue)}" onchange="updateXConfigField('apiBaseUrl', this.value)"
+                placeholder="https://api.twitterapi.io" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">监听模式</label>
+              <select onchange="updateXConfigField('mode', this.value)"
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="poll" ${xMode === 'poll' ? 'selected' : ''}>轮询</option>
+                <option value="websocket" ${xMode === 'websocket' ? 'selected' : ''}>WebSocket</option>
+              </select>
+              <p class="text-xs text-slate-500 mt-1">${isWebsocket ? 'WebSocket 模式下将忽略拉取间隔设置。' : '轮询模式按规则/全局间隔拉取。'}</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">监听用户名</label>
+              <input type="text" value="${escapeHtml(sourceUserName)}" onchange="updateXQuickMappingField('sourceUserName', this.value)"
+                placeholder="@handle" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium text-slate-700 mb-1">目标 Webhook</label>
+              <input type="text" value="${escapeHtml(targetWebhookUrl)}" onchange="updateXQuickMappingField('targetWebhookUrl', this.value)"
+                placeholder="Discord Webhook URL" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 mt-2">如需多条监听规则，请在下方规则中添加。</p>
         </div>
       `;
       };
@@ -5067,13 +5511,13 @@
             <div class="flex gap-2">
               <input type="password" value="${tokenValue}" onchange="${updateHandler}"
                 placeholder="从 @BotFather 获取的Token" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono text-sm">
-              <button onclick="${connectHandler}" ${state === 'connecting' || state === 'online' ? 'disabled' : ''}
-                class="px-3 py-1.5 text-xs font-medium rounded-md ${state === 'connecting' || state === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                ${state === 'connecting' ? '连接中...' : state === 'online' ? '已启动' : '连接'}
+              <button onclick="${connectHandler}" ${state === 'connecting' || state === 'online' || state === 'disconnecting' ? 'disabled' : ''}
+                class="px-3 py-1.5 text-xs font-medium rounded-md ${state === 'connecting' || state === 'online' || state === 'disconnecting' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                ${state === 'connecting' ? '连接中...' : state === 'online' ? '已启动' : state === 'disconnecting' ? '停止中...' : '连接'}
               </button>
-              <button onclick="${disconnectHandler}" ${state !== 'online' && state !== 'error' && state !== 'connecting' ? 'disabled' : ''}
-                class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${state !== 'online' && state !== 'error' && state !== 'connecting' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                ${state === 'connecting' ? '中断' : '断开'}
+              <button onclick="${disconnectHandler}" ${state === 'disconnecting' || (state !== 'online' && state !== 'error' && state !== 'connecting') ? 'disabled' : ''}
+                class="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${state === 'disconnecting' || (state !== 'online' && state !== 'error' && state !== 'connecting') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                ${state === 'connecting' ? '中断' : state === 'disconnecting' ? '停止中...' : '断开'}
               </button>
             </div>
             <div class="text-xs text-slate-500 mt-1">
@@ -5182,13 +5626,13 @@
               </div>
             </div>
             <div class="flex gap-2 mt-3">
-              <button onclick="${connectHandler}" ${state === 'connecting' || state === 'online' ? 'disabled' : ''}
-                class="flex-1 px-3 py-2 text-sm font-medium rounded-md ${state === 'connecting' || state === 'online' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
-                ${state === 'connecting' ? '连接中...' : state === 'online' ? '已启动' : '连接'}
+              <button onclick="${connectHandler}" ${state === 'connecting' || state === 'online' || state === 'disconnecting' ? 'disabled' : ''}
+                class="flex-1 px-3 py-2 text-sm font-medium rounded-md ${state === 'connecting' || state === 'online' || state === 'disconnecting' ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white">
+                ${state === 'connecting' ? '连接中...' : state === 'online' ? '已启动' : state === 'disconnecting' ? '停止中...' : '连接'}
               </button>
-              <button onclick="${disconnectHandler}" ${state !== 'online' && state !== 'error' && state !== 'connecting' ? 'disabled' : ''}
-                class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-slate-200 ${state !== 'online' && state !== 'error' && state !== 'connecting' ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
-                ${state === 'connecting' ? '中断' : '断开'}
+              <button onclick="${disconnectHandler}" ${state === 'disconnecting' || (state !== 'online' && state !== 'error' && state !== 'connecting') ? 'disabled' : ''}
+                class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-slate-200 ${state === 'disconnecting' || (state !== 'online' && state !== 'error' && state !== 'connecting') ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}">
+                ${state === 'connecting' ? '中断' : state === 'disconnecting' ? '停止中...' : '断开'}
               </button>
             </div>
             <div class="text-xs text-slate-500 mt-2">
@@ -5205,19 +5649,22 @@
         <!-- 实例控制栏 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
           <div class="px-6 py-4 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <h2 class="font-semibold text-slate-800">${acc.name || '未命名实例'}</h2>
-              <span id="instance-status-badge" class="px-2 py-0.5 rounded-full text-xs ${getInstanceStatusBadgeClass(acc)}">${getInstanceStatusLabel(acc)}</span>
+            <div class="flex flex-col gap-1">
+              <div class="flex items-center gap-3">
+                <h2 class="font-semibold text-slate-800">${acc.name || '未命名实例'}</h2>
+                <span id="instance-status-badge" class="px-2 py-0.5 rounded-full text-xs ${getInstanceStatusBadgeClass(acc)}">${getInstanceStatusLabel(acc)}</span>
+              </div>
+              <div id="instance-account-detail" class="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">${buildAccountCardSummary(acc).detailHtml || ''}</div>
             </div>
             <div class="flex items-center gap-2">
               <button onclick="startInstance()" id="btn-start-instance"
                 class="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 hover:bg-green-500 text-white disabled:bg-green-300 disabled:cursor-not-allowed"
-                ${getInstanceState(acc) === 'online' || getInstanceState(acc) === 'pending' ? 'disabled' : ''}>
+                ${['online', 'pending', 'connecting'].includes(getInstanceState(acc)) ? 'disabled' : ''}>
                 启动实例
               </button>
               <button onclick="stopInstance()" id="btn-stop-instance"
                 class="px-4 py-2 text-sm font-medium rounded-lg bg-red-600 hover:bg-red-500 text-white disabled:bg-red-300 disabled:cursor-not-allowed"
-                ${getInstanceState(acc) !== 'online' && getInstanceState(acc) !== 'pending' ? 'disabled' : ''}>
+                ${getInstanceState(acc) === 'idle' ? 'disabled' : ''}>
                 停止实例
               </button>
             </div>
@@ -5258,7 +5705,8 @@
 
             ${renderAccountSelectors(acc, forwardingType)}
 
-            
+            ${renderXInstanceConfig()}
+
 
 
 
@@ -5471,12 +5919,11 @@
             <div class="w-full space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <input type="checkbox" ${isTelegramForwardEnabled(acc) ? 'checked' : ''} onchange="updateTelegramForwarding(this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">Discord → Telegram 转发规则</span>
                 </div>
-                ${isTelegramForwardEnabled(acc) ? `<button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+                <button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
               </div>
-              ${isTelegramForwardEnabled(acc) ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Discord→Telegram 转发</div>'}
+              ${renderMappings(acc, forwardingType)}
             </div>
             ` : forwardingType === 'telegram-to-discord' ? `
             <!-- Telegram→Discord 转发规则 -->
@@ -5492,24 +5939,22 @@
             <div class="w-full space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <input type="checkbox" ${isTelegramForwardEnabled(acc) ? 'checked' : ''} onchange="updateTelegramForwarding(this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">Telegram → Discord 转发规则</span>
                 </div>
-                ${isTelegramForwardEnabled(acc) ? `<button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+                <button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
               </div>
-              ${isTelegramForwardEnabled(acc) ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Telegram→Discord 转发</div>'}
+              ${renderMappings(acc, forwardingType)}
             </div>
             ` : forwardingType === 'telegram-to-telegram' ? `
             <!-- Telegram→Telegram 转发规则 -->
             <div class="w-full space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <input type="checkbox" ${isTelegramForwardEnabled(acc) ? 'checked' : ''} onchange="updateTelegramForwarding(this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">Telegram → Telegram 转发规则</span>
                 </div>
-                ${isTelegramForwardEnabled(acc) ? `<button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+                <button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
               </div>
-              ${isTelegramForwardEnabled(acc) ? renderMappings(acc, forwardingType) : '<div class="text-slate-400 text-sm">已关闭 Telegram→Telegram 转发</div>'}
+              ${renderMappings(acc, forwardingType)}
             </div>
             ` : forwardingType === 'x-to-discord' ? `
             <!-- X→Discord 转发规则 -->
@@ -5547,19 +5992,16 @@
             <div class="w-full space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex flex-wrap items-center gap-2">
-                  <input type="checkbox" ${acc.enableFeishuForward ? 'checked' : ''} onchange="updateField('enableFeishuForward', this.checked)" class="h-4 w-4 rounded border-slate-300">
                   <span class="text-sm text-slate-800 font-medium">飞书转发规则</span>
                 </div>
-                ${acc.enableFeishuForward ? `<button onclick="addFeishuMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>` : ''}
+                <button onclick="addFeishuMapping()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
               </div>
-              ${acc.enableFeishuForward ? `
-                <div id="feishuChats" class="mt-2 text-xs text-slate-500"></div>
-                <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
-                  <p>Webhook：填写飞书自定义机器人 Webhook 地址。</p>
-                  <p>话题 Thread：填写 thread_id（话题根消息 message_id）。获取方式：订阅 <code class="px-1 bg-slate-100 rounded">im.message.receive_v1</code> 事件保存 message_id，或用历史消息接口找到 root_id 为空的 message_id。可为不同 Discord 频道配置不同 thread_id。</p>
-                </div>
-                ${renderFeishuMappings(acc)}
-              ` : '<div class="text-slate-400 text-sm">未启用飞书转发</div>'}
+              <div id="feishuChats" class="mt-2 text-xs text-slate-500"></div>
+              <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                <p>Webhook：填写飞书自定义机器人 Webhook 地址。</p>
+                <p>话题 Thread：填写 thread_id（话题根消息 message_id）。获取方式：订阅 <code class="px-1 bg-slate-100 rounded">im.message.receive_v1</code> 事件保存 message_id，或用历史消息接口找到 root_id 为空的 message_id。可为不同 Discord 频道配置不同 thread_id。</p>
+              </div>
+              ${renderFeishuMappings(acc)}
             </div>
             ` : ''}
           </div>
@@ -6007,6 +6449,7 @@
       const startIdx = (discordPage - 1) * pageSize;
       const endIdx = startIdx + pageSize;
       const currentPageMappings = mappings.slice(startIdx, endIdx);
+      const isXWebsocket = kind === 'x' && acc.xConfig?.mode === 'websocket';
 
       if (mappings.length === 0) {
         const label = kind === 'x' ? 'X' : 'TruthSocial';
@@ -6044,8 +6487,9 @@
                 <div class="flex items-center gap-2">
                   <span>拉取间隔</span>
                   <input type="number" min="10" value="${m.pollIntervalSeconds || ''}" onchange="updateExternalMapping('x', ${idx + startIdx}, 'pollIntervalSeconds', this.value)"
-                    placeholder="秒" class="w-24 px-2 py-1 border border-slate-200 rounded-lg text-xs font-mono focus:border-indigo-500 focus:outline-none">
-                  <span>秒</span>
+                    ${isXWebsocket ? 'disabled' : ''}
+                    placeholder="秒" class="w-24 px-2 py-1 border border-slate-200 rounded-lg text-xs font-mono focus:border-indigo-500 focus:outline-none ${isXWebsocket ? 'opacity-50 cursor-not-allowed' : ''}">
+                  <span class="${isXWebsocket ? 'text-slate-400' : ''}">${isXWebsocket ? 'WebSocket 模式忽略' : '秒'}</span>
                 </div>
               </div>
             </div>
@@ -6150,10 +6594,11 @@
           }
 
           const guildSelectId = `feishu-guild-select-${mappingKey}`;
+          const savedGuildName = m.sourceGuildName || '';
           sourceInput = `<div class="flex items-center gap-1">
             <select id="${guildSelectId}" onchange="onFeishuGuildSelect('${discordAccountId}', this.value, '${channelSelectId}', ${idx + startIdx})"
               class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-              ${getCachedGuildsOptions(savedGuildId)}
+              ${getCachedGuildsOptions(savedGuildId, savedGuildName)}
             </select>
             <select id="${channelSelectId}" onchange="updateFeishuSource(${idx + startIdx}, this.value, '${guildSelectId}')"
               class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
@@ -6228,6 +6673,7 @@
       const notes = acc.channelNotes || {};
       const guildMap = acc.feishuSourceGuildMap || {};
       const channelNameMap = acc.feishuSourceChannelNameMap || {};
+      const guildNameMap = acc.feishuSourceGuildNameMap || {};
 
       // 将entries转换为数组，并按照特定顺序排序
       const entries = Object.entries(hooks);
@@ -6246,6 +6692,7 @@
         return {
           sourceChannelId: source,
           sourceGuildId: guildMap[source] || '',
+          sourceGuildName: guildNameMap[source] || '',
           sourceChannelName: channelNameMap[source] || '',
           mode: target.mode,
           webhookUrl: target.webhookUrl,
@@ -6733,15 +7180,6 @@
       return acc.telegramConfig.enableTelegramForward !== false;
     }
 
-    function updateTelegramForwarding(enabled) {
-      const acc = getActiveAccount();
-      ensureTelegramConfig(acc);
-      acc.telegramConfig.enableTelegramForward = enabled;
-      acc.enableForwarding = enabled;
-      saveConfig();
-      render();
-    }
-
     function updateTelegramDefaultSender(value) {
       const acc = getActiveAccount();
       ensureTelegramConfig(acc);
@@ -6780,6 +7218,78 @@
           });
         }
       }
+      const immediateFields = new Set(['telegramListenerAccountId', 'telegramSenderAccountId']);
+      if (immediateFields.has(field)) {
+        void saveConfigImmediate().catch((e) => console.error('保存失败', e));
+      } else {
+        saveConfig();
+      }
+      render();
+    }
+
+    function updateXConfigField(field, value) {
+      const acc = getActiveAccount();
+      ensureXConfig(acc);
+      if (field === 'apiKey') {
+        const trimmed = typeof value === 'string' ? value.trim() : '';
+        if (trimmed) {
+          acc.xConfig.apiKey = trimmed;
+        } else if (acc.xConfig.apiKey) {
+          delete acc.xConfig.apiKey;
+        }
+      } else if (field === 'apiBaseUrl') {
+        const trimmed = typeof value === 'string' ? value.trim() : '';
+        if (trimmed) {
+          acc.xConfig.apiBaseUrl = trimmed;
+        } else if (acc.xConfig.apiBaseUrl) {
+          delete acc.xConfig.apiBaseUrl;
+        }
+      } else if (field === 'mode') {
+        const token = typeof value === 'string' ? value.trim().toLowerCase() : '';
+        if (token === 'websocket' || token === 'ws') {
+          acc.xConfig.mode = 'websocket';
+        } else if (token === 'poll' || token === 'polling') {
+          acc.xConfig.mode = 'poll';
+        } else if (acc.xConfig.mode) {
+          delete acc.xConfig.mode;
+        }
+      } else {
+        acc.xConfig[field] = value;
+      }
+      saveConfig();
+      render();
+    }
+
+    function updateXQuickMappingField(field, value) {
+      const acc = getActiveAccount();
+      ensureXConfig(acc);
+      let mapping = acc.xConfig.mappings[0];
+      if (!mapping) {
+        mapping = {
+          id: genId(),
+          sourceUserName: '',
+          sourceUserId: '',
+          targetWebhookUrl: '',
+          note: '',
+          includeReplies: false,
+          includeRetweets: false
+        };
+        acc.xConfig.mappings.unshift(mapping);
+      }
+
+      if (field === 'sourceUserName') {
+        const normalized = normalizeExternalHandle(value);
+        if (normalized) {
+          mapping.sourceUserName = normalized;
+        } else if (mapping.sourceUserName) {
+          delete mapping.sourceUserName;
+        }
+      } else if (field === 'targetWebhookUrl') {
+        mapping.targetWebhookUrl = typeof value === 'string' ? value.trim() : value;
+      } else {
+        mapping[field] = value;
+      }
+
       saveConfig();
       render();
     }
@@ -6793,7 +7303,8 @@
         type: 'selfbot',
         token: '',
         email: '',
-        password: ''
+        password: '',
+        loginEnabled: true
       });
       saveConfig();
       render();
@@ -6802,7 +7313,18 @@
     function updateDiscordLibraryField(accountId, field, value) {
       const entry = (state.discordAccounts || []).find((item) => item.id === accountId);
       if (!entry) return;
-      entry[field] = value;
+      if (field === 'type') {
+        entry.type = value === 'bot' ? 'bot' : 'selfbot';
+        if (entry.type === 'bot') {
+          entry.email = '';
+          entry.password = '';
+          entry.totpSecret = '';
+          const ui = getLibraryUiState('discord', entry.id, entry);
+          ui.loginMode = 'token';
+        }
+      } else {
+        entry[field] = value;
+      }
       saveConfig();
       render();
     }
@@ -6821,6 +7343,10 @@
     async function loginDiscordLibrary(accountId) {
       const entry = (state.discordAccounts || []).find((item) => item.id === accountId);
       if (!entry) return;
+      if (entry.type === 'bot') {
+        showToast('机器人账号仅支持 Token 登录', 'error');
+        return;
+      }
       if (!entry.email || !entry.password) {
         showToast('请先填写邮箱和密码', 'error');
         return;
@@ -7042,78 +7568,6 @@
         showToast(data?.message || '已断开', 'success');
       } catch (e) {
         showToast('断开失败: ' + (e?.message || e), 'error');
-      }
-    }
-
-    function addXLibraryAccount() {
-      state.xAccounts = state.xAccounts || [];
-      state.xAccounts.push({
-        id: genId(),
-        name: 'X账号',
-        remark: '',
-        apiKey: '',
-        apiBaseUrl: '',
-        loginCookie: '',
-        loginUserName: '',
-        loginEmail: '',
-        loginPassword: '',
-        loginTotpSecret: '',
-        loginProxy: ''
-      });
-      saveConfig();
-      render();
-    }
-
-    function updateXLibraryField(accountId, field, value) {
-      const entry = (state.xAccounts || []).find((item) => item.id === accountId);
-      if (!entry) return;
-      entry[field] = value;
-      saveConfig();
-      render();
-    }
-
-    function removeXLibraryAccount(accountId) {
-      state.xAccounts = (state.xAccounts || []).filter((item) => item.id !== accountId);
-      state.accounts.forEach((acc) => {
-        if (acc.xAccountId === accountId) acc.xAccountId = '';
-      });
-      saveConfig();
-      render();
-    }
-
-    async function loginXLibrary(accountId) {
-      const entry = (state.xAccounts || []).find((item) => item.id === accountId);
-      if (!entry) return;
-      if (!entry.apiKey || !entry.loginUserName || !entry.loginEmail || !entry.loginPassword) {
-        showToast('请填写 API Key、用户名、邮箱、密码', 'error');
-        return;
-      }
-      try {
-        const res = await fetch('/api/x/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            xAccountId: entry.id,
-            useLibrary: true,
-            mode: 'password',
-            apiKey: entry.apiKey,
-            apiBaseUrl: entry.apiBaseUrl,
-            userName: entry.loginUserName,
-            email: entry.loginEmail,
-            password: entry.loginPassword,
-            totpSecret: entry.loginTotpSecret || undefined
-          })
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          showToast(data?.error || '登录失败', 'error');
-          return;
-        }
-        await loadConfig();
-        render();
-        showToast('Cookie 已保存', 'success');
-      } catch (e) {
-        showToast('登录失败: ' + (e?.message || e), 'error');
       }
     }
 
@@ -8428,6 +8882,8 @@
       standbyMode: {
         enabled: false,
         mainChannelId: '',
+        mainGuildId: '',
+        mainGuildName: '',
         cooldownSeconds: 60
       }
     };
@@ -8503,6 +8959,112 @@
       } else {
         body.classList.add('opacity-50', 'pointer-events-none');
       }
+    }
+
+    function updateRuleStandbyMainId(value) {
+      if (!ruleConfigData.standbyMode) return;
+      ruleConfigData.standbyMode.mainChannelId = (value || '').trim();
+    }
+
+    function updateRuleStandbyMainChannel(value, guildSelectId) {
+      if (!ruleConfigData.standbyMode) return;
+      ruleConfigData.standbyMode.mainChannelId = (value || '').trim();
+      if (guildSelectId) {
+        const guildId = document.getElementById(guildSelectId)?.value || '';
+        ruleConfigData.standbyMode.mainGuildId = guildId;
+        const guild = cachedGuilds.find(g => g.id === guildId);
+        ruleConfigData.standbyMode.mainGuildName = guild ? guild.name : '';
+      }
+    }
+
+    async function onStandbyGuildSelect(accountId, guildId, channelSelectId) {
+      if (!ruleConfigData.standbyMode) return;
+      ruleConfigData.standbyMode.mainGuildId = guildId || '';
+      const guild = cachedGuilds.find(g => g.id === guildId);
+      ruleConfigData.standbyMode.mainGuildName = guild ? guild.name : '';
+      ruleConfigData.standbyMode.mainChannelId = '';
+      const channelSelect = document.getElementById(channelSelectId);
+      if (!channelSelect) return;
+      if (!guildId) {
+        channelSelect.innerHTML = '<option value="">请先选择服务器</option>';
+        return;
+      }
+      channelSelect.innerHTML = '<option value="">加载中...</option>';
+      await fetchDiscordChannels(accountId, guildId);
+      const latestSelect = document.getElementById(channelSelectId);
+      if (latestSelect) {
+        latestSelect.innerHTML = getCachedChannelsOptions(accountId, guildId, '');
+      }
+    }
+
+    function renderRuleStandbyMainChannelInput(acc, forwardingType) {
+      const container = document.getElementById('ruleStandbyMainInput');
+      if (!container) return;
+      const standby = ruleConfigData.standbyMode || {};
+      const mainId = standby.mainChannelId || '';
+      const mode = globalRuleInputMode;
+      const isDiscordSource = forwardingType.startsWith('discord-') || forwardingType === 'discord-to-feishu';
+      const isTelegramSource = forwardingType.startsWith('telegram-');
+      const discordAccountId = acc?.discordAccountId || '';
+      const telegramAccountId = acc?.telegramListenerAccountId || acc?.telegramSenderAccountId || '';
+
+      if (isTelegramSource && mode === 'select' && telegramAccountId) {
+        if (!cachedTelegramDialogs[telegramAccountId] && !cachedTelegramDialogsLoading[telegramAccountId]) {
+          fetchTelegramDialogsForRule(telegramAccountId).then(() => renderRuleStandbyMainChannelInput(acc, forwardingType));
+        }
+        container.innerHTML = `<select onchange="updateRuleStandbyMainId(this.value)"
+          class="flex-1 min-w-[12rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+          ${getCachedTelegramDialogsOptions(telegramAccountId, mainId)}
+        </select>`;
+        return;
+      }
+
+      if (isDiscordSource && mode === 'select' && discordAccountId) {
+        const savedGuildId = standby.mainGuildId || '';
+        const savedGuildName = standby.mainGuildName || '';
+        if (discordAccountId) {
+          requestDiscordGuilds(discordAccountId);
+        }
+        if (savedGuildId && discordAccountId) {
+          const cacheKey = `${discordAccountId}:${savedGuildId}`;
+          if (!cachedChannels[cacheKey] && !window[`loadingStandbyChannels_${cacheKey}`]) {
+            window[`loadingStandbyChannels_${cacheKey}`] = true;
+            fetchDiscordChannels(discordAccountId, savedGuildId).then(() => {
+              delete window[`loadingStandbyChannels_${cacheKey}`];
+              renderRuleStandbyMainChannelInput(acc, forwardingType);
+            }).catch(() => {
+              delete window[`loadingStandbyChannels_${cacheKey}`];
+            });
+          }
+        }
+
+        const channelSelectId = 'rule-standby-channel';
+        let channelOptions;
+        if (savedGuildId && discordAccountId) {
+          channelOptions = getCachedChannelsOptions(discordAccountId, savedGuildId, mainId);
+        } else if (mainId) {
+          channelOptions = `<option value="${mainId}" selected>频道 (${mainId}) - 请选择服务器</option>`;
+        } else {
+          channelOptions = '<option value="">请先选择服务器</option>';
+        }
+        const guildSelectId = 'rule-standby-guild';
+        container.innerHTML = `<div class="flex items-center gap-1">
+          <select id="${guildSelectId}" onchange="onStandbyGuildSelect('${discordAccountId}', this.value, '${channelSelectId}')"
+            class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+            ${getCachedGuildsOptions(savedGuildId, savedGuildName)}
+          </select>
+          <select id="${channelSelectId}" onchange="updateRuleStandbyMainChannel(this.value, '${guildSelectId}')"
+            class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+            ${channelOptions}
+          </select>
+        </div>`;
+        return;
+      }
+
+      container.innerHTML = `<input type="text" id="ruleStandbyMainId" value="${escapeHtml(mainId)}"
+        onchange="updateRuleStandbyMainId(this.value)"
+        placeholder="填写主频道的 Channel ID"
+        class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none font-mono">`;
     }
 
     // 处理规则配置回车输入
@@ -8617,6 +9179,8 @@
         standbyMode: {
           enabled: standby.enabled === true,
           mainChannelId: standby.mainChannelId || '',
+          mainGuildId: standby.mainGuildId || '',
+          mainGuildName: standby.mainGuildName || '',
           cooldownSeconds: Number.isFinite(Number(standby.cooldownSeconds)) ? Number(standby.cooldownSeconds) : 60
         }
       };
@@ -8648,8 +9212,8 @@
       }
       if (supportsStandby) {
         document.getElementById('ruleStandbyEnabled').checked = ruleConfigData.standbyMode.enabled;
-        document.getElementById('ruleStandbyMainId').value = ruleConfigData.standbyMode.mainChannelId || '';
         document.getElementById('ruleStandbyCooldown').value = ruleConfigData.standbyMode.cooldownSeconds || 60;
+        renderRuleStandbyMainChannelInput(acc, forwardingType);
         toggleRuleStandbyConfig();
       }
 
@@ -8783,9 +9347,12 @@
         const standbyEnabled = document.getElementById('ruleStandbyEnabled').checked;
         if (standbyEnabled) {
           const cooldownValue = parseInt(document.getElementById('ruleStandbyCooldown').value, 10);
+          const standbyMainId = ruleConfigData.standbyMode?.mainChannelId || '';
           mapping.standbyMode = {
             enabled: true,
-            mainChannelId: document.getElementById('ruleStandbyMainId').value.trim(),
+            mainChannelId: standbyMainId,
+            mainGuildId: ruleConfigData.standbyMode?.mainGuildId || '',
+            mainGuildName: ruleConfigData.standbyMode?.mainGuildName || '',
             cooldownSeconds: Number.isFinite(cooldownValue) ? Math.max(1, cooldownValue) : 60
           };
         } else if (mapping.standbyMode) {
@@ -9124,7 +9691,6 @@
         discordAccountId: '',
         telegramListenerAccountId: '',
         telegramSenderAccountId: '',
-        xAccountId: '',
         truthSocialAccountId: '',
         showSourceIdentity: false,
         forwardingType: 'discord-to-discord', // 添加默认转发类型
@@ -9580,12 +10146,22 @@
       const channelSelect = document.getElementById(channelSelectId);
       if (!channelSelect) return;
 
-      // 保存选择的服务器ID（使用立即保存，避免刷新时丢失）
+      // 保存选择的服务器ID和名称（使用立即保存，避免刷新时丢失）
       const acc = getActiveAccount();
       const entries = getFeishuMappings(acc);
       if (entries[mappingIdx]) {
+        const sourceChannelId = entries[mappingIdx].sourceChannelId;
         if (!acc.feishuSourceGuildMap) acc.feishuSourceGuildMap = {};
-        acc.feishuSourceGuildMap[entries[mappingIdx].sourceChannelId] = guildId || '';
+        acc.feishuSourceGuildMap[sourceChannelId] = guildId || '';
+
+        // 保存服务器名称
+        if (!acc.feishuSourceGuildNameMap) acc.feishuSourceGuildNameMap = {};
+        if (guildId) {
+          const guild = cachedGuilds.find(g => g.id === guildId);
+          acc.feishuSourceGuildNameMap[sourceChannelId] = guild ? guild.name : '';
+        } else {
+          delete acc.feishuSourceGuildNameMap[sourceChannelId];
+        }
         saveConfigImmediate();
       }
 
@@ -10577,7 +11153,7 @@
               }
             }
           },
-          { element: '#accountLibraryModal', popover: { title: '2. 账号库面板', description: '这里统一管理 Discord/Telegram/X/Truth 账号。', side: 'bottom', align: 'center' }, onHighlightStarted: () => openAccountLibrary() },
+          { element: '#accountLibraryModal', popover: { title: '2. 账号库面板', description: '这里统一管理 Discord/Telegram/Truth 账号。', side: 'bottom', align: 'center' }, onHighlightStarted: () => openAccountLibrary() },
           { element: '#libraryFilterSelect', popover: { title: '3. 类型筛选', description: '按类型过滤账号列表，便于管理。', side: 'bottom', align: 'start' } },
           { element: 'button[onclick="addLibraryAccountFromSelect()"]', popover: { title: '4. 新建账号', description: '创建后会弹出编辑窗口，填写账号凭据。', side: 'bottom', align: 'start' } },
           { popover: { title: '5. 填写凭据', description: 'Discord 可用 Token / 邮箱密码登录；Telegram 支持 Bot Token / Session / 手机号登录。', side: 'center', align: 'center' } },
@@ -10747,6 +11323,8 @@
       const msgEl = document.getElementById(`lib-tg-msg-${accountId}`);
       const btnConnect = document.getElementById(`lib-tg-connect-${accountId}`);
       const btnDisconnect = document.getElementById(`lib-tg-disconnect-${accountId}`);
+      const inlineBadgeEl = document.getElementById(`lib-tg-inline-badge-${accountId}`);
+      const inlineMsgEl = document.getElementById(`lib-tg-inline-msg-${accountId}`);
 
       const normalizedState = state || 'idle';
       const displayLabels = {
@@ -10762,10 +11340,17 @@
 
       if (badgeEl) {
         badgeEl.textContent = displayState;
-        badgeEl.className = `px-2 py-0.5 rounded-full ${getBadgeClass(badgeState)}`;
+        badgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
       }
       if (msgEl) {
         msgEl.textContent = message || '';
+      }
+      if (inlineBadgeEl) {
+        inlineBadgeEl.textContent = displayState;
+        inlineBadgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
+      }
+      if (inlineMsgEl) {
+        inlineMsgEl.textContent = message || '';
       }
 
       if (btnConnect) {
@@ -10811,12 +11396,16 @@
       const summary = buildAccountCardSummary(acc);
       const badgeEl = document.getElementById(`account-tab-status-${acc.id}`);
       const subEl = document.getElementById(`account-tab-sub-${acc.id}`);
+      const instanceDetailEl = document.getElementById('instance-account-detail');
       if (badgeEl) {
         badgeEl.textContent = summary.badgeLabel;
         badgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(summary.state)}`;
       }
       if (subEl) {
         subEl.textContent = getForwardingTypeLabel(acc.forwardingType);
+      }
+      if (instanceDetailEl && acc.id === state.activeId) {
+        instanceDetailEl.innerHTML = summary.detailHtml || '';
       }
     }
 
@@ -10860,12 +11449,12 @@
     }
 
     function shouldApplyRemoteState(localState, remoteState, holdUntil) {
-      const holdActive = typeof holdUntil === 'number' ? holdUntil > Date.now() : true;
+      const holdActive = typeof holdUntil === 'number' ? holdUntil > Date.now() : false;
       if (localState === 'disconnecting' && (remoteState === 'online' || remoteState === 'pending' || remoteState === 'connecting')) {
         return !holdActive;
       }
       if ((localState === 'pending' || localState === 'connecting') && remoteState === 'idle') {
-        return false;
+        return !holdActive;
       }
       return true;
     }
@@ -10906,7 +11495,10 @@
               (localLoginState === 'pending' || localLoginState === 'connecting') &&
               remoteLoginState === 'online' &&
               connectHoldUntil > Date.now();
-            if (!ignoreOnlineDuringStart && shouldApplyRemoteState(localAcc.loginState, remoteLoginState, loginHoldUntil)) {
+            const loginHold = (localLoginState === 'pending' || localLoginState === 'connecting')
+              ? connectHoldUntil
+              : loginHoldUntil;
+            if (!ignoreOnlineDuringStart && shouldApplyRemoteState(localAcc.loginState, remoteLoginState, loginHold)) {
               const loginChanged = remoteLoginState !== localAcc.loginState || remoteLoginMessage !== localAcc.loginMessage;
               if (loginChanged) {
                 localAcc.loginState = remoteLoginState;
@@ -11069,6 +11661,66 @@
             updateAccountCardStatus(localAcc);
           });
 
+          if (Array.isArray(data.discordAccounts)) {
+            if (!Array.isArray(state.discordAccounts) || state.discordAccounts.length !== data.discordAccounts.length) {
+              state.discordAccounts = data.discordAccounts;
+              shouldRender = true;
+            } else {
+              data.discordAccounts.forEach((remoteAcc) => {
+                const localAcc = state.discordAccounts.find((acc) => acc.id === remoteAcc.id);
+                if (!localAcc) {
+                  state.discordAccounts.push(remoteAcc);
+                  shouldRender = true;
+                  return;
+                }
+                const remoteState = remoteAcc.loginState || 'idle';
+                const remoteMessage = remoteAcc.loginMessage || '';
+                const localState = localAcc.loginState || 'idle';
+                const wasOnline = localState === 'online';
+                const connectHoldUntil = getConnectHold(`discord-lib:${remoteAcc.id}`);
+                const disconnectHoldUntil = getDisconnectHold(`discord-lib:${remoteAcc.id}`);
+                const holdUntil = (localState === 'pending' || localState === 'connecting') ? connectHoldUntil : disconnectHoldUntil;
+                if (shouldApplyRemoteState(localState, remoteState, holdUntil)) {
+                  const stateChanged = remoteState !== localState || remoteMessage !== localAcc.loginMessage;
+                  if (stateChanged) {
+                    localAcc.loginState = remoteState;
+                    localAcc.loginMessage = remoteMessage;
+                  }
+                }
+                if (remoteState === 'idle' || remoteState === 'error') {
+                  clearDisconnectHold(`discord-lib:${remoteAcc.id}`);
+                  discordAutoSyncOnLogin.delete(remoteAcc.id);
+                }
+                if (remoteState !== 'idle') {
+                  clearConnectHold(`discord-lib:${remoteAcc.id}`);
+                }
+                if (typeof remoteAcc.loginEnabled === 'boolean' && localAcc.loginEnabled !== remoteAcc.loginEnabled) {
+                  localAcc.loginEnabled = remoteAcc.loginEnabled;
+                }
+                if (remoteAcc.syncedUser && localAcc.syncedUser !== remoteAcc.syncedUser) {
+                  localAcc.syncedUser = remoteAcc.syncedUser;
+                }
+                if (typeof remoteAcc.guildsCount === 'number') {
+                  localAcc.guildsCount = remoteAcc.guildsCount;
+                }
+                if (typeof remoteAcc.channelsCount === 'number') {
+                  localAcc.channelsCount = remoteAcc.channelsCount;
+                }
+                if (typeof remoteAcc.lastSyncTime === 'string') {
+                  localAcc.lastSyncTime = remoteAcc.lastSyncTime;
+                }
+                if (typeof remoteAcc.name === 'string') {
+                  localAcc.name = remoteAcc.name;
+                }
+                updateDiscordLibraryStatusElement(remoteAcc.id);
+                if (!wasOnline && remoteState === 'online' && !discordAutoSyncOnLogin.has(remoteAcc.id)) {
+                  discordAutoSyncOnLogin.add(remoteAcc.id);
+                  autoSyncDiscordAfterLogin(remoteAcc.id);
+                }
+              });
+            }
+          }
+
           if (Array.isArray(data.telegramAccounts)) {
             if (!Array.isArray(state.telegramAccounts) || state.telegramAccounts.length !== data.telegramAccounts.length) {
               state.telegramAccounts = data.telegramAccounts;
@@ -11083,12 +11735,25 @@
                 }
                 const remoteState = remoteAcc.loginState || 'idle';
                 const remoteMessage = remoteAcc.loginMessage || '';
-                const stateChanged = remoteState !== localAcc.loginState || remoteMessage !== localAcc.loginMessage;
+                const localState = localAcc.loginState || 'idle';
+                const connectHoldUntil = getConnectHold(`tg-lib:${remoteAcc.id}`);
+                const disconnectHoldUntil = getDisconnectHold(`tg-lib:${remoteAcc.id}`);
+                const holdUntil = (localState === 'pending' || localState === 'connecting') ? connectHoldUntil : disconnectHoldUntil;
+                if (!shouldApplyRemoteState(localState, remoteState, holdUntil)) {
+                  return;
+                }
+                const stateChanged = remoteState !== localState || remoteMessage !== localAcc.loginMessage;
                 if (stateChanged) {
                   localAcc.loginState = remoteState;
                   localAcc.loginMessage = remoteMessage;
                   localAcc.userInfo = remoteAcc.userInfo;
                   updateTelegramLibraryStatusElement(remoteAcc.id, remoteState, remoteMessage);
+                }
+                if (remoteState === 'idle' || remoteState === 'error') {
+                  clearDisconnectHold(`tg-lib:${remoteAcc.id}`);
+                }
+                if (remoteState !== 'idle') {
+                  clearConnectHold(`tg-lib:${remoteAcc.id}`);
                 }
                 if (typeof remoteAcc.enabled === 'boolean' && localAcc.enabled !== remoteAcc.enabled) {
                   localAcc.enabled = remoteAcc.enabled;

@@ -9,6 +9,7 @@ import { Bot, Client } from "./bot.js";
 import { OCRClient } from "./ocrClient.js";
 import {
   getMultiConfig,
+  saveMultiConfig,
   type MultiConfig,
   type AccountConfig,
   type RuleLevelConfig,
@@ -38,6 +39,7 @@ let telegramBridgeClient: TelegramBridgeClient | null = null;
 // 全局 Discord Bridge 客户端
 let discordBridgeClient: DiscordBridgeClient | null = null;
 const telegramSequentialDedupe = new Map<string, string>();
+const telegramStandbyActivity = new Map<string, number>();
 
 interface RunningAccount {
   account: AccountConfig;
@@ -94,6 +96,7 @@ const sharedDiscordClients = new Map<
 >();
 let currentConfig: MultiConfig | null = null;
 const statusFile = path.resolve(process.cwd(), ".data", "status.json");
+const discordLibraryStatusFile = path.resolve(process.cwd(), ".data", "discord_library_status.json");
 const telegramLoginRequestFile = path.resolve(process.cwd(), ".data", "telegram_login_request.json");
 const telegramLoginResponseFile = path.resolve(process.cwd(), ".data", "telegram_login_response.json");
 const telegramSyncRequestDir = path.resolve(process.cwd(), ".data", "telegram_sync_requests");
@@ -115,6 +118,7 @@ const loggedNoTokenAccounts = new Set<string>();
 let lastConfigHash: string | null = null;
 let lastConfigMtime: number = 0;
 let telegramLoginProcessing = false;
+let lastTelegramWatchSummaryHash: string | null = null;
 let telegramSyncProcessing = false;
 let discordLoginProcessing = false;
 
@@ -283,6 +287,48 @@ function normalizeTelegramChatId(value: string | number): string | number {
   return trimmed;
 }
 
+function buildTelegramChatIdVariants(value?: string | number): Set<string> {
+  const variants = new Set<string>();
+  if (value === undefined || value === null) return variants;
+  const raw = String(value).trim();
+  if (!raw) return variants;
+  variants.add(raw);
+  if (!/^-?\d+$/.test(raw)) return variants;
+  const unsigned = raw.startsWith("-") ? raw.slice(1) : raw;
+  if (unsigned) variants.add(unsigned);
+  const without100 = unsigned.startsWith("100") && unsigned.length > 3 ? unsigned.slice(3) : "";
+  if (without100) variants.add(without100);
+  variants.add(`-${unsigned}`);
+  if (unsigned && !unsigned.startsWith("100")) {
+    variants.add(`-100${unsigned}`);
+    variants.add(`100${unsigned}`);
+  } else if (without100) {
+    variants.add(`-100${without100}`);
+    variants.add(`100${without100}`);
+  }
+  return variants;
+}
+
+function isTelegramSourceMatch(
+  raw: string,
+  sourceChatId?: string,
+  sourceChatUsername?: string,
+): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  if (sourceChatUsername) {
+    const normalized = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
+    if (normalized === sourceChatUsername) return true;
+  }
+  if (!sourceChatId) return false;
+  const rawVariants = buildTelegramChatIdVariants(trimmed);
+  const sourceVariants = buildTelegramChatIdVariants(sourceChatId);
+  for (const candidate of rawVariants) {
+    if (sourceVariants.has(candidate)) return true;
+  }
+  return false;
+}
+
 function applyLongMessageConfig(
   content: string,
   config?: { enabled?: boolean; threshold?: number; appendMessage?: string },
@@ -414,6 +460,40 @@ function shouldFallbackToTelegramClient(sendResult: any): boolean {
   if (errorText.includes("forbidden")) return true;
   if (errorText.includes("not enough rights")) return true;
   return false;
+}
+
+function normalizeTelegramStandbyKey(value?: string): string {
+  if (!value) return "";
+  const raw = String(value).trim();
+  if (!raw) return "";
+  return raw.startsWith("@") ? raw.slice(1).toLowerCase() : raw;
+}
+
+function recordTelegramStandbyActivity(chatId?: string, username?: string) {
+  const now = Date.now();
+  const idKey = normalizeTelegramStandbyKey(chatId);
+  if (idKey) telegramStandbyActivity.set(idKey, now);
+  const userKey = normalizeTelegramStandbyKey(username);
+  if (userKey) telegramStandbyActivity.set(userKey, now);
+}
+
+function getTelegramStandbyLastActive(mainChannelId?: string): number {
+  const key = normalizeTelegramStandbyKey(mainChannelId);
+  if (!key) return 0;
+  return telegramStandbyActivity.get(key) || 0;
+}
+
+function isTelegramStandbyMainChannel(
+  mainChannelId: string | undefined,
+  sourceChatId?: string,
+  sourceChatUsername?: string,
+): boolean {
+  const mainKey = normalizeTelegramStandbyKey(mainChannelId);
+  if (!mainKey) return false;
+  const sourceKeys = new Set(
+    [normalizeTelegramStandbyKey(sourceChatId), normalizeTelegramStandbyKey(sourceChatUsername)].filter(Boolean),
+  );
+  return sourceKeys.has(mainKey);
 }
 
 async function sendTelegramMessageWithFallback(
@@ -852,7 +932,7 @@ function refreshScheduledBroadcasts(account: AccountConfig, running: RunningAcco
   }
 }
 
-async function writeStatus(accountId: string, state: string, message?: string) {
+export async function writeStatus(accountId: string, state: string, message?: string) {
   try {
     await fs.mkdir(path.dirname(statusFile), { recursive: true });
     let obj: Record<string, any> = {};
@@ -862,6 +942,19 @@ async function writeStatus(accountId: string, state: string, message?: string) {
     } catch {}
     obj[accountId] = { loginState: state, loginMessage: message || "" };
     await fs.writeFile(statusFile, JSON.stringify(obj, null, 2));
+  } catch {}
+}
+
+async function writeDiscordLibraryStatus(accountId: string, state: string, message?: string) {
+  try {
+    await fs.mkdir(path.dirname(discordLibraryStatusFile), { recursive: true });
+    let obj: Record<string, any> = {};
+    try {
+      const buf = await fs.readFile(discordLibraryStatusFile, "utf-8");
+      obj = JSON.parse(buf.toString());
+    } catch {}
+    obj[accountId] = { loginState: state, loginMessage: message || "" };
+    await fs.writeFile(discordLibraryStatusFile, JSON.stringify(obj, null, 2));
   } catch {}
 }
 
@@ -877,13 +970,7 @@ function getSharedClientByAccountId(accountId: string) {
 }
 
 async function writeStatusForAccount(accountId: string, state: string, message?: string) {
-  const shared = getSharedClientByAccountId(accountId);
-  if (shared) {
-    await Promise.all(
-      Array.from(shared.accountIds).map((id) => writeStatus(id, state, message)),
-    );
-    return;
-  }
+  // 每个实例的状态独立管理，不再同步更新所有共享账号
   await writeStatus(accountId, state, message);
 }
 
@@ -1007,8 +1094,9 @@ function buildDiscordLoginMessage(user: any, fallback: string): string {
 
 function collectDiscordListenChannels(account: AccountConfig): Set<string> {
   const listenChannels = new Set<string>();
-  const webhooks = account.enableDiscordForward !== false ? account.channelWebhooks || {} : {};
-  const feishuWebhooks = account.enableFeishuForward ? account.channelFeishuWebhooks || {} : {};
+  // 保持监听渠道集合稳定，避免实例暂停时断开连接
+  const webhooks = account.channelWebhooks || {};
+  const feishuWebhooks = account.channelFeishuWebhooks || {};
   const mappings = (account as any).mappings || [];
   for (const channelId of Object.keys(webhooks)) {
     if (channelId) listenChannels.add(channelId);
@@ -1022,11 +1110,9 @@ function collectDiscordListenChannels(account: AccountConfig): Set<string> {
     }
   }
   const telegramMappings = account.telegramConfig?.mappings || [];
-  if (account.telegramConfig?.enableTelegramForward !== false) {
-    for (const mapping of telegramMappings) {
-      if (mapping?.type === "discord-to-telegram" && mapping.sourceChannelId) {
-        listenChannels.add(String(mapping.sourceChannelId));
-      }
+  for (const mapping of telegramMappings) {
+    if (mapping?.type === "discord-to-telegram" && mapping.sourceChannelId) {
+      listenChannels.add(String(mapping.sourceChannelId));
     }
   }
   return listenChannels;
@@ -1208,6 +1294,7 @@ function setupTelegramBridgeClient() {
       const sourceChatId = params.chat_id?.toString();
       const sourceChatUsername =
         typeof params.chat_username === "string" ? params.chat_username : undefined;
+      recordTelegramStandbyActivity(sourceChatId, sourceChatUsername);
 
       const matchingRules = telegramMappings.filter(
         (m: any) => {
@@ -1215,12 +1302,7 @@ function setupTelegramBridgeClient() {
           if (mappingType !== allowedMappingType) return false;
           const raw = typeof m.sourceChannelId === "string" ? m.sourceChannelId.trim() : "";
           if (!raw) return false;
-          if (sourceChatId && raw === sourceChatId) return true;
-          if (sourceChatUsername) {
-            const normalized = raw.startsWith("@") ? raw.slice(1) : raw;
-            return normalized === sourceChatUsername;
-          }
-          return false;
+          return isTelegramSourceMatch(raw, sourceChatId, sourceChatUsername);
         },
       );
 
@@ -1471,6 +1553,22 @@ function setupTelegramBridgeClient() {
         const stripChinese = account.stripChinese === true || rule.stripChinese === true;
         const stripOptions = { stripEnglish, stripChinese };
         try {
+          const standby = (rule as RuleLevelConfig).standbyMode;
+          if (standby?.enabled && standby.mainChannelId) {
+            if (!isTelegramStandbyMainChannel(standby.mainChannelId, sourceChatId, sourceChatUsername)) {
+              const cooldownMs = Math.max(1, Number(standby.cooldownSeconds) || 60) * 1000;
+              const lastMainTime = getTelegramStandbyLastActive(standby.mainChannelId);
+              const timeDiff = Date.now() - lastMainTime;
+              if (lastMainTime > 0 && timeDiff < cooldownMs) {
+                const remaining = ((cooldownMs - timeDiff) / 1000).toFixed(1);
+                logSkip(
+                  `主备模式静默: 主频道(${standby.mainChannelId}) 在 ${remaining}s 内活跃`,
+                  `目标: ${rule.targetChannelId}`,
+                );
+                continue;
+              }
+            }
+          }
           if (rule.ignoreImages === true && hasImage) {
             logSkip("规则已启用忽略图片", `目标: ${rule.targetChannelId}`);
             continue;
@@ -1935,19 +2033,51 @@ function setupDiscordBridgeClient() {
       if (!accountId) return;
       const state = params?.state;
       const user = params?.user;
+      const isLibraryAccount = Boolean(currentConfig?.discordAccounts?.some((acc) => acc.id === accountId));
+      const isInstanceAccount = Boolean(currentConfig?.accounts?.some((acc) => acc.id === accountId));
+
       const running = runningAccounts.get(accountId);
       if (running && user) {
         running.bot.setSelfUser(user);
       }
 
-      if (state === "online") {
-        await writeStatusForAccount(accountId, "online", buildDiscordLoginMessage(user, "登录成功"));
-      } else if (state === "connecting") {
-        await writeStatusForAccount(accountId, "pending", "正在连接...");
-      } else if (state === "disconnected") {
-        await writeStatusForAccount(accountId, "error", "连接已断开");
-      } else if (state === "error") {
-        await writeStatusForAccount(accountId, "error", params?.error || "连接失败");
+      const instanceState =
+        state === "online"
+          ? { state: "online", message: buildDiscordLoginMessage(user, "登录成功") }
+          : state === "connecting"
+            ? { state: "pending", message: "正在连接..." }
+            : state === "disconnected"
+              ? { state: "error", message: "连接已断开" }
+              : state === "error"
+                ? { state: "error", message: params?.error || "连接失败" }
+                : { state: undefined, message: undefined };
+
+      const libraryState =
+        state === "online"
+          ? { state: "online", message: buildDiscordLoginMessage(user, "已连接") }
+          : state === "connecting"
+            ? { state: "connecting", message: "正在登录..." }
+            : state === "disconnected"
+              ? { state: "error", message: "连接已断开" }
+              : state === "error"
+                ? { state: "error", message: params?.error || "连接失败" }
+                : { state: undefined, message: undefined };
+
+      if (isInstanceAccount && instanceState.state) {
+        await writeStatusForAccount(accountId, instanceState.state, instanceState.message);
+      }
+
+      if (isLibraryAccount && libraryState.state) {
+        await writeDiscordLibraryStatus(accountId, libraryState.state, libraryState.message);
+        if (state === "online" && currentConfig) {
+          for (const acc of currentConfig.accounts) {
+            if (acc.discordAccountId !== accountId) continue;
+            if (!acc.loginRequested) continue;
+            if (runningAccounts.has(acc.id)) continue;
+            await discordForwardLogger.info(`账号 ${accountId} 上线，正在启动依赖实例 ${acc.name}...`);
+            await startAccount(acc, discordForwardLogger);
+          }
+        }
       }
     } catch (err: any) {
       discordForwardLogger.error(`Discord bridge status handling failed: ${String(err?.message || err)}`);
@@ -2083,14 +2213,19 @@ async function processTelegramSyncRequest(logger: FileLogger) {
         }
         const bridge = telegramBridgeClient;
 
-        const accountId = String(request.accountId);
+        const requestAccount = request?.account && typeof request.account === "object" ? request.account : undefined;
+        const accountId = String(request.accountId || requestAccount?.id || "");
         let account = currentConfig?.telegramAccounts?.find((acc) => acc.id === accountId);
         if (!account) {
           const rawMulti = await getMultiConfig();
           account = rawMulti.telegramAccounts?.find((acc) => acc.id === accountId);
         }
 
-        if (!account) {
+        if (!account && requestAccount) {
+          account = requestAccount;
+        }
+
+        if (!account || !accountId) {
           await fs.writeFile(
             responsePath,
             JSON.stringify({ id: request.id, success: false, error: "ACCOUNT_NOT_FOUND" }, null, 2),
@@ -2100,7 +2235,14 @@ async function processTelegramSyncRequest(logger: FileLogger) {
 
         const hasBotToken = typeof account.token === "string" && account.token.trim().length > 0;
         const hasSession = Boolean(account.sessionString || account.sessionPath);
-        const isBot = account.type === "bot" || (hasBotToken && !hasSession);
+        const inferredType = account.type || (hasBotToken && !hasSession ? "bot" : "client");
+        const normalizedAccount = {
+          ...account,
+          id: accountId,
+          name: account.name || "Telegram",
+          type: inferredType,
+        };
+        const isBot = normalizedAccount.type === "bot";
 
         if (isBot) {
           if (!hasBotToken) {
@@ -2132,26 +2274,26 @@ async function processTelegramSyncRequest(logger: FileLogger) {
           if (isBot) {
             connectResult = await telegramBridgeClient.connectBot({
               id: accountId,
-              name: account.name || "",
+              name: normalizedAccount.name || "",
               type: "bot",
-              token: account.token || "",
-              proxyUrl: account.proxyUrl,
+              token: normalizedAccount.token || "",
+              proxyUrl: normalizedAccount.proxyUrl,
               enabled: true,
             });
           } else {
             connectResult = await telegramBridgeClient.connectClient({
               id: accountId,
-              name: account.name || "",
+              name: normalizedAccount.name || "",
               type: "client",
-              token: account.apiHash || account.token || "",
-              apiId: account.apiId,
-              apiHash: account.apiHash,
-              sessionPath: account.sessionPath,
-              sessionString: account.sessionString,
-              sessionType: account.sessionType,
-              phoneNumber: account.phoneNumber,
-              twoFactorPassword: account.twoFactorPassword,
-              proxyUrl: account.proxyUrl,
+              token: normalizedAccount.apiHash || normalizedAccount.token || "",
+              apiId: normalizedAccount.apiId,
+              apiHash: normalizedAccount.apiHash,
+              sessionPath: normalizedAccount.sessionPath,
+              sessionString: normalizedAccount.sessionString,
+              sessionType: normalizedAccount.sessionType,
+              phoneNumber: normalizedAccount.phoneNumber,
+              twoFactorPassword: normalizedAccount.twoFactorPassword,
+              proxyUrl: normalizedAccount.proxyUrl,
               enabled: true,
             });
           }
@@ -2478,7 +2620,13 @@ async function stopAccount(accountId: string, logger: FileLogger, manual: boolea
 async function reconnectAccount(accountId: string, logger: FileLogger, delay: number = 5000) {
   const running = runningAccounts.get(accountId);
   if (!running) return;
-  
+
+  // 如果是 Bridge 账号（使用外部消息源），不在 Node.js 端执行重连逻辑
+  // Bridge 的重连由 Python 进程内部管理
+  if (running.bot && (running.bot as any).options?.externalMessageSource) {
+    return;
+  }
+
   // 如果手动停止，不重连
   if (running.isManuallyStopped) {
     return;
@@ -2551,8 +2699,9 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
     }
     try {
       // 清理旧的客户端
+      // 注意：如果是共享 token 的情况，不要调用 destroy()，否则会影响其他使用相同 token 的实例
       try {
-        if ((currentRunning.client as any).destroy) {
+        if ((currentRunning.client as any).destroy && !currentRunning.sharedKey) {
           await (currentRunning.client as any).destroy();
         }
       } catch {}
@@ -2709,10 +2858,17 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
 function setupReconnectHandlers(accountId: string, logger: FileLogger) {
   const running = runningAccounts.get(accountId);
   if (!running) return;
+
+  // 如果是 Bridge 账号（使用外部消息源），不绑定 Node.js 端的重连监听器
+  // Bridge 的连接管理由 Python 进程负责
+  if (running.bot && (running.bot as any).options?.externalMessageSource) {
+    return;
+  }
+
   if (running.sharedKey && !running.sharedPrimary) {
     return;
   }
-  
+
   const client = running.client;
   
   // 移除旧的事件监听器（如果存在），避免重复添加
@@ -2921,6 +3077,8 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     const forwardSettingsChanged =
       account.enableDiscordForward !== oldAccount.enableDiscordForward ||
       account.enableFeishuForward !== oldAccount.enableFeishuForward;
+    const telegramForwardChanged =
+      account.telegramConfig?.enableTelegramForward !== oldAccount.telegramConfig?.enableTelegramForward;
     const feishuConfigChanged =
       JSON.stringify(account.channelFeishuWebhooks || {}) !== JSON.stringify(oldAccount.channelFeishuWebhooks || {}) ||
       account.feishuAppId !== oldAccount.feishuAppId ||
@@ -2969,6 +3127,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         watermarkChanged ||
         styleChanged ||
         forwardSettingsChanged ||
+        telegramForwardChanged ||
         feishuConfigChanged ||
         proxyChanged ||
         forwardingTypeChanged ||
@@ -3007,7 +3166,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         existing.senderBotsBySource = senderBotsBySource;
         existing.defaultSenderBot = defaultSenderBot;
         (existing as any).feishuSendersBySource = feishuSendersBySource;
-        if (ruleConfigChanged || scheduledChanged || forwardingTypeChanged) {
+        if (ruleConfigChanged || scheduledChanged || forwardingTypeChanged || telegramForwardChanged) {
           refreshScheduledBroadcasts(account, existing, logger);
         }
 
@@ -3047,6 +3206,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         !watermarkChanged &&
         !styleChanged &&
         !forwardSettingsChanged &&
+        !telegramForwardChanged &&
         !feishuConfigChanged &&
         !proxyChanged &&
         !restartRequested &&
@@ -3107,6 +3267,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       watermarkChanged ||
       styleChanged ||
       forwardSettingsChanged ||
+      telegramForwardChanged ||
       feishuConfigChanged ||
       proxyChanged
     ) {
@@ -3150,8 +3311,15 @@ async function main() {
   const multi = resolveMultiConfigForRuntime(rawMulti);
   currentConfig = multi;
 
-  // 启动时自动连接所有已配置 loginRequested=true 的账号
-  await logger.info("系统启动，将启动账号处理器并同步到 Discord Bridge...");
+  // 重启项目时不自动启动实例，重置所有账号的 loginRequested 为 false
+  await logger.info("系统启动，重置所有实例状态（需手动启动）...");
+  for (const account of multi.accounts) {
+    account.loginRequested = false;
+    await writeStatus(account.id, "idle", "等待手动启动");
+  }
+  // 保存重置后的配置
+  await saveMultiConfig(multi);
+
 
   // 按 sharedKey 分组实例，实现多实例共享同一 Discord 账号
   const startupSharedKeyGroups = new Map<string, AccountConfig[]>();
@@ -3397,18 +3565,62 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
   }
 
   // 提取Telegram相关配置
-  const telegramAccounts: any[] = [];
-  const telegramAccountIds = new Set<string>();
-  const pushTelegramAccount = (tgAccount: any) => {
+  const telegramAccountsById = new Map<string, any>();
+  const watchSummaryLines: string[] = [];
+  const roleRank = { listener: 1, sender: 2 } as const;
+  const mergeTelegramAccount = (tgAccount: any) => {
     if (!tgAccount || !tgAccount.id) return;
-    if (telegramAccountIds.has(tgAccount.id)) return;
-    telegramAccounts.push(tgAccount);
-    telegramAccountIds.add(tgAccount.id);
+    const existing = telegramAccountsById.get(tgAccount.id);
+    if (!existing) {
+      telegramAccountsById.set(tgAccount.id, { ...tgAccount });
+      return;
+    }
+    // 合并字段，优先保留已有的有效值，必要时升级 role/启用状态
+    if (!existing.name && tgAccount.name) existing.name = tgAccount.name;
+    if (!existing.type && tgAccount.type) existing.type = tgAccount.type;
+    if (!existing.token && tgAccount.token) existing.token = tgAccount.token;
+    if (!existing.sessionPath && tgAccount.sessionPath) existing.sessionPath = tgAccount.sessionPath;
+    if (!existing.sessionString && tgAccount.sessionString) existing.sessionString = tgAccount.sessionString;
+    if (!existing.sessionType && tgAccount.sessionType) existing.sessionType = tgAccount.sessionType;
+    if (!existing.apiId && tgAccount.apiId) existing.apiId = tgAccount.apiId;
+    if (!existing.apiHash && tgAccount.apiHash) existing.apiHash = tgAccount.apiHash;
+    if (!existing.proxyUrl && tgAccount.proxyUrl) existing.proxyUrl = tgAccount.proxyUrl;
+    if (tgAccount.enabled === true) existing.enabled = true;
+    const existingRank = existing.role ? roleRank[existing.role as keyof typeof roleRank] || 0 : 0;
+    const nextRank = tgAccount.role ? roleRank[tgAccount.role as keyof typeof roleRank] || 0 : 0;
+    if (nextRank > existingRank) {
+      existing.role = tgAccount.role;
+    } else if (!existing.role && tgAccount.role) {
+      existing.role = tgAccount.role;
+    }
   };
   const telegramMappings = [];
 
   for (const account of config.accounts) {
     if (account.telegramConfig) {
+      const telegramForwardEnabled = account.telegramConfig?.enableTelegramForward !== false;
+      const mappingSummaryTargets = (account.telegramConfig.mappings || [])
+        .filter((mapping) => mapping?.sourceChannelId && mapping?.targetChannelId)
+        .map((mapping) => ({
+          type: mapping.type || "telegram-to-discord",
+          source: String(mapping.sourceChannelId),
+          target: String(mapping.targetChannelId),
+        }));
+      if (telegramForwardEnabled && mappingSummaryTargets.length > 0) {
+        const uniqSources = Array.from(new Set(mappingSummaryTargets.map((m) => m.source)));
+        const uniqTargets = Array.from(new Set(mappingSummaryTargets.map((m) => m.target)));
+        const uniqTypes = Array.from(new Set(mappingSummaryTargets.map((m) => m.type)));
+        const formatList = (items: string[], limit = 6) => {
+          if (items.length <= limit) return items.join(", ");
+          return `${items.slice(0, limit).join(", ")}...(共${items.length})`;
+        };
+        const instanceLabel = account.name || account.id;
+        const listenerLabel = account.telegramListenerAccountId || "未选";
+        const senderLabel = account.telegramSenderAccountId || "未选";
+        watchSummaryLines.push(
+          `实例 ${instanceLabel} | 类型=${uniqTypes.join("/") || "未知"} | 监听=${formatList(uniqSources)} | 目标=${formatList(uniqTargets)} | 监听账号=${listenerLabel} | 发送账号=${senderLabel}`,
+        );
+      }
       // 添加Telegram账号
       if (account.telegramConfig.accounts) {
         for (const tgAccount of account.telegramConfig.accounts) {
@@ -3422,7 +3634,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           if (shouldOverrideLegacyBot) {
             tokenToUse = account.telegramBotToken || "";
           }
-          pushTelegramAccount({
+          mergeTelegramAccount({
             id: tgAccount.id,
             name: tgAccount.name,
             type: tgAccount.type,
@@ -3459,7 +3671,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
         const existingBotEntry = (account.telegramConfig.accounts || []).find(
           (tgAccount) => tgAccount.id === botStatusId
         );
-        pushTelegramAccount({
+        mergeTelegramAccount({
           id: botStatusId,
           name: `${account.name || "Telegram"} Bot`,
           type: "bot",
@@ -3479,7 +3691,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
         const existingClientEntry = (account.telegramConfig.accounts || []).find(
           (tgAccount) => tgAccount.id === account.id
         );
-        pushTelegramAccount({
+        mergeTelegramAccount({
           id: account.id,
           name: account.name || "Telegram Client",
           type: "client",
@@ -3496,11 +3708,12 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
       }
 
       // 添加Telegram映射，并附带 Discord 账号的 showSourceIdentity 设置
-      if (account.telegramConfig.mappings) {
+      if (account.telegramConfig.mappings && telegramForwardEnabled) {
         for (const mapping of account.telegramConfig.mappings) {
           telegramMappings.push({
             ...mapping,
             showSourceIdentity: account.showSourceIdentity === true,
+            senderAccountId: account.telegramSenderAccountId || undefined,
           });
         }
       }
@@ -3513,13 +3726,21 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
     id: `config_sync_${Date.now()}`,
     method: "updateConfig",
     params: {
-      accounts: telegramAccounts,
+      accounts: Array.from(telegramAccountsById.values()),
       mappings: telegramMappings
     }
   };
 
   const messageSent = telegramBridgeManager.sendMessage(JSON.stringify(configUpdateMessage));
   if (messageSent) {
+    if (watchSummaryLines.length > 0) {
+      const summary = watchSummaryLines.join("\n");
+      const summaryHash = createHash("md5").update(summary).digest("hex");
+      if (summaryHash !== lastTelegramWatchSummaryHash) {
+        lastTelegramWatchSummaryHash = summaryHash;
+        console.log("[ConfigSync] Telegram 监听规则摘要:\n" + summary);
+      }
+    }
   } else {
     console.error("[ConfigSync] Failed to send config update to Telegram Bridge");
   }
@@ -3530,6 +3751,14 @@ function hasDiscordListeningAccounts(config: MultiConfig): boolean {
     if (isExternalForwardingType(account.forwardingType)) continue;
     const { shouldConnect } = shouldConnectDiscordListener(account);
     if (shouldConnect) return true;
+  }
+  const libraryAccounts = config.discordAccounts || [];
+  if (
+    libraryAccounts.some(
+      (acc) => acc.loginEnabled !== false && typeof acc.token === "string" && acc.token.trim(),
+    )
+  ) {
+    return true;
   }
   return false;
 }
@@ -3578,7 +3807,7 @@ async function syncConfigToDiscordBridge(config: MultiConfig) {
     setupDiscordBridgeClient();
   }
 
-  const accounts: DiscordBridgeAccountConfig[] = [];
+  const accountsById = new Map<string, DiscordBridgeAccountConfig>();
   for (const account of config.accounts) {
     if (isExternalForwardingType(account.forwardingType)) continue;
     const { shouldConnect, listenChannels } = shouldConnectDiscordListener(account);
@@ -3587,7 +3816,7 @@ async function syncConfigToDiscordBridge(config: MultiConfig) {
       await writeStatusForAccount(account.id, "idle", "未配置 Discord 监听规则");
     }
 
-    accounts.push({
+    accountsById.set(account.id, {
       id: account.id,
       token: account.token || "",
       type: account.type === "bot" ? "bot" : "selfbot",
@@ -3596,6 +3825,22 @@ async function syncConfigToDiscordBridge(config: MultiConfig) {
     });
   }
 
+  const libraryAccounts = config.discordAccounts || [];
+  for (const account of libraryAccounts) {
+    if (account.loginEnabled === false) continue;
+    if (typeof account.token !== "string" || !account.token.trim()) continue;
+    if (accountsById.has(account.id)) continue;
+    accountsById.set(account.id, {
+      id: account.id,
+      token: account.token,
+      type: account.type === "bot" ? "bot" : "selfbot",
+      enabled: true,
+      // 使用不可用频道ID占位，保持会话在线但不接收消息
+      listenChannels: ["0"],
+    });
+  }
+
+  const accounts = Array.from(accountsById.values());
   if (discordBridgeClient) {
     try {
       await discordBridgeClient.updateConfig({ accounts });

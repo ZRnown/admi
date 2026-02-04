@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from typing import Any, Dict, Optional, Set
 
 from loguru import logger
@@ -71,10 +72,17 @@ class DiscordAccountSession:
                     },
                 )
             shared_count = len(self.shared_accounts)
+            user_label = None
+            if payload:
+                user_label = payload.get("tag") or payload.get("username") or payload.get("displayName")
             if shared_count > 1:
-                logger.info(f"Discord account {self.account_id} connected (shared by {shared_count} accounts)")
+                logger.info(
+                    f"Discord账号已连接 | 账号={self.account_id} | 用户={user_label or '未知'} | 共享={shared_count}"
+                )
             else:
-                logger.info(f"Discord account {self.account_id} connected")
+                logger.info(
+                    f"Discord账号已连接 | 账号={self.account_id} | 用户={user_label or '未知'}"
+                )
 
         @self.client.event
         async def on_disconnect():
@@ -189,19 +197,34 @@ class DiscordAccountSession:
             all_channels.update(channels)
         self.listen_channels = all_channels
 
-    def add_shared_account(self, account_id: str, channels: Optional[list] = None) -> None:
+    async def add_shared_account(self, account_id: str, channels: Optional[list] = None) -> None:
         """添加共享账号"""
         channel_set = set(int(c) for c in channels or [] if str(c).strip())
         self.shared_accounts[account_id] = channel_set
         self._update_total_listen_channels()
         logger.info(f"Added shared account {account_id} to session {self.account_id}")
+        # 如果客户端已连接，为新加入的账号发送当前状态
+        if self.ready_event.is_set():
+            await self.ipc.send_notification(
+                "discord_status",
+                {
+                    "accountId": account_id,
+                    "state": "online",
+                    "user": self.user_payload,
+                },
+            )
 
-    def remove_shared_account(self, account_id: str) -> bool:
+    async def remove_shared_account(self, account_id: str) -> bool:
         """移除共享账号，返回是否还有剩余账号"""
         if account_id in self.shared_accounts:
             del self.shared_accounts[account_id]
             self._update_total_listen_channels()
             logger.info(f"Removed shared account {account_id} from session {self.account_id}")
+            # 为移除的账号发送断开状态
+            await self.ipc.send_notification(
+                "discord_status",
+                {"accountId": account_id, "state": "idle"},
+            )
         return len(self.shared_accounts) > 0
 
     def has_account(self, account_id: str) -> bool:
@@ -273,7 +296,7 @@ class DiscordBridge:
                 if session.has_account(acc_id):
                     session.update_listen_channels(acc_id, listen_channels)
                 else:
-                    session.add_shared_account(acc_id, listen_channels)
+                    await session.add_shared_account(acc_id, listen_channels)
 
         # 清理不再需要的账号
         for acc_id in list(self.account_to_token.keys()):
@@ -281,7 +304,7 @@ class DiscordBridge:
                 token = self.account_to_token.pop(acc_id, None)
                 if token and token in self.sessions_by_token:
                     session = self.sessions_by_token[token]
-                    has_remaining = session.remove_shared_account(acc_id)
+                    has_remaining = await session.remove_shared_account(acc_id)
                     if not has_remaining:
                         await session.stop()
                         self.sessions_by_token.pop(token, None)
@@ -482,6 +505,10 @@ def build_message_payload(message: Any, account_id: str) -> Dict[str, Any]:
 
 
 async def main():
+    # 配置日志，移除默认处理器避免重复
+    logger.remove()
+    logger.add(sys.stderr, level="INFO", format="{time} {level} {message}")
+
     bridge = DiscordBridge()
     await bridge.start()
 

@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 // 状态文件路径
 const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
+const triggerFile = path.resolve(process.cwd(), ".data", "trigger_reload");
 
 function resolveClientAccountId(account: AccountConfig, telegramAccountId?: string) {
   const candidates = account.telegramConfig?.accounts || [];
@@ -35,6 +36,15 @@ async function writeTelegramStatus(accountId: string, state: string, message: st
   }
 }
 
+async function triggerBotReload() {
+  try {
+    await fs.mkdir(path.dirname(triggerFile), { recursive: true });
+    await fs.writeFile(triggerFile, Date.now().toString());
+  } catch {
+    // 忽略错误
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -57,6 +67,7 @@ export async function POST(req: NextRequest) {
       }
       target.enabled = false;
       await saveMultiConfig(multi);
+      await triggerBotReload();
       await writeTelegramStatus(telegramAccountId, "idle", "已断开");
       return NextResponse.json({ state: "idle", message: "已断开" });
     }
@@ -70,13 +81,28 @@ export async function POST(req: NextRequest) {
     const clientAccountId = resolveClientAccountId(account, telegramAccountId);
 
     // 保存 enabled: false 到配置
-    if (account.telegramConfig?.accounts) {
-      const target = account.telegramConfig.accounts.find(a => a.id === clientAccountId);
-      if (target) {
-        target.enabled = false;
-        await saveMultiConfig(multi);
-      }
+    if (!account.telegramConfig) {
+      account.telegramConfig = { accounts: [], mappings: [], enableTelegramForward: false };
     }
+    if (!account.telegramConfig.accounts) {
+      account.telegramConfig.accounts = [];
+    }
+
+    let target = account.telegramConfig.accounts.find(a => a.id === clientAccountId);
+    if (target) {
+      target.enabled = false;
+    } else {
+      // 如果目标账号不存在，创建一个 disabled 的条目
+      account.telegramConfig.accounts.push({
+        id: clientAccountId,
+        name: "",
+        type: "client" as const,
+        token: "",
+        enabled: false,
+      });
+    }
+    await saveMultiConfig(multi);
+    await triggerBotReload();
 
     // 更新状态文件为已断开
     await writeTelegramStatus(clientAccountId, "idle", "已断开");

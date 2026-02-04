@@ -10,7 +10,6 @@ const state = {
   telegramAvatarBaseUrl: '',
   discordAccounts: [],
   telegramAccounts: [],
-  xAccounts: [],
   truthSocialAccounts: [],
   enabledForwardingTypes: null
 };

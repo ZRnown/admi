@@ -1014,8 +1014,10 @@ export class Bot {
     const sendersForThis = this.getSendersForChannel(message.channelId);
     const feishuSenderForThis = this.getFeishuSenderForChannel(message.channelId);
 
-    // 检查是否有 Telegram 映射
-    const telegramMappingsCheck = (this.config as any).telegramConfig?.mappings || [];
+    // 检查是否有 Telegram 映射（受 enableTelegramForward 控制）
+    const telegramConfig = (this.config as any).telegramConfig;
+    const telegramForwardEnabled = telegramConfig?.enableTelegramForward !== false;
+    const telegramMappingsCheck = telegramForwardEnabled ? telegramConfig?.mappings || [] : [];
     const hasTelegramMapping = telegramMappingsCheck.some(
       (m: any) => m.type === 'discord-to-telegram' && m.sourceChannelId === message.channelId
     );
@@ -1950,7 +1952,7 @@ export class Bot {
     }
 
     // Telegram 转发 - 只要有匹配的 discord-to-telegram 规则就尝试转发
-    const telegramMappings = (this.config as any).telegramConfig?.mappings || [];
+    const telegramMappings = telegramForwardEnabled ? telegramConfig?.mappings || [] : [];
     const discordToTelegramMappings = telegramMappings.filter(
       (m: any) => m.type === 'discord-to-telegram' && m.sourceChannelId === message.channelId
     );

@@ -462,13 +462,20 @@ class TelegramForwarder:
                     logger.debug(f"Looking for Telegram account, available: {[getattr(acc, 'id', 'unknown') for acc in self.account_configs]}")
 
                     preferred_type = getattr(mapping, "sender_account_type", None)
+                    preferred_account_id = getattr(mapping, "sender_account_id", None)
 
-                    if preferred_type in ("bot", "client"):
+                    if preferred_account_id:
+                        for acc in self.account_configs:
+                            if getattr(acc, "enabled", True) and getattr(acc, "id", None) == preferred_account_id:
+                                telegram_account = acc
+                                break
+
+                    if not telegram_account and preferred_type in ("bot", "client"):
                         for acc in self.account_configs:
                             if getattr(acc, "enabled", True) and getattr(acc, "type", "") == preferred_type and getattr(acc, "role", None) == "sender":
                                 telegram_account = acc
                                 break
-                    if preferred_type in ("bot", "client") and not telegram_account:
+                    if not telegram_account and preferred_type in ("bot", "client"):
                         for acc in self.account_configs:
                             if getattr(acc, "enabled", True) and getattr(acc, "type", "") == preferred_type:
                                 telegram_account = acc

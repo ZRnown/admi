@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import { getMultiConfig, saveMultiConfig } from "@/src/config";
-import { writeStatus, triggerFile } from "../../_lib/common";
+import { writeDiscordLibraryStatus, writeStatus, triggerFile } from "../../_lib/common";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,10 +50,15 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "账号不存在" }, { status: 404 });
       }
 
+      const respondLibraryError = async (message: string, status = 400) => {
+        await writeDiscordLibraryStatus(discordAccountId, "error", message);
+        return NextResponse.json({ error: message }, { status });
+      };
+
       if (mode === "token") {
         const token = typeof body?.token === "string" ? body.token.trim() : "";
         if (!token) {
-          return NextResponse.json({ error: "缺少 token" }, { status: 400 });
+          return respondLibraryError("缺少 token", 400);
         }
         const accountType = body?.accountType === "bot" ? "bot" : "selfbot";
         account.token = token;
@@ -66,12 +71,16 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, tokenStored: true });
       }
 
+      if (account.type === "bot") {
+        return respondLibraryError("机器人账号仅支持 Token 登录", 400);
+      }
+
       const email = typeof body?.email === "string" ? body.email.trim() : "";
       const password = typeof body?.password === "string" ? body.password : "";
       const totpSecret = typeof body?.totpSecret === "string" ? body.totpSecret.trim() : undefined;
 
       if (!email || !password) {
-        return NextResponse.json({ error: "缺少邮箱或密码" }, { status: 400 });
+        return respondLibraryError("缺少邮箱或密码", 400);
       }
 
       await fs.mkdir(path.dirname(loginRequestFile), { recursive: true });
@@ -97,19 +106,19 @@ export async function POST(req: NextRequest) {
 
       const response = await waitForLoginResponse(requestId, 60000);
       if (!response) {
-        return NextResponse.json({ error: "登录请求超时" }, { status: 504 });
+        return respondLibraryError("登录请求超时", 504);
       }
 
       if (!response.success) {
         const detail = response?.result?.message || response?.message;
         const error =
           response?.error && detail ? `${response.error}: ${detail}` : response?.error || detail || "登录失败";
-        return NextResponse.json({ error }, { status: 400 });
+        return respondLibraryError(error, 400);
       }
 
       const token = response?.result?.token;
       if (!token) {
-        return NextResponse.json({ error: "登录失败，未获取到 Token" }, { status: 500 });
+        return respondLibraryError("登录失败，未获取到 Token", 500);
       }
 
       account.token = token;
@@ -153,6 +162,10 @@ export async function POST(req: NextRequest) {
         await fs.writeFile(triggerFile, Date.now().toString(), "utf-8");
       } catch {}
       return NextResponse.json({ ok: true, loginState: autoLogin ? "pending" : "idle" });
+    }
+
+    if (account.type === "bot") {
+      return NextResponse.json({ error: "机器人账号仅支持 Token 登录" }, { status: 400 });
     }
 
     const email = typeof body?.email === "string" ? body.email.trim() : "";

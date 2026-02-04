@@ -43,6 +43,8 @@ class TelegramClientManager:
         self._event_handlers: Dict[str, Any] = {}
         self._pending_logins: Dict[str, Dict[str, Any]] = {}
         self._pending_login_ttl = 10 * 60
+        self._manually_disconnecting: set = set()  # 正在手动断开的账号，防止自动重连
+        self._unwatched_log_count: Dict[str, int] = {}
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
         media_root = os.getenv("TELEGRAM_MEDIA_DIR") or str(base_dir / ".data" / "telegram_media")
@@ -149,6 +151,9 @@ class TelegramClientManager:
     async def _disconnect_client(self, account_id: str) -> Dict[str, Any]:
         """断开Telegram客户端连接（内部方法，不处理锁）"""
         try:
+            # 标记为手动断开，防止自动重连
+            self._manually_disconnecting.add(account_id)
+
             shared_key = self._shared_by_account.get(account_id)
             client = self.clients.get(account_id)
 
@@ -230,6 +235,9 @@ class TelegramClientManager:
                 "error": "DISCONNECT_FAILED",
                 "message": str(e)
             }
+        finally:
+            # 清理手动断开标记
+            self._manually_disconnecting.discard(account_id)
 
     def _start_update_task(self, account_id: str, client: TelegramClient):
         task_key = self._get_task_key(account_id)
@@ -344,7 +352,11 @@ class TelegramClientManager:
         if not hasattr(self, "_watched_chats"):
             self._watched_chats = {}
         self._watched_chats[account_id] = set(normalized)
-        logger.info(f"客户端账号 {account_id} 监听 {len(normalized)} 个聊天")
+        self._unwatched_log_count[account_id] = 0
+        preview = normalized[:8]
+        suffix = "" if len(normalized) <= 8 else f"...(共{len(normalized)})"
+        account_label = self._format_account_label(account_id)
+        logger.info(f"客户端账号 {account_label} 监听 {len(normalized)} 个聊天: {preview}{suffix}")
 
     def _is_watched_chat(
         self,
@@ -357,8 +369,23 @@ class TelegramClientManager:
         watched = self._watched_chats.get(account_id)
         if not watched:
             return False
-        if chat_id in watched:
-            return True
+        if chat_id is not None:
+            candidates: List[int] = [chat_id]
+            try:
+                if isinstance(chat_id, int) and chat_id < 0:
+                    abs_id = abs(chat_id)
+                    candidates.append(abs_id)
+                    abs_str = str(abs_id)
+                    if abs_str.startswith("100") and len(abs_str) > 3:
+                        try:
+                            candidates.append(int(abs_str[3:]))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            for candidate in candidates:
+                if candidate in watched:
+                    return True
         if chat_username:
             name = chat_username.lstrip("@").lower()
             return name in watched
@@ -786,21 +813,18 @@ class TelegramClientManager:
         """连接状态变更回调"""
         logger.info(f"Connection state changed for {account_id}: {state.status}")
         shared_key = self._shared_by_account.get(account_id)
-        if shared_key:
-            for acc_id in self._shared_account_ids.get(shared_key, set()):
-                if acc_id == account_id:
-                    continue
-                self.connection_manager.update_state(
-                    acc_id,
-                    state.status,
-                    state.error_message,
-                    state.user_info,
-                )
-            if self._shared_primary.get(shared_key) != account_id:
-                return
+
+        # 不再同步更新所有共享账号的状态，每个实例的状态独立管理
+        # 只有主账号才处理自动重连逻辑
+        if shared_key and self._shared_primary.get(shared_key) != account_id:
+            return
 
         # 如果连接断开，启动自动重连
         if state.status in [ConnectionStatus.DISCONNECTED, ConnectionStatus.ERROR]:
+            # 如果是手动断开，不自动重连
+            if account_id in self._manually_disconnecting:
+                logger.info(f"Skipping auto-reconnect for {account_id} (manual disconnect)")
+                return
             # 只为有保存配置的账号重连
             if account_id in self._account_configs:
                 logger.info(f"Starting auto-reconnect for {account_id}")
@@ -1027,6 +1051,14 @@ class TelegramClientManager:
 
             # 只处理配置中监听的频道，忽略其他频道的消息
             if not self._is_watched_chat(account_id, chat_id, chat_username):
+                count = self._unwatched_log_count.get(account_id, 0)
+                if count < 3:
+                    watched_ids = self._get_watched_chat_ids(account_id)
+                    account_label = self._format_account_label(account_id)
+                    logger.info(
+                        f"忽略未监听聊天 | 账号={account_label} | chat_id={chat_id} | username={chat_username or ''} | 已监听={watched_ids}"
+                    )
+                    self._unwatched_log_count[account_id] = count + 1
                 return
 
             # 跳过自己发送的消息（如果配置了）
@@ -1093,8 +1125,9 @@ class TelegramClientManager:
                 chat_username = getattr(message.chat, "username", None)
 
             if self._is_watched_chat(account_id, message.chat_id, chat_username):
-                logger.debug(
-                    f"收到 Telegram 更新: 账号={account_id} chat={message.chat_id} id={message.id}"
+                account_label = self._format_account_label(account_id)
+                logger.info(
+                    f"收到 Telegram 消息 | 账号={account_label} | chat_id={message.chat_id} | username={chat_username or ''} | id={message.id}"
                 )
 
             reply_to_message = None
@@ -1169,6 +1202,23 @@ class TelegramClientManager:
             return None
         name = f"{user_info.get('firstName') or ''} {user_info.get('lastName') or ''}".strip()
         return name or user_info.get("username")
+
+    def _format_account_label(self, account_id: str) -> str:
+        user_info = None
+        shared_key = self._shared_by_account.get(account_id)
+        if shared_key:
+            user_info = self._shared_user_info.get(shared_key)
+        if not user_info:
+            state = self.connection_manager.get_state(account_id)
+            user_info = state.user_info if state else None
+        if user_info:
+            username = user_info.get("username")
+            display = self._build_display_name(user_info)
+            if username:
+                return f"{account_id}(@{username})"
+            if display:
+                return f"{account_id}({display})"
+        return account_id
 
     async def _get_avatar_file(self, client: TelegramClient, user: Any) -> Optional[str]:
         """下载并缓存用户头像，返回文件名"""

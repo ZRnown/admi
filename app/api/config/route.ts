@@ -9,8 +9,8 @@ import {
   type MultiConfig,
   type DiscordAccountLibrary,
   type TelegramAccountConfig,
-  type XAccountLibrary,
   type TruthSocialAccountLibrary,
+  type XAccountLibrary,
   type FeishuTargetConfig,
   type FrontendTelegramConfig,
   type RuleLevelConfig,
@@ -20,7 +20,7 @@ import {
   type ScheduledBroadcastConfig,
   type ScheduledContentItem,
 } from "@/src/config";
-import { readStatus, triggerFile } from "../_lib/common";
+import { readDiscordLibraryStatus, readStatus, triggerFile } from "../_lib/common";
 import { requireAuth } from "@/app/api/_lib/auth";
 
 export const runtime = "nodejs";
@@ -377,6 +377,8 @@ interface FrontendDiscordAccountLibrary
   extends Omit<DiscordAccountLibrary, "guildsCount" | "channelsCount"> {
   guildsCount?: number | string;
   channelsCount?: number | string;
+  loginState?: string;
+  loginMessage?: string;
 }
 
 interface FrontendTelegramAccountLibrary extends Omit<TelegramAccountConfig, "apiId" | "dialogsCount"> {
@@ -619,39 +621,20 @@ function mergeXConfig(incoming?: XSourceConfig, fallback?: XSourceConfig): XSour
   if ("apiKey" in incoming) {
     next.apiKey = resolveSecretValue(incoming.apiKey, fallback?.apiKey);
   }
-  if ("loginCookie" in incoming) {
-    next.loginCookie = resolveSecretValue(incoming.loginCookie, fallback?.loginCookie);
-  }
-  if ("loginPassword" in incoming) {
-    next.loginPassword = resolveSecretValue(incoming.loginPassword, fallback?.loginPassword);
-  }
-  if ("loginTotpSecret" in incoming) {
-    next.loginTotpSecret = resolveSecretValue(incoming.loginTotpSecret, fallback?.loginTotpSecret);
-  }
 
   if (typeof incoming.apiBaseUrl === "string") {
     next.apiBaseUrl = incoming.apiBaseUrl.trim() || undefined;
   } else if (fallback?.apiBaseUrl) {
     next.apiBaseUrl = fallback.apiBaseUrl;
   }
+  if (typeof incoming.mode === "string") {
+    const token = incoming.mode.trim().toLowerCase();
+    next.mode = token === "websocket" || token === "ws" ? "websocket" : token === "poll" || token === "polling" ? "poll" : undefined;
+  } else if (fallback?.mode) {
+    next.mode = fallback.mode;
+  }
   const pollIntervalSeconds = normalizeOptionalNumber(incoming.pollIntervalSeconds);
   next.pollIntervalSeconds = pollIntervalSeconds ?? fallback?.pollIntervalSeconds;
-
-  if (typeof incoming.loginUserName === "string") {
-    next.loginUserName = incoming.loginUserName.trim().replace(/^@+/, "") || undefined;
-  } else if (fallback?.loginUserName) {
-    next.loginUserName = fallback.loginUserName;
-  }
-  if (typeof incoming.loginEmail === "string") {
-    next.loginEmail = incoming.loginEmail.trim() || undefined;
-  } else if (fallback?.loginEmail) {
-    next.loginEmail = fallback.loginEmail;
-  }
-  if (typeof incoming.loginProxy === "string") {
-    next.loginProxy = incoming.loginProxy.trim() || undefined;
-  } else if (fallback?.loginProxy) {
-    next.loginProxy = fallback.loginProxy;
-  }
 
   if (Array.isArray(incoming.mappings)) {
     next.mappings = incoming.mappings;
@@ -663,13 +646,8 @@ function mergeXConfig(incoming?: XSourceConfig, fallback?: XSourceConfig): XSour
   const hasAny =
     !!next.apiKey ||
     !!next.apiBaseUrl ||
+    !!next.mode ||
     !!next.pollIntervalSeconds ||
-    !!next.loginCookie ||
-    !!next.loginUserName ||
-    !!next.loginEmail ||
-    !!next.loginPassword ||
-    !!next.loginTotpSecret ||
-    !!next.loginProxy ||
     hasMappings;
   return hasAny ? next : undefined;
 }
@@ -971,9 +949,6 @@ function maskFrontendAccount(account: FrontendAccount): FrontendAccount {
     masked.xConfig = {
       ...masked.xConfig,
       apiKey: maskSecret(masked.xConfig.apiKey),
-      loginCookie: maskSecret(masked.xConfig.loginCookie),
-      loginPassword: maskSecret(masked.xConfig.loginPassword),
-      loginTotpSecret: maskSecret(masked.xConfig.loginTotpSecret),
     };
   }
   if (masked.truthSocialConfig) {
@@ -1029,9 +1004,6 @@ function maskXLibraryAccount(account: FrontendXAccountLibrary): FrontendXAccount
   return {
     ...account,
     apiKey: maskSecret(account.apiKey),
-    loginCookie: maskSecret(account.loginCookie),
-    loginPassword: maskSecret(account.loginPassword),
-    loginTotpSecret: maskSecret(account.loginTotpSecret),
   };
 }
 
@@ -1066,6 +1038,12 @@ function dtoToDiscordLibraryAccount(
       : typeof dto.channelsCount === "string" && dto.channelsCount.trim() && !isNaN(Number(dto.channelsCount))
         ? Number(dto.channelsCount)
         : base.channelsCount;
+  const loginEnabled =
+    dto.loginEnabled === false
+      ? false
+      : dto.loginEnabled === true
+        ? true
+        : base.loginEnabled !== false;
   return {
     ...base,
     id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
@@ -1077,6 +1055,7 @@ function dtoToDiscordLibraryAccount(
     password: typeof resolvedPassword === "string" && resolvedPassword.trim() ? resolvedPassword : undefined,
     totpSecret: typeof resolvedTotp === "string" && resolvedTotp.trim() ? resolvedTotp : undefined,
     proxyUrl: typeof dto.proxyUrl === "string" && dto.proxyUrl.trim() ? dto.proxyUrl.trim() : base.proxyUrl,
+    loginEnabled,
     syncedUser: typeof dto.syncedUser === "object" && dto.syncedUser ? dto.syncedUser : base.syncedUser,
     lastSyncTime:
       typeof dto.lastSyncTime === "string" && dto.lastSyncTime.trim() ? dto.lastSyncTime.trim() : base.lastSyncTime,
@@ -1141,15 +1120,15 @@ function dtoToTelegramLibraryAccount(
   };
 }
 
-function dtoToXLibraryAccount(dto: FrontendXAccountLibrary, fallback?: XAccountLibrary): XAccountLibrary {
+function dtoToXLibraryAccount(
+  dto: FrontendXAccountLibrary,
+  fallback?: XAccountLibrary,
+): XAccountLibrary {
   const base: XAccountLibrary = fallback ?? {
     id: randomUUID(),
     name: "X 账号",
   };
   const resolvedApiKey = resolveSecretValue(dto.apiKey, base.apiKey);
-  const resolvedLoginCookie = resolveSecretValue(dto.loginCookie, base.loginCookie);
-  const resolvedLoginPassword = resolveSecretValue(dto.loginPassword, base.loginPassword);
-  const resolvedLoginTotp = resolveSecretValue(dto.loginTotpSecret, base.loginTotpSecret);
   return {
     ...base,
     id: typeof dto.id === "string" && dto.id.trim() ? dto.id.trim() : base.id,
@@ -1157,19 +1136,6 @@ function dtoToXLibraryAccount(dto: FrontendXAccountLibrary, fallback?: XAccountL
     remark: typeof dto.remark === "string" && dto.remark.trim() ? dto.remark.trim() : base.remark,
     apiKey: typeof resolvedApiKey === "string" && resolvedApiKey.trim() ? resolvedApiKey : base.apiKey,
     apiBaseUrl: typeof dto.apiBaseUrl === "string" && dto.apiBaseUrl.trim() ? dto.apiBaseUrl.trim() : base.apiBaseUrl,
-    loginCookie:
-      typeof resolvedLoginCookie === "string" && resolvedLoginCookie.trim() ? resolvedLoginCookie : base.loginCookie,
-    loginUserName:
-      typeof dto.loginUserName === "string" && dto.loginUserName.trim() ? dto.loginUserName.trim() : base.loginUserName,
-    loginEmail:
-      typeof dto.loginEmail === "string" && dto.loginEmail.trim() ? dto.loginEmail.trim() : base.loginEmail,
-    loginPassword:
-      typeof resolvedLoginPassword === "string" && resolvedLoginPassword.trim()
-        ? resolvedLoginPassword
-        : base.loginPassword,
-    loginTotpSecret:
-      typeof resolvedLoginTotp === "string" && resolvedLoginTotp.trim() ? resolvedLoginTotp : base.loginTotpSecret,
-    loginProxy: typeof dto.loginProxy === "string" && dto.loginProxy.trim() ? dto.loginProxy.trim() : base.loginProxy,
   };
 }
 
@@ -1564,6 +1530,7 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get("export") === "1";
     const multi = await getMultiConfig();
     const status = await readStatus();
+    const discordLibraryStatus = await readDiscordLibraryStatus();
     const telegramStatus = await readTelegramStatus();
     const externalStatus = await readExternalForwardStatus();
     const forwardStats = await readForwardStats();
@@ -1580,6 +1547,14 @@ export async function GET(req: NextRequest) {
       };
     });
     const discordAccounts = Array.isArray(multi.discordAccounts) ? multi.discordAccounts : [];
+    const frontendDiscordAccounts: FrontendDiscordAccountLibrary[] = discordAccounts.map((acc) => {
+      const statusEntry = discordLibraryStatus[acc.id];
+      return {
+        ...acc,
+        loginState: typeof statusEntry?.loginState === "string" ? statusEntry.loginState : undefined,
+        loginMessage: typeof statusEntry?.loginMessage === "string" ? statusEntry.loginMessage : undefined,
+      };
+    });
     const xAccounts = Array.isArray(multi.xAccounts) ? multi.xAccounts : [];
     const truthSocialAccounts = Array.isArray(multi.truthSocialAccounts) ? multi.truthSocialAccounts : [];
     const payload: FrontendPayload = {
@@ -1603,8 +1578,8 @@ export async function GET(req: NextRequest) {
         return includeSecrets ? frontend : maskFrontendAccount(frontend);
       }),
       discordAccounts: includeSecrets
-        ? discordAccounts
-        : discordAccounts.map((acc) => maskDiscordLibraryAccount(acc as FrontendDiscordAccountLibrary)),
+        ? frontendDiscordAccounts
+        : frontendDiscordAccounts.map((acc) => maskDiscordLibraryAccount(acc)),
       telegramAccounts: includeSecrets
         ? frontendTelegramAccounts
         : frontendTelegramAccounts.map((acc) => maskTelegramLibraryAccount(acc)),
@@ -1760,6 +1735,10 @@ export async function PUT(req: NextRequest) {
         typeof body.telegramAvatarBaseUrl === "string" && body.telegramAvatarBaseUrl.trim()
           ? body.telegramAvatarBaseUrl.trim()
           : current.telegramAvatarBaseUrl,
+      discordAccounts: current.discordAccounts,
+      telegramAccounts: current.telegramAccounts,
+      xAccounts: current.xAccounts,
+      truthSocialAccounts: current.truthSocialAccounts,
     };
 
     await saveMultiConfig(next);

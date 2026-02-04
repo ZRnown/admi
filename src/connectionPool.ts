@@ -1,252 +1,232 @@
 /**
- * 全局连接池 - 解决同一账号在多个实例中重复登录的问题
+ * 全局 Discord 账号管理器
  *
  * 核心逻辑：
- * - 使用凭据哈希作为 Key（而非 Account ID），确保相同凭据只登录一次
- * - 引用计数管理：当所有实例都释放连接时才真正断开
- * - 支持 Discord (Bot/Selfbot) 和 Telegram (Bot/Client) 两种类型
+ * - 使用 Account ID 作为 Key（而非 Token Hash）
+ * - 项目启动时自动登录所有账号库中的账号
+ * - 账号连接与实例无关，只要在库里且有 Token 就保持在线
+ * - 实例只是规则的挂载/卸载，不影响账号连接
  */
 
 import { Client as SelfBotClient } from "discord.js-selfbot-v13";
 import { Client as BotClient, GatewayIntentBits, Partials } from "discord.js";
-import { createHash } from "crypto";
+import { EventEmitter } from "events";
 import { FileLogger } from "./logger.js";
+import type { DiscordAccountLibrary } from "./config.js";
 
 // Discord Client 类型
 export type DiscordClient = SelfBotClient | BotClient;
 
 // 连接状态
-export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
+export type AccountStatus = "online" | "connecting" | "error" | "offline";
 
-// Discord 连接信息
-export interface DiscordConnection {
-  type: "discord";
-  clientType: "bot" | "selfbot";
+// 已连接的账号信息
+interface ConnectedAccount {
   client: DiscordClient;
-  status: ConnectionStatus;
-  refCount: number;
-  token: string;
-  error?: string;
-  user?: { id: string; username: string; discriminator?: string };
+  info: DiscordAccountLibrary;
+  status: AccountStatus;
+  reconnectTimer?: NodeJS.Timeout;
 }
 
-// Telegram 连接信息
-export interface TelegramConnection {
-  type: "telegram";
-  clientType: "bot" | "client";
-  status: ConnectionStatus;
-  refCount: number;
-  sessionKey: string; // bot token 或 session hash
-  error?: string;
-  user?: { id: string; username?: string; firstName?: string };
-}
-
-export type Connection = DiscordConnection | TelegramConnection;
-
-// 连接池事件监听器
-type ConnectionEventListener = (key: string, connection: Connection) => void;
+// 状态写入函数类型（避免循环引用）
+type StatusWriter = (accountId: string, state: string, message: string) => Promise<void>;
 
 /**
- * 生成 Discord 凭据的哈希 Key
+ * 全局 Discord 账号管理器
  */
-export function buildDiscordCredentialKey(token: string): string {
-  return `discord:${createHash("sha256").update(token).digest("hex").slice(0, 16)}`;
-}
-
-/**
- * 生成 Telegram 凭据的哈希 Key
- */
-export function buildTelegramCredentialKey(
-  type: "bot" | "client",
-  credential: string // bot token 或 session string/path
-): string {
-  const hash = createHash("sha256").update(credential).digest("hex").slice(0, 16);
-  return `telegram:${type}:${hash}`;
-}
-
-/**
- * 全局连接池管理器
- */
-class ConnectionPoolManager {
-  private connections = new Map<string, Connection>();
-  private listeners: ConnectionEventListener[] = [];
+export class GlobalDiscordManager extends EventEmitter {
+  private accounts = new Map<string, ConnectedAccount>();
   private logger: FileLogger | null = null;
+  private statusWriter: StatusWriter | null = null;
 
   setLogger(logger: FileLogger) {
     this.logger = logger;
   }
 
-  /**
-   * 添加状态变化监听器
-   */
-  onStatusChange(listener: ConnectionEventListener) {
-    this.listeners.push(listener);
+  setStatusWriter(writer: StatusWriter) {
+    this.statusWriter = writer;
   }
 
   /**
-   * 通知所有监听器
+   * 获取客户端供实例使用
    */
-  private notifyListeners(key: string, connection: Connection) {
-    for (const listener of this.listeners) {
-      try {
-        listener(key, connection);
-      } catch (e) {
-        // 忽略监听器错误
+  getClient(accountId: string): DiscordClient | undefined {
+    return this.accounts.get(accountId)?.client;
+  }
+
+  /**
+   * 检查账号是否在线
+   */
+  isOnline(accountId: string): boolean {
+    return this.accounts.get(accountId)?.status === "online";
+  }
+
+  /**
+   * 获取账号状态
+   */
+  getStatus(accountId: string): AccountStatus | undefined {
+    return this.accounts.get(accountId)?.status;
+  }
+
+  /**
+   * 获取所有账号
+   */
+  getAllAccounts(): Map<string, ConnectedAccount> {
+    return new Map(this.accounts);
+  }
+
+  /**
+   * 同步账号库配置（启动/停止账号）
+   */
+  async syncAccounts(library: DiscordAccountLibrary[]) {
+    const newIds = new Set(library.map(a => a.id));
+    const libraryById = new Map(library.map(a => [a.id, a]));
+
+    // 1. 清理不在库中的账号
+    for (const [id, session] of this.accounts) {
+      const nextConfig = libraryById.get(id);
+      const shouldDisable = nextConfig?.loginEnabled === false || !nextConfig?.token;
+      if (!newIds.has(id)) {
+        this.logger?.info(`[AccountManager] 账号 ${session.info.name} 已从库中移除，正在断开...`);
+        await this.disconnect(id);
+      } else if (shouldDisable) {
+        this.logger?.info(`[AccountManager] 账号 ${session.info.name} 已停用，正在断开...`);
+        await this.disconnect(id);
+      }
+    }
+
+    // 2. 启动或更新账号
+    for (const accConfig of library) {
+      const loginEnabled = accConfig.loginEnabled !== false;
+      if (!loginEnabled) {
+        await this.updateStatus(accConfig.id, "idle", "未启用");
+        continue;
+      }
+      if (!accConfig.token) {
+        await this.updateStatus(accConfig.id, "error", "未配置 Token");
+        continue;
+      }
+      const existing = this.accounts.get(accConfig.id);
+
+      // 如果 Token 变了，或者之前没启动
+      if (!existing || existing.info.token !== accConfig.token) {
+        if (existing) await this.disconnect(accConfig.id); // Token 变了先断开
+        this.connect(accConfig).catch((err) => {
+          this.logger?.error(`[AccountManager] 账号 ${accConfig.name} 登录异常: ${err?.message || err}`);
+        });
       }
     }
   }
 
   /**
-   * 获取连接（如果存在）
+   * 连接单个账号
    */
-  getConnection(key: string): Connection | undefined {
-    return this.connections.get(key);
-  }
+  async connect(config: DiscordAccountLibrary) {
+    if (this.accounts.has(config.id)) return;
 
-  /**
-   * 获取所有连接
-   */
-  getAllConnections(): Map<string, Connection> {
-    return new Map(this.connections);
-  }
+    this.logger?.info(`[AccountManager] 正在连接账号: ${config.name}`);
+    await this.updateStatus(config.id, "connecting", "正在登录...");
 
-  /**
-   * 检查连接是否存在且已连接
-   */
-  isConnected(key: string): boolean {
-    const conn = this.connections.get(key);
-    return conn?.status === "connected";
-  }
+    const client = config.type === "bot"
+      ? new BotClient({
+          intents: [
+            GatewayIntentBits.Guilds,
+            GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.MessageContent,
+            GatewayIntentBits.DirectMessages,
+          ],
+          partials: [Partials.Channel, Partials.Message],
+        })
+      : new SelfBotClient({
+          checkUpdate: false,
+          patchVoice: false,
+          syncStatus: false
+        } as any);
 
-  /**
-   * 获取或创建 Discord 连接
-   */
-  async acquireDiscord(
-    token: string,
-    clientType: "bot" | "selfbot"
-  ): Promise<{ key: string; connection: DiscordConnection }> {
-    const key = buildDiscordCredentialKey(token);
-    const existing = this.connections.get(key) as DiscordConnection | undefined;
-
-    // 如果已存在连接
-    if (existing) {
-      existing.refCount++;
-      await this.logger?.info(`[ConnectionPool] Discord 连接已存在，引用计数: ${existing.refCount}`);
-      return { key, connection: existing };
-    }
-
-    // 创建新连接
-    const connection: DiscordConnection = {
-      type: "discord",
-      clientType,
-      client: null as any,
-      status: "connecting",
-      refCount: 1,
-      token,
+    const session: ConnectedAccount = {
+      client,
+      info: config,
+      status: "connecting"
     };
-    this.connections.set(key, connection);
-    this.notifyListeners(key, connection);
+    this.accounts.set(config.id, session);
+
+    (client as any).on("ready", async () => {
+      session.status = "online";
+      const display = client.user?.tag || client.user?.username || config.name;
+      this.logger?.info(`[AccountManager] 账号 ${config.name} 已连接: ${display}`);
+      await this.updateStatus(config.id, "online", `已连接: ${display}`);
+      this.emit("ready", config.id, client);
+    });
+
+    (client as any).on("error", (err: any) => {
+      const msg = err?.message || String(err);
+      this.logger?.error(`[AccountManager] 账号 ${config.name} 错误: ${msg}`);
+      this.updateStatus(config.id, "error", msg).catch(() => {});
+    });
+
+    // 自动重连逻辑
+    (client as any).on("disconnect", () => {
+      if (session.status !== "offline") { // 非手动断开
+        session.status = "error";
+        this.updateStatus(config.id, "pending", "连接断开，正在重连...");
+        this.logger?.warn(`[AccountManager] 账号 ${config.name} 断开，5秒后重连...`);
+        if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+        session.reconnectTimer = setTimeout(() => {
+          this.accounts.delete(config.id); // 清理旧引用
+          this.connect(config).catch(e => console.error(e));
+        }, 5000);
+      }
+    });
 
     try {
-      const client = await this.createDiscordClient(clientType, token);
-      connection.client = client;
-      connection.status = "connected";
-      connection.user = {
-        id: (client as any).user?.id || "",
-        username: (client as any).user?.username || "",
-        discriminator: (client as any).user?.discriminator,
-      };
-      await this.logger?.info(`[ConnectionPool] Discord 连接成功: ${connection.user.username}`);
-      this.notifyListeners(key, connection);
-    } catch (error: any) {
-      connection.status = "error";
-      connection.error = error.message || "连接失败";
-      await this.logger?.error(`[ConnectionPool] Discord 连接失败: ${connection.error}`);
-      this.notifyListeners(key, connection);
-      throw error;
-    }
-
-    return { key, connection };
-  }
-
-  /**
-   * 创建 Discord 客户端
-   */
-  private async createDiscordClient(
-    clientType: "bot" | "selfbot",
-    token: string
-  ): Promise<DiscordClient> {
-    if (clientType === "selfbot") {
-      const client = new SelfBotClient({
-        checkUpdate: false,
-        patchVoice: false,
-        syncStatus: false,
-      } as any);
-      await client.login(token);
-      return client;
-    } else {
-      const client = new BotClient({
-        intents: [
-          GatewayIntentBits.Guilds,
-          GatewayIntentBits.GuildMessages,
-          GatewayIntentBits.MessageContent,
-          GatewayIntentBits.DirectMessages,
-        ],
-        partials: [Partials.Channel, Partials.Message],
-      });
-      await client.login(token);
-      return client;
+      await (client as any).login(config.token);
+    } catch (e: any) {
+      this.logger?.error(`[AccountManager] 账号 ${config.name} 登录失败: ${e.message}`);
+      await this.updateStatus(config.id, "error", e.message);
+      this.accounts.delete(config.id);
     }
   }
 
   /**
-   * 释放连接引用
+   * 断开单个账号
    */
-  async release(key: string): Promise<void> {
-    const connection = this.connections.get(key);
-    if (!connection) return;
+  async disconnect(id: string) {
+    const session = this.accounts.get(id);
+    if (!session) return;
 
-    connection.refCount--;
-    await this.logger?.info(`[ConnectionPool] 释放连接 ${key}，剩余引用: ${connection.refCount}`);
+    session.status = "offline"; // 标记为离线，防止触发自动重连
+    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
 
-    if (connection.refCount <= 0) {
-      await this.disconnect(key);
+    try {
+      await (session.client as any).destroy();
+    } catch (e) {
+      // ignore
+    }
+
+    this.accounts.delete(id);
+    await this.updateStatus(id, "idle", "已断开");
+    this.logger?.info(`[AccountManager] 账号 ${session.info.name} 已断开`);
+  }
+
+  /**
+   * 断开所有账号
+   */
+  async disconnectAll() {
+    const ids = Array.from(this.accounts.keys());
+    for (const id of ids) {
+      await this.disconnect(id);
     }
   }
 
   /**
-   * 强制断开连接
+   * 辅助方法：更新状态文件
    */
-  async disconnect(key: string): Promise<void> {
-    const connection = this.connections.get(key);
-    if (!connection) return;
-
-    await this.logger?.info(`[ConnectionPool] 断开连接: ${key}`);
-
-    if (connection.type === "discord" && connection.client) {
-      try {
-        connection.client.destroy();
-      } catch (e) {
-        // 忽略销毁错误
-      }
-    }
-
-    connection.status = "disconnected";
-    this.connections.delete(key);
-    this.notifyListeners(key, connection);
-  }
-
-  /**
-   * 断开所有连接
-   */
-  async disconnectAll(): Promise<void> {
-    const keys = Array.from(this.connections.keys());
-    for (const key of keys) {
-      await this.disconnect(key);
+  private async updateStatus(accountId: string, state: string, message: string) {
+    if (this.statusWriter) {
+      await this.statusWriter(accountId, state, message);
     }
   }
 }
 
 // 导出单例
-export const connectionPool = new ConnectionPoolManager();
-
+export const discordManager = new GlobalDiscordManager();

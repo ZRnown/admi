@@ -242,17 +242,17 @@ export class TelegramBridgeManager extends EventEmitter {
       this.emit('error', error);
     });
 
-    // 监听stdout和stderr
+    // 监听stdout和stderr - 只emit事件，不打印日志（避免与start-backend.js重复）
     if (this.process.stdout) {
       this.process.stdout.on('data', (data) => {
-        console.log(`[TelegramBridge] ${data.toString().trim()}`);
         this.emit('stdout', data);
       });
     }
 
     if (this.process.stderr) {
       this.process.stderr.on('data', (data) => {
-        console.error(`[TelegramBridge] ${data.toString().trim()}`);
+        // 只打印stderr日志，stdout由IPC处理
+        console.log(`[TelegramBridge] ${data.toString().trim()}`);
         this.emit('stderr', data);
       });
     }
@@ -478,14 +478,14 @@ export class DiscordBridgeManager extends EventEmitter {
 
     if (this.process.stdout) {
       this.process.stdout.on("data", (data) => {
-        console.log(`[DiscordBridge] ${data.toString().trim()}`);
         this.emit("stdout", data);
       });
     }
 
     if (this.process.stderr) {
       this.process.stderr.on("data", (data) => {
-        console.error(`[DiscordBridge] ${data.toString().trim()}`);
+        // 只打印stderr日志，stdout由IPC处理
+        console.log(`[DiscordBridge] ${data.toString().trim()}`);
         this.emit("stderr", data);
       });
     }

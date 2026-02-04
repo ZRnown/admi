@@ -17,10 +17,6 @@ function getTelegramLibraryLabel(item) {
   return `${item.name || 'Telegram账号'} [${typeLabel}]`;
 }
 
-function getXLibraryLabel(item) {
-  return item?.name || 'X账号';
-}
-
 function getTruthLibraryLabel(item) {
   return item?.name || 'TruthSocial账号';
 }
@@ -45,17 +41,6 @@ function getTelegramLibraryOptions(selectedId, filterType) {
     if (filterType && item.type !== filterType) return;
     options.push(
       `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(getTelegramLibraryLabel(item))}</option>`
-    );
-  });
-  return options.join('');
-}
-
-function getXLibraryOptions(selectedId) {
-  const options = [`<option value="">未选择</option>`];
-  (state.xAccounts || []).forEach((item) => {
-    if (!item?.id) return;
-    options.push(
-      `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(getXLibraryLabel(item))}</option>`
     );
   });
   return options.join('');

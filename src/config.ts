@@ -84,6 +84,7 @@ export interface DiscordAccountLibrary {
   password?: string;
   totpSecret?: string;
   proxyUrl?: string;
+  loginEnabled?: boolean;
   syncedUser?: Record<string, any>;
   lastSyncTime?: string;
   guildsCount?: number;
@@ -96,12 +97,6 @@ export interface XAccountLibrary {
   remark?: string;
   apiKey?: string;
   apiBaseUrl?: string;
-  loginCookie?: string;
-  loginUserName?: string;
-  loginEmail?: string;
-  loginPassword?: string;
-  loginTotpSecret?: string;
-  loginProxy?: string;
 }
 
 export interface TruthSocialAccountLibrary {
@@ -267,6 +262,8 @@ export interface RuleLevelConfig {
     enabled: boolean;
     mainChannelId: string;
     cooldownSeconds: number;
+    mainGuildId?: string;
+    mainGuildName?: string;
   };
 }
 
@@ -291,17 +288,14 @@ export interface XForwardingRule extends RuleLevelConfig {
   pollIntervalSeconds?: number;
 }
 
+export type XStreamMode = "poll" | "websocket";
+
 export interface XSourceConfig {
   apiKey?: string;
   apiBaseUrl?: string;
+  mode?: XStreamMode;
   pollIntervalSeconds?: number;
   mappings?: XForwardingRule[];
-  loginCookie?: string;
-  loginUserName?: string;
-  loginEmail?: string;
-  loginPassword?: string;
-  loginTotpSecret?: string;
-  loginProxy?: string;
 }
 
 export interface TruthSocialForwardingRule extends RuleLevelConfig {
@@ -798,6 +792,8 @@ function normalizeScheduledBroadcastConfig(raw: any): ScheduledBroadcastConfig |
 function normalizeStandbyMode(raw: any): RuleLevelConfig["standbyMode"] | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const mainChannelId = typeof raw.mainChannelId === "string" ? raw.mainChannelId.trim() : "";
+  const mainGuildId = typeof raw.mainGuildId === "string" ? raw.mainGuildId.trim() : "";
+  const mainGuildName = typeof raw.mainGuildName === "string" ? raw.mainGuildName.trim() : "";
   const cooldownSeconds =
     typeof raw.cooldownSeconds === "number"
       ? raw.cooldownSeconds
@@ -806,11 +802,14 @@ function normalizeStandbyMode(raw: any): RuleLevelConfig["standbyMode"] | undefi
         : 60;
   const enabled = raw.enabled === true;
   if (!enabled && !mainChannelId) return undefined;
-  return {
+  const result: RuleLevelConfig["standbyMode"] = {
     enabled,
     mainChannelId,
     cooldownSeconds: Number.isFinite(cooldownSeconds) ? cooldownSeconds : 60,
   };
+  if (mainGuildId) result.mainGuildId = mainGuildId;
+  if (mainGuildName) result.mainGuildName = mainGuildName;
+  return result;
 }
 
 function normalizeRuleConfig(raw: any): RuleLevelConfig {
@@ -998,6 +997,7 @@ function normalizeDiscordAccountLibrary(raw: any): DiscordAccountLibrary[] {
         password: typeof item.password === "string" ? item.password : undefined,
         totpSecret: typeof item.totpSecret === "string" ? item.totpSecret : undefined,
         proxyUrl: typeof item.proxyUrl === "string" && item.proxyUrl.trim() ? item.proxyUrl.trim() : undefined,
+        loginEnabled: item.loginEnabled !== false,
         syncedUser: item.syncedUser && typeof item.syncedUser === "object" ? item.syncedUser : undefined,
         lastSyncTime: typeof item.lastSyncTime === "string" ? item.lastSyncTime : undefined,
         guildsCount: typeof item.guildsCount === "number" ? item.guildsCount : undefined,
@@ -1015,14 +1015,9 @@ function normalizeXAccountLibrary(raw: any): XAccountLibrary[] {
       return {
         id: typeof item.id === "string" && item.id.trim() ? item.id : randomUUID(),
         name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "X 账号",
+        remark: typeof item.remark === "string" && item.remark.trim() ? item.remark.trim() : undefined,
         apiKey: typeof item.apiKey === "string" ? item.apiKey : undefined,
         apiBaseUrl: typeof item.apiBaseUrl === "string" ? item.apiBaseUrl : undefined,
-        loginCookie: typeof item.loginCookie === "string" ? item.loginCookie : undefined,
-        loginUserName: typeof item.loginUserName === "string" ? item.loginUserName : undefined,
-        loginEmail: typeof item.loginEmail === "string" ? item.loginEmail : undefined,
-        loginPassword: typeof item.loginPassword === "string" ? item.loginPassword : undefined,
-        loginTotpSecret: typeof item.loginTotpSecret === "string" ? item.loginTotpSecret : undefined,
-        loginProxy: typeof item.loginProxy === "string" ? item.loginProxy : undefined,
       };
     })
     .filter(Boolean) as XAccountLibrary[];
@@ -1096,88 +1091,32 @@ function normalizeXMappings(raw: any): XForwardingRule[] {
 
 function normalizeXConfig(raw: any): XSourceConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const loginRaw = raw.login && typeof raw.login === "object" ? raw.login : {};
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
   const apiBaseUrl = typeof raw.apiBaseUrl === "string" && raw.apiBaseUrl.trim() ? raw.apiBaseUrl.trim() : undefined;
+  const modeRaw =
+    typeof raw.mode === "string"
+      ? raw.mode
+      : typeof raw.streamMode === "string"
+        ? raw.streamMode
+        : undefined;
+  const modeToken = typeof modeRaw === "string" ? modeRaw.trim().toLowerCase() : "";
+  const mode: XStreamMode | undefined =
+    modeToken === "websocket" || modeToken === "ws"
+      ? "websocket"
+      : modeToken === "poll" || modeToken === "polling"
+        ? "poll"
+        : undefined;
   const pollIntervalSeconds = normalizeOptionalNumber(raw.pollIntervalSeconds);
   const mappings = normalizeXMappings(raw.mappings);
-  const loginCookie =
-    typeof raw.loginCookie === "string" && raw.loginCookie.trim()
-      ? raw.loginCookie.trim()
-      : typeof loginRaw.loginCookie === "string" && loginRaw.loginCookie.trim()
-        ? loginRaw.loginCookie.trim()
-        : undefined;
-  const loginUserNameRaw =
-    typeof raw.loginUserName === "string"
-      ? raw.loginUserName
-      : typeof raw.loginUsername === "string"
-        ? raw.loginUsername
-        : typeof raw.userName === "string"
-          ? raw.userName
-          : typeof raw.username === "string"
-            ? raw.username
-            : typeof loginRaw.userName === "string"
-              ? loginRaw.userName
-              : typeof loginRaw.username === "string"
-                ? loginRaw.username
-                : undefined;
-  const loginUserName =
-    typeof loginUserNameRaw === "string" && loginUserNameRaw.trim()
-      ? loginUserNameRaw.trim().replace(/^@+/, "")
-      : undefined;
-  const loginEmailRaw =
-    typeof raw.loginEmail === "string"
-      ? raw.loginEmail
-      : typeof raw.email === "string"
-        ? raw.email
-        : typeof loginRaw.email === "string"
-          ? loginRaw.email
-          : undefined;
-  const loginEmail = typeof loginEmailRaw === "string" && loginEmailRaw.trim() ? loginEmailRaw.trim() : undefined;
-  const loginPasswordRaw =
-    typeof raw.loginPassword === "string"
-      ? raw.loginPassword
-      : typeof raw.password === "string"
-        ? raw.password
-        : typeof loginRaw.password === "string"
-          ? loginRaw.password
-          : undefined;
-  const loginPassword = typeof loginPasswordRaw === "string" && loginPasswordRaw ? loginPasswordRaw : undefined;
-  const loginTotpRaw =
-    typeof raw.loginTotpSecret === "string"
-      ? raw.loginTotpSecret
-      : typeof raw.totpSecret === "string"
-        ? raw.totpSecret
-        : typeof loginRaw.totpSecret === "string"
-          ? loginRaw.totpSecret
-          : undefined;
-  const loginTotpSecret =
-    typeof loginTotpRaw === "string" && loginTotpRaw.trim() ? loginTotpRaw.trim() : undefined;
-  const loginProxyRaw =
-    typeof raw.loginProxy === "string"
-      ? raw.loginProxy
-      : typeof raw.proxy === "string"
-        ? raw.proxy
-        : typeof loginRaw.proxy === "string"
-          ? loginRaw.proxy
-          : undefined;
-  const loginProxy = typeof loginProxyRaw === "string" && loginProxyRaw.trim() ? loginProxyRaw.trim() : undefined;
-  const hasLogin =
-    !!loginCookie || !!loginUserName || !!loginEmail || !!loginPassword || !!loginTotpSecret || !!loginProxy;
-  if (!apiKey && mappings.length === 0 && !hasLogin) {
+  if (!apiKey && !apiBaseUrl && !mode && !pollIntervalSeconds && mappings.length === 0) {
     return undefined;
   }
   return {
     apiKey,
     apiBaseUrl,
+    mode,
     pollIntervalSeconds,
     mappings,
-    loginCookie,
-    loginUserName,
-    loginEmail,
-    loginPassword,
-    loginTotpSecret,
-    loginProxy,
   };
 }
 
@@ -1264,8 +1203,8 @@ function applyForwardingTypeRestrictions(
 ): AccountConfig[] {
   if (!allowedTypes || allowedTypes.length === 0) return accounts;
   return accounts.map((account) => {
-    const current = account.forwardingType || "discord-to-discord";
-    if (allowedTypes.includes(current as ForwardingType)) {
+    const current = account.forwardingType;
+    if (current && FORWARDING_TYPES.includes(current as ForwardingType)) {
       return account;
     }
     return { ...account, forwardingType: allowedTypes[0] };
@@ -1740,6 +1679,7 @@ function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; cha
         password: typeof login.password === "string" ? login.password : undefined,
         totpSecret: typeof login.totpSecret === "string" ? login.totpSecret : undefined,
         proxyUrl: account.proxyUrl,
+        loginEnabled: true,
       });
       discordIdSet.add(entryId);
       if (!account.discordAccountId) {
@@ -1758,9 +1698,7 @@ function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; cha
       if (!xConfig) continue;
       const hasCreds =
         (xConfig.apiKey && xConfig.apiKey.trim()) ||
-        (xConfig.loginCookie && xConfig.loginCookie.trim()) ||
-        (xConfig.loginUserName && xConfig.loginUserName.trim()) ||
-        (xConfig.loginEmail && xConfig.loginEmail.trim());
+        (xConfig.apiBaseUrl && xConfig.apiBaseUrl.trim());
       if (!hasCreds) continue;
       const entryId = ensureUniqueId(xIdSet, account.xAccountId);
       xAccounts.push({
@@ -1768,12 +1706,6 @@ function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; cha
         name: account.name ? `${account.name} X` : "X 账号",
         apiKey: xConfig.apiKey,
         apiBaseUrl: xConfig.apiBaseUrl,
-        loginCookie: xConfig.loginCookie,
-        loginUserName: xConfig.loginUserName,
-        loginEmail: xConfig.loginEmail,
-        loginPassword: xConfig.loginPassword,
-        loginTotpSecret: xConfig.loginTotpSecret,
-        loginProxy: xConfig.loginProxy,
       });
       xIdSet.add(entryId);
       if (!account.xAccountId) {
@@ -2150,17 +2082,6 @@ export function resolveMultiConfigForRuntime(config: MultiConfig): MultiConfig {
       };
     }
 
-    const xAccount = account.xAccountId ? xById.get(account.xAccountId) : undefined;
-    if (xAccount) {
-      const base = account.xConfig || { mappings: [] };
-      resolved.xConfig = {
-        ...base,
-        ...xAccount,
-        mappings: base.mappings,
-        pollIntervalSeconds: base.pollIntervalSeconds,
-      };
-    }
-
     const truthAccount = account.truthSocialAccountId ? truthById.get(account.truthSocialAccountId) : undefined;
     if (truthAccount) {
       const base = account.truthSocialConfig || { mappings: [] };
@@ -2169,6 +2090,19 @@ export function resolveMultiConfigForRuntime(config: MultiConfig): MultiConfig {
         username: truthAccount.username ?? base.username,
         password: truthAccount.password ?? base.password,
         mappings: base.mappings,
+        pollIntervalSeconds: base.pollIntervalSeconds,
+      };
+    }
+
+    const xAccount = account.xAccountId ? xById.get(account.xAccountId) : undefined;
+    if (xAccount) {
+      const base = account.xConfig || { mappings: [] };
+      resolved.xConfig = {
+        ...base,
+        apiKey: xAccount.apiKey ?? base.apiKey,
+        apiBaseUrl: xAccount.apiBaseUrl ?? base.apiBaseUrl,
+        mappings: base.mappings,
+        mode: base.mode,
         pollIntervalSeconds: base.pollIntervalSeconds,
       };
     }

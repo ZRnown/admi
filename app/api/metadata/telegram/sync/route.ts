@@ -55,7 +55,16 @@ async function readCachedDialogs(accountId: string): Promise<any[]> {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const accountId = typeof body?.accountId === "string" ? body.accountId : "";
+    const accountPayload = body?.account && typeof body.account === "object" ? body.account : undefined;
+    const accountIdRaw =
+      typeof body?.accountId === "string"
+        ? body.accountId
+        : typeof body?.telegramAccountId === "string"
+          ? body.telegramAccountId
+          : typeof accountPayload?.id === "string"
+            ? accountPayload.id
+            : "";
+    const accountId = accountIdRaw;
 
     if (!accountId) {
       return NextResponse.json({ error: "缺少 accountId 参数" }, { status: 400 });
@@ -69,6 +78,7 @@ export async function POST(request: NextRequest) {
         {
           id: requestId,
           accountId,
+          account: accountPayload,
           createdAt: Date.now(),
         },
         null,

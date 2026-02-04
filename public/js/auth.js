@@ -148,7 +148,6 @@ async function saveNewPassword() {
       telegramAvatarBaseUrl: state.telegramAvatarBaseUrl,
       discordAccounts: state.discordAccounts,
       telegramAccounts: state.telegramAccounts,
-      xAccounts: state.xAccounts,
       truthSocialAccounts: state.truthSocialAccounts,
       enabledForwardingTypes: state.enabledForwardingTypes
     };

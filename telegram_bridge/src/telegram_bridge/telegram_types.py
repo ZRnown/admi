@@ -64,6 +64,7 @@ class TelegramMapping(BaseModel):
     translate: bool = False
     translate_direction: str = Field(default="auto", alias="translateDirection")
     sender_account_type: Optional[str] = Field(default=None, alias="senderAccountType")
+    sender_account_id: Optional[str] = Field(default=None, alias="senderAccountId")
     # Discord 账号的 showSourceIdentity 设置
     show_source_identity: bool = Field(default=True, alias="showSourceIdentity")
     # Telegram特有的超长消息处理

@@ -26,6 +26,7 @@ class TelegramBotManager:
         self.message_handlers: Dict[str, callable] = {}
         self.connection_manager = ConnectionManager(reconnect_config or ReconnectConfig())
         self.media_handler = MediaHandler()
+        self._http_session: Optional[aiohttp.ClientSession] = None
         self._connect_locks: Dict[str, asyncio.Lock] = {}
         self._update_tasks: Dict[str, asyncio.Task] = {}
         self._keepalive_tasks: Dict[str, asyncio.Task] = {}
@@ -48,11 +49,59 @@ class TelegramBotManager:
         self.avatar_ttl_seconds = 6 * 60 * 60
         self._entity_cache_seconds = 60 * 60
         self._watched_chats: Dict[str, set] = {}
+        self._unwatched_log_count: Dict[str, int] = {}
         self._setup_connection_callbacks()
+
+    def _get_http_session(self) -> aiohttp.ClientSession:
+        if self._http_session and not self._http_session.closed:
+            return self._http_session
+        timeout = aiohttp.ClientTimeout(total=20, connect=6)
+        connector = aiohttp.TCPConnector(limit=64, ttl_dns_cache=300, keepalive_timeout=30)
+        self._http_session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+        return self._http_session
+
+    async def close(self):
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
+        self._http_session = None
+        await self.media_handler.close()
 
     def _setup_connection_callbacks(self):
         """设置连接状态回调"""
         pass  # 动态注册在connect时处理
+
+    def _format_account_label(self, account_id: str) -> str:
+        user_info = None
+        shared_key = self._shared_by_account.get(account_id)
+        if shared_key:
+            user_info = self._shared_user_info.get(shared_key)
+        if not user_info:
+            state = self.connection_manager.get_state(account_id)
+            user_info = state.user_info if state else None
+        if user_info:
+            username = user_info.get("username")
+            display = self._build_display_name(user_info)
+            if username:
+                return f"{account_id}(@{username})"
+            if display:
+                return f"{account_id}({display})"
+        return account_id
+
+    def _build_chat_id_candidates(self, chat_id: int) -> set:
+        candidates = {chat_id}
+        try:
+            if isinstance(chat_id, int) and chat_id < 0:
+                abs_id = abs(chat_id)
+                candidates.add(abs_id)
+                abs_str = str(abs_id)
+                if abs_str.startswith("100") and len(abs_str) > 3:
+                    try:
+                        candidates.add(int(abs_str[3:]))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return candidates
 
     def update_watched_chats(self, account_id: str, chat_ids: list):
         """更新监听的频道列表"""
@@ -68,15 +117,20 @@ class TelegramBotManager:
                     except ValueError:
                         normalized.add(cleaned.lower())
         self._watched_chats[account_id] = normalized
-        logger.info(f"机器人账号 {account_id} 监听 {len(normalized)} 个聊天")
+        self._unwatched_log_count[account_id] = 0
+        preview = list(normalized)[:8]
+        suffix = "" if len(normalized) <= 8 else f"...(共{len(normalized)})"
+        account_label = self._format_account_label(account_id)
+        logger.info(f"机器人账号 {account_label} 监听 {len(normalized)} 个聊天: {preview}{suffix}")
 
     def _is_watched_chat(self, account_id: str, chat_id: int, chat_username: str) -> bool:
         """检查是否是监听的频道"""
         watched = self._watched_chats.get(account_id)
         if not watched:
             return False
-        if chat_id in watched:
-            return True
+        for candidate in self._build_chat_id_candidates(chat_id):
+            if candidate in watched:
+                return True
         if chat_username:
             return chat_username.lstrip("@").lower() in watched
         return False
@@ -618,27 +672,27 @@ class TelegramBotManager:
 
             try:
                 url = f"https://api.telegram.org/bot{token}/getUpdates"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, params={"limit": 100}) as resp:
-                        data = await resp.json()
-                        if data.get("ok"):
-                            for update in data.get("result", []):
-                                # 从消息中提取聊天信息
-                                message = update.get("message") or update.get("channel_post")
-                                if message and message.get("chat"):
-                                    chat = message["chat"]
-                                    chat_id = chat.get("id")
-                                    if chat_id and chat_id not in seen_chat_ids:
-                                        seen_chat_ids.add(chat_id)
-                                        chat_type = chat.get("type", "private")
-                                        channel = TelegramChannel(
-                                            id=str(chat_id),
-                                            title=chat.get("title") or chat.get("first_name") or "Unknown",
-                                            type=chat_type,
-                                            username=chat.get("username"),
-                                            member_count=None
-                                        )
-                                        channels.append(channel.dict())
+                session = self._get_http_session()
+                async with session.get(url, params={"limit": 100}) as resp:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        for update in data.get("result", []):
+                            # 从消息中提取聊天信息
+                            message = update.get("message") or update.get("channel_post")
+                            if message and message.get("chat"):
+                                chat = message["chat"]
+                                chat_id = chat.get("id")
+                                if chat_id and chat_id not in seen_chat_ids:
+                                    seen_chat_ids.add(chat_id)
+                                    chat_type = chat.get("type", "private")
+                                    channel = TelegramChannel(
+                                        id=str(chat_id),
+                                        title=chat.get("title") or chat.get("first_name") or "Unknown",
+                                        type=chat_type,
+                                        username=chat.get("username"),
+                                        member_count=None
+                                    )
+                                    channels.append(channel.dict())
             except Exception as e:
                 logger.warning(f"Failed to get updates via Bot API: {e}")
 
@@ -736,23 +790,23 @@ class TelegramBotManager:
             payload["reply_to_message_id"] = reply_to_message_id
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as resp:
-                    data = await resp.json()
-                    if data.get("ok"):
-                        logger.info(f"Message sent via Bot API to chat_id {chat_id}")
-                        return {
-                            "success": True,
-                            "messageId": data["result"]["message_id"]
-                        }
-                    else:
-                        error_msg = data.get("description", "Unknown error")
-                        logger.error(f"Bot API error: {error_msg}")
-                        return {
-                            "success": False,
-                            "error": "BOT_API_ERROR",
-                            "message": error_msg
-                        }
+            session = self._get_http_session()
+            async with session.post(url, json=payload) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    logger.info(f"Message sent via Bot API to chat_id {chat_id}")
+                    return {
+                        "success": True,
+                        "messageId": data["result"]["message_id"]
+                    }
+                else:
+                    error_msg = data.get("description", "Unknown error")
+                    logger.error(f"Bot API error: {error_msg}")
+                    return {
+                        "success": False,
+                        "error": "BOT_API_ERROR",
+                        "message": error_msg
+                    }
         except Exception as e:
             logger.error(f"Failed to send message via Bot API: {e}")
             return {
@@ -813,23 +867,23 @@ class TelegramBotManager:
             if reply_to_message_id:
                 payload["reply_to_message_id"] = reply_to_message_id
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as resp:
-                    data = await resp.json()
-                    if data.get("ok"):
-                        logger.info(f"Media sent via Bot API ({api_method}) to chat_id {chat_id}")
-                        return {
-                            "success": True,
-                            "messageId": data["result"]["message_id"]
-                        }
-                    else:
-                        error_msg = data.get("description", "Unknown error")
-                        logger.error(f"Bot API error ({api_method}): {error_msg}")
-                        return {
-                            "success": False,
-                            "error": "BOT_API_ERROR",
-                            "message": error_msg
-                        }
+            session = self._get_http_session()
+            async with session.post(url, json=payload) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    logger.info(f"Media sent via Bot API ({api_method}) to chat_id {chat_id}")
+                    return {
+                        "success": True,
+                        "messageId": data["result"]["message_id"]
+                    }
+                else:
+                    error_msg = data.get("description", "Unknown error")
+                    logger.error(f"Bot API error ({api_method}): {error_msg}")
+                    return {
+                        "success": False,
+                        "error": "BOT_API_ERROR",
+                        "message": error_msg
+                    }
         except Exception as e:
             logger.error(f"Failed to send media via Bot API: {e}")
             return {
@@ -860,7 +914,20 @@ class TelegramBotManager:
 
             # 只处理配置中监听的频道，忽略其他频道的消息
             if not self._is_watched_chat(account_id, chat_id, chat_username):
+                count = self._unwatched_log_count.get(account_id, 0)
+                if count < 3:
+                    watched_ids = list(self._watched_chats.get(account_id, set()))
+                    account_label = self._format_account_label(account_id)
+                    logger.info(
+                        f"忽略未监听聊天 | 账号={account_label} | chat_id={chat_id} | username={chat_username or ''} | 已监听={watched_ids}"
+                    )
+                    self._unwatched_log_count[account_id] = count + 1
                 return
+
+            account_label = self._format_account_label(account_id)
+            logger.info(
+                f"收到 Telegram 消息 | 账号={account_label} | chat_id={chat_id} | username={chat_username or ''} | id={getattr(message, 'id', '')}"
+            )
 
             # 解析媒体信息
             media = []

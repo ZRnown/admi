@@ -236,6 +236,7 @@ class TelegramBridgeService:
             # 停止所有客户端连接
             await self.client_manager.disconnect_all()
             await self.bot_manager.disconnect_all()
+            await self.bot_manager.close()
 
             # 停止IPC服务器
             await self.ipc_server.stop()
@@ -551,7 +552,22 @@ class TelegramBridgeService:
                 return {"success": False, "error": "Missing channelId or message"}
 
             # 处理Discord消息转发
-            await self.forwarder.handle_discord_message(message_data, discord_channel_id)
+            result = await self.forwarder.handle_discord_message(message_data, discord_channel_id)
+
+            # 检查转发结果
+            if result and isinstance(result, dict):
+                if "error" in result:
+                    return {"success": False, "error": result["error"]}
+                successful = result.get("successful_forwards", 0)
+                failed = result.get("failed_forwards", 0)
+                if failed > 0 and successful == 0:
+                    # 全部失败
+                    details = result.get("details", [])
+                    error_msg = details[0].get("error", "Unknown error") if details else "All forwards failed"
+                    return {"success": False, "error": error_msg, "details": details}
+                elif failed > 0:
+                    # 部分失败
+                    return {"success": True, "partial": True, "successful": successful, "failed": failed}
 
             return {"success": True}
 
