@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import os
 from typing import Any, Dict, Optional, Set
 
 from loguru import logger
@@ -32,6 +33,7 @@ class DiscordAccountSession:
         self.task: Optional[asyncio.Task] = None
         self.ready_event: asyncio.Event = asyncio.Event()
         self.user_payload: Optional[Dict[str, Any]] = None
+        self.login_timeout_seconds = int(os.getenv("DISCORD_LOGIN_TIMEOUT_SECONDS", "120"))
         # 共享此客户端的所有账号 ID 及其监听频道
         self.shared_accounts: Dict[str, Set[int]] = {account_id: set()}
         self._build_client()
@@ -160,7 +162,36 @@ class DiscordAccountSession:
                     "discord_status",
                     {"accountId": acc_id, "state": "connecting"},
                 )
-            await self.client.start(self.token)
+            # 启动客户端并等待 ready（超时则报错）
+            client_task = asyncio.create_task(self.client.start(self.token))
+            ready_task = asyncio.create_task(self.ready_event.wait())
+            done, pending = await asyncio.wait(
+                {client_task, ready_task},
+                timeout=self.login_timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if ready_task in done:
+                # 登录成功，保持运行
+                try:
+                    await client_task
+                finally:
+                    if not ready_task.done():
+                        ready_task.cancel()
+                return
+
+            # 客户端提前结束（登录失败）
+            if client_task in done:
+                exc = client_task.exception()
+                raise exc or RuntimeError("DISCORD_LOGIN_FAILED")
+
+            # 超时
+            try:
+                await self.client.close()
+            except Exception:
+                pass
+            client_task.cancel()
+            raise RuntimeError(f"DISCORD_LOGIN_TIMEOUT({self.login_timeout_seconds}s)")
         except Exception as exc:
             # 为所有共享账号发送错误状态
             for acc_id in self.shared_accounts.keys():
