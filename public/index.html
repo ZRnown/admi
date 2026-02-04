@@ -7351,16 +7351,32 @@
     }
 
     async function removeDiscordLibraryAccount(accountId) {
+      const previous = state.discordAccounts ? [...state.discordAccounts] : [];
       state.discordAccounts = (state.discordAccounts || []).filter((item) => item.id !== accountId);
       state.accounts.forEach((acc) => {
         if (acc.discordAccountId === accountId) {
           acc.discordAccountId = '';
         }
+        if (acc.discordSenderAccountId === accountId) {
+          acc.discordSenderAccountId = '';
+        }
       });
+      librarySelection.delete(getLibrarySelectionKey('discord', accountId));
+      clearLibraryCreatePending('discord', accountId);
+      if (editingLibraryAccount && editingLibraryAccount.kind === 'discord' && editingLibraryAccount.id === accountId) {
+        editingLibraryAccount = null;
+        closeAccountLibraryEditModal();
+      }
       render();
       try {
         await saveConfigImmediate();
-      } catch {}
+        await loadConfig();
+        render();
+      } catch (e) {
+        state.discordAccounts = previous;
+        showToast(`删除失败: ${e?.message || e}`, 'error');
+        render();
+      }
     }
 
     async function loginDiscordLibrary(accountId) {
@@ -7506,15 +7522,28 @@
     }
 
     async function removeTelegramLibraryAccount(accountId) {
+      const previous = state.telegramAccounts ? [...state.telegramAccounts] : [];
       state.telegramAccounts = (state.telegramAccounts || []).filter((item) => item.id !== accountId);
       state.accounts.forEach((acc) => {
         if (acc.telegramListenerAccountId === accountId) acc.telegramListenerAccountId = '';
         if (acc.telegramSenderAccountId === accountId) acc.telegramSenderAccountId = '';
       });
+      librarySelection.delete(getLibrarySelectionKey('telegram', accountId));
+      clearLibraryCreatePending('telegram', accountId);
+      if (editingLibraryAccount && editingLibraryAccount.kind === 'telegram' && editingLibraryAccount.id === accountId) {
+        editingLibraryAccount = null;
+        closeAccountLibraryEditModal();
+      }
       render();
       try {
         await saveConfigImmediate();
-      } catch {}
+        await loadConfig();
+        render();
+      } catch (e) {
+        state.telegramAccounts = previous;
+        showToast(`删除失败: ${e?.message || e}`, 'error');
+        render();
+      }
     }
 
     async function uploadTelegramLibrarySessionFile(accountId, file) {
@@ -7676,14 +7705,27 @@
     }
 
     async function removeTruthLibraryAccount(accountId) {
+      const previous = state.truthSocialAccounts ? [...state.truthSocialAccounts] : [];
       state.truthSocialAccounts = (state.truthSocialAccounts || []).filter((item) => item.id !== accountId);
       state.accounts.forEach((acc) => {
         if (acc.truthSocialAccountId === accountId) acc.truthSocialAccountId = '';
       });
+      librarySelection.delete(getLibrarySelectionKey('truthsocial', accountId));
+      clearLibraryCreatePending('truthsocial', accountId);
+      if (editingLibraryAccount && editingLibraryAccount.kind === 'truthsocial' && editingLibraryAccount.id === accountId) {
+        editingLibraryAccount = null;
+        closeAccountLibraryEditModal();
+      }
       render();
       try {
         await saveConfigImmediate();
-      } catch {}
+        await loadConfig();
+        render();
+      } catch (e) {
+        state.truthSocialAccounts = previous;
+        showToast(`删除失败: ${e?.message || e}`, 'error');
+        render();
+      }
     }
 
     function updateTelegramRoleField(role, type, field, value) {
