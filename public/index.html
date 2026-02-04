@@ -7505,14 +7505,16 @@
       render();
     }
 
-    function removeTelegramLibraryAccount(accountId) {
+    async function removeTelegramLibraryAccount(accountId) {
       state.telegramAccounts = (state.telegramAccounts || []).filter((item) => item.id !== accountId);
       state.accounts.forEach((acc) => {
         if (acc.telegramListenerAccountId === accountId) acc.telegramListenerAccountId = '';
         if (acc.telegramSenderAccountId === accountId) acc.telegramSenderAccountId = '';
       });
-      saveConfig();
       render();
+      try {
+        await saveConfigImmediate();
+      } catch {}
     }
 
     async function uploadTelegramLibrarySessionFile(accountId, file) {
@@ -7673,13 +7675,15 @@
       render();
     }
 
-    function removeTruthLibraryAccount(accountId) {
+    async function removeTruthLibraryAccount(accountId) {
       state.truthSocialAccounts = (state.truthSocialAccounts || []).filter((item) => item.id !== accountId);
       state.accounts.forEach((acc) => {
         if (acc.truthSocialAccountId === accountId) acc.truthSocialAccountId = '';
       });
-      saveConfig();
       render();
+      try {
+        await saveConfigImmediate();
+      } catch {}
     }
 
     function updateTelegramRoleField(role, type, field, value) {
