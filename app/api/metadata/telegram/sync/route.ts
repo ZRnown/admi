@@ -123,6 +123,7 @@ export async function POST(request: NextRequest) {
 
     const result = response.result || {};
     const dialogs = Array.isArray(result.dialogs) ? result.dialogs : [];
+    const note = typeof result.note === "string" ? result.note : "";
     const updatedAt = new Date().toISOString();
 
     // 尝试读取最新的缓存和状态作为兜底
@@ -139,6 +140,7 @@ export async function POST(request: NextRequest) {
       user: userInfo || null,
       dialogs: cachedDialogs,
       dialogsCount: cachedDialogs.length,
+      note,
       updatedAt,
     });
   } catch (error: any) {

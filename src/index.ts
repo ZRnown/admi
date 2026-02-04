@@ -12,6 +12,7 @@ import {
   saveMultiConfig,
   type MultiConfig,
   type AccountConfig,
+  type DiscordAccountLibrary,
   type RuleLevelConfig,
   type ScheduledContentItem,
   accountToLegacyConfig,
@@ -958,6 +959,51 @@ async function writeDiscordLibraryStatus(accountId: string, state: string, messa
   } catch {}
 }
 
+async function readDiscordLibraryStatusMap(): Promise<Record<string, { loginState?: string; loginMessage?: string }>> {
+  try {
+    const buf = await fs.readFile(discordLibraryStatusFile, "utf-8");
+    return JSON.parse(buf.toString());
+  } catch {
+    return {};
+  }
+}
+
+async function primeDiscordLibraryStatus(accounts: DiscordAccountLibrary[]) {
+  if (!accounts.length) return;
+  const statusMap = await readDiscordLibraryStatusMap();
+  let changed = false;
+  for (const account of accounts) {
+    const entry = statusMap[account.id] || {};
+    const loginEnabled = account.loginEnabled !== false;
+    const tokenOk = typeof account.token === "string" && account.token.trim();
+    if (!loginEnabled) {
+      if (entry.loginState !== "idle" || entry.loginMessage !== "未启用") {
+        statusMap[account.id] = { loginState: "idle", loginMessage: "未启用" };
+        changed = true;
+      }
+      continue;
+    }
+    if (!tokenOk) {
+      if (entry.loginState !== "error" || entry.loginMessage !== "未配置 Token") {
+        statusMap[account.id] = { loginState: "error", loginMessage: "未配置 Token" };
+        changed = true;
+      }
+      continue;
+    }
+    const state = entry.loginState;
+    if (!state || state === "idle" || state === "stopped") {
+      statusMap[account.id] = { loginState: "connecting", loginMessage: "正在登录..." };
+      changed = true;
+    }
+  }
+  if (changed) {
+    try {
+      await fs.mkdir(path.dirname(discordLibraryStatusFile), { recursive: true });
+      await fs.writeFile(discordLibraryStatusFile, JSON.stringify(statusMap, null, 2));
+    } catch {}
+  }
+}
+
 function buildDiscordShareKey(account: AccountConfig): string | null {
   if (!account.token) return null;
   return `${account.type}:${account.token}`;
@@ -972,6 +1018,68 @@ function getSharedClientByAccountId(accountId: string) {
 async function writeStatusForAccount(accountId: string, state: string, message?: string) {
   // 每个实例的状态独立管理，不再同步更新所有共享账号
   await writeStatus(accountId, state, message);
+}
+
+function mergeTelegramDialogs(existing: any[], incoming: any[]) {
+  const byId = new Map<string, any>();
+  for (const entry of existing || []) {
+    const id = entry?.id;
+    if (!id) continue;
+    byId.set(String(id), entry);
+  }
+  for (const entry of incoming || []) {
+    const id = entry?.id;
+    if (!id) continue;
+    const key = String(id);
+    const prev = byId.get(key);
+    byId.set(key, prev ? { ...prev, ...entry } : entry);
+  }
+  return Array.from(byId.values());
+}
+
+async function updateTelegramDialogsCacheFromMessage(accountId: string, params: any) {
+  try {
+    if (!accountId) return;
+    const chatId = params?.chat_id ?? params?.chatId;
+    if (!chatId) return;
+    const idStr = String(chatId);
+    const rawTitle = typeof params?.chat_title === "string" ? params.chat_title.trim() : "";
+    const rawUsername = typeof params?.chat_username === "string" ? params.chat_username.trim() : "";
+    const username = rawUsername.startsWith("@") ? rawUsername.slice(1) : rawUsername;
+    let title = rawTitle;
+    if (!title && username) title = `@${username}`;
+    if (!title) title = idStr;
+    let type = typeof params?.chat_type === "string" ? params.chat_type : "";
+    if (!type) {
+      const numeric = Number(chatId);
+      if (Number.isFinite(numeric)) {
+        if (numeric < 0) {
+          const absStr = String(Math.abs(numeric));
+          type = absStr.startsWith("100") ? "supergroup" : "group";
+        } else {
+          type = "private";
+        }
+      } else {
+        type = "unknown";
+      }
+    }
+    const entry = {
+      id: idStr,
+      title,
+      type,
+      username: username || undefined,
+      member_count: null,
+    };
+    let cache: Record<string, any[]> = {};
+    try {
+      const rawCache = await fs.readFile(telegramDialogsCacheFile, "utf-8");
+      cache = JSON.parse(rawCache);
+    } catch {}
+    const existing = Array.isArray(cache[accountId]) ? cache[accountId] : [];
+    const merged = mergeTelegramDialogs(existing, [entry]);
+    cache[accountId] = merged;
+    await fs.writeFile(telegramDialogsCacheFile, JSON.stringify(cache, null, 2));
+  } catch {}
 }
 
 // 写入 Discord 服务器/频道缓存
@@ -1275,6 +1383,10 @@ function setupTelegramBridgeClient() {
   const telegramForwardLogger = new FileLogger();
 
   telegramBridgeClient.on("telegram_message", async (params) => {
+    const incomingAccountId = typeof params?.accountId === "string" ? params.accountId : "";
+    if (incomingAccountId) {
+      updateTelegramDialogsCacheFromMessage(incomingAccountId, params).catch(() => {});
+    }
     const accounts = currentConfig?.accounts || [];
     for (const account of accounts) {
       const currentForwardingType = account.forwardingType || 'discord-to-discord';
@@ -2350,13 +2462,18 @@ async function processTelegramSyncRequest(logger: FileLogger) {
         }
 
         const dialogs = Array.isArray(channelsResult.channels) ? channelsResult.channels : [];
+        const note = typeof channelsResult?.note === "string" ? channelsResult.note : "";
+        let finalDialogs = dialogs;
         try {
           let cache: Record<string, any[]> = {};
           try {
             const rawCache = await fs.readFile(telegramDialogsCacheFile, "utf-8");
             cache = JSON.parse(rawCache);
           } catch {}
-          cache[accountId] = dialogs;
+          const existing = Array.isArray(cache[accountId]) ? cache[accountId] : [];
+          const merged = mergeTelegramDialogs(existing, dialogs);
+          finalDialogs = dialogs.length > 0 ? merged : existing;
+          cache[accountId] = finalDialogs;
           await fs.writeFile(telegramDialogsCacheFile, JSON.stringify(cache, null, 2));
         } catch {}
 
@@ -2367,9 +2484,10 @@ async function processTelegramSyncRequest(logger: FileLogger) {
               id: request.id,
               success: true,
               result: {
-                dialogs,
-                dialogsCount: dialogs.length,
+                dialogs: finalDialogs,
+                dialogsCount: finalDialogs.length,
                 userInfo: connectResult?.userInfo || connectResult?.user_info || null,
+                note,
               },
             },
             null,
@@ -2447,7 +2565,7 @@ async function processDiscordLoginRequest(logger: FileLogger) {
         try {
           const token = await withTimeout(
             (client as any).passLogin(email, password),
-            45000,
+            120000,
             "DISCORD_LOGIN",
           );
           const resolvedToken = typeof token === "string" && token.trim() ? token.trim() : (client as any).token;
@@ -3826,6 +3944,9 @@ async function syncConfigToDiscordBridge(config: MultiConfig) {
   }
 
   const libraryAccounts = config.discordAccounts || [];
+  try {
+    await primeDiscordLibraryStatus(libraryAccounts);
+  } catch {}
   for (const account of libraryAccounts) {
     if (account.loginEnabled === false) continue;
     if (typeof account.token !== "string" || !account.token.trim()) continue;

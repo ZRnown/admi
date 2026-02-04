@@ -6,6 +6,7 @@ Telegram客户端管理器
 import asyncio
 import hashlib
 import os
+import json
 import time
 import uuid
 from pathlib import Path
@@ -48,6 +49,8 @@ class TelegramClientManager:
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
         media_root = os.getenv("TELEGRAM_MEDIA_DIR") or str(base_dir / ".data" / "telegram_media")
+        self.dialogs_cache_file = base_dir / ".data" / "telegram_dialogs_cache.json"
+        self._dialogs_cache_seen: Dict[str, set] = {}
         self.avatar_dir = Path(avatar_root)
         self.avatar_dir.mkdir(parents=True, exist_ok=True)
         self.media_dir = Path(media_root)
@@ -61,6 +64,82 @@ class TelegramClientManager:
         """设置连接状态回调"""
         # 为所有可能的账号设置回调
         pass  # 动态注册在connect时处理
+
+    def _build_dialog_entry(self, chat_id: int, chat_title: Optional[str], chat_username: Optional[str], chat_type: Optional[str]):
+        chat_id_str = str(chat_id) if chat_id is not None else ""
+        if not chat_id_str:
+            return None
+        title = (chat_title or "").strip()
+        username = (chat_username or "").strip()
+        if username.startswith("@"):
+            username = username[1:]
+        if not title and username:
+            title = f"@{username}"
+        if not title:
+            title = chat_id_str
+        entry_type = chat_type or ""
+        if not entry_type:
+            try:
+                numeric = int(chat_id)
+                if numeric < 0:
+                    abs_str = str(abs(numeric))
+                    entry_type = "supergroup" if abs_str.startswith("100") else "group"
+                else:
+                    entry_type = "private"
+            except Exception:
+                entry_type = "unknown"
+        return {
+            "id": chat_id_str,
+            "title": title,
+            "type": entry_type,
+            "username": username or None,
+            "member_count": None,
+        }
+
+    def _load_dialogs_cache(self) -> Dict[str, Any]:
+        try:
+            if self.dialogs_cache_file.exists():
+                with open(self.dialogs_cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    def _ensure_dialogs_seen(self, account_id: str) -> set:
+        seen = self._dialogs_cache_seen.get(account_id)
+        if seen is not None:
+            return seen
+        cache = self._load_dialogs_cache()
+        existing = cache.get(account_id) if isinstance(cache.get(account_id), list) else []
+        seen = set()
+        for item in existing:
+            if isinstance(item, dict) and item.get("id") is not None:
+                seen.add(str(item.get("id")))
+        self._dialogs_cache_seen[account_id] = seen
+        return seen
+
+    def _record_dialog(self, account_id: str, chat_id: int, chat_title: Optional[str], chat_username: Optional[str], chat_type: Optional[str]):
+        try:
+            entry = self._build_dialog_entry(chat_id, chat_title, chat_username, chat_type)
+            if not entry:
+                return
+            seen = self._ensure_dialogs_seen(account_id)
+            if entry["id"] in seen:
+                return
+            cache = self._load_dialogs_cache()
+            existing = cache.get(account_id) if isinstance(cache.get(account_id), list) else []
+            merged_map = {}
+            for item in existing:
+                if isinstance(item, dict) and item.get("id") is not None:
+                    merged_map[str(item.get("id"))] = item
+            merged_map[entry["id"]] = entry
+            cache[account_id] = list(merged_map.values())
+            self.dialogs_cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.dialogs_cache_file, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+            seen.add(entry["id"])
+        except Exception:
+            pass
 
     def _get_connect_lock(self, lock_id: str) -> asyncio.Lock:
         lock = self._connect_locks.get(lock_id)
@@ -1043,11 +1122,18 @@ class TelegramClientManager:
             # 获取chat信息用于过滤
             chat_id = message.chat_id
             chat_username = None
+            chat_title = None
+            chat_type = None
             try:
                 chat = await event.get_chat()
                 chat_username = getattr(chat, "username", None)
+                chat_title = getattr(chat, "title", None) or getattr(chat, "name", None)
+                chat_type = getattr(chat, "type", None)
             except:
                 pass
+
+            # 记录对话到缓存（即便未监听，也保留同步名单）
+            self._record_dialog(account_id, chat_id, chat_title, chat_username, chat_type)
 
             # 只处理配置中监听的频道，忽略其他频道的消息
             if not self._is_watched_chat(account_id, chat_id, chat_username):

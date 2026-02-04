@@ -1977,6 +1977,8 @@
     const discordAutoSyncAttempted = new Set();
     const discordAutoSyncOnLogin = new Set();
     const discordAutoSyncInFlight = new Set();
+    const discordAutoReloginInFlight = new Set();
+    const discordAutoReloginAt = new Map();
 
     async function onGuildSelectForRule(accountId, guildId, channelSelectId, mappingIdx) {
       console.log('[DEBUG] onGuildSelectForRule called:', { accountId, guildId, channelSelectId, mappingIdx });
@@ -2655,6 +2657,9 @@
         }
         await fetchTelegramDialogsForLibrary(accountId);
         showToast(`Telegram 数据同步完成（${result.dialogsCount || 0} 个对话）`, 'success');
+        if (result.note) {
+          showToast(result.note, 'warning');
+        }
       } finally {
         setLibrarySyncing('telegram', accountId, false);
       }
@@ -2842,6 +2847,7 @@
         if (!res.ok || data?.error) {
           return { success: false, error: data?.error || data?.message || '同步失败' };
         }
+        const note = typeof data?.note === 'string' ? data.note.trim() : '';
 
         if (data?.user) {
           const derivedName = data.user.username
@@ -2869,7 +2875,8 @@
         return {
           success: true,
           user: data.user,
-          dialogsCount
+          dialogsCount,
+          note
         };
       } catch (e) {
         console.error('同步 Telegram 账号失败:', e);
@@ -7329,15 +7336,17 @@
       render();
     }
 
-    function removeDiscordLibraryAccount(accountId) {
+    async function removeDiscordLibraryAccount(accountId) {
       state.discordAccounts = (state.discordAccounts || []).filter((item) => item.id !== accountId);
       state.accounts.forEach((acc) => {
         if (acc.discordAccountId === accountId) {
           acc.discordAccountId = '';
         }
       });
-      saveConfig();
       render();
+      try {
+        await saveConfigImmediate();
+      } catch {}
     }
 
     async function loginDiscordLibrary(accountId) {
@@ -7376,6 +7385,64 @@
         await syncDiscordAccountData(accountId);
       } catch (e) {
         showToast('登录失败: ' + (e?.message || e), 'error');
+      }
+    }
+
+    function isDiscordTokenInvalidMessage(message) {
+      if (!message) return false;
+      const raw = String(message);
+      const lower = raw.toLowerCase();
+      return (
+        lower.includes('improper token') ||
+        lower.includes('token_invalid') ||
+        lower.includes('tokeninvalid') ||
+        lower.includes('invalid token') ||
+        lower.includes('unauthorized') ||
+        lower.includes('401')
+      );
+    }
+
+    async function autoReloginDiscordLibraryAccount(accountId, reason) {
+      if (!accountId) return;
+      if (discordAutoReloginInFlight.has(accountId)) return;
+      const last = discordAutoReloginAt.get(accountId) || 0;
+      if (Date.now() - last < 60000) return;
+      const entry = getDiscordLibraryAccountById(accountId);
+      if (!entry || entry.type === 'bot') return;
+      if (!entry.email || !entry.password) return;
+      if (entry.loginEnabled === false) return;
+      discordAutoReloginAt.set(accountId, Date.now());
+      discordAutoReloginInFlight.add(accountId);
+      try {
+        const res = await fetch('/api/account/discord-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            discordAccountId: entry.id,
+            useLibrary: true,
+            mode: 'password',
+            email: entry.email,
+            password: entry.password,
+            totpSecret: entry.totpSecret || undefined,
+            autoLogin: false
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          entry.loginState = 'error';
+          entry.loginMessage = data?.error || reason || '登录失败';
+          updateDiscordLibraryStatusElement(entry.id);
+          return;
+        }
+        await loadConfig();
+        render();
+        await connectDiscordLibraryAccount(accountId);
+      } catch (e) {
+        entry.loginState = 'error';
+        entry.loginMessage = e?.message || reason || '登录失败';
+        updateDiscordLibraryStatusElement(entry.id);
+      } finally {
+        discordAutoReloginInFlight.delete(accountId);
       }
     }
 
@@ -11686,6 +11753,9 @@
                     localAcc.loginState = remoteState;
                     localAcc.loginMessage = remoteMessage;
                   }
+                }
+                if (remoteState === 'error' && isDiscordTokenInvalidMessage(remoteMessage)) {
+                  autoReloginDiscordLibraryAccount(remoteAcc.id, remoteMessage);
                 }
                 if (remoteState === 'idle' || remoteState === 'error') {
                   clearDisconnectHold(`discord-lib:${remoteAcc.id}`);

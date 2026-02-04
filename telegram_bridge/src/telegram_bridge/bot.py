@@ -6,6 +6,7 @@ Telegram机器人管理器
 import asyncio
 import os
 import time
+import json
 import aiohttp
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
@@ -41,6 +42,8 @@ class TelegramBotManager:
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
         media_root = os.getenv("TELEGRAM_MEDIA_DIR") or str(base_dir / ".data" / "telegram_media")
+        self.dialogs_cache_file = base_dir / ".data" / "telegram_dialogs_cache.json"
+        self._dialogs_cache_seen: Dict[str, set] = {}
         self.avatar_dir = Path(avatar_root)
         self.avatar_dir.mkdir(parents=True, exist_ok=True)
         self.media_dir = Path(media_root)
@@ -102,6 +105,82 @@ class TelegramBotManager:
         except Exception:
             pass
         return candidates
+
+    def _build_dialog_entry(self, chat_id: int, chat_title: Optional[str], chat_username: Optional[str], chat_type: Optional[str]):
+        chat_id_str = str(chat_id) if chat_id is not None else ""
+        if not chat_id_str:
+            return None
+        title = (chat_title or "").strip()
+        username = (chat_username or "").strip()
+        if username.startswith("@"):
+            username = username[1:]
+        if not title and username:
+            title = f"@{username}"
+        if not title:
+            title = chat_id_str
+        entry_type = chat_type or ""
+        if not entry_type:
+            try:
+                numeric = int(chat_id)
+                if numeric < 0:
+                    abs_str = str(abs(numeric))
+                    entry_type = "supergroup" if abs_str.startswith("100") else "group"
+                else:
+                    entry_type = "private"
+            except Exception:
+                entry_type = "unknown"
+        return {
+            "id": chat_id_str,
+            "title": title,
+            "type": entry_type,
+            "username": username or None,
+            "member_count": None,
+        }
+
+    def _load_dialogs_cache(self) -> Dict[str, Any]:
+        try:
+            if self.dialogs_cache_file.exists():
+                with open(self.dialogs_cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    def _ensure_dialogs_seen(self, account_id: str) -> set:
+        seen = self._dialogs_cache_seen.get(account_id)
+        if seen is not None:
+            return seen
+        cache = self._load_dialogs_cache()
+        existing = cache.get(account_id) if isinstance(cache.get(account_id), list) else []
+        seen = set()
+        for item in existing:
+            if isinstance(item, dict) and item.get("id") is not None:
+                seen.add(str(item.get("id")))
+        self._dialogs_cache_seen[account_id] = seen
+        return seen
+
+    def _record_dialog(self, account_id: str, chat_id: int, chat_title: Optional[str], chat_username: Optional[str], chat_type: Optional[str]):
+        try:
+            entry = self._build_dialog_entry(chat_id, chat_title, chat_username, chat_type)
+            if not entry:
+                return
+            seen = self._ensure_dialogs_seen(account_id)
+            if entry["id"] in seen:
+                return
+            cache = self._load_dialogs_cache()
+            existing = cache.get(account_id) if isinstance(cache.get(account_id), list) else []
+            merged_map = {}
+            for item in existing:
+                if isinstance(item, dict) and item.get("id") is not None:
+                    merged_map[str(item.get("id"))] = item
+            merged_map[entry["id"]] = entry
+            cache[account_id] = list(merged_map.values())
+            self.dialogs_cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.dialogs_cache_file, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+            seen.add(entry["id"])
+        except Exception:
+            pass
 
     def update_watched_chats(self, account_id: str, chat_ids: list):
         """更新监听的频道列表"""
@@ -669,6 +748,7 @@ class TelegramBotManager:
             # 使用 Bot API getUpdates 获取最近的更新，从中提取群组信息
             channels = []
             seen_chat_ids = set()
+            note_parts: List[str] = []
 
             try:
                 url = f"https://api.telegram.org/bot{token}/getUpdates"
@@ -693,15 +773,36 @@ class TelegramBotManager:
                                         member_count=None
                                     )
                                     channels.append(channel.dict())
+                    else:
+                        error_msg = data.get("description", "Unknown error")
+                        logger.warning(f"Bot API getUpdates error: {error_msg}")
+                        if "webhook" in str(error_msg).lower():
+                            note_parts.append("检测到该机器人已配置 Webhook，getUpdates 无法读取对话列表。请先删除 Webhook 再同步。")
             except Exception as e:
                 logger.warning(f"Failed to get updates via Bot API: {e}")
 
+            # 检查 Webhook 状态（用于提示）
+            try:
+                url = f"https://api.telegram.org/bot{token}/getWebhookInfo"
+                session = self._get_http_session()
+                async with session.get(url) as resp:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        info = data.get("result", {}) or {}
+                        webhook_url = info.get("url")
+                        if webhook_url:
+                            note_parts.append("检测到该机器人已配置 Webhook，getUpdates 无法读取对话列表。请先删除 Webhook 再同步。")
+            except Exception:
+                pass
+
             # 如果没有从 getUpdates 获取到数据，返回空列表但标记成功
             # 机器人需要先在群组中收到消息才能获取群组列表
+            if not channels:
+                note_parts.append("机器人只能获取最近有消息的群组。如果列表为空，请先在群组中发送消息。")
             return {
                 "success": True,
                 "channels": channels,
-                "note": "机器人只能获取最近有消息的群组。如果列表为空，请先在群组中发送消息。"
+                "note": " ".join(note_parts) if note_parts else "机器人只能获取最近有消息的群组。如果列表为空，请先在群组中发送消息。"
             }
 
         except Exception as e:
@@ -911,6 +1012,11 @@ class TelegramBotManager:
             # 获取chat信息用于过滤
             chat_id = message.chat_id
             chat_username = getattr(message.chat, 'username', None)
+            chat_title = getattr(message.chat, 'title', None)
+            chat_type = getattr(message.chat, 'type', None)
+
+            # 记录对话到缓存（即便未监听，也保留同步名单）
+            self._record_dialog(account_id, chat_id, chat_title, chat_username, chat_type)
 
             # 只处理配置中监听的频道，忽略其他频道的消息
             if not self._is_watched_chat(account_id, chat_id, chat_username):

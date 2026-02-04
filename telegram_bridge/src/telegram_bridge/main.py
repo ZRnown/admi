@@ -109,9 +109,26 @@ class TelegramBridgeService:
                         cache_data = json.load(f)
                 except Exception:
                     pass
+            existing = cache_data.get(account_id) if isinstance(cache_data.get(account_id), list) else []
+            incoming = dialogs if isinstance(dialogs, list) else []
+            # 空结果不覆盖，避免同步抖动导致丢失
+            if len(incoming) == 0:
+                merged = existing
+            else:
+                merged_map = {}
+                for item in existing:
+                    key = str(item.get("id")) if isinstance(item, dict) and item.get("id") is not None else None
+                    if key:
+                        merged_map[key] = item
+                for item in incoming:
+                    key = str(item.get("id")) if isinstance(item, dict) and item.get("id") is not None else None
+                    if key:
+                        prev = merged_map.get(key)
+                        merged_map[key] = {**prev, **item} if prev else item
+                merged = list(merged_map.values()) if merged_map else incoming
 
             # 更新缓存
-            cache_data[account_id] = dialogs
+            cache_data[account_id] = merged
 
             # 写入文件
             with open(self.dialogs_cache_file, "w", encoding="utf-8") as f:

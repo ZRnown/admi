@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 const loginRequestFile = path.resolve(process.cwd(), ".data", "discord_login_request.json");
 const loginResponseFile = path.resolve(process.cwd(), ".data", "discord_login_response.json");
 
-async function waitForLoginResponse(requestId: string, maxWaitMs = 20000): Promise<any | null> {
+async function waitForLoginResponse(requestId: string, maxWaitMs = 120000): Promise<any | null> {
   const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
     try {
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
         ),
       );
 
-      const response = await waitForLoginResponse(requestId, 60000);
+      const response = await waitForLoginResponse(requestId, 120000);
       if (!response) {
         return respondLibraryError("登录请求超时", 504);
       }
@@ -197,7 +197,7 @@ export async function POST(req: NextRequest) {
       ),
     );
 
-    const response = await waitForLoginResponse(requestId, 60000);
+    const response = await waitForLoginResponse(requestId, 120000);
     if (!response) {
       return NextResponse.json({ error: "登录请求超时" }, { status: 504 });
     }
