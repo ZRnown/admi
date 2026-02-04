@@ -287,6 +287,12 @@ class DiscordBridge:
 
             if not account_id or not token or not enabled:
                 continue
+            if isinstance(token, str):
+                token = token.strip()
+                if token.lower().startswith("bot "):
+                    token = token[4:].strip()
+            if not token:
+                continue
 
             if token not in token_groups:
                 token_groups[token] = []

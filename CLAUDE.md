@@ -28,6 +28,9 @@ pnpm backend
 
 # 测试 OCR 服务
 pnpm test:ocr
+
+# 启动 OCR 服务器（独立运行）
+pnpm start:paddle-ocr-server
 ```
 
 ### 生产部署
@@ -38,6 +41,16 @@ pnpm build && pnpm start
 
 # 启动后端
 pnpm build:bot && pnpm start:bot
+```
+
+### Python Bridge 开发
+
+```bash
+# Telegram Bridge（需要 Python 3.8+）
+cd telegram_bridge && pip install -e . && python -m telegram_bridge
+
+# Discord Bridge
+cd discord_bridge && pip install -e . && python -m discord_bridge
 ```
 
 ## 架构概览
@@ -61,7 +74,7 @@ pnpm build:bot && pnpm start:bot
 
 | 文件 | 职责 |
 |------|------|
-| `index.ts` | 主入口，账号生命周期管理，配置热重载 |
+| `index.ts` | 主入口，账号生命周期管理，配置热重载，共享客户端管理 |
 | `bot.ts` | Discord 消息处理核心，过滤逻辑，转发路由 |
 | `config.ts` | 配置类型定义，多账号配置解析 |
 | `senderBot.ts` | Discord Webhook 发送器，翻译集成 |
@@ -69,7 +82,12 @@ pnpm build:bot && pnpm start:bot
 | `telegramBridgeClient.ts` | Telegram Bridge IPC 客户端 |
 | `discordBridgeClient.ts` | Discord Bridge IPC 客户端 |
 | `processManager.ts` | Telegram/Discord Bridge 进程管理 |
-| `instanceManager.ts` | 实例状态管理 |
+| `externalForwarder.ts` | X/Truth Social 等外部平台转发器 |
+| `connectionPool.ts` | 连接池管理 |
+| `keywordMatcher.ts` | 关键词匹配与过滤 |
+| `languageFilter.ts` | 语言检测与过滤 |
+| `ocrClient.ts` | OCR 服务客户端 |
+| `watermark.ts` | 图片水印处理 |
 
 ### Python Bridge 服务
 

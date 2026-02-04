@@ -2689,11 +2689,21 @@
     }
 
     // 同步单个 Discord 账号数据（主动登录获取数据）
-    async function syncDiscordAccountDataOnly(accountId) {
+    async function syncDiscordAccountDataOnly(accountId, retryCount = 0) {
+      const MAX_RETRIES = 3;
+      const RETRY_DELAY = 1500; // 1.5秒
+
       try {
         // 从账号库获取账号信息
         let account = (state.discordAccounts || []).find(a => a.id === accountId);
         if (!account) {
+          // 如果账号不存在且还有重试次数，等待后重新加载配置再试
+          if (retryCount < MAX_RETRIES) {
+            console.log(`[同步] Discord 账号 ${accountId} 不存在，等待后端同步... (重试 ${retryCount + 1}/${MAX_RETRIES})`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+            await loadConfig();
+            return syncDiscordAccountDataOnly(accountId, retryCount + 1);
+          }
           return { success: false, error: '账号不存在' };
         }
 
@@ -2813,10 +2823,20 @@
     }
 
     // 同步单个 Telegram 账号数据（不依赖 DOM）
-    async function syncTelegramAccountDataOnly(accountId) {
+    async function syncTelegramAccountDataOnly(accountId, retryCount = 0) {
+      const MAX_RETRIES = 3;
+      const RETRY_DELAY = 1500; // 1.5秒
+
       try {
-        const account = (state.telegramAccounts || []).find(a => a.id === accountId);
+        let account = (state.telegramAccounts || []).find(a => a.id === accountId);
         if (!account) {
+          // 如果账号不存在且还有重试次数，等待后重新加载配置再试
+          if (retryCount < MAX_RETRIES) {
+            console.log(`[同步] Telegram 账号 ${accountId} 不存在，等待后端同步... (重试 ${retryCount + 1}/${MAX_RETRIES})`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+            await loadConfig();
+            return syncTelegramAccountDataOnly(accountId, retryCount + 1);
+          }
           return { success: false, error: '账号不存在' };
         }
         let res;
@@ -3590,7 +3610,9 @@
           password: ''
         });
       }
-      saveConfig();
+      void saveConfigImmediate().catch((e) => {
+        console.error('保存失败', e);
+      });
       render();
       return newId;
     }
@@ -7327,7 +7349,9 @@
         password: '',
         loginEnabled: true
       });
-      saveConfig();
+      void saveConfigImmediate().catch((e) => {
+        console.error('保存失败', e);
+      });
       render();
     }
 
@@ -7391,6 +7415,7 @@
         return;
       }
       try {
+        await saveConfigImmediate();
         const res = await fetch('/api/account/discord-login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

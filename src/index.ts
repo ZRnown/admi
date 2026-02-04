@@ -1005,8 +1005,34 @@ async function primeDiscordLibraryStatus(accounts: DiscordAccountLibrary[]) {
 }
 
 function buildDiscordShareKey(account: AccountConfig): string | null {
-  if (!account.token) return null;
-  return `${account.type}:${account.token}`;
+  const token = normalizeDiscordToken(account.token);
+  if (!token) return null;
+  return `${account.type}:${token}`;
+}
+
+function normalizeDiscordToken(raw?: string): string {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (trimmed.toLowerCase().startsWith("bot ")) {
+    return trimmed.slice(4).trim();
+  }
+  return trimmed;
+}
+
+function normalizeDiscordLoginError(error?: string): string {
+  const msg = typeof error === "string" ? error : "";
+  if (!msg) return "连接失败";
+  if (msg.includes("Improper token")) {
+    return "Token 无效或被风控（异地/IP），请重新登录或使用代理";
+  }
+  if (msg.includes("DISCORD_LOGIN_TIMEOUT")) {
+    return "登录超时，可能被风控或网络受限";
+  }
+  if (msg.includes("Request to use mfa")) {
+    return "账号开启 MFA，请填写谷歌验证密钥";
+  }
+  return msg;
 }
 
 function getSharedClientByAccountId(accountId: string) {
@@ -2153,6 +2179,7 @@ function setupDiscordBridgeClient() {
         running.bot.setSelfUser(user);
       }
 
+      const normalizedError = normalizeDiscordLoginError(params?.error);
       const instanceState =
         state === "online"
           ? { state: "online", message: buildDiscordLoginMessage(user, "登录成功") }
@@ -2160,8 +2187,8 @@ function setupDiscordBridgeClient() {
             ? { state: "pending", message: "正在连接..." }
             : state === "disconnected"
               ? { state: "error", message: "连接已断开" }
-              : state === "error"
-                ? { state: "error", message: params?.error || "连接失败" }
+            : state === "error"
+                ? { state: "error", message: normalizedError }
                 : { state: undefined, message: undefined };
 
       const libraryState =
@@ -2171,8 +2198,8 @@ function setupDiscordBridgeClient() {
             ? { state: "connecting", message: "正在登录..." }
             : state === "disconnected"
               ? { state: "error", message: "连接已断开" }
-              : state === "error"
-                ? { state: "error", message: params?.error || "连接失败" }
+            : state === "error"
+                ? { state: "error", message: normalizedError }
                 : { state: undefined, message: undefined };
 
       if (isInstanceAccount && instanceState.state) {
@@ -3934,9 +3961,10 @@ async function syncConfigToDiscordBridge(config: MultiConfig) {
       await writeStatusForAccount(account.id, "idle", "未配置 Discord 监听规则");
     }
 
+    const normalizedToken = normalizeDiscordToken(account.token);
     accountsById.set(account.id, {
       id: account.id,
-      token: account.token || "",
+      token: normalizedToken,
       type: account.type === "bot" ? "bot" : "selfbot",
       enabled: shouldConnect,
       listenChannels: Array.from(listenChannels),
@@ -3951,9 +3979,10 @@ async function syncConfigToDiscordBridge(config: MultiConfig) {
     if (account.loginEnabled === false) continue;
     if (typeof account.token !== "string" || !account.token.trim()) continue;
     if (accountsById.has(account.id)) continue;
+    const normalizedToken = normalizeDiscordToken(account.token);
     accountsById.set(account.id, {
       id: account.id,
-      token: account.token,
+      token: normalizedToken,
       type: account.type === "bot" ? "bot" : "selfbot",
       enabled: true,
       // 使用不可用频道ID占位，保持会话在线但不接收消息
