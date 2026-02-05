@@ -1,2 +1,4 @@
-discord.py-self
+# 注意：必须先卸载 discord.py，再安装 discord.py-self
+# pip uninstall discord.py -y && pip install discord.py-self
+discord.py-self>=2.0
 loguru

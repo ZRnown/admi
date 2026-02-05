@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import os
+import inspect
 from typing import Any, Dict, Optional, Set
 
 from loguru import logger
@@ -147,6 +148,27 @@ class DiscordAccountSession:
             except Exception as exc:
                 logger.error(f"Failed to handle message: {exc}")
 
+    def _resolve_start_kwargs(self, bot_flag: Optional[bool]) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {}
+        try:
+            sig = inspect.signature(self.client.start)
+            if "bot" in sig.parameters and bot_flag is not None:
+                kwargs["bot"] = bot_flag
+        except Exception:
+            pass
+        return kwargs
+
+    async def _start_client(self, bot_flag: Optional[bool]) -> None:
+        start_fn = self.client.start
+        kwargs = self._resolve_start_kwargs(bot_flag)
+        if kwargs:
+            try:
+                return await start_fn(self.token, **kwargs)
+            except TypeError:
+                # 兼容不支持 bot 参数的实现
+                return await start_fn(self.token)
+        return await start_fn(self.token)
+
     async def start(self) -> None:
         if not self.client:
             raise RuntimeError("Client not initialized")
@@ -158,6 +180,7 @@ class DiscordAccountSession:
         max_retries = 3
         retry_delay = 2  # 秒
         last_error = None
+        mode_override: Optional[bool] = None
 
         for attempt in range(max_retries):
             try:
@@ -182,7 +205,14 @@ class DiscordAccountSession:
                     self.ready_event = asyncio.Event()
 
                 # 启动客户端并等待 ready（超时则报错）
-                client_task = asyncio.create_task(self.client.start(self.token))
+                bot_flag = mode_override
+                if bot_flag is None:
+                    bot_flag = True if self.client_type == "bot" else False
+                mode_label = "bot" if bot_flag else "user"
+                logger.info(
+                    f"Discord account {self.account_id} starting in {mode_label} mode"
+                )
+                client_task = asyncio.create_task(self._start_client(bot_flag))
                 ready_task = asyncio.create_task(self.ready_event.wait())
                 done, pending = await asyncio.wait(
                     {client_task, ready_task},
@@ -215,6 +245,18 @@ class DiscordAccountSession:
             except Exception as exc:
                 last_error = exc
                 error_str = str(exc)
+                lower_error = error_str.lower()
+                if (
+                    mode_override is None
+                    and ("improper token" in lower_error or "loginfailure" in lower_error)
+                ):
+                    # 可能是 bot/selfbot 模式判断错误，尝试切换一次
+                    mode_override = not (True if self.client_type == "bot" else False)
+                    logger.warning(
+                        f"Discord account {self.account_id} failed with {error_str}, retrying in "
+                        f"{'bot' if mode_override else 'user'} mode..."
+                    )
+                    continue
                 # 检查是否是可重试的错误（如 sequence 错误）
                 is_retryable = (
                     "sequence" in error_str.lower() or
