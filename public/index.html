@@ -776,6 +776,30 @@
       return state;
     }
 
+    function getDiscordListenChannelCount(acc) {
+      if (!acc) return 0;
+      const ids = new Set();
+      const webhooks = acc.channelWebhooks || {};
+      Object.keys(webhooks).forEach((id) => {
+        if (id) ids.add(String(id));
+      });
+      const feishuWebhooks = acc.channelFeishuWebhooks || {};
+      Object.keys(feishuWebhooks).forEach((id) => {
+        if (id) ids.add(String(id));
+      });
+      const mappings = acc.mappings || [];
+      mappings.forEach((m) => {
+        if (m?.sourceChannelId) ids.add(String(m.sourceChannelId));
+      });
+      const telegramMappings = acc.telegramConfig?.mappings || [];
+      telegramMappings.forEach((m) => {
+        if (m?.type === 'discord-to-telegram' && m.sourceChannelId) {
+          ids.add(String(m.sourceChannelId));
+        }
+      });
+      return ids.size;
+    }
+
     function getInstanceStatusBadgeClass(acc) {
       const state = getInstanceState(acc);
 
@@ -793,6 +817,21 @@
       }
       if (type === 'x-to-discord' || type === 'truthsocial-to-discord') {
         return acc?.loginState || 'idle';
+      }
+      const libraryId = acc?.discordAccountId || acc?.discordSenderAccountId;
+      if (libraryId) {
+        if (type === 'discord-to-discord' && acc.enableDiscordForward === false) {
+          return 'idle';
+        }
+        if (type === 'discord-to-feishu' && acc.enableFeishuForward !== true) {
+          return 'idle';
+        }
+        if (!acc.loginRequested) return 'idle';
+        if (getDiscordListenChannelCount(acc) === 0) return 'idle';
+        const status = getDiscordLibraryStatus(libraryId);
+        if (status.state === 'online') return 'online';
+        if (status.state === 'error') return 'error';
+        if (status.state === 'pending' || status.state === 'connecting') return 'pending';
       }
       return resolveDiscordInstanceState(acc, type);
     }
@@ -963,6 +1002,11 @@
       }
       const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
       if (needsDiscord) {
+        if (getDiscordListenChannelCount(acc) === 0) {
+          showToast('请先配置 Discord 监听频道', 'error');
+          render();
+          return;
+        }
         if (usingDiscordLibrary) {
           if (!discordLibraryId) {
             showToast('请先选择 Discord 账号', 'error');
