@@ -10185,7 +10185,6 @@
         if (shouldRerender) render();
       }
     }
-  }
 
     function setMappingInputMode(idx, mode) {
       const next = mode === 'manual' ? 'manual' : 'select';
@@ -11328,7 +11327,6 @@
           { popover: { title: '12. 实例名称', description: '建议用“项目/业务/用途”命名，便于管理。', side: 'center', align: 'center' } },
           { popover: { title: '13. 选择转发类型', description: 'Discord↔Discord / Discord↔Telegram / Telegram↔Telegram / 飞书 / X / TruthSocial。', side: 'center', align: 'center' } },
           { popover: { title: '14. 选择账号', description: '从账号库选择监听/发送账号。', side: 'center', align: 'center' } },
-          { element: '#ruleInputModeToggle', popover: { title: '15. 规则填写模式', description: '列表选择更安全；手动输入更灵活。', side: 'bottom', align: 'start' } },
           { element: 'button[onclick^="addMapping"]', popover: { title: '16. 添加规则', description: '每条规则对应一组“来源 → 目标”。', side: 'bottom', align: 'start' } },
           { popover: { title: '17. 选择来源', description: '左侧选择来源频道/对话。', side: 'center', align: 'center' } },
           { popover: { title: '18. 选择目标', description: '右侧选择目标频道或 Webhook。', side: 'center', align: 'center' } },

@@ -1,4 +1,5 @@
 import { Client as BotClient, GatewayIntentBits, Partials } from "discord.js";
+import { Client as SelfBotClient } from "discord.js-selfbot-v13";
 import { promises as fs } from "fs";
 import { watch, stat } from "node:fs";
 import path from "node:path";
@@ -2576,8 +2577,38 @@ async function processDiscordLoginRequest(logger: FileLogger) {
 
     let result: any = null;
     if (request.action === "password") {
-      // 密码登录功能已移除，请使用 Token 登录
-      result = { success: false, error: "PASSWORD_LOGIN_NOT_SUPPORTED", message: "密码登录功能已移除，请使用 Token 登录" };
+      const email = request.params?.email;
+      const password = request.params?.password;
+      const totpSecret = request.params?.totpSecret;
+      if (!email || !password) {
+        result = { success: false, error: "MISSING_CREDENTIALS" };
+      } else {
+        const client = new SelfBotClient({
+          checkUpdate: false,
+          patchVoice: false,
+          syncStatus: false,
+          ...(totpSecret ? { TOTPKey: totpSecret } : {}),
+        } as any);
+        try {
+          const token = await withTimeout(
+            (client as any).passLogin(email, password),
+            120000,
+            "DISCORD_LOGIN",
+          );
+          const resolvedToken = typeof token === "string" && token.trim() ? token.trim() : (client as any).token;
+          if (resolvedToken) {
+            result = { success: true, token: resolvedToken };
+          } else {
+            result = { success: false, error: "TOKEN_NOT_FOUND" };
+          }
+        } catch (e: any) {
+          result = { success: false, error: String(e?.message || e) };
+        } finally {
+          try {
+            await (client as any).destroy();
+          } catch {}
+        }
+      }
     } else {
       result = { success: false, error: "UNKNOWN_ACTION" };
     }
