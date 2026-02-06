@@ -934,6 +934,7 @@
       if (currentState === 'online' || currentState === 'pending' || currentState === 'connecting') {
         return;
       }
+      const shouldForceRestart = currentState === 'idle' || currentState === 'error';
       const type = acc.forwardingType || 'discord-to-discord';
       const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
       const usingLibrary = hasTelegramLibrarySelection(acc);
@@ -975,11 +976,14 @@
             render();
             return;
           }
-          if (!acc.loginRequested) {
+          if (!acc.loginRequested || shouldForceRestart) {
             acc.loginRequested = true;
             acc.loginNonce = (acc.loginNonce || 0) + 1;
             acc.loginState = 'pending';
             acc.loginMessage = '启动中...';
+            if (shouldForceRestart) {
+              acc.restartNonce = (acc.restartNonce || 0) + 1;
+            }
             setConnectHold(`discord:${acc.id}`);
           }
         } else {
@@ -987,6 +991,9 @@
           acc.loginNonce = (acc.loginNonce || 0) + 1;
           acc.loginState = 'pending';
           acc.loginMessage = '启动中...';
+          if (shouldForceRestart) {
+            acc.restartNonce = (acc.restartNonce || 0) + 1;
+          }
           setConnectHold(`discord:${acc.id}`);
         }
       } else {
