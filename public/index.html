@@ -1830,9 +1830,13 @@
     // 全局规则填写模式 (manual: 手动输入, select: 从列表选择)
     let globalRuleInputMode = 'select';
 
-    // 获取规则填写模式（使用全局模式）
-    function getRuleInputMode(mappingKey, field) {
+    function resolveRuleInputMode(value) {
+      if (value === 'manual' || value === 'select') return value;
       return globalRuleInputMode;
+    }
+
+    function getRuleInputMode(mapping) {
+      return resolveRuleInputMode(mapping?.inputMode);
     }
 
     function setGlobalRuleInputMode(mode) {
@@ -2027,7 +2031,7 @@
     // 生成来源频道输入UI（支持手动和选择两种模式，使用全局模式）
     function renderSourceChannelInput(acc, m, idx, forwardingType, placeholder) {
       const mappingKey = `${acc.id}:${forwardingType}:${idx}`;
-      const mode = globalRuleInputMode;
+      const mode = getRuleInputMode(m);
       const discordAccountId = acc.discordAccountId || '';
       const telegramAccountId = acc.telegramListenerAccountId || '';
       const isDiscordSource = forwardingType.startsWith('discord-');
@@ -2110,7 +2114,7 @@
 
     // 生成目标频道输入UI（支持手动和选择两种模式）
     function renderTargetChannelInput(acc, m, idx, forwardingType, placeholder) {
-      const mode = globalRuleInputMode;
+      const mode = getRuleInputMode(m);
       const telegramSenderAccountId = acc.telegramSenderAccountId || '';
       const discordSenderAccountId = acc.discordSenderAccountId || '';
       const savedTargetId = m.targetChannelId || m.targetWebhookUrl || '';
@@ -5919,22 +5923,6 @@
                 '配置 TruthSocial 内容转发到 Discord 的规则'}
                 </p>
               </div>
-              <!-- 全局规则填写模式切换 -->
-              ${['discord-to-discord', 'discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-feishu'].includes(forwardingType) ? `
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-slate-500">频道填写方式：</span>
-                <div id="ruleInputModeToggle" class="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs">
-                  <button onclick="setGlobalRuleInputMode('select')"
-                    class="px-3 py-1.5 ${globalRuleInputMode === 'select' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}">
-                    列表选择
-                  </button>
-                  <button onclick="setGlobalRuleInputMode('manual')"
-                    class="px-3 py-1.5 ${globalRuleInputMode === 'manual' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}">
-                    手动输入
-                  </button>
-                </div>
-              </div>
-              ` : ''}
             </div>
           </div>
 
@@ -6410,6 +6398,7 @@
         let sourcePlaceholder = '来源频道 ID';
         let targetPlaceholder = '目标频道 ID';
         let arrowIcon = '→';
+        const ruleInputMode = getRuleInputMode(m);
         const senderType = getEffectiveTelegramSenderType(acc, forwardingType, m);
 
         if (forwardingType === 'discord-to-discord') {
@@ -6437,6 +6426,16 @@
         return `
         <div class="w-full flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
           <div class="w-full flex gap-3 items-center flex-wrap min-w-0">
+            <div class="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px]">
+              <button onclick="setMappingInputMode(${originalIndex}, 'select')"
+                class="px-2.5 py-1 ${ruleInputMode === 'select' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}">
+                列表
+              </button>
+              <button onclick="setMappingInputMode(${originalIndex}, 'manual')"
+                class="px-2.5 py-1 ${ruleInputMode === 'manual' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}">
+                ID
+              </button>
+            </div>
             ${renderSourceChannelInput(acc, m, originalIndex, forwardingType, sourcePlaceholder)}
             <span class="text-slate-300">${arrowIcon}</span>
             ${renderTargetChannelInput(acc, m, originalIndex, forwardingType, targetPlaceholder)}
@@ -9031,6 +9030,7 @@
       scheduledBroadcastMode: "inherit",
       scheduledIntervalMinutes: 60,
       scheduledContentIds: [],
+      inputMode: '',
       standbyMode: {
         enabled: false,
         mainChannelId: '',
@@ -9154,7 +9154,7 @@
       if (!container) return;
       const standby = ruleConfigData.standbyMode || {};
       const mainId = standby.mainChannelId || '';
-      const mode = globalRuleInputMode;
+      const mode = resolveRuleInputMode(ruleConfigData?.inputMode);
       const isDiscordSource = forwardingType.startsWith('discord-') || forwardingType === 'discord-to-feishu';
       const isTelegramSource = forwardingType.startsWith('telegram-');
       const discordAccountId = acc?.discordAccountId || '';
@@ -9328,6 +9328,7 @@
         scheduledBroadcastMode: scheduleMode,
         scheduledIntervalMinutes: scheduleInterval,
         scheduledContentIds: ruleScheduleIds,
+        inputMode: mapping.inputMode || '',
         standbyMode: {
           enabled: standby.enabled === true,
           mainChannelId: standby.mainChannelId || '',
@@ -9928,6 +9929,7 @@
           sourceChannelId: '',
           targetChannelId: '',
           type: mappingType,
+          inputMode: globalRuleInputMode,
           note: '',
           translate: false,
           translateDirection: 'auto'
@@ -9945,7 +9947,7 @@
         // Discord→Discord 转发规则
         if (!acc.mappings) acc.mappings = [];
 
-        const newMapping = { id: genId(), sourceChannelId: '', targetWebhookUrl: '', note: '' };
+        const newMapping = { id: genId(), sourceChannelId: '', targetWebhookUrl: '', inputMode: globalRuleInputMode, note: '' };
         console.log('[DEBUG] 添加新规则到开头:', newMapping.id);
 
         acc.mappings.unshift(newMapping);
@@ -10081,6 +10083,7 @@
     function updateMapping(idx, field, value) {
       const acc = getActiveAccount();
       const forwardingType = acc.forwardingType || currentForwardingType;
+      const shouldRerender = field === 'inputMode';
 
       // 根据转发类型决定更新哪个数组
       if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
@@ -10109,11 +10112,12 @@
           console.log('[DEBUG] 更新 Telegram 规则:', idx, field, value);
         }
         // 立即保存关键字段
-        if (['sourceChannelId', 'sourceGuildId', 'targetChannelId', 'note'].includes(field)) {
+        if (['sourceChannelId', 'sourceGuildId', 'targetChannelId', 'note', 'inputMode'].includes(field)) {
           saveConfigImmediate();
         } else {
           saveConfig();
         }
+        if (shouldRerender) render();
       } else {
         // 更新 Discord→Discord 规则
         if (acc.mappings[idx]) {
@@ -10172,15 +10176,21 @@
             acc.channelTranslate[sourceId] = true;
           }
         }
-        const immediateFields = ['sourceChannelId', 'sourceGuildId', 'targetChannelId', 'targetWebhookUrl', 'note'];
+        const immediateFields = ['sourceChannelId', 'sourceGuildId', 'targetChannelId', 'targetWebhookUrl', 'note', 'inputMode'];
         if (immediateFields.includes(field)) {
           saveConfigImmediate();
         } else {
           saveConfig();
         }
+        if (shouldRerender) render();
       }
     }
   }
+
+    function setMappingInputMode(idx, mode) {
+      const next = mode === 'manual' ? 'manual' : 'select';
+      updateMapping(idx, 'inputMode', next);
+    }
 
     // 更新 mapping 并同时保存服务器ID
     function updateMappingWithGuild(idx, field, value, guildSelectId) {

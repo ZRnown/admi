@@ -113,6 +113,7 @@ export interface TelegramMapping extends RuleLevelConfig {
   sourceGuildId?: string;      // Discord来源服务器ID（用于discord-to-telegram）
   targetChannelId: string;     // 目标频道ID
   type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
+  inputMode?: "manual" | "select";
   note?: string;
   translate?: boolean;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
@@ -150,6 +151,7 @@ export interface FrontendTelegramMapping extends RuleLevelConfig {
   sourceGuildId?: string;
   targetChannelId: string;
   type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
+  inputMode?: "manual" | "select";
   note?: string;
   translate?: boolean;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
@@ -273,6 +275,7 @@ export interface DiscordMappingRule extends RuleLevelConfig {
   sourceChannelId: string;
   sourceGuildId?: string;
   targetWebhookUrl: string;
+  inputMode?: "manual" | "select";
   note?: string;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
 }
@@ -1353,6 +1356,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
           sourceGuildId: typeof m.sourceGuildId === "string" ? m.sourceGuildId : undefined,
           targetWebhookUrl: typeof m.targetWebhookUrl === "string" ? m.targetWebhookUrl : "",
+          inputMode: m.inputMode === "manual" ? "manual" : m.inputMode === "select" ? "select" : undefined,
           note: typeof m.note === "string" ? m.note : undefined,
           translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,
           // RuleLevelConfig 规则级别过滤配置
@@ -1434,6 +1438,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
             targetChannelId: rawTarget,
             type: normalizedType,
+            inputMode: mapping.inputMode === "manual" ? "manual" : mapping.inputMode === "select" ? "select" : undefined,
             note: typeof mapping.note === "string" ? mapping.note : undefined,
             translate: mapping.translate === true,
             translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(mapping.translateDirection) ? mapping.translateDirection : "auto",
