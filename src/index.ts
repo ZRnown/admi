@@ -41,6 +41,8 @@ let telegramBridgeClient: TelegramBridgeClient | null = null;
 let discordBridgeClient: DiscordBridgeClient | null = null;
 const telegramSequentialDedupe = new Map<string, string>();
 const telegramStandbyActivity = new Map<string, number>();
+const telegramStandbyPending = new Map<string, NodeJS.Timeout>();
+let telegramStandbyPendingSeq = 0;
 
 interface RunningAccount {
   account: AccountConfig;
@@ -1429,6 +1431,7 @@ function setupTelegramBridgeClient() {
       updateTelegramDialogsCacheFromMessage(incomingAccountId, params).catch(() => {});
     }
     const accounts = currentConfig?.accounts || [];
+    const receivedAt = Date.now();
     for (const account of accounts) {
       const currentForwardingType = account.forwardingType || 'discord-to-discord';
       if (currentForwardingType !== 'telegram-to-discord' && currentForwardingType !== 'telegram-to-telegram') continue;
@@ -1707,21 +1710,13 @@ function setupTelegramBridgeClient() {
         const stripOptions = { stripEnglish, stripChinese };
         try {
           const standby = (rule as RuleLevelConfig).standbyMode;
-          if (standby?.enabled && standby.mainChannelId) {
-            if (!isTelegramStandbyMainChannel(standby.mainChannelId, sourceChatId, sourceChatUsername)) {
-              const cooldownMs = Math.max(1, Number(standby.cooldownSeconds) || 60) * 1000;
-              const lastMainTime = getTelegramStandbyLastActive(standby.mainChannelId);
-              const timeDiff = Date.now() - lastMainTime;
-              if (lastMainTime > 0 && timeDiff < cooldownMs) {
-                const remaining = ((cooldownMs - timeDiff) / 1000).toFixed(1);
-                logSkip(
-                  `主备模式静默: 主频道(${standby.mainChannelId}) 在 ${remaining}s 内活跃`,
-                  `目标: ${rule.targetChannelId}`,
-                );
-                continue;
-              }
-            }
-          }
+          const standbyMainChannelId =
+            standby?.enabled && typeof standby.mainChannelId === "string" ? standby.mainChannelId.trim() : "";
+          const standbyEnabled = Boolean(standbyMainChannelId);
+          const isStandbyMain = standbyEnabled
+            ? isTelegramStandbyMainChannel(standbyMainChannelId, sourceChatId, sourceChatUsername)
+            : false;
+          const standbyCooldownMs = standbyEnabled ? Math.max(1, Number(standby?.cooldownSeconds) || 60) * 1000 : 0;
           if (rule.ignoreImages === true && hasImage) {
             logSkip("规则已启用忽略图片", `目标: ${rule.targetChannelId}`);
             continue;
@@ -1975,6 +1970,49 @@ function setupTelegramBridgeClient() {
 
           let contentPreview = formatLogPreview(contentForRule);
           const senderLabel = senderDisplayName || "Telegram User";
+          const scheduleStandbyForward = async (targetLabel: string, sendFn: () => Promise<void>) => {
+            if (!standbyEnabled || isStandbyMain || !standbyMainChannelId) {
+              return false;
+            }
+            const elapsed = Date.now() - receivedAt;
+            const delayMs = Math.max(0, standbyCooldownMs - elapsed);
+            const runSend = async () => {
+              const lastMainTime = getTelegramStandbyLastActive(standbyMainChannelId);
+              if (lastMainTime > receivedAt) {
+                logSkip(
+                  `主备模式静默: 主频道(${standbyMainChannelId}) 在等待窗口内有消息`,
+                  `目标: ${targetLabel}`,
+                );
+                return;
+              }
+              await sendFn();
+            };
+
+            if (delayMs <= 0) {
+              await runSend();
+              return true;
+            }
+
+            const waitSeconds = Math.ceil(delayMs / 1000);
+            const waitMsg =
+              `[${forwardTag}] 主备模式等待 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+              `主频道: ${standbyMainChannelId} | 等待: ${waitSeconds}s | 目标: ${targetLabel} | 文本: ${contentPreview}`;
+            console.log(waitMsg);
+            telegramForwardLogger.info(waitMsg);
+            const key = `standby:${account.id}:${rule.id || targetLabel}:${receivedAt}:${++telegramStandbyPendingSeq}`;
+            const timer = setTimeout(() => {
+              telegramStandbyPending.delete(key);
+              runSend().catch((error: any) => {
+                const errorMsg =
+                  `[${forwardTag}] 主备延迟转发失败 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+                  `目标: ${targetLabel} | 错误: ${String(error?.message || error)}`;
+                console.error(errorMsg);
+                telegramForwardLogger.error(errorMsg);
+              });
+            }, delayMs);
+            telegramStandbyPending.set(key, timer);
+            return true;
+          };
 
           if (isTelegramToTelegram) {
             const targetChatId = typeof rule.targetChannelId === "string" ? rule.targetChannelId.trim() : "";
@@ -2038,95 +2076,111 @@ function setupTelegramBridgeClient() {
             }
             contentPreview = formatLogPreview(telegramContent);
 
-            const bridge = telegramBridgeClient;
-            if (!bridge) {
-              logSkip("Telegram Bridge 未就绪", `目标: ${targetChatId}`);
-              continue;
-            }
+            const dispatchTelegram = async () => {
+              const bridge = telegramBridgeClient;
+              if (!bridge) {
+                logSkip("Telegram Bridge 未就绪", `目标: ${targetChatId}`);
+                return;
+              }
 
-            const { result: sendResult, account: senderAccount } =
-              await sendTelegramMessageWithFallback(
-                bridge,
-                account,
-                preferredSenderType,
-                "sender",
-                {
-                  chatId: sendChatId,
-                  message: {
-                    text: telegramContent,
-                    reply_to_message_id: replyTargetId,
-                    watermark: effectiveWatermarks[0],
-                    watermarkSecondary: effectiveWatermarks[1],
-                    watermarks: effectiveWatermarks,
+              const { result: sendResult, account: senderAccount } =
+                await sendTelegramMessageWithFallback(
+                  bridge,
+                  account,
+                  preferredSenderType,
+                  "sender",
+                  {
+                    chatId: sendChatId,
+                    message: {
+                      text: telegramContent,
+                      reply_to_message_id: replyTargetId,
+                      watermark: effectiveWatermarks[0],
+                      watermarkSecondary: effectiveWatermarks[1],
+                      watermarks: effectiveWatermarks,
+                    },
+                    media: uploads.length > 0 ? uploads : undefined,
                   },
-                  media: uploads.length > 0 ? uploads : undefined,
-                },
-                (message) => {
-                  const logMsg =
-                    `[${forwardTag}] ${message} | 账号: ${account.name} | 目标: ${targetChatId}`;
-                  console.warn(logMsg);
-                  telegramForwardLogger.info(logMsg);
-                },
-              );
+                  (message) => {
+                    const logMsg =
+                      `[${forwardTag}] ${message} | 账号: ${account.name} | 目标: ${targetChatId}`;
+                    console.warn(logMsg);
+                    telegramForwardLogger.info(logMsg);
+                  },
+                );
 
-            if (!senderAccount) {
-              logSkip("未找到可用 Telegram 发送账号", `目标: ${targetChatId}`);
+              if (!senderAccount) {
+                logSkip("未找到可用 Telegram 发送账号", `目标: ${targetChatId}`);
+                return;
+              }
+
+              if (sendResult?.messageId && sourceChatId && sourceMessageId) {
+                recordTelegramReplyMapping(sourceChatId, String(sourceMessageId), targetChatId, String(sendResult.messageId));
+              }
+
+              if (sendResult?.success || sendResult?.messageId) {
+                const logMsg =
+                  `[${forwardTag}] 转发成功 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+                  `目标: ${targetChatId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
+                console.log(logMsg);
+                telegramForwardLogger.info(logMsg);
+                recordForwardStat(
+                  account.id,
+                  currentForwardingType === "telegram-to-telegram" ? "telegram-to-telegram" : "telegram-to-discord",
+                );
+              } else {
+                const errorMsg =
+                  `[${forwardTag}] 转发失败 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
+                  `目标: ${targetChatId} | 错误: ${String(sendResult?.error || sendResult?.message || "未知错误")}`;
+                console.error(errorMsg);
+                telegramForwardLogger.error(errorMsg);
+              }
+            };
+
+            if (await scheduleStandbyForward(targetChatId, dispatchTelegram)) {
               continue;
             }
 
-            if (sendResult?.messageId && sourceChatId && sourceMessageId) {
-              recordTelegramReplyMapping(sourceChatId, String(sourceMessageId), targetChatId, String(sendResult.messageId));
-            }
+            await dispatchTelegram();
+          } else {
+            const dispatchDiscord = async () => {
+              const tempSender = new SenderBot({
+                webhookUrl: rule.targetChannelId,
+                watermark: account.watermark,
+                watermarkSecondary: account.watermarkSecondary,
+                watermarks: account.watermarks,
+                watermarkEnabled: account.watermarkEnabled !== false,
+              });
 
-            if (sendResult?.success || sendResult?.messageId) {
+              await tempSender.sendData([{
+                content: contentForRule,
+                username: showSourceIdentity ? senderDisplayName : undefined,
+                avatarUrl,
+                uploads: uploads.length > 0 ? uploads : undefined,
+                useEmbed,
+                extraEmbeds,
+                stripEnglish,
+                stripChinese,
+                watermark: rule.watermark,
+                watermarkSecondary: rule.watermarkSecondary,
+                watermarks: rule.watermarks,
+              }]);
+
               const logMsg =
                 `[${forwardTag}] 转发成功 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
-                `目标: ${targetChatId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
+                `目标: ${rule.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
               console.log(logMsg);
               telegramForwardLogger.info(logMsg);
               recordForwardStat(
                 account.id,
                 currentForwardingType === "telegram-to-telegram" ? "telegram-to-telegram" : "telegram-to-discord",
               );
-            } else {
-              const errorMsg =
-                `[${forwardTag}] 转发失败 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
-                `目标: ${targetChatId} | 错误: ${String(sendResult?.error || sendResult?.message || "未知错误")}`;
-              console.error(errorMsg);
-              telegramForwardLogger.error(errorMsg);
+            };
+
+            if (await scheduleStandbyForward(rule.targetChannelId, dispatchDiscord)) {
+              continue;
             }
-          } else {
-            const tempSender = new SenderBot({
-              webhookUrl: rule.targetChannelId,
-              watermark: account.watermark,
-              watermarkSecondary: account.watermarkSecondary,
-              watermarks: account.watermarks,
-              watermarkEnabled: account.watermarkEnabled !== false,
-            });
 
-            await tempSender.sendData([{
-              content: contentForRule,
-              username: showSourceIdentity ? senderDisplayName : undefined,
-              avatarUrl,
-              uploads: uploads.length > 0 ? uploads : undefined,
-              useEmbed,
-              extraEmbeds,
-              stripEnglish,
-              stripChinese,
-              watermark: rule.watermark,
-              watermarkSecondary: rule.watermarkSecondary,
-              watermarks: rule.watermarks,
-            }]);
-
-            const logMsg =
-              `[${forwardTag}] 转发成功 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
-              `目标: ${rule.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
-            console.log(logMsg);
-            telegramForwardLogger.info(logMsg);
-            recordForwardStat(
-              account.id,
-              currentForwardingType === "telegram-to-telegram" ? "telegram-to-telegram" : "telegram-to-discord",
-            );
+            await dispatchDiscord();
           }
         } catch (error: any) {
           const errorMsg =
