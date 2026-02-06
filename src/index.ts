@@ -470,18 +470,37 @@ function normalizeTelegramStandbyKey(value?: string): string {
   return raw.startsWith("@") ? raw.slice(1).toLowerCase() : raw;
 }
 
+function buildTelegramStandbyKeys(value?: string): string[] {
+  if (!value) return [];
+  const raw = String(value).trim();
+  if (!raw) return [];
+  const keys = new Set<string>();
+  const normalized = normalizeTelegramStandbyKey(raw);
+  if (normalized) keys.add(normalized);
+  if (/^-?\d+$/.test(raw)) {
+    for (const variant of buildTelegramChatIdVariants(raw)) {
+      if (variant) keys.add(variant);
+    }
+  }
+  return [...keys];
+}
+
 function recordTelegramStandbyActivity(chatId?: string, username?: string) {
   const now = Date.now();
-  const idKey = normalizeTelegramStandbyKey(chatId);
-  if (idKey) telegramStandbyActivity.set(idKey, now);
-  const userKey = normalizeTelegramStandbyKey(username);
-  if (userKey) telegramStandbyActivity.set(userKey, now);
+  for (const key of buildTelegramStandbyKeys(chatId)) {
+    telegramStandbyActivity.set(key, now);
+  }
+  for (const key of buildTelegramStandbyKeys(username)) {
+    telegramStandbyActivity.set(key, now);
+  }
 }
 
 function getTelegramStandbyLastActive(mainChannelId?: string): number {
-  const key = normalizeTelegramStandbyKey(mainChannelId);
-  if (!key) return 0;
-  return telegramStandbyActivity.get(key) || 0;
+  let last = 0;
+  for (const key of buildTelegramStandbyKeys(mainChannelId)) {
+    last = Math.max(last, telegramStandbyActivity.get(key) || 0);
+  }
+  return last;
 }
 
 function isTelegramStandbyMainChannel(
@@ -489,12 +508,8 @@ function isTelegramStandbyMainChannel(
   sourceChatId?: string,
   sourceChatUsername?: string,
 ): boolean {
-  const mainKey = normalizeTelegramStandbyKey(mainChannelId);
-  if (!mainKey) return false;
-  const sourceKeys = new Set(
-    [normalizeTelegramStandbyKey(sourceChatId), normalizeTelegramStandbyKey(sourceChatUsername)].filter(Boolean),
-  );
-  return sourceKeys.has(mainKey);
+  if (!mainChannelId) return false;
+  return isTelegramSourceMatch(mainChannelId, sourceChatId, sourceChatUsername);
 }
 
 async function sendTelegramMessageWithFallback(
