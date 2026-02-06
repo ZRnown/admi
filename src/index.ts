@@ -332,6 +332,22 @@ function isTelegramSourceMatch(
   return false;
 }
 
+function isTelegramIdentifierMatch(a?: string, b?: string): boolean {
+  if (!a || !b) return false;
+  const rawA = String(a).trim();
+  const rawB = String(b).trim();
+  if (!rawA || !rawB) return false;
+  const normA = rawA.startsWith("@") ? rawA.slice(1).toLowerCase() : rawA.toLowerCase();
+  const normB = rawB.startsWith("@") ? rawB.slice(1).toLowerCase() : rawB.toLowerCase();
+  if (normA === normB) return true;
+  const variantsA = buildTelegramChatIdVariants(rawA);
+  const variantsB = buildTelegramChatIdVariants(rawB);
+  for (const candidate of variantsA) {
+    if (variantsB.has(candidate)) return true;
+  }
+  return false;
+}
+
 function applyLongMessageConfig(
   content: string,
   config?: { enabled?: boolean; threshold?: number; appendMessage?: string },
@@ -1450,7 +1466,6 @@ function setupTelegramBridgeClient() {
       const sourceChatId = params.chat_id?.toString();
       const sourceChatUsername =
         typeof params.chat_username === "string" ? params.chat_username : undefined;
-      recordTelegramStandbyActivity(sourceChatId, sourceChatUsername);
 
       const matchingRules = telegramMappings.filter(
         (m: any) => {
@@ -1713,9 +1728,15 @@ function setupTelegramBridgeClient() {
           const standbyMainChannelId =
             standby?.enabled && typeof standby.mainChannelId === "string" ? standby.mainChannelId.trim() : "";
           const standbyEnabled = Boolean(standbyMainChannelId);
-          const isStandbyMain = standbyEnabled
-            ? isTelegramStandbyMainChannel(standbyMainChannelId, sourceChatId, sourceChatUsername)
+          const isStandbyMainRule = standbyEnabled
+            ? isTelegramIdentifierMatch(standbyMainChannelId, rule.sourceChannelId)
             : false;
+          const isStandbyMain = standbyEnabled
+            ? (isStandbyMainRule || isTelegramStandbyMainChannel(standbyMainChannelId, sourceChatId, sourceChatUsername))
+            : false;
+          if (standbyEnabled && isStandbyMain) {
+            recordTelegramStandbyActivity(standbyMainChannelId);
+          }
           const standbyCooldownMs = standbyEnabled ? Math.max(1, Number(standby?.cooldownSeconds) || 60) * 1000 : 0;
           if (rule.ignoreImages === true && hasImage) {
             logSkip("规则已启用忽略图片", `目标: ${rule.targetChannelId}`);

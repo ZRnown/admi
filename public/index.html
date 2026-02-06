@@ -11695,7 +11695,13 @@
             const isActive = localAcc.id === state.activeId;
 
             if (typeof remoteAcc.loginRequested === 'boolean' && localAcc.loginRequested !== remoteAcc.loginRequested) {
-              localAcc.loginRequested = remoteAcc.loginRequested;
+              const connectHoldUntilForLogin = getConnectHold(`discord:${localAcc.id}`);
+              const holdActiveForLogin = connectHoldUntilForLogin > Date.now();
+              const isLocalStarting = localAcc.loginRequested && (localAcc.loginState === 'pending' || localAcc.loginState === 'connecting');
+              if (!(isLocalStarting && !remoteAcc.loginRequested && holdActiveForLogin)) {
+                localAcc.loginRequested = remoteAcc.loginRequested;
+                shouldRender = true;
+              }
             }
 
             const loginHoldUntil = getDisconnectHold(`discord:${localAcc.id}`);
