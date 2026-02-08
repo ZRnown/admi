@@ -769,6 +769,76 @@ export class Bot {
     return this.feishuSendersBySource?.get(channelId);
   }
 
+  private normalizeWebhookUrl(url: string): string {
+    return String(url || "").trim().replace(/\/+$/, "");
+  }
+
+  private resolveDiscordSendRoutes(
+    channelId: string,
+    directSenders: SenderBot[],
+  ): Array<{
+    sender: SenderBot;
+    standby?: {
+      mainChannelId: string;
+      cooldownSeconds: number;
+    };
+  }> {
+    const mappings = (this.config as any).mappings || [];
+    const routes: Array<{
+      sender: SenderBot;
+      standby?: {
+        mainChannelId: string;
+        cooldownSeconds: number;
+      };
+    }> = [];
+    const routeKeys = new Set<string>();
+
+    const addRoute = (
+      sender: SenderBot,
+      standby?: {
+        mainChannelId: string;
+        cooldownSeconds: number;
+      },
+    ) => {
+      const webhookKey = this.normalizeWebhookUrl(sender.webhookUrl || "") || `sender:${routes.length}`;
+      const standbyKey = standby ? `standby:${standby.mainChannelId}:${standby.cooldownSeconds}` : "direct";
+      const routeKey = `${webhookKey}|${standbyKey}`;
+      if (routeKeys.has(routeKey)) {
+        return;
+      }
+      routeKeys.add(routeKey);
+      routes.push({ sender, standby });
+    };
+
+    // 当前规则源频道（A路）消息默认直发。
+    for (const sender of directSenders) {
+      addRoute(sender, undefined);
+    }
+
+    // 若当前频道是某条规则配置的备用频道（B路），则复用该规则主频道的目标发送器，按观察窗口兜底转发。
+    for (const mapping of mappings) {
+      const standby = mapping?.standbyMode;
+      const standbyChannelId =
+        standby?.enabled === true && typeof standby.mainChannelId === "string"
+          ? standby.mainChannelId.trim()
+          : "";
+      const mainChannelId =
+        typeof mapping?.sourceChannelId === "string" ? mapping.sourceChannelId.trim() : "";
+
+      if (!standbyChannelId || standbyChannelId !== channelId || !mainChannelId || mainChannelId === channelId) {
+        continue;
+      }
+
+      const cooldownSeconds = Math.max(1, Number(standby?.cooldownSeconds) || 60);
+      const mainSenders = this.getSendersForChannel(mainChannelId);
+      for (const sender of mainSenders) {
+        addRoute(sender, { mainChannelId, cooldownSeconds });
+      }
+    }
+
+    return routes;
+  }
+
   private buildSequentialSignature(message: Message): string {
     const text = collectMessageTextPieces(message)
       .map((item) => String(item || "").trim())
@@ -827,6 +897,17 @@ export class Bot {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
     let rule = mappings.find((m: any) => m.sourceChannelId === channelId);
+
+    // 兼容主备模式：当当前频道是“备用/B 路”且自身没有独立规则时，沿用其主规则配置。
+    if (!rule) {
+      rule = mappings.find((m: any) => {
+        const standby = m?.standbyMode;
+        if (!standby?.enabled || typeof standby.mainChannelId !== "string") {
+          return false;
+        }
+        return standby.mainChannelId.trim() === channelId;
+      });
+    }
 
     // 如果顶层没找到，查找 telegramConfig.mappings（Discord->Telegram 规则）
     if (!rule) {
@@ -1009,6 +1090,7 @@ export class Bot {
 
     // 快速检查：路由映射是否存在，不存在则快速返回
     const sendersForThis = this.getSendersForChannel(message.channelId);
+    const discordRoutes = this.resolveDiscordSendRoutes(message.channelId, sendersForThis);
     const feishuSenderForThis = this.getFeishuSenderForChannel(message.channelId);
 
     // 检查是否有 Telegram 映射（受 enableTelegramForward 控制）
@@ -1018,16 +1100,35 @@ export class Bot {
     const hasTelegramMapping = telegramMappingsCheck.some(
       (m: any) => m.type === 'discord-to-telegram' && m.sourceChannelId === message.channelId
     );
+    const standbyRefCount = ((this.config as any).mappings || []).filter((m: any) => {
+      const standby = m?.standbyMode;
+      return (
+        standby?.enabled === true &&
+        typeof standby?.mainChannelId === 'string' &&
+        standby.mainChannelId.trim() === message.channelId
+      );
+    }).length;
 
     // 只有在没有任何转发目标时才返回
-    if (sendersForThis.length === 0 && !feishuSenderForThis && !hasTelegramMapping) {
+    if (discordRoutes.length === 0 && !feishuSenderForThis && !hasTelegramMapping) {
+      if (standbyRefCount > 0) {
+        this.logger.info(
+          "[STANDBY] 备用频道已被引用，但未找到可用主规则目标: channel=" +
+            message.channelId +
+            " 被 " +
+            standbyRefCount +
+            " 条主备规则引用",
+        );
+      }
       return; // 快速返回，不做多余计算
     }
 
     // 记录消息检测日志（仅在启用机器人中转时，帮助调试）
-    if (sendersForThis.length > 0 && sendersForThis.some(s => s.enableBotRelay)) {
+    if (discordRoutes.length > 0 && discordRoutes.some((r) => r.sender.enableBotRelay)) {
       this.logger.info(`[Bot] 检测到消息 (id=${message.id}, channel=${message.channelId}, author=${message.author?.tag || 'unknown'})，准备转发`);
     }
+
+    const receivedAt = Date.now();
 
     // 记录消息处理开始，特别是webhook消息
     // 在函数开始处声明一次 isWebhook，后续复用
@@ -1053,26 +1154,7 @@ export class Bot {
 
     // 获取规则级别配置（提前获取，用于过滤与OCR检查）
     const ruleConfig = this.getRuleLevelConfig(message.channelId);
-    if (ruleConfig.standbyMode?.enabled && ruleConfig.standbyMode.mainChannelId) {
-      const mainId = ruleConfig.standbyMode.mainChannelId;
-      if (mainId && mainId !== message.channelId) {
-        const cooldownMs = Math.max(1, ruleConfig.standbyMode.cooldownSeconds || 60) * 1000;
-        const lastMainTime = Bot.channelActivity.get(mainId) || 0;
-        const timeDiff = Date.now() - lastMainTime;
-        if (lastMainTime > 0 && timeDiff < cooldownMs) {
-          const remaining = ((cooldownMs - timeDiff) / 1000).toFixed(1);
-          this.logger.info(
-            `[STANDBY] 跳过备用频道消息: 主频道(${mainId})在 ${remaining}s 内活跃 (阈值 ${ruleConfig.standbyMode.cooldownSeconds || 60}s)`,
-          );
-          return;
-        }
-        if (lastMainTime > 0) {
-          this.logger.info(
-            `[STANDBY] 触发备用频道转发: 主频道已静默 ${(timeDiff / 1000).toFixed(0)}s`,
-          );
-        }
-      }
-    }
+    // 主备逻辑改为按“每条映射规则”在发送阶段判断，避免同一频道既是主又是备时误伤主频道直连转发。
     const caseInsensitive = this.config.caseInsensitiveKeywords ?? true;
     const stripEnglish = this.config.stripEnglish === true || ruleConfig.stripEnglish === true;
     const stripChinese = this.config.stripChinese === true || ruleConfig.stripChinese === true;
@@ -1308,9 +1390,9 @@ export class Bot {
 
     // GIF 链接的处理移动到附件收集之后
 
-    // 路由：仅当该源频道在映射中时才转发；未映射则跳过（sendersForThis 已在前面检查过）
-    if (sendersForThis.length > 0) {
-      this.logger.info(`${logPrefix} [ROUTE] Found ${sendersForThis.length} mapping(s) for channel ${message.channelId}, will forward to webhook(s)`);
+    // 路由：仅当该源频道在映射中时才转发；未映射则跳过（discordRoutes 已在前面检查过）
+    if (discordRoutes.length > 0) {
+      this.logger.info(`${logPrefix} [ROUTE] Found ${discordRoutes.length} mapping(s) for channel ${message.channelId}, will forward to webhook(s)`);
     } else if (feishuSenderForThis) {
       this.logger.info(`${logPrefix} [ROUTE] Found Feishu mapping for channel ${message.channelId}, will forward to Feishu`);
     }
@@ -1495,7 +1577,7 @@ export class Bot {
         if (!mapped) {
           try {
             // 使用第一个 sender 来扫描目标频道
-            const firstSender = sendersForThis.length > 0 ? sendersForThis[0] : undefined;
+            const firstSender = discordRoutes.length > 0 ? discordRoutes[0].sender : undefined;
             const found = await this.tryResolveMappingFromTarget(ref.id, firstSender);
             if (found) {
               mapped = found;
@@ -1509,7 +1591,7 @@ export class Bot {
           replyToTarget = { channelId: mapped.channelId, messageId: mapped.messageId };
           // 无论是否有附件/Embed，都生成 CTA 行；有资产时用"查看附件"，否则用"查看消息"
           // 使用第一个 sender 来获取 webhookGuildId
-          const firstSender = sendersForThis.length > 0 ? sendersForThis[0] : undefined;
+          const firstSender = discordRoutes.length > 0 ? discordRoutes[0].sender : undefined;
           if (firstSender?.webhookGuildId) {
             const link = `https://discord.com/channels/${firstSender.webhookGuildId}/${mapped.channelId}/${mapped.messageId}`;
             let display: string;
@@ -1840,16 +1922,44 @@ export class Bot {
 
     // 检查 Discord 转发开关
     const enableDiscordForward = this.config.enableDiscordForward !== false;
-    const shouldSendDiscord = sendersForThis.length > 0 && enableDiscordForward;
-    if (sendersForThis.length > 0 && !enableDiscordForward) {
+    const shouldSendDiscord = discordRoutes.length > 0 && enableDiscordForward;
+    if (discordRoutes.length > 0 && !enableDiscordForward) {
       this.logger.info(`${logPrefix} [SKIP] Discord 转发已关闭，跳过转发`);
     }
 
     this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${discordContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed}, style=${forwardStyle})`);
     if (shouldSendDiscord) {
       // 遍历所有匹配的 SenderBot，向每个 webhook 发送消息
-      for (let senderIndex = 0; senderIndex < sendersForThis.length; senderIndex++) {
-        const senderForThis = sendersForThis[senderIndex];
+      for (let senderIndex = 0; senderIndex < discordRoutes.length; senderIndex++) {
+        const route = discordRoutes[senderIndex];
+        const senderForThis = route.sender;
+        const standbyRule = route.standby;
+
+        if (standbyRule && standbyRule.mainChannelId !== message.channelId) {
+          const cooldownMs = standbyRule.cooldownSeconds * 1000;
+          const waitSeconds = Math.ceil(cooldownMs / 1000);
+          const mainId = standbyRule.mainChannelId;
+
+          this.logger.info(
+            `[STANDBY] 备用频道消息进入观察窗口: ${waitSeconds}s | 备用=${message.channelId} | 主=${mainId} | 规则=${senderIndex + 1}/${discordRoutes.length}`,
+          );
+
+          await new Promise((resolve) => setTimeout(resolve, cooldownMs));
+
+          const lastMainTime = Bot.channelActivity.get(mainId) || 0;
+          if (lastMainTime > receivedAt) {
+            const mainAfterMs = Math.max(0, lastMainTime - receivedAt);
+            this.logger.info(
+              `[STANDBY] 跳过备用频道消息: 主频道(${mainId})在观察窗口内活跃(${Math.ceil(mainAfterMs / 1000)}s内) | 规则=${senderIndex + 1}/${discordRoutes.length}`,
+            );
+            continue;
+          }
+
+          this.logger.info(
+            `[STANDBY] 触发备用频道转发: 主频道(${mainId})在观察窗口(${waitSeconds}s)内无消息 | 规则=${senderIndex + 1}/${discordRoutes.length}`,
+          );
+        }
+
         try {
           const results = await senderForThis.sendData(toSend);
           if (results && results.length > 0) {
@@ -1879,7 +1989,7 @@ export class Bot {
               const isReply = !!message.reference;
               const attachmentCount = message.attachments?.size || 0;
 
-              let logMsg = `${logPrefix} [SUCCESS] 转发成功 [${senderIndex + 1}/${sendersForThis.length}]: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
+              let logMsg = `${logPrefix} [SUCCESS] 转发成功 [${senderIndex + 1}/${discordRoutes.length}]: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
               logMsg += `\n  内容: ${contentDisplay}`;
               if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
               if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
@@ -1891,13 +2001,13 @@ export class Bot {
               this.logger.info(logMsg);
               recordForwardStat(getStatsAccountId(this.config), "discord-to-discord");
             } else {
-              this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId [${senderIndex + 1}/${sendersForThis.length}]`);
+              this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId [${senderIndex + 1}/${discordRoutes.length}]`);
             }
           } else {
-            this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results [${senderIndex + 1}/${sendersForThis.length}]`);
+            this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results [${senderIndex + 1}/${discordRoutes.length}]`);
           }
         } catch (err: any) {
-          this.logger.error(`${logPrefix} [ERROR] Send failed [${senderIndex + 1}/${sendersForThis.length}]: ${String(err?.message || err)}`);
+          this.logger.error(`${logPrefix} [ERROR] Send failed [${senderIndex + 1}/${discordRoutes.length}]: ${String(err?.message || err)}`);
         }
       }
     }

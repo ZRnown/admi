@@ -4,6 +4,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import {
   type AccountConfig,
+  CONFIG_VERSION,
   getMultiConfig,
   saveMultiConfig,
   type MultiConfig,
@@ -270,6 +271,13 @@ interface FrontendMapping {
   watermarks?: WatermarkConfig[];
   watermarkEnabled?: boolean;
   scheduledBroadcast?: ScheduledBroadcastConfig;
+  standbyMode?: {
+    enabled: boolean;
+    mainChannelId: string;
+    cooldownSeconds: number;
+    mainGuildId?: string;
+    mainGuildName?: string;
+  };
 }
 
 interface FrontendAccount {
@@ -809,6 +817,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         watermarkSecondary: savedRule.watermarkSecondary,
         watermarks: resolvedWatermarks,
         scheduledBroadcast: normalizeScheduledBroadcastConfig(savedRule.scheduledBroadcast),
+        standbyMode: savedRule.standbyMode,
       });
     }
   } else {
@@ -834,6 +843,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         watermarkSecondary: undefined,
         watermarks: undefined,
         scheduledBroadcast: undefined,
+        standbyMode: undefined,
       });
     }
   }
@@ -1285,6 +1295,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           watermarkSecondary: mapping.watermarkSecondary,
           watermarks: mappingWatermarks,
           scheduledBroadcast: normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast),
+          standbyMode: mapping.standbyMode,
         });
       }
     }
@@ -1657,6 +1668,7 @@ export async function POST(req: NextRequest) {
         telegramAccounts,
         xAccounts,
         truthSocialAccounts,
+        version: current.version || CONFIG_VERSION,
       };
     } else {
       // 兼容旧版请求
@@ -1691,6 +1703,7 @@ export async function POST(req: NextRequest) {
         historyScan: { enabled: true },
       };
       next = { accounts: [account], activeId: id };
+      next.version = CONFIG_VERSION;
     }
 
     await saveMultiConfig(next);
@@ -1739,6 +1752,7 @@ export async function PUT(req: NextRequest) {
       telegramAccounts: current.telegramAccounts,
       xAccounts: current.xAccounts,
       truthSocialAccounts: current.truthSocialAccounts,
+      version: current.version || CONFIG_VERSION,
     };
 
     await saveMultiConfig(next);

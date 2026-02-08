@@ -595,10 +595,9 @@ class TelegramBridgeService:
 
 async def main():
     """主函数"""
-    # 配置日志
+    # 仅输出到命令行，不写入日志文件
     logger.remove()
     logger.add(sys.stderr, level="INFO", format="{time} {level} {message}")
-    logger.add("logs/telegram-bridge-{time}.log", rotation="1 day", level="DEBUG")
 
     # 创建并启动服务
     service = TelegramBridgeService()

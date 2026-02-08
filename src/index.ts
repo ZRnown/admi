@@ -122,6 +122,7 @@ let lastConfigHash: string | null = null;
 let lastConfigMtime: number = 0;
 let telegramLoginProcessing = false;
 let lastTelegramWatchSummaryHash: string | null = null;
+let lastTelegramConfigPayloadHash: string | null = null;
 let telegramSyncProcessing = false;
 let discordLoginProcessing = false;
 
@@ -1275,6 +1276,14 @@ function collectDiscordListenChannels(account: AccountConfig): Set<string> {
     if (mapping?.sourceChannelId) {
       listenChannels.add(String(mapping.sourceChannelId));
     }
+    const standbyMainChannelId =
+      mapping?.standbyMode?.enabled && typeof mapping?.standbyMode?.mainChannelId === "string"
+        ? mapping.standbyMode.mainChannelId.trim()
+        : "";
+    if (standbyMainChannelId) {
+      // 主备模式下需要监听备用频道（B 路），用于接收兜底消息。
+      listenChannels.add(standbyMainChannelId);
+    }
   }
   const telegramMappings = account.telegramConfig?.mappings || [];
   for (const mapping of telegramMappings) {
@@ -1558,28 +1567,6 @@ function setupTelegramBridgeClient() {
       let englishRatio: number | null = null;
       let chineseRatio: number | null = null;
 
-      if (hasText) {
-        try {
-          const ratio = getLanguageRatio(normalizedContent);
-          if (ratio.total > 0) {
-            englishRatio = Math.round(ratio.englishRatio);
-            chineseRatio = Math.round(ratio.chineseRatio);
-            const englishThreshold = clampPercent(account.ignoreEnglishThreshold, 100);
-            const chineseThreshold = clampPercent(account.ignoreChineseThreshold, 100);
-            if (account.ignoreEnglish && englishRatio >= englishThreshold) {
-              logSkip(`忽略英文(占比${englishRatio}%>=${englishThreshold}%)`);
-              continue;
-            }
-            if (account.ignoreChinese && chineseRatio >= chineseThreshold) {
-              logSkip(`忽略中文(占比${chineseRatio}%>=${chineseThreshold}%)`);
-              continue;
-            }
-          }
-        } catch (e: any) {
-          console.error(`[${forwardTag}] 语言占比过滤异常: ${String(e?.message || e)}`);
-        }
-      }
-
       const isImage = (m: any) =>
         m?.type === "photo" || String(m?.mimeType || "").startsWith("image/");
       const isVideo = (m: any) =>
@@ -1592,55 +1579,6 @@ function setupTelegramBridgeClient() {
       const hasVideo = Boolean(params.video) || mediaItems.some(isVideo);
       const hasAudio = mediaItems.some(isAudio);
       const hasDocument = Boolean(params.document) || mediaItems.some(isDocument);
-
-      try {
-        if (globalRequiredGroups.length > 0 && hasText) {
-          const { matchedGroups } = matchParsedKeywordGroups(normalizedContent, globalRequiredGroups, {
-            caseInsensitive,
-          });
-          if (matchedGroups.length === 0) {
-            logSkip("未命中全局关键词", `关键词: ${formatGroupLabel(globalRequiredGroups)}`);
-            continue;
-          }
-        }
-      } catch (e: any) {
-        console.error(`[${forwardTag}] 文本关键词过滤异常: ${String(e?.message || e)}`);
-      }
-
-      try {
-        if (globalExcludeGroups.length > 0 && hasText) {
-          const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(normalizedContent, globalExcludeGroups, {
-            caseInsensitive,
-          });
-          if (matchedGroups.length > 0) {
-            logSkip("命中全局屏蔽词", `命中: ${matchedKeywords.join("、")}`);
-            continue;
-          }
-        }
-      } catch (e: any) {
-        console.error(`[${forwardTag}] 文本屏蔽词过滤异常: ${String(e?.message || e)}`);
-      }
-
-      try {
-        if (account.ignoreImages && hasImage) {
-          logSkip("已启用忽略图片");
-          continue;
-        }
-        if (account.ignoreVideo && hasVideo) {
-          logSkip("已启用忽略视频");
-          continue;
-        }
-        if (account.ignoreAudio && hasAudio) {
-          logSkip("已启用忽略音频");
-          continue;
-        }
-        if (account.ignoreDocuments && hasDocument) {
-          logSkip("已启用忽略文件");
-          continue;
-        }
-      } catch (e: any) {
-        console.error(`[${forwardTag}] 忽略规则检查异常: ${String(e?.message || e)}`);
-      }
 
       const imageMediaItems = mediaItems.filter((m: any) => m?.localPath && isImage(m));
       const needsOcrCheck =
@@ -1715,6 +1653,78 @@ function setupTelegramBridgeClient() {
         console.error(`[${forwardTag}] OCR过滤异常: ${String(e?.message || e)}`);
       }
 
+      // 图片消息优先执行 OCR 屏蔽逻辑；仅在未被 OCR 屏蔽后再执行文本/忽略类规则。
+      if (hasText) {
+        try {
+          const ratio = getLanguageRatio(normalizedContent);
+          if (ratio.total > 0) {
+            englishRatio = Math.round(ratio.englishRatio);
+            chineseRatio = Math.round(ratio.chineseRatio);
+            const englishThreshold = clampPercent(account.ignoreEnglishThreshold, 100);
+            const chineseThreshold = clampPercent(account.ignoreChineseThreshold, 100);
+            if (account.ignoreEnglish && englishRatio >= englishThreshold) {
+              logSkip(`忽略英文(占比${englishRatio}%>=${englishThreshold}%)`);
+              continue;
+            }
+            if (account.ignoreChinese && chineseRatio >= chineseThreshold) {
+              logSkip(`忽略中文(占比${chineseRatio}%>=${chineseThreshold}%)`);
+              continue;
+            }
+          }
+        } catch (e: any) {
+          console.error(`[${forwardTag}] 语言占比过滤异常: ${String(e?.message || e)}`);
+        }
+      }
+
+      try {
+        if (globalRequiredGroups.length > 0 && hasText) {
+          const { matchedGroups } = matchParsedKeywordGroups(normalizedContent, globalRequiredGroups, {
+            caseInsensitive,
+          });
+          if (matchedGroups.length === 0) {
+            logSkip("未命中全局关键词", `关键词: ${formatGroupLabel(globalRequiredGroups)}`);
+            continue;
+          }
+        }
+      } catch (e: any) {
+        console.error(`[${forwardTag}] 文本关键词过滤异常: ${String(e?.message || e)}`);
+      }
+
+      try {
+        if (globalExcludeGroups.length > 0 && hasText) {
+          const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(normalizedContent, globalExcludeGroups, {
+            caseInsensitive,
+          });
+          if (matchedGroups.length > 0) {
+            logSkip("命中全局屏蔽词", `命中: ${matchedKeywords.join("、")}`);
+            continue;
+          }
+        }
+      } catch (e: any) {
+        console.error(`[${forwardTag}] 文本屏蔽词过滤异常: ${String(e?.message || e)}`);
+      }
+
+      try {
+        if (account.ignoreImages && hasImage) {
+          logSkip("已启用忽略图片");
+          continue;
+        }
+        if (account.ignoreVideo && hasVideo) {
+          logSkip("已启用忽略视频");
+          continue;
+        }
+        if (account.ignoreAudio && hasAudio) {
+          logSkip("已启用忽略音频");
+          continue;
+        }
+        if (account.ignoreDocuments && hasDocument) {
+          logSkip("已启用忽略文件");
+          continue;
+        }
+      } catch (e: any) {
+        console.error(`[${forwardTag}] 忽略规则检查异常: ${String(e?.message || e)}`);
+      }
+
       for (const rule of filteredRules) {
         const senderDisplayName =
           params.from_display_name ||
@@ -1738,6 +1748,59 @@ function setupTelegramBridgeClient() {
             recordTelegramStandbyActivity(standbyMainChannelId);
           }
           const standbyCooldownMs = standbyEnabled ? Math.max(1, Number(standby?.cooldownSeconds) || 60) * 1000 : 0;
+
+          // 规则级别也遵循“图片先 OCR 屏蔽，再执行其他规则”。
+          const ruleOcrBlockedGroups = parseKeywordGroups(rule.ocrBlockedKeywords);
+          const ruleOcrTriggerGroups = parseKeywordGroups(rule.ocrTriggerKeywords);
+          const activeRuleOcrTriggerGroups =
+            globalOcrTriggerGroups.length > 0 ? [] : ruleOcrTriggerGroups;
+
+          if (ruleOcrBlockedGroups.length > 0 || activeRuleOcrTriggerGroups.length > 0) {
+            if (imageMediaItems.length > 0) {
+              if (!ocrClient) {
+                logOcr(`OCR服务器未配置，规则触发无法生效 | 目标: ${rule.targetChannelId}`);
+                continue;
+              }
+              if (!ocrChecked) {
+                await runOcr();
+                logOcrSummary();
+              }
+
+              if (ruleOcrBlockedGroups.length > 0) {
+                let blocked = false;
+                let blockedKeywords: string[] = [];
+                for (const text of ocrTexts) {
+                  const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(text, ruleOcrBlockedGroups, {
+                    caseInsensitive,
+                  });
+                  if (matchedGroups.length > 0) {
+                    blocked = true;
+                    blockedKeywords = matchedKeywords;
+                    break;
+                  }
+                }
+                if (blocked) {
+                  logOcr(`命中规则OCR屏蔽词: ${blockedKeywords.join("、")} | 目标: ${rule.targetChannelId}`);
+                  continue;
+                }
+              }
+
+              if (activeRuleOcrTriggerGroups.length > 0) {
+                const triggered = ocrTexts.some(
+                  (text) =>
+                    matchParsedKeywordGroups(text, activeRuleOcrTriggerGroups, { caseInsensitive }).matchedGroups.length >
+                      0,
+                );
+                if (!triggered) {
+                  logOcr(
+                    `未命中规则OCR触发词: ${formatGroupLabel(activeRuleOcrTriggerGroups)} | 目标: ${rule.targetChannelId}`,
+                  );
+                  continue;
+                }
+              }
+            }
+          }
+
           if (rule.ignoreImages === true && hasImage) {
             logSkip("规则已启用忽略图片", `目标: ${rule.targetChannelId}`);
             continue;
@@ -1799,57 +1862,6 @@ function setupTelegramBridgeClient() {
                 `命中: ${matchedKeywords.join("、")} | 目标: ${rule.targetChannelId}`,
               );
               continue;
-            }
-          }
-
-          const ruleOcrBlockedGroups = parseKeywordGroups(rule.ocrBlockedKeywords);
-          const ruleOcrTriggerGroups = parseKeywordGroups(rule.ocrTriggerKeywords);
-          const activeRuleOcrTriggerGroups =
-            globalOcrTriggerGroups.length > 0 ? [] : ruleOcrTriggerGroups;
-
-          if (ruleOcrBlockedGroups.length > 0 || activeRuleOcrTriggerGroups.length > 0) {
-            if (imageMediaItems.length > 0) {
-              if (!ocrClient) {
-                logOcr(`OCR服务器未配置，规则触发无法生效 | 目标: ${rule.targetChannelId}`);
-                continue;
-              }
-              if (!ocrChecked) {
-                await runOcr();
-                logOcrSummary();
-              }
-
-              if (ruleOcrBlockedGroups.length > 0) {
-                let blocked = false;
-                let blockedKeywords: string[] = [];
-                for (const text of ocrTexts) {
-                  const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(text, ruleOcrBlockedGroups, {
-                    caseInsensitive,
-                  });
-                  if (matchedGroups.length > 0) {
-                    blocked = true;
-                    blockedKeywords = matchedKeywords;
-                    break;
-                  }
-                }
-                if (blocked) {
-                  logOcr(`命中规则OCR屏蔽词: ${blockedKeywords.join("、")} | 目标: ${rule.targetChannelId}`);
-                  continue;
-                }
-              }
-
-              if (activeRuleOcrTriggerGroups.length > 0) {
-                const triggered = ocrTexts.some(
-                  (text) =>
-                    matchParsedKeywordGroups(text, activeRuleOcrTriggerGroups, { caseInsensitive }).matchedGroups.length >
-                      0,
-                );
-                if (!triggered) {
-                  logOcr(
-                    `未命中规则OCR触发词: ${formatGroupLabel(activeRuleOcrTriggerGroups)} | 目标: ${rule.targetChannelId}`,
-                  );
-                  continue;
-                }
-              }
             }
           }
 
@@ -1995,29 +2007,25 @@ function setupTelegramBridgeClient() {
             if (!standbyEnabled || isStandbyMain || !standbyMainChannelId) {
               return false;
             }
-            const elapsed = Date.now() - receivedAt;
-            const delayMs = Math.max(0, standbyCooldownMs - elapsed);
+            const delayMs = standbyCooldownMs;
+
             const runSend = async () => {
               const lastMainTime = getTelegramStandbyLastActive(standbyMainChannelId);
               if (lastMainTime > receivedAt) {
+                const mainAfterMs = Math.max(0, lastMainTime - receivedAt);
                 logSkip(
-                  `主备模式静默: 主频道(${standbyMainChannelId}) 在等待窗口内有消息`,
-                  `目标: ${targetLabel}`,
+                  `主备模式静默: 主频道(${standbyMainChannelId}) 在观察窗口内有新消息`,
+                  `主频道活跃于 ${Math.ceil(mainAfterMs / 1000)}s 内 | 目标: ${targetLabel}`,
                 );
                 return;
               }
               await sendFn();
             };
 
-            if (delayMs <= 0) {
-              await runSend();
-              return true;
-            }
-
             const waitSeconds = Math.ceil(delayMs / 1000);
             const waitMsg =
               `[${forwardTag}] 主备模式等待 | 账号: ${account.name} | 来自: ${senderLabel} | 源: ${sourceLabel} | ` +
-              `主频道: ${standbyMainChannelId} | 等待: ${waitSeconds}s | 目标: ${targetLabel} | 文本: ${contentPreview}`;
+              `主频道: ${standbyMainChannelId} | 观察窗口: ${waitSeconds}s | 目标: ${targetLabel} | 文本: ${contentPreview}`;
             console.log(waitMsg);
             telegramForwardLogger.info(waitMsg);
             const key = `standby:${account.id}:${rule.id || targetLabel}:${receivedAt}:${++telegramStandbyPendingSeq}`;
@@ -3861,7 +3869,7 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
             apiHash: tgAccount.apiHash,
             proxyUrl: tgAccount.proxyUrl,
             role: tgAccount.role,
-            enabled: tgAccount.enabled !== false
+            enabled: telegramForwardEnabled && tgAccount.enabled !== false
           });
         }
       }
@@ -3896,7 +3904,8 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           apiHash: account.telegramApiHash,
           proxyUrl: account.proxyUrl,
           // 优先使用已保存的 enabled 状态，否则默认 false
-          enabled: existingBotEntry ? existingBotEntry.enabled !== false : false,
+          enabled:
+            telegramForwardEnabled && (existingBotEntry ? existingBotEntry.enabled !== false : false),
         });
       }
 
@@ -3918,7 +3927,8 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
           apiHash: account.telegramApiHash,
           proxyUrl: account.proxyUrl,
           // 优先使用已保存的 enabled 状态，否则默认 false
-          enabled: existingClientEntry ? existingClientEntry.enabled !== false : false,
+          enabled:
+            telegramForwardEnabled && (existingClientEntry ? existingClientEntry.enabled !== false : false),
         });
       }
 
@@ -3946,8 +3956,15 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
     }
   };
 
+  const payloadJson = JSON.stringify(configUpdateMessage.params || {});
+  const payloadHash = createHash("md5").update(payloadJson).digest("hex");
+  if (payloadHash === lastTelegramConfigPayloadHash) {
+    return;
+  }
+
   const messageSent = telegramBridgeManager.sendMessage(JSON.stringify(configUpdateMessage));
   if (messageSent) {
+    lastTelegramConfigPayloadHash = payloadHash;
     if (watchSummaryLines.length > 0) {
       const summary = watchSummaryLines.join("\n");
       const summaryHash = createHash("md5").update(summary).digest("hex");

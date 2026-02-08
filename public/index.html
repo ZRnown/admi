@@ -383,19 +383,20 @@
           <div class="space-y-3">
             <label class="inline-flex items-center gap-2 text-sm text-slate-700">
               <input type="checkbox" id="ruleStandbyEnabled" class="h-4 w-4 rounded border-slate-300" onchange="toggleRuleStandbyConfig()">
-              启用备用频道模式（此规则作为备用/B 路）
+              启用备用频道模式（当前规则作为主/A 路）
             </label>
+            <p class="text-[11px] text-slate-500">当前规则源频道（主/A 路）：<span id="ruleStandbyCurrentSource" class="font-mono text-slate-700">-</span></p>
             <div id="ruleStandbyConfigBody" class="w-full space-y-3 opacity-50 pointer-events-none transition-opacity">
               <div>
-                <label class="block text-xs text-slate-600 mb-1">主频道（A 路）</label>
+                <label class="block text-xs text-slate-600 mb-1">备用频道（B 路，需要选择）</label>
                 <div id="ruleStandbyMainInput" class="w-full"></div>
-                <p class="text-[10px] text-slate-500 mt-1">当主频道有消息时，备用频道消息将保持静默。</p>
+                <p class="text-[10px] text-slate-500 mt-1">当当前规则主频道在观察窗口内有消息时，备用频道消息不转发。</p>
               </div>
               <div>
                 <label class="block text-xs text-slate-600 mb-1">静默判定时间（秒）</label>
                 <input type="number" id="ruleStandbyCooldown" value="60" min="1"
                   class="w-28 rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                <p class="text-[10px] text-slate-500 mt-1">主频道在过去 X 秒内活跃，则备用频道不转发。</p>
+                <p class="text-[10px] text-slate-500 mt-1">当前规则主频道在过去 X 秒内活跃，则备用频道不转发。</p>
               </div>
             </div>
           </div>
@@ -6416,6 +6417,9 @@
             return accIndex;
           }, {})
         : null;
+      const telegramIndexByRef = isTelegramForwarding && acc.telegramConfig?.mappings
+        ? new Map(acc.telegramConfig.mappings.map((item, index) => [item, index]))
+        : null;
       const librarySender = forwardingType === 'discord-to-telegram'
         ? getTelegramLibraryAccountById(acc.telegramSenderAccountId)
         : null;
@@ -6443,8 +6447,8 @@
       }
 
       const mappingsHtml = currentPageMappings.map((m, idx) => {
-        const originalIndex = isTelegramForwarding && telegramIndexById
-          ? (telegramIndexById[m.id] ?? idx + startIdx)
+        const originalIndex = isTelegramForwarding
+          ? (telegramIndexByRef?.get(m) ?? (telegramIndexById?.[m?.id] ?? idx + startIdx))
           : idx + startIdx;
         let sourcePlaceholder = '来源频道 ID';
         let targetPlaceholder = '目标频道 ID';
@@ -9246,7 +9250,7 @@
         if (savedGuildId && discordAccountId) {
           channelOptions = getCachedChannelsOptions(discordAccountId, savedGuildId, mainId);
         } else if (mainId) {
-          channelOptions = `<option value="${mainId}" selected>频道 (${mainId}) - 请选择服务器</option>`;
+          channelOptions = `<option value="${mainId}" selected>备用频道 (${mainId}) - 请选择服务器</option>`;
         } else {
           channelOptions = '<option value="">请先选择服务器</option>';
         }
@@ -9266,7 +9270,7 @@
 
       container.innerHTML = `<input type="text" id="ruleStandbyMainId" value="${escapeHtml(mainId)}"
         onchange="updateRuleStandbyMainId(this.value)"
-        placeholder="填写主频道的 Channel ID"
+        placeholder="填写备用频道（B 路）的 Channel ID"
         class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none font-mono">`;
     }
 
@@ -9295,32 +9299,43 @@
 
       const acc = getActiveAccount();
       let mapping;
+      let sourceChannelId = "";
 
       // 根据转发类型获取对应的规则
       if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
         ensureTelegramConfig(acc);
         mapping = acc.telegramConfig?.mappings?.[mappingIndex];
+        sourceChannelId = mapping?.sourceChannelId || "";
       } else if (forwardingType === 'x-to-discord') {
         ensureXConfig(acc);
         mapping = acc.xConfig.mappings[mappingIndex];
+        sourceChannelId = mapping?.sourceChannelId || "";
       } else if (forwardingType === 'truthsocial-to-discord') {
         ensureTruthSocialConfig(acc);
         mapping = acc.truthSocialConfig.mappings[mappingIndex];
+        sourceChannelId = mapping?.sourceChannelId || "";
       } else if (forwardingType === 'discord-to-feishu') {
         const entries = getFeishuMappings(acc);
         const entry = entries[mappingIndex];
         if (entry) {
           const configs = acc.feishuRuleConfigs || {};
           mapping = configs[entry.sourceChannelId] || {};
+          sourceChannelId = entry.sourceChannelId || "";
         }
       } else {
         const mappings = acc.mappings || [];
         mapping = mappings[mappingIndex];
+        sourceChannelId = mapping?.sourceChannelId || "";
       }
 
       if (!mapping) {
         console.error('找不到规则', mappingIndex, forwardingType);
         return;
+      }
+
+      const standbySourceNode = document.getElementById('ruleStandbyCurrentSource');
+      if (standbySourceNode) {
+        standbySourceNode.textContent = sourceChannelId || '未设置';
       }
 
       // 初始化临时数据

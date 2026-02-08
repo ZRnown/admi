@@ -262,6 +262,7 @@ export interface RuleLevelConfig {
   scheduledBroadcast?: ScheduledBroadcastConfig;
   standbyMode?: {
     enabled: boolean;
+    // 历史字段名沿用 mainChannelId，实际语义为备用频道(B路)ID。
     mainChannelId: string;
     cooldownSeconds: number;
     mainGuildId?: string;
