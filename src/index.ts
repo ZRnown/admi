@@ -574,6 +574,51 @@ async function sendTelegramMessageWithFallback(
   return { result, account: primary, usedFallback: false };
 }
 
+
+async function sendDiscordDirectMessageViaBridge(params: {
+  accountId: string;
+  targetType: "channel" | "friend";
+  targetId: string;
+  content: string;
+  uploads?: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean; isVideo?: boolean }>;
+}): Promise<{ success: boolean; targetMessageId?: string; targetChannelId?: string; error?: string }> {
+  if (!discordBridgeClient) {
+    return { success: false, error: "DISCORD_BRIDGE_NOT_READY" };
+  }
+
+  try {
+    if (params.targetType === "friend") {
+      const result = await discordBridgeClient.sendDmMessage({
+        accountId: params.accountId,
+        friendId: params.targetId,
+        content: params.content,
+        uploads: params.uploads,
+      });
+      return {
+        success: result?.success === true,
+        targetMessageId: result?.messageId,
+        targetChannelId: result?.channelId,
+        error: result?.error,
+      };
+    }
+
+    const result = await discordBridgeClient.sendChannelMessage({
+      accountId: params.accountId,
+      channelId: params.targetId,
+      content: params.content,
+      uploads: params.uploads,
+    });
+    return {
+      success: result?.success === true,
+      targetMessageId: result?.messageId,
+      targetChannelId: result?.channelId,
+      error: result?.error,
+    };
+  } catch (error: any) {
+    return { success: false, error: String(error?.message || error) };
+  }
+}
+
 function parseFeishuTarget(raw: any): { mode: "webhook" | "thread"; target: string } | null {
   if (typeof raw === "string") {
     const trimmed = raw.trim();
@@ -1332,6 +1377,16 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
     if (mappings.length > 0) {
       // 使用 mappings 数组构建（支持相同源ID多个webhook）
       for (const mapping of mappings) {
+        const rawSenderType = typeof mapping?.discordSenderType === "string" ? mapping.discordSenderType : "";
+        const senderType =
+          rawSenderType === "account" || rawSenderType === "friend"
+            ? rawSenderType
+            : mapping?.discordSenderAccountId && mapping?.targetFriendId
+              ? "friend"
+              : mapping?.discordSenderAccountId && mapping?.targetChannelId
+                ? "account"
+                : "webhook";
+        if (senderType !== "webhook") continue;
         if (!mapping?.sourceChannelId || !mapping?.targetWebhookUrl) continue;
         const channelId = String(mapping.sourceChannelId);
         const webhookUrl = String(mapping.targetWebhookUrl);
@@ -1412,15 +1467,39 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   }
 
   // 检查是否配置了任何转发规则
-  const hasDiscordWebhooks = Object.keys(webhooks).length > 0;
+  const hasDiscordDirectMappings = mappings.some((mapping: any) => {
+    if (!mapping?.sourceChannelId) return false;
+    const rawSenderType = typeof mapping?.discordSenderType === "string" ? mapping.discordSenderType : "";
+    const senderType =
+      rawSenderType === "account" || rawSenderType === "friend"
+        ? rawSenderType
+        : mapping?.discordSenderAccountId && mapping?.targetFriendId
+          ? "friend"
+          : mapping?.discordSenderAccountId && mapping?.targetChannelId
+            ? "account"
+            : "webhook";
+    if (senderType === "friend") {
+      return !!(mapping.discordSenderAccountId && mapping.targetFriendId);
+    }
+    if (senderType === "account") {
+      return !!(mapping.discordSenderAccountId && mapping.targetChannelId);
+    }
+    return !!mapping.targetWebhookUrl;
+  });
   const hasFeishuWebhooks = Object.keys(feishuWebhooks).length > 0;
   const hasTelegramMappings = (account.telegramConfig?.mappings || []).some(
     (m: any) => m.type === 'discord-to-telegram'
   );
 
   // 如果没有配置任何转发规则（Discord/Feishu/Telegram），且 Discord 转发未关闭，则报错
-  if (!defaultSenderBot && !hasFeishuWebhooks && account.enableDiscordForward !== false && !hasTelegramMappings) {
-    throw new Error("At least one forwarding rule must be configured (Discord webhook, Feishu webhook, or Telegram mapping).");
+  if (
+    !defaultSenderBot &&
+    !hasDiscordDirectMappings &&
+    !hasFeishuWebhooks &&
+    account.enableDiscordForward !== false &&
+    !hasTelegramMappings
+  ) {
+    throw new Error("At least one forwarding rule must be configured (Discord webhook/direct target, Feishu webhook, or Telegram mapping).");
   }
 
   await Promise.all(prepares);
@@ -2771,7 +2850,7 @@ async function startAccount(
     existing.senderBotsBySource = senderBotsBySource;
     (existing as any).feishuSendersBySource = feishuSendersBySource;
     existing.defaultSenderBot = defaultSenderBot;
-    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
+    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, sendDiscordDirectMessageViaBridge);
     refreshScheduledBroadcasts(account, existing, logger);
     if (shouldConnect) {
       await writeStatusForAccount(account.id, "pending", "正在连接...");
@@ -2785,6 +2864,7 @@ async function startAccount(
     const dummyClient = {} as any;
     const bot = new Bot(dummyClient, legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, {
       externalMessageSource: true,
+      discordDirectSender: sendDiscordDirectMessageViaBridge,
     });
 
     const runningInfo: RunningAccount = {
@@ -2969,7 +3049,14 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       
       // 重新创建 Bot 实例
       const legacyConfig = accountToLegacyConfig(currentRunning.account);
-      const bot = new Bot(client, legacyConfig, currentRunning.defaultSenderBot, currentRunning.senderBotsBySource);
+      const bot = new Bot(
+        client,
+        legacyConfig,
+        currentRunning.defaultSenderBot,
+        currentRunning.senderBotsBySource,
+        currentRunning.feishuSendersBySource,
+        { discordDirectSender: sendDiscordDirectMessageViaBridge },
+      );
       
       // 更新运行信息
       currentRunning.client = client;
@@ -3384,7 +3471,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         }
 
         const legacyConfig = accountToLegacyConfig(account);
-        existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
+        existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, sendDiscordDirectMessageViaBridge);
         existing.account = account;
         existing.senderBotsBySource = senderBotsBySource;
         existing.defaultSenderBot = defaultSenderBot;
@@ -3471,7 +3558,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     const legacyConfig = accountToLegacyConfig(account);
-    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
+    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, sendDiscordDirectMessageViaBridge);
     existing.account = account;
     existing.senderBotsBySource = senderBotsBySource;
     existing.defaultSenderBot = defaultSenderBot;

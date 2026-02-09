@@ -228,11 +228,48 @@ function normalizeTelegramMessage(state: string, message?: string): string {
   return "未连接";
 }
 
+function resolveDiscordMappingSenderType(mapping: any): "webhook" | "account" | "friend" {
+  const rawSenderType = typeof mapping?.discordSenderType === "string" ? mapping.discordSenderType.trim() : "";
+  if (rawSenderType === "webhook" || rawSenderType === "account" || rawSenderType === "friend") {
+    return rawSenderType;
+  }
+  const senderAccountId =
+    typeof mapping?.discordSenderAccountId === "string" ? mapping.discordSenderAccountId.trim() : "";
+  const targetFriendId = typeof mapping?.targetFriendId === "string" ? mapping.targetFriendId.trim() : "";
+  const targetChannelId = typeof mapping?.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
+  if (senderAccountId && targetFriendId) return "friend";
+  if (senderAccountId && targetChannelId) return "account";
+  return "webhook";
+}
+
+function hasDiscordMappingTarget(mapping: any): boolean {
+  const senderType = resolveDiscordMappingSenderType(mapping);
+  if (senderType === "friend") {
+    const senderAccountId =
+      typeof mapping?.discordSenderAccountId === "string" ? mapping.discordSenderAccountId.trim() : "";
+    const targetFriendId = typeof mapping?.targetFriendId === "string" ? mapping.targetFriendId.trim() : "";
+    return !!senderAccountId && !!targetFriendId;
+  }
+  if (senderType === "account") {
+    const senderAccountId =
+      typeof mapping?.discordSenderAccountId === "string" ? mapping.discordSenderAccountId.trim() : "";
+    const targetChannelId = typeof mapping?.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
+    return !!senderAccountId && !!targetChannelId;
+  }
+  const targetWebhookUrl = typeof mapping?.targetWebhookUrl === "string" ? mapping.targetWebhookUrl.trim() : "";
+  return !!targetWebhookUrl;
+}
+
 interface FrontendMapping {
   id: string;
   sourceChannelId: string;
   sourceGuildId?: string;
   targetWebhookUrl: string;
+  discordSenderType?: "webhook" | "account" | "friend";
+  discordSenderAccountId?: string;
+  targetGuildId?: string;
+  targetChannelId?: string;
+  targetFriendId?: string;
   note?: string;
   // 是否开启翻译
   translate?: boolean;
@@ -382,9 +419,10 @@ interface FrontendAccount {
 }
 
 interface FrontendDiscordAccountLibrary
-  extends Omit<DiscordAccountLibrary, "guildsCount" | "channelsCount"> {
+  extends Omit<DiscordAccountLibrary, "guildsCount" | "channelsCount" | "friendsCount"> {
   guildsCount?: number | string;
   channelsCount?: number | string;
+  friendsCount?: number | string;
   loginState?: string;
   loginMessage?: string;
 }
@@ -776,8 +814,9 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
   // 优先使用 savedMappings 数组（支持相同源ID的多个规则）
   if (savedMappings.length > 0) {
     for (const savedRule of savedMappings) {
-      if (!savedRule?.sourceChannelId || !savedRule?.targetWebhookUrl) continue;
+      if (!savedRule?.sourceChannelId || !hasDiscordMappingTarget(savedRule)) continue;
       const channelId = String(savedRule.sourceChannelId);
+      const senderType = resolveDiscordMappingSenderType(savedRule);
       const resolvedWatermarks = resolveFrontendWatermarks(
         savedRule.watermarks,
         savedRule.watermark,
@@ -787,7 +826,13 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         id: savedRule.id || channelId,
         sourceChannelId: channelId,
         sourceGuildId: typeof savedRule.sourceGuildId === "string" ? savedRule.sourceGuildId : undefined,
-        targetWebhookUrl: String(savedRule.targetWebhookUrl),
+        targetWebhookUrl: typeof savedRule.targetWebhookUrl === "string" ? savedRule.targetWebhookUrl : "",
+        discordSenderType: senderType,
+        discordSenderAccountId:
+          typeof savedRule.discordSenderAccountId === "string" ? savedRule.discordSenderAccountId : undefined,
+        targetGuildId: typeof savedRule.targetGuildId === "string" ? savedRule.targetGuildId : undefined,
+        targetChannelId: typeof savedRule.targetChannelId === "string" ? savedRule.targetChannelId : undefined,
+        targetFriendId: typeof savedRule.targetFriendId === "string" ? savedRule.targetFriendId : undefined,
         note: savedRule.note || account.channelNotes?.[channelId],
         translateDirection: !account.enableTranslation
           ? "off"
@@ -1048,6 +1093,12 @@ function dtoToDiscordLibraryAccount(
       : typeof dto.channelsCount === "string" && dto.channelsCount.trim() && !isNaN(Number(dto.channelsCount))
         ? Number(dto.channelsCount)
         : base.channelsCount;
+  const friendsCount =
+    typeof dto.friendsCount === "number"
+      ? dto.friendsCount
+      : typeof dto.friendsCount === "string" && dto.friendsCount.trim() && !isNaN(Number(dto.friendsCount))
+        ? Number(dto.friendsCount)
+        : base.friendsCount;
   const loginEnabled =
     dto.loginEnabled === false
       ? false
@@ -1071,6 +1122,7 @@ function dtoToDiscordLibraryAccount(
       typeof dto.lastSyncTime === "string" && dto.lastSyncTime.trim() ? dto.lastSyncTime.trim() : base.lastSyncTime,
     guildsCount,
     channelsCount,
+    friendsCount,
   };
 }
 
@@ -1231,9 +1283,19 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
 
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
-      if (mapping?.sourceChannelId && mapping?.targetWebhookUrl) {
+      if (mapping?.sourceChannelId && hasDiscordMappingTarget(mapping)) {
         const key = String(mapping.sourceChannelId);
-        channelWebhooks[key] = String(mapping.targetWebhookUrl);
+        const senderType = resolveDiscordMappingSenderType(mapping);
+        const targetWebhookUrl =
+          typeof mapping.targetWebhookUrl === "string" ? mapping.targetWebhookUrl.trim() : "";
+        const targetChannelId =
+          typeof mapping.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
+        const targetFriendId =
+          typeof mapping.targetFriendId === "string" ? mapping.targetFriendId.trim() : "";
+
+        if (senderType === "webhook" && targetWebhookUrl) {
+          channelWebhooks[key] = targetWebhookUrl;
+        }
         if (typeof mapping.note === "string" && mapping.note.trim()) {
           channelNotes[key] = mapping.note.trim();
         }
@@ -1267,7 +1329,13 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           id: mapping.id || randomUUID(),
           sourceChannelId: key,
           sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
-          targetWebhookUrl: String(mapping.targetWebhookUrl),
+          targetWebhookUrl,
+          discordSenderType: senderType,
+          discordSenderAccountId:
+            typeof mapping.discordSenderAccountId === "string" ? mapping.discordSenderAccountId.trim() : undefined,
+          targetGuildId: typeof mapping.targetGuildId === "string" ? mapping.targetGuildId.trim() : undefined,
+          targetChannelId: targetChannelId || undefined,
+          targetFriendId: targetFriendId || undefined,
           note: mapping.note,
           translateDirection: mapping.translateDirection,
           longMessage: mapping.longMessage,

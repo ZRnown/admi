@@ -34,6 +34,26 @@ export interface DiscordBridgeUpdateConfigParams {
   accounts: DiscordBridgeAccountConfig[];
 }
 
+export interface DiscordBridgeUpload {
+  url?: string;
+  localPath?: string;
+  filename?: string;
+}
+
+export interface DiscordBridgeSendChannelParams {
+  accountId: string;
+  channelId: string;
+  content?: string;
+  uploads?: DiscordBridgeUpload[];
+}
+
+export interface DiscordBridgeSendDmParams {
+  accountId: string;
+  friendId: string;
+  content?: string;
+  uploads?: DiscordBridgeUpload[];
+}
+
 export class DiscordBridgeClient extends EventEmitter {
   private process: any;
   private pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>;
@@ -158,5 +178,17 @@ export class DiscordBridgeClient extends EventEmitter {
 
   async updateConfig(params: DiscordBridgeUpdateConfigParams): Promise<{ success: boolean; accounts?: number }> {
     return this._sendRequest("updateConfig", params);
+  }
+
+  async sendChannelMessage(
+    params: DiscordBridgeSendChannelParams,
+  ): Promise<{ success: boolean; messageId?: string; channelId?: string; error?: string }> {
+    return this._sendRequest("sendChannelMessage", params);
+  }
+
+  async sendDmMessage(
+    params: DiscordBridgeSendDmParams,
+  ): Promise<{ success: boolean; messageId?: string; channelId?: string; error?: string }> {
+    return this._sendRequest("sendDmMessage", params);
   }
 }

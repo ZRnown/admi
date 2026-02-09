@@ -89,6 +89,7 @@ export interface DiscordAccountLibrary {
   lastSyncTime?: string;
   guildsCount?: number;
   channelsCount?: number;
+  friendsCount?: number;
 }
 
 export interface XAccountLibrary {
@@ -276,6 +277,11 @@ export interface DiscordMappingRule extends RuleLevelConfig {
   sourceChannelId: string;
   sourceGuildId?: string;
   targetWebhookUrl: string;
+  discordSenderType?: "webhook" | "account" | "friend";
+  discordSenderAccountId?: string;
+  targetGuildId?: string;
+  targetChannelId?: string;
+  targetFriendId?: string;
   inputMode?: "manual" | "select";
   note?: string;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
@@ -1006,6 +1012,7 @@ function normalizeDiscordAccountLibrary(raw: any): DiscordAccountLibrary[] {
         lastSyncTime: typeof item.lastSyncTime === "string" ? item.lastSyncTime : undefined,
         guildsCount: typeof item.guildsCount === "number" ? item.guildsCount : undefined,
         channelsCount: typeof item.channelsCount === "number" ? item.channelsCount : undefined,
+        friendsCount: typeof item.friendsCount === "number" ? item.friendsCount : undefined,
       };
     })
     .filter(Boolean) as DiscordAccountLibrary[];
@@ -1208,7 +1215,7 @@ function applyForwardingTypeRestrictions(
   if (!allowedTypes || allowedTypes.length === 0) return accounts;
   return accounts.map((account) => {
     const current = account.forwardingType;
-    if (current && FORWARDING_TYPES.includes(current as ForwardingType)) {
+    if (current && allowedTypes.includes(current as ForwardingType)) {
       return account;
     }
     return { ...account, forwardingType: allowedTypes[0] };
@@ -1349,6 +1356,27 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   // 处理 Discord->Discord mappings（保留规则级别配置）
   const mappings: DiscordMappingRule[] = Array.isArray(input?.mappings)
     ? input.mappings.map((m: any) => {
+        const rawSenderType = typeof m.discordSenderType === "string" ? m.discordSenderType : "";
+        const discordSenderAccountId =
+          typeof m.discordSenderAccountId === "string" && m.discordSenderAccountId.trim()
+            ? m.discordSenderAccountId.trim()
+            : undefined;
+        const targetChannelId =
+          typeof m.targetChannelId === "string" && m.targetChannelId.trim()
+            ? m.targetChannelId.trim()
+            : undefined;
+        const targetFriendId =
+          typeof m.targetFriendId === "string" && m.targetFriendId.trim()
+            ? m.targetFriendId.trim()
+            : undefined;
+        let discordSenderType: "webhook" | "account" | "friend" | undefined;
+        if (rawSenderType === "webhook" || rawSenderType === "account" || rawSenderType === "friend") {
+          discordSenderType = rawSenderType;
+        } else if (discordSenderAccountId && targetFriendId) {
+          discordSenderType = "friend";
+        } else if (discordSenderAccountId && targetChannelId) {
+          discordSenderType = "account";
+        }
         const watermark = normalizeWatermarkConfig(m.watermark);
         const watermarkSecondary = normalizeWatermarkConfig(m.watermarkSecondary);
         const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(m.watermarks), watermark, watermarkSecondary);
@@ -1357,6 +1385,14 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
           sourceGuildId: typeof m.sourceGuildId === "string" ? m.sourceGuildId : undefined,
           targetWebhookUrl: typeof m.targetWebhookUrl === "string" ? m.targetWebhookUrl : "",
+          discordSenderType,
+          discordSenderAccountId,
+          targetGuildId:
+            typeof m.targetGuildId === "string" && m.targetGuildId.trim()
+              ? m.targetGuildId.trim()
+              : undefined,
+          targetChannelId,
+          targetFriendId,
           inputMode: m.inputMode === "manual" ? "manual" : m.inputMode === "select" ? "select" : undefined,
           note: typeof m.note === "string" ? m.note : undefined,
           translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,

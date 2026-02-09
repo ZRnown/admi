@@ -1879,6 +1879,10 @@
     let cachedTelegramToDiscordGuildsLoading = {};
     let cachedTelegramToDiscordChannels = {};  // { accountId:guildId: channels[] }
 
+    // 缓存 Discord 好友列表（用于 Discord→Discord 好友发送）
+    let cachedDiscordFriends = {}; // { accountId: friends[] }
+    let cachedDiscordFriendsLoading = {};
+
     // 全局规则填写模式 (manual: 手动输入, select: 从列表选择)
     let globalRuleInputMode = 'select';
 
@@ -2009,6 +2013,9 @@
 
     // 获取缓存的 Telegram 对话选项HTML
     function getCachedTelegramDialogsOptions(accountId, selectedId) {
+      if (!accountId) {
+        return '<option value="">请先选择 Telegram 发送账号</option>';
+      }
       const dialogs = cachedTelegramDialogs[accountId] || [];
       if (dialogs.length === 0) {
         if (selectedId) {
@@ -2169,19 +2176,32 @@
       const mode = getRuleInputMode(m);
       const telegramSenderAccountId = acc.telegramSenderAccountId || '';
       const discordSenderAccountId = acc.discordSenderAccountId || '';
-      const savedTargetId = m.targetChannelId || m.targetWebhookUrl || '';
+      const savedTargetId = m.targetFriendId || m.targetChannelId || m.targetWebhookUrl || '';
 
-      // Discord→Discord: 支持 Webhook 或账号发送
+      // Discord→Discord: 支持 Webhook / 账号频道 / 发送到好友
       if (forwardingType === 'discord-to-discord') {
-        const senderType = m.discordSenderType || 'webhook';
+        const senderType = (m.discordSenderType === 'account' || m.discordSenderType === 'friend') ? m.discordSenderType : 'webhook';
         const senderAccountId = m.discordSenderAccountId || '';
         const targetGuildId = m.targetGuildId || '';
+        const targetFriendId = m.targetFriendId || '';
 
-        // 发送方式选择器
-        let html = `<select onchange="updateDiscordToDiscordSenderType(${idx}, this.value)"
-          class="w-24 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-          <option value="webhook" ${senderType === 'webhook' ? 'selected' : ''}>Webhook</option>
-          <option value="account" ${senderType === 'account' ? 'selected' : ''}>账号发送</option>
+        // 发送到好友时让这一行占满可用空间
+        let html = `<div class="flex-1 min-w-[24rem] flex items-center gap-2">`;
+
+        // 发送方式选择器（好友模式下不展示 Webhook）
+        const senderModeOptions = senderType === 'friend'
+          ? `
+            <option value="account" ${senderType === 'account' ? 'selected' : ''}>账号发送</option>
+            <option value="friend" ${senderType === 'friend' ? 'selected' : ''}>发送到好友</option>
+          `
+          : `
+            <option value="webhook" ${senderType === 'webhook' ? 'selected' : ''}>Webhook</option>
+            <option value="account" ${senderType === 'account' ? 'selected' : ''}>账号发送</option>
+            <option value="friend" ${senderType === 'friend' ? 'selected' : ''}>发送到好友</option>
+          `;
+        html += `<select onchange="updateDiscordToDiscordSenderType(${idx}, this.value)"
+          class="min-w-[8rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+          ${senderModeOptions}
         </select>`;
 
         if (senderType === 'webhook') {
@@ -2190,53 +2210,75 @@
             onchange="updateMapping(${idx}, 'targetWebhookUrl', this.value)"
             placeholder="${placeholder}"
             class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
-        } else {
-          // 账号发送模式：显示账号选择和频道选择
-          const discordAccounts = state.discordAccounts || [];
-          html += `<select onchange="updateDiscordToDiscordAccount(${idx}, this.value)"
-            class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-            <option value="">选择账号</option>
-            ${discordAccounts.map(a => `<option value="${a.id}" ${senderAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name || 'Discord账号')}</option>`).join('')}
-          </select>`;
+          html += `</div>`;
+          return html;
+        }
 
+        const discordAccounts = state.discordAccounts || [];
+        html += `<select onchange="updateDiscordToDiscordAccount(${idx}, this.value)"
+          class="min-w-[13rem] flex-1 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+          <option value="">选择账号</option>
+          ${discordAccounts.map(a => `<option value="${a.id}" ${senderAccountId === a.id ? 'selected' : ''}>${escapeHtml(getDiscordLibraryLabel(a))}</option>`).join('')}
+        </select>`;
+
+        if (senderType === 'friend') {
+          if (senderAccountId && !cachedDiscordFriends[senderAccountId] && !cachedDiscordFriendsLoading[senderAccountId]) {
+            fetchDiscordFriendsForRule(senderAccountId).then(() => render());
+          }
           if (mode === 'select') {
-            // 加载服务器列表（如果已选择账号）
-            if (senderAccountId && !cachedTelegramToDiscordGuilds[senderAccountId] && !cachedTelegramToDiscordGuildsLoading[senderAccountId]) {
-              fetchTelegramToDiscordGuilds(senderAccountId).then(() => render());
-            }
-            const guilds = senderAccountId ? (cachedTelegramToDiscordGuilds[senderAccountId] || []) : [];
-            html += `<select onchange="updateDiscordToDiscordGuild(${idx}, this.value)"
-              class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="">选择服务器</option>
-              ${guilds.map(g => `<option value="${g.id}" ${targetGuildId === g.id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
-            </select>`;
-
-            // 加载频道列表（如果已选择服务器）
-            if (senderAccountId && targetGuildId) {
-              const cacheKey = `${senderAccountId}:${targetGuildId}`;
-              if (!cachedTelegramToDiscordChannels[cacheKey] && !window[`loadingD2DChannels_${cacheKey}`]) {
-                window[`loadingD2DChannels_${cacheKey}`] = true;
-                fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).then(() => {
-                  delete window[`loadingD2DChannels_${cacheKey}`];
-                  render();
-                });
-              }
-            }
-            const cacheKey = `${senderAccountId}:${targetGuildId}`;
-            const channels = (senderAccountId && targetGuildId) ? (cachedTelegramToDiscordChannels[cacheKey] || []) : [];
-            html += `<select onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
-              class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="">选择频道</option>
-              ${channels.filter(ch => ch.type === 0 || ch.type === 5).map(ch => `<option value="${ch.id}" ${(m.targetChannelId || '') === ch.id ? 'selected' : ''}># ${escapeHtml(ch.name)}</option>`).join('')}
+            html += `<select onchange="updateDiscordToDiscordFriend(${idx}, this.value)"
+              class="min-w-[16rem] flex-[2] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+              ${getCachedDiscordFriendsOptions(senderAccountId, targetFriendId)}
             </select>`;
           } else {
-            // 手动输入模式
-            html += `<input type="text" value="${m.targetChannelId || ''}"
-              onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
-              placeholder="频道 ID"
-              class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
+            html += `<input type="text" value="${targetFriendId}"
+              onchange="updateDiscordToDiscordFriend(${idx}, this.value)"
+              placeholder="好友 ID"
+              class="min-w-[16rem] flex-[2] px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
           }
+          html += `</div>`;
+          return html;
         }
+
+        // 账号发送到频道
+        if (mode === 'select') {
+          // 加载服务器列表（如果已选择账号）
+          if (senderAccountId && !cachedTelegramToDiscordGuilds[senderAccountId] && !cachedTelegramToDiscordGuildsLoading[senderAccountId]) {
+            fetchTelegramToDiscordGuilds(senderAccountId).then(() => render());
+          }
+          const guilds = senderAccountId ? (cachedTelegramToDiscordGuilds[senderAccountId] || []) : [];
+          html += `<select onchange="updateDiscordToDiscordGuild(${idx}, this.value)"
+            class="min-w-[10rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+            <option value="">选择服务器</option>
+            ${guilds.map(g => `<option value="${g.id}" ${targetGuildId === g.id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+          </select>`;
+
+          // 加载频道列表（如果已选择服务器）
+          if (senderAccountId && targetGuildId) {
+            const cacheKey = `${senderAccountId}:${targetGuildId}`;
+            if (!cachedTelegramToDiscordChannels[cacheKey] && !window[`loadingD2DChannels_${cacheKey}`]) {
+              window[`loadingD2DChannels_${cacheKey}`] = true;
+              fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).then(() => {
+                delete window[`loadingD2DChannels_${cacheKey}`];
+                render();
+              });
+            }
+          }
+          const cacheKey = `${senderAccountId}:${targetGuildId}`;
+          const channels = (senderAccountId && targetGuildId) ? (cachedTelegramToDiscordChannels[cacheKey] || []) : [];
+          html += `<select onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
+            class="min-w-[12rem] flex-1 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+            <option value="">选择频道</option>
+            ${channels.filter(ch => ch.type === 0 || ch.type === 5).map(ch => `<option value="${ch.id}" ${(m.targetChannelId || '') === ch.id ? 'selected' : ''}># ${escapeHtml(ch.name)}</option>`).join('')}
+          </select>`;
+        } else {
+          // 手动输入模式
+          html += `<input type="text" value="${m.targetChannelId || ''}"
+            onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
+            placeholder="频道 ID"
+            class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
+        }
+        html += `</div>`;
         return html;
       }
 
@@ -2273,7 +2315,7 @@
           html += `<select onchange="updateTelegramToDiscordAccount(${idx}, this.value)"
             class="flex-1 min-w-[12rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
             <option value="">选择账号</option>
-            ${discordAccounts.map(a => `<option value="${a.id}" ${senderAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name || 'Discord账号')}</option>`).join('')}
+            ${discordAccounts.map(a => `<option value="${a.id}" ${senderAccountId === a.id ? 'selected' : ''}>${escapeHtml(getDiscordLibraryLabel(a))}</option>`).join('')}
           </select>`;
 
           if (senderAccountId && mode === 'select') {
@@ -2316,9 +2358,9 @@
       }
 
       // Discord→Telegram 或 Telegram→Telegram: 目标是 Telegram 对话
-      if ((forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') && mode === 'select' && telegramSenderAccountId) {
+      if ((forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') && mode === 'select') {
         // 加载 Telegram 对话列表
-        if (!cachedTelegramDialogs[telegramSenderAccountId] && !cachedTelegramDialogsLoading[telegramSenderAccountId]) {
+        if (telegramSenderAccountId && !cachedTelegramDialogs[telegramSenderAccountId] && !cachedTelegramDialogsLoading[telegramSenderAccountId]) {
           fetchTelegramDialogsForRule(telegramSenderAccountId).then(() => render());
         }
         return `<select onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
@@ -2424,6 +2466,89 @@
       }
     }
 
+
+    // Discord→Discord: 获取好友/私聊联系人列表
+    async function fetchDiscordFriendsForRule(accountId) {
+      if (!accountId) return [];
+      if (Array.isArray(cachedDiscordFriends[accountId]) && cachedDiscordFriends[accountId].length > 0) {
+        return cachedDiscordFriends[accountId];
+      }
+      if (cachedDiscordFriendsLoading[accountId]) return [];
+      cachedDiscordFriendsLoading[accountId] = true;
+
+      const readFriendsCache = async () => {
+        const res = await fetch('/api/metadata/discord/friends', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId })
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data.friends) ? data.friends : [];
+      };
+
+      try {
+        // 先读本地缓存
+        let friends = await readFriendsCache();
+
+        // 缓存为空时，自动触发一次同步，避免用户必须手动点“更新”
+        if (friends.length === 0) {
+          const account = (state.discordAccounts || []).find(item => item.id === accountId);
+          if (account?.token) {
+            const syncRes = await fetch('/api/metadata/discord/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                accountId,
+                token: account.token,
+                type: account.type || 'selfbot',
+                proxyUrl: account.proxyUrl || ''
+              })
+            });
+            const syncData = await syncRes.json().catch(() => ({}));
+            if (!syncRes.ok || syncData?.error) {
+              console.warn('自动同步好友失败', syncData?.error || syncData?.detail || syncRes.status);
+            }
+            friends = await readFriendsCache();
+          }
+        }
+
+        cachedDiscordFriends[accountId] = friends;
+        return friends;
+      } catch (e) {
+        console.error('获取好友列表失败', e);
+        return [];
+      } finally {
+        cachedDiscordFriendsLoading[accountId] = false;
+      }
+    }
+
+    function getCachedDiscordFriendsOptions(accountId, selectedId) {
+      if (!accountId) {
+        return '<option value="">请先选择账号</option>';
+      }
+      const friends = cachedDiscordFriends[accountId] || [];
+      if (friends.length === 0) {
+        if (selectedId) {
+          return `<option value="${selectedId}" selected>加载好友中... (${selectedId})</option>`;
+        }
+        return '<option value="">暂无好友/私聊联系人（可先点更新）</option>';
+      }
+      let html = '<option value="">选择好友</option>';
+      friends.forEach(friend => {
+        const tag = friend.tag || friend.username || friend.globalName || friend.id;
+        const label = friend.globalName && friend.username
+          ? `${friend.globalName} (@${friend.username})`
+          : tag;
+        const icon = friend.type === 'friend' ? '👤' : '💬';
+        html += `<option value="${friend.id}" ${String(friend.id) === String(selectedId) ? 'selected' : ''}>${icon} ${escapeHtml(label)}</option>`;
+      });
+      if (selectedId && !friends.some(friend => String(friend.id) === String(selectedId))) {
+        html += `<option value="${selectedId}" selected>未知好友 (${selectedId})</option>`;
+      }
+      return html;
+    }
+
     // Telegram→Discord: 更新发送方式
     function updateTelegramToDiscordSenderType(idx, value) {
       const acc = getActiveAccount();
@@ -2473,8 +2598,16 @@
         delete acc.mappings[idx].discordSenderAccountId;
         delete acc.mappings[idx].targetGuildId;
         delete acc.mappings[idx].targetChannelId;
-      } else {
+        delete acc.mappings[idx].targetFriendId;
+      } else if (value === 'account') {
         delete acc.mappings[idx].targetWebhookUrl;
+        delete acc.mappings[idx].targetFriendId;
+      } else if (value === 'friend') {
+        delete acc.mappings[idx].targetWebhookUrl;
+        delete acc.mappings[idx].targetGuildId;
+        delete acc.mappings[idx].targetChannelId;
+      } else {
+        acc.mappings[idx].discordSenderType = 'webhook';
       }
       saveConfig();
       render();
@@ -2487,6 +2620,15 @@
       acc.mappings[idx].discordSenderAccountId = accountId;
       acc.mappings[idx].targetGuildId = '';
       acc.mappings[idx].targetChannelId = '';
+      acc.mappings[idx].targetFriendId = '';
+      saveConfig();
+      render();
+    }
+
+    function updateDiscordToDiscordFriend(idx, friendId) {
+      const acc = getActiveAccount();
+      if (!acc?.mappings?.[idx]) return;
+      acc.mappings[idx].targetFriendId = friendId;
       saveConfig();
       render();
     }
@@ -2814,7 +2956,8 @@
           body: JSON.stringify({
             accountId,
             token,
-            type: account.type || 'bot'
+            type: account.type || 'bot',
+            proxyUrl: account.proxyUrl || ''
           })
         });
         const data = await res.json();
@@ -2841,7 +2984,10 @@
           }
           account.guildsCount = Number.isFinite(data.guildsCount) ? data.guildsCount : 0;
           account.channelsCount = Number.isFinite(data.channelsCount) ? data.channelsCount : 0;
+          account.friendsCount = Number.isFinite(data.friendsCount) ? data.friendsCount : 0;
           account.lastSyncTime = new Date().toISOString();
+          delete cachedDiscordFriends[accountId];
+          delete cachedDiscordFriendsLoading[accountId];
           await saveConfigImmediate();
           render();
         }
@@ -4975,9 +5121,10 @@
       if (kind === 'discord') {
         const guildsCount = Number.isFinite(account.guildsCount) ? account.guildsCount : null;
         const channelsCount = Number.isFinite(account.channelsCount) ? account.channelsCount : null;
-        const summary = guildsCount === null && channelsCount === null
+        const friendsCount = Number.isFinite(account.friendsCount) ? account.friendsCount : null;
+        const summary = guildsCount === null && channelsCount === null && friendsCount === null
           ? '未同步'
-          : `服务器 ${guildsCount ?? 0} / 频道 ${channelsCount ?? 0}`;
+          : `服务器 ${guildsCount ?? 0} / 频道 ${channelsCount ?? 0} / 联系人 ${friendsCount ?? 0}`;
         body.innerHTML = `
           <div class="space-y-4">
             <div class="flex items-center justify-between bg-slate-50 rounded-lg p-3">
@@ -4986,12 +5133,24 @@
                 <div class="text-xs text-slate-500 mt-1">${summary} · 上次同步：${lastSyncLabel}</div>
               </div>
             </div>
-            <div id="syncInfoGuildsList" class="space-y-2">
-              <div class="text-slate-400 text-center py-4">正在加载服务器列表...</div>
+            <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <div class="border border-slate-200 rounded-lg p-3 bg-white">
+                <div class="text-xs font-medium text-slate-600 mb-2">服务器与频道</div>
+                <div id="syncInfoGuildsList" class="space-y-2">
+                  <div class="text-slate-400 text-center py-4">正在加载服务器列表...</div>
+                </div>
+              </div>
+              <div class="border border-slate-200 rounded-lg p-3 bg-white">
+                <div class="text-xs font-medium text-slate-600 mb-2">联系人</div>
+                <div id="syncInfoContactsList" class="space-y-2">
+                  <div class="text-slate-400 text-center py-4">正在加载联系人...</div>
+                </div>
+              </div>
             </div>
           </div>
         `;
         loadDiscordGuildsForSyncInfo(id);
+        loadDiscordContactsForSyncInfo(id);
         return;
       }
       if (kind === 'telegram') {
@@ -5054,6 +5213,64 @@
             <div id="syncInfoChannels-${accountId}-${guild.id}" class="hidden border-t border-slate-100"></div>
           </div>
         `).join('');
+      } catch (e) {
+        container.innerHTML = `<div class="text-red-500 text-center py-4">加载失败: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+
+    async function loadDiscordContactsForSyncInfo(accountId) {
+      const container = document.getElementById('syncInfoContactsList');
+      if (!container) return;
+
+      try {
+        const res = await fetch('/api/metadata/discord/friends', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          container.innerHTML = `<div class="text-red-500 text-center py-4">${escapeHtml(data.error)}</div>`;
+          return;
+        }
+
+        const contacts = Array.isArray(data.friends) ? data.friends : [];
+        if (contacts.length === 0) {
+          container.innerHTML = '<div class="text-slate-400 text-center py-4">暂无联系人，请先点击同步</div>';
+          return;
+        }
+
+        const friends = contacts.filter((item) => item && item.type === 'friend');
+        const dmContacts = contacts.filter((item) => item && item.type !== 'friend');
+
+        const renderSection = (title, list, copyLabel, icon) => {
+          if (!list.length) return '';
+          return `
+            <div class="space-y-1">
+              <div class="text-xs text-slate-500 font-medium">${title} (${list.length})</div>
+              ${list.map((item) => {
+                const displayName = item.globalName && item.username
+                  ? `${item.globalName} (@${item.username})`
+                  : (item.tag || item.username || item.globalName || item.id);
+                return `
+                  <div class="flex items-center justify-between rounded bg-slate-50 p-2 text-xs">
+                    <span class="text-slate-700 truncate pr-2">${icon} ${escapeHtml(displayName)}</span>
+                    <span class="text-slate-400 font-mono cursor-pointer hover:text-indigo-500 transition" onclick="copyToClipboard('${item.id}', '${copyLabel}')" title="点击复制">${item.id}</span>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `;
+        };
+
+        container.innerHTML = `
+          <div class="space-y-3 max-h-72 overflow-y-auto pr-1">
+            ${renderSection('好友', friends, '好友ID', '👤')}
+            ${renderSection('私聊联系人', dmContacts, '联系人ID', '💬')}
+          </div>
+        `;
       } catch (e) {
         container.innerHTML = `<div class="text-red-500 text-center py-4">加载失败: ${escapeHtml(e.message)}</div>`;
       }
@@ -5327,8 +5544,9 @@
           if (item.kind === 'discord') {
             const guildsCount = Number.isFinite(item.account.guildsCount) ? item.account.guildsCount : null;
             const channelsCount = Number.isFinite(item.account.channelsCount) ? item.account.channelsCount : null;
-            if (guildsCount === null && channelsCount === null) return '未同步';
-            return `服务器 ${guildsCount ?? 0} / 频道 ${channelsCount ?? 0}`;
+            const friendsCount = Number.isFinite(item.account.friendsCount) ? item.account.friendsCount : null;
+            if (guildsCount === null && channelsCount === null && friendsCount === null) return '未同步';
+            return `服务器 ${guildsCount ?? 0} / 频道 ${channelsCount ?? 0} / 联系人 ${friendsCount ?? 0}`;
           }
           if (item.kind === 'telegram') {
             const dialogsCount = Number.isFinite(item.account.dialogsCount) ? item.account.dialogsCount : null;
@@ -6455,6 +6673,9 @@
         let arrowIcon = '→';
         const ruleInputMode = getRuleInputMode(m);
         const senderType = getEffectiveTelegramSenderType(acc, forwardingType, m);
+        const d2dSenderType = forwardingType === 'discord-to-discord'
+          ? ((m.discordSenderType === 'account' || m.discordSenderType === 'friend') ? m.discordSenderType : 'webhook')
+          : '';
 
         if (forwardingType === 'discord-to-discord') {
           sourcePlaceholder = 'Discord 频道/子区 ID';
@@ -6494,7 +6715,7 @@
             ${renderSourceChannelInput(acc, m, originalIndex, forwardingType, sourcePlaceholder)}
             <span class="text-slate-300">${arrowIcon}</span>
             ${renderTargetChannelInput(acc, m, originalIndex, forwardingType, targetPlaceholder)}
-            ${forwardingType === 'discord-to-discord' ? `
+            ${forwardingType === 'discord-to-discord' && d2dSenderType !== 'friend' ? `
             <select onchange="updateMappingRelay(${originalIndex}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="">Webhook 默认</option>
               ${(acc.botRelays || []).map(r => `<option value="${r.id}" ${acc.channelRelayMap?.[m.sourceChannelId || ''] === r.id ? 'selected' : ''}>${r.name || '中转机器人'}</option>`).join('')}
@@ -10242,7 +10463,18 @@
             acc.channelTranslate[sourceId] = true;
           }
         }
-        const immediateFields = ['sourceChannelId', 'sourceGuildId', 'targetChannelId', 'targetWebhookUrl', 'note', 'inputMode'];
+        const immediateFields = [
+          'sourceChannelId',
+          'sourceGuildId',
+          'targetChannelId',
+          'targetWebhookUrl',
+          'targetFriendId',
+          'discordSenderType',
+          'discordSenderAccountId',
+          'targetGuildId',
+          'note',
+          'inputMode'
+        ];
         if (immediateFields.includes(field)) {
           saveConfigImmediate();
         } else {
@@ -11895,15 +12127,20 @@
           });
 
           if (Array.isArray(data.discordAccounts)) {
-            if (!Array.isArray(state.discordAccounts) || state.discordAccounts.length !== data.discordAccounts.length) {
-              state.discordAccounts = data.discordAccounts;
+            const remoteDiscordAccounts = data.discordAccounts;
+            const localDiscordAccounts = Array.isArray(state.discordAccounts) ? state.discordAccounts : [];
+            const discordIdSetMatched =
+              localDiscordAccounts.length === remoteDiscordAccounts.length &&
+              localDiscordAccounts.every((acc) => remoteDiscordAccounts.some((remote) => remote.id === acc.id));
+
+            // 账号集合发生变化（即使数量相同）时直接替换，避免 UI 保留已删除/旧实例账号
+            if (!discordIdSetMatched) {
+              state.discordAccounts = remoteDiscordAccounts;
               shouldRender = true;
             } else {
-              data.discordAccounts.forEach((remoteAcc) => {
-                const localAcc = state.discordAccounts.find((acc) => acc.id === remoteAcc.id);
+              remoteDiscordAccounts.forEach((remoteAcc) => {
+                const localAcc = localDiscordAccounts.find((acc) => acc.id === remoteAcc.id);
                 if (!localAcc) {
-                  state.discordAccounts.push(remoteAcc);
-                  shouldRender = true;
                   return;
                 }
                 const remoteState = remoteAcc.loginState || 'idle';
@@ -11942,6 +12179,9 @@
                 if (typeof remoteAcc.channelsCount === 'number') {
                   localAcc.channelsCount = remoteAcc.channelsCount;
                 }
+                if (typeof remoteAcc.friendsCount === 'number') {
+                  localAcc.friendsCount = remoteAcc.friendsCount;
+                }
                 if (typeof remoteAcc.lastSyncTime === 'string') {
                   localAcc.lastSyncTime = remoteAcc.lastSyncTime;
                 }
@@ -11958,15 +12198,19 @@
           }
 
           if (Array.isArray(data.telegramAccounts)) {
-            if (!Array.isArray(state.telegramAccounts) || state.telegramAccounts.length !== data.telegramAccounts.length) {
-              state.telegramAccounts = data.telegramAccounts;
+            const remoteTelegramAccounts = data.telegramAccounts;
+            const localTelegramAccounts = Array.isArray(state.telegramAccounts) ? state.telegramAccounts : [];
+            const telegramIdSetMatched =
+              localTelegramAccounts.length === remoteTelegramAccounts.length &&
+              localTelegramAccounts.every((acc) => remoteTelegramAccounts.some((remote) => remote.id === acc.id));
+
+            if (!telegramIdSetMatched) {
+              state.telegramAccounts = remoteTelegramAccounts;
               shouldRender = true;
             } else {
-              data.telegramAccounts.forEach((remoteAcc) => {
-                const localAcc = state.telegramAccounts.find((acc) => acc.id === remoteAcc.id);
+              remoteTelegramAccounts.forEach((remoteAcc) => {
+                const localAcc = localTelegramAccounts.find((acc) => acc.id === remoteAcc.id);
                 if (!localAcc) {
-                  state.telegramAccounts.push(remoteAcc);
-                  shouldRender = true;
                   return;
                 }
                 const remoteState = remoteAcc.loginState || 'idle';

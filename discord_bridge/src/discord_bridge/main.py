@@ -2,6 +2,12 @@ import asyncio
 import sys
 import os
 import inspect
+import tempfile
+import shutil
+from pathlib import Path
+from urllib.parse import urlparse
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from typing import Any, Dict, Optional, Set
 
 from loguru import logger
@@ -364,7 +370,147 @@ class DiscordBridge:
 
     async def start(self):
         self.ipc_server.register_handler("updateConfig", self._handle_update_config)
+        self.ipc_server.register_handler("sendChannelMessage", self._handle_send_channel_message)
+        self.ipc_server.register_handler("sendDmMessage", self._handle_send_dm_message)
         await self.ipc_server.start()
+
+    def _resolve_session(self, account_id: str) -> DiscordAccountSession:
+        token = self.account_to_token.get(account_id)
+        if not token:
+            raise RuntimeError("ACCOUNT_NOT_CONNECTED")
+        session = self.sessions_by_token.get(token)
+        if not session or not session.client:
+            raise RuntimeError("ACCOUNT_SESSION_NOT_READY")
+        return session
+
+    def _download_upload_to_path(self, url: str, path: str, auth_header: Optional[str] = None) -> None:
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "*/*",
+            "Referer": "https://discord.com/",
+        }
+        if auth_header:
+            headers["Authorization"] = auth_header
+
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=30) as response, open(path, "wb") as out:
+            shutil.copyfileobj(response, out)
+
+    async def _resolve_upload_files(self, uploads: Any, session: Optional[DiscordAccountSession] = None):
+        files = []
+        temp_files = []
+        for item in uploads or []:
+            if not isinstance(item, dict):
+                continue
+            filename = str(item.get("filename") or "").strip() or None
+            local_path = str(item.get("localPath") or "").strip()
+            url = str(item.get("url") or "").strip()
+            if not local_path and not url:
+                continue
+            path_to_use = local_path
+            if not path_to_use and url:
+                parsed = urlparse(url)
+                suffix = Path(parsed.path).suffix or ".bin"
+                fd, tmp_path = tempfile.mkstemp(prefix="discord_bridge_", suffix=suffix)
+                os.close(fd)
+
+                host = (parsed.hostname or "").lower()
+                is_discord_host = "discord.com" in host or "discordapp.com" in host
+                auth_header = None
+                if session and is_discord_host and session.token:
+                    auth_header = f"Bot {session.token}" if session.client_type == "bot" else session.token
+
+                try:
+                    await asyncio.to_thread(self._download_upload_to_path, url, tmp_path, None)
+                except HTTPError as exc:
+                    # Discord CDN 某些链接会拒绝匿名下载，回退到带 Authorization 重试
+                    if exc.code == 403 and auth_header:
+                        logger.warning(f"Upload download got 403, retry with auth header: {url[:120]}")
+                        await asyncio.to_thread(self._download_upload_to_path, url, tmp_path, auth_header)
+                    else:
+                        raise
+
+                path_to_use = tmp_path
+                temp_files.append(tmp_path)
+            if not path_to_use:
+                continue
+            files.append(discord.File(path_to_use, filename=filename or Path(path_to_use).name))
+        return files, temp_files
+
+    async def _send_with_uploads(self, channel: Any, content: str, uploads: Any, session: Optional[DiscordAccountSession] = None):
+        text = str(content or "")
+        files, temp_files = await self._resolve_upload_files(uploads, session)
+        try:
+            payload_text = text if text else None
+            if not payload_text and len(files) == 0:
+                raise RuntimeError("EMPTY_MESSAGE")
+            if files:
+                return await channel.send(content=payload_text, files=files)
+            return await channel.send(content=payload_text)
+        finally:
+            for f in files:
+                try:
+                    f.close()
+                except Exception:
+                    pass
+            for tmp in temp_files:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+
+    async def _handle_send_channel_message(self, params: Dict[str, Any]):
+        account_id = str(params.get("accountId") or "").strip()
+        channel_id = str(params.get("channelId") or "").strip()
+        if not account_id or not channel_id:
+            raise RuntimeError("INVALID_PARAMS")
+
+        session = self._resolve_session(account_id)
+        client = session.client
+        channel = client.get_channel(int(channel_id))
+        if channel is None:
+            channel = await client.fetch_channel(int(channel_id))
+        if channel is None:
+            raise RuntimeError("CHANNEL_NOT_FOUND")
+
+        sent = await self._send_with_uploads(
+            channel,
+            str(params.get("content") or ""),
+            params.get("uploads") or [],
+            session,
+        )
+        return {
+            "success": True,
+            "messageId": str(getattr(sent, "id", "")),
+            "channelId": str(getattr(channel, "id", channel_id)),
+        }
+
+    async def _handle_send_dm_message(self, params: Dict[str, Any]):
+        account_id = str(params.get("accountId") or "").strip()
+        friend_id = str(params.get("friendId") or "").strip()
+        if not account_id or not friend_id:
+            raise RuntimeError("INVALID_PARAMS")
+
+        session = self._resolve_session(account_id)
+        client = session.client
+        user = client.get_user(int(friend_id))
+        if user is None:
+            user = await client.fetch_user(int(friend_id))
+        if user is None:
+            raise RuntimeError("USER_NOT_FOUND")
+        dm_channel = await user.create_dm()
+
+        sent = await self._send_with_uploads(
+            dm_channel,
+            str(params.get("content") or ""),
+            params.get("uploads") or [],
+            session,
+        )
+        return {
+            "success": True,
+            "messageId": str(getattr(sent, "id", "")),
+            "channelId": str(getattr(dm_channel, "id", "")),
+        }
 
     async def _handle_update_config(self, params: Dict[str, Any]):
         accounts = params.get("accounts") or []

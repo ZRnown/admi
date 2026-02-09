@@ -26,6 +26,37 @@ interface RenderOutput {
   content: string;
 }
 
+type DiscordDirectTargetType = "channel" | "friend";
+
+interface DiscordDirectSendParams {
+  accountId: string;
+  targetType: DiscordDirectTargetType;
+  targetId: string;
+  content: string;
+  uploads?: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean; isVideo?: boolean }>;
+}
+
+interface DiscordDirectSendResult {
+  success: boolean;
+  targetMessageId?: string;
+  targetChannelId?: string;
+  error?: string;
+}
+
+type DiscordDirectSendHandler = (params: DiscordDirectSendParams) => Promise<DiscordDirectSendResult>;
+
+type DiscordSendRoute = {
+  kind: "webhook" | "channel" | "friend";
+  sender?: SenderBot;
+  accountId?: string;
+  targetId?: string;
+  targetLabel: string;
+  standby?: {
+    mainChannelId: string;
+    cooldownSeconds: number;
+  };
+};
+
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i;
 const VIDEO_EXT_RE = /\.(mp4|mov|webm|mkv|avi|flv)(?:$|[?#])/i;
 const AUDIO_EXT_RE = /\.(mp3|wav|ogg|flac|m4a|aac)(?:$|[?#])/i;
@@ -529,6 +560,7 @@ export class Bot {
   senderBot?: SenderBot; // default sender (可选，如果关闭 Discord 转发则为 undefined)
   private senderBotsBySource?: Map<string, SenderBot[]>;  // 支持相同源ID对应多个webhook
   private feishuSendersBySource?: Map<string, FeishuSender>;
+  private discordDirectSender?: DiscordDirectSendHandler;
   config: Config;
   client: Client;
   // 记录频道最近活跃时间（用于主备模式）
@@ -570,13 +602,14 @@ export class Bot {
     senderBot: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot[]>,
     feishuSendersBySource?: Map<string, FeishuSender>,
-    options?: { sharedClient?: boolean; externalMessageSource?: boolean },
+    options?: { sharedClient?: boolean; externalMessageSource?: boolean; discordDirectSender?: DiscordDirectSendHandler },
   ) {
     this.config = config;
     this.senderBot = senderBot;
     this.client = client;
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
+    this.discordDirectSender = options?.discordDirectSender;
 
     // 初始化OCR客户端 - 自动根据屏蔽/触发词启用/禁用
     const hasOCRKeywords = this.hasOcrFilters(config);
@@ -696,11 +729,13 @@ export class Bot {
     defaultSender: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot[]>,
     feishuSendersBySource?: Map<string, FeishuSender>,
+    discordDirectSender?: DiscordDirectSendHandler,
   ) {
     this.config = config;
     this.senderBot = defaultSender;
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
+    this.discordDirectSender = discordDirectSender;
 
     // 更新OCR配置 - 自动根据屏蔽/触发词启用/禁用
     const hasOCRKeywords = this.hasOcrFilters(config);
@@ -776,46 +811,131 @@ export class Bot {
   private resolveDiscordSendRoutes(
     channelId: string,
     directSenders: SenderBot[],
-  ): Array<{
-    sender: SenderBot;
-    standby?: {
-      mainChannelId: string;
-      cooldownSeconds: number;
-    };
-  }> {
+  ): DiscordSendRoute[] {
     const mappings = (this.config as any).mappings || [];
-    const routes: Array<{
-      sender: SenderBot;
-      standby?: {
-        mainChannelId: string;
-        cooldownSeconds: number;
-      };
-    }> = [];
+    const routes: DiscordSendRoute[] = [];
     const routeKeys = new Set<string>();
 
-    const addRoute = (
-      sender: SenderBot,
-      standby?: {
-        mainChannelId: string;
-        cooldownSeconds: number;
-      },
-    ) => {
-      const webhookKey = this.normalizeWebhookUrl(sender.webhookUrl || "") || `sender:${routes.length}`;
-      const standbyKey = standby ? `standby:${standby.mainChannelId}:${standby.cooldownSeconds}` : "direct";
-      const routeKey = `${webhookKey}|${standbyKey}`;
+    const resolveSenderType = (mapping: any): "webhook" | "account" | "friend" => {
+      const senderType = typeof mapping?.discordSenderType === "string" ? mapping.discordSenderType : "";
+      if (senderType === "webhook" || senderType === "account" || senderType === "friend") {
+        return senderType;
+      }
+      const senderAccountId =
+        typeof mapping?.discordSenderAccountId === "string" ? mapping.discordSenderAccountId.trim() : "";
+      const targetFriendId = typeof mapping?.targetFriendId === "string" ? mapping.targetFriendId.trim() : "";
+      const targetChannelId = typeof mapping?.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
+      if (senderAccountId && targetFriendId) return "friend";
+      if (senderAccountId && targetChannelId) return "account";
+      return "webhook";
+    };
+
+    const addRoute = (route: DiscordSendRoute) => {
+      const standbyKey = route.standby
+        ? `standby:${route.standby.mainChannelId}:${route.standby.cooldownSeconds}`
+        : "direct";
+      let routeId = route.kind;
+      if (route.kind === "webhook") {
+        const senderKey = this.normalizeWebhookUrl(route.sender?.webhookUrl || "") || `webhook:${routes.length}`;
+        routeId += `:${senderKey}`;
+      } else {
+        routeId += `:${route.accountId || ""}:${route.targetId || ""}`;
+      }
+      const routeKey = `${routeId}|${standbyKey}`;
       if (routeKeys.has(routeKey)) {
         return;
       }
       routeKeys.add(routeKey);
-      routes.push({ sender, standby });
+      routes.push(route);
     };
 
-    // 当前规则源频道（A路）消息默认直发。
-    for (const sender of directSenders) {
-      addRoute(sender, undefined);
+    const addWebhookRoutes = (
+      sourceSenders: SenderBot[],
+      targetWebhookUrl: string,
+      standby?: { mainChannelId: string; cooldownSeconds: number },
+    ) => {
+      const normalizedTarget = this.normalizeWebhookUrl(targetWebhookUrl || "");
+      let matched = sourceSenders;
+      if (normalizedTarget) {
+        const filtered = sourceSenders.filter(
+          (sender) => this.normalizeWebhookUrl(sender.webhookUrl || "") === normalizedTarget,
+        );
+        if (filtered.length > 0) {
+          matched = filtered;
+        }
+      }
+      for (const sender of matched) {
+        addRoute({
+          kind: "webhook",
+          sender,
+          targetLabel: sender.webhookUrl || targetWebhookUrl || "Webhook",
+          standby,
+        });
+      }
+    };
+
+    const appendRouteFromMapping = (
+      mapping: any,
+      sourceSenders: SenderBot[],
+      standby?: { mainChannelId: string; cooldownSeconds: number },
+    ) => {
+      const senderType = resolveSenderType(mapping);
+      if (senderType === "friend") {
+        const accountId =
+          typeof mapping?.discordSenderAccountId === "string" ? mapping.discordSenderAccountId.trim() : "";
+        const targetFriendId = typeof mapping?.targetFriendId === "string" ? mapping.targetFriendId.trim() : "";
+        if (accountId && targetFriendId) {
+          addRoute({
+            kind: "friend",
+            accountId,
+            targetId: targetFriendId,
+            targetLabel: `好友:${targetFriendId}`,
+            standby,
+          });
+        }
+        return;
+      }
+
+      if (senderType === "account") {
+        const accountId =
+          typeof mapping?.discordSenderAccountId === "string" ? mapping.discordSenderAccountId.trim() : "";
+        const targetChannelId = typeof mapping?.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
+        if (accountId && targetChannelId) {
+          addRoute({
+            kind: "channel",
+            accountId,
+            targetId: targetChannelId,
+            targetLabel: `频道:${targetChannelId}`,
+            standby,
+          });
+        }
+        return;
+      }
+
+      const targetWebhookUrl = typeof mapping?.targetWebhookUrl === "string" ? mapping.targetWebhookUrl.trim() : "";
+      addWebhookRoutes(sourceSenders, targetWebhookUrl, standby);
+    };
+
+    const directMappings = mappings.filter(
+      (mapping: any) => typeof mapping?.sourceChannelId === "string" && mapping.sourceChannelId.trim() === channelId,
+    );
+
+    if (directMappings.length > 0) {
+      for (const mapping of directMappings) {
+        appendRouteFromMapping(mapping, directSenders);
+      }
+    } else {
+      // 兼容旧配置：仅按 sourceChannelId -> webhook 转发
+      for (const sender of directSenders) {
+        addRoute({
+          kind: "webhook",
+          sender,
+          targetLabel: sender.webhookUrl || "Webhook",
+        });
+      }
     }
 
-    // 若当前频道是某条规则配置的备用频道（B路），则复用该规则主频道的目标发送器，按观察窗口兜底转发。
+    // 若当前频道是某条规则配置的备用频道（B路），则复用该规则主频道的目标发送方式，按观察窗口兜底转发。
     for (const mapping of mappings) {
       const standby = mapping?.standbyMode;
       const standbyChannelId =
@@ -831,13 +951,12 @@ export class Bot {
 
       const cooldownSeconds = Math.max(1, Number(standby?.cooldownSeconds) || 60);
       const mainSenders = this.getSendersForChannel(mainChannelId);
-      for (const sender of mainSenders) {
-        addRoute(sender, { mainChannelId, cooldownSeconds });
-      }
+      appendRouteFromMapping(mapping, mainSenders, { mainChannelId, cooldownSeconds });
     }
 
     return routes;
   }
+
 
   private buildSequentialSignature(message: Message): string {
     const text = collectMessageTextPieces(message)
@@ -1124,7 +1243,7 @@ export class Bot {
     }
 
     // 记录消息检测日志（仅在启用机器人中转时，帮助调试）
-    if (discordRoutes.length > 0 && discordRoutes.some((r) => r.sender.enableBotRelay)) {
+    if (discordRoutes.length > 0 && discordRoutes.some((r) => r.kind === "webhook" && r.sender?.enableBotRelay)) {
       this.logger.info(`[Bot] 检测到消息 (id=${message.id}, channel=${message.channelId}, author=${message.author?.tag || 'unknown'})，准备转发`);
     }
 
@@ -1392,7 +1511,7 @@ export class Bot {
 
     // 路由：仅当该源频道在映射中时才转发；未映射则跳过（discordRoutes 已在前面检查过）
     if (discordRoutes.length > 0) {
-      this.logger.info(`${logPrefix} [ROUTE] Found ${discordRoutes.length} mapping(s) for channel ${message.channelId}, will forward to webhook(s)`);
+      this.logger.info(`${logPrefix} [ROUTE] Found ${discordRoutes.length} mapping(s) for channel ${message.channelId}, will forward to configured target(s)`);
     } else if (feishuSenderForThis) {
       this.logger.info(`${logPrefix} [ROUTE] Found Feishu mapping for channel ${message.channelId}, will forward to Feishu`);
     }
@@ -1561,6 +1680,7 @@ export class Bot {
       this.logger.error(`${logPrefix} [ERROR] Exclude keyword filter failed: ${String(e?.message || e)}`);
     }
     let replyToTarget: { channelId: string; messageId: string } | undefined;
+    const firstWebhookSender = discordRoutes.find((r) => r.kind === "webhook")?.sender;
     // 给样式2使用的回复元信息（仅用于格式化文本）
     let replyUserNameForStyle2: string | undefined;
     let replyContentForStyle2: string | undefined;
@@ -1577,7 +1697,7 @@ export class Bot {
         if (!mapped) {
           try {
             // 使用第一个 sender 来扫描目标频道
-            const firstSender = discordRoutes.length > 0 ? discordRoutes[0].sender : undefined;
+            const firstSender = firstWebhookSender;
             const found = await this.tryResolveMappingFromTarget(ref.id, firstSender);
             if (found) {
               mapped = found;
@@ -1591,7 +1711,7 @@ export class Bot {
           replyToTarget = { channelId: mapped.channelId, messageId: mapped.messageId };
           // 无论是否有附件/Embed，都生成 CTA 行；有资产时用"查看附件"，否则用"查看消息"
           // 使用第一个 sender 来获取 webhookGuildId
-          const firstSender = discordRoutes.length > 0 ? discordRoutes[0].sender : undefined;
+          const firstSender = firstWebhookSender;
           if (firstSender?.webhookGuildId) {
             const link = `https://discord.com/channels/${firstSender.webhookGuildId}/${mapped.channelId}/${mapped.messageId}`;
             let display: string;
@@ -1929,10 +2049,8 @@ export class Bot {
 
     this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${discordContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed}, style=${forwardStyle})`);
     if (shouldSendDiscord) {
-      // 遍历所有匹配的 SenderBot，向每个 webhook 发送消息
       for (let senderIndex = 0; senderIndex < discordRoutes.length; senderIndex++) {
         const route = discordRoutes[senderIndex];
-        const senderForThis = route.sender;
         const standbyRule = route.standby;
 
         if (standbyRule && standbyRule.mainChannelId !== message.channelId) {
@@ -1961,48 +2079,89 @@ export class Bot {
         }
 
         try {
-          const results = await senderForThis.sendData(toSend);
-          if (results && results.length > 0) {
-            const first = results[0];
-            if (first.sourceMessageId) {
-              // 只为第一个 sender 保存映射（用于回复跳转）
-              if (senderIndex === 0) {
-                if (this.sourceToTarget.has(first.sourceMessageId)) {
-                  this.sourceToTarget.delete(first.sourceMessageId);
-                }
-                this.sourceToTarget.set(first.sourceMessageId, {
-                  channelId: first.targetChannelId,
-                  messageId: first.targetMessageId,
-                  timestamp: Date.now()
-                });
-                this.limitMapSize();
-                this.isMappingDirty = true;
+          let first:
+            | {
+                sourceMessageId?: string;
+                targetMessageId: string;
+                targetChannelId: string;
               }
+            | undefined;
 
-              const authorTag = isWebhook
-                ? (webhookName !== "unknown" ? webhookName : "Webhook")
-                : (message.author?.tag || message.author?.username || "未知用户");
-              const contentPreview = collectMessageTextPieces(message).join("\n").trim();
-              const contentDisplay = formatLogPreview(contentPreview, 120);
-              const hasAttachments = (message.attachments?.size || 0) > 0;
-              const hasEmbeds = (message.embeds?.length || 0) > 0;
-              const isReply = !!message.reference;
-              const attachmentCount = message.attachments?.size || 0;
-
-              let logMsg = `${logPrefix} [SUCCESS] 转发成功 [${senderIndex + 1}/${discordRoutes.length}]: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标频道: ${first.targetChannelId}`;
-              logMsg += `\n  内容: ${contentDisplay}`;
-              if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
-              if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
-              if (isReply) logMsg += ` | 回复消息`;
-              if (isWebhook) logMsg += ` | Webhook消息`;
-              logMsg += `\n  源消息ID: ${first.sourceMessageId} -> 目标消息ID: ${first.targetMessageId}`;
-
-              console.log(logMsg);
-              this.logger.info(logMsg);
-              recordForwardStat(getStatsAccountId(this.config), "discord-to-discord");
-            } else {
-              this.logger.warn(`${logPrefix} [WARN] Send result missing sourceMessageId [${senderIndex + 1}/${discordRoutes.length}]`);
+          if (route.kind === "webhook") {
+            if (!route.sender) {
+              this.logger.warn(`${logPrefix} [WARN] Webhook route missing sender [${senderIndex + 1}/${discordRoutes.length}]`);
+              continue;
             }
+            const results = await route.sender.sendData(toSend);
+            if (results && results.length > 0) {
+              first = results[0];
+            }
+          } else {
+            if (!this.discordDirectSender) {
+              this.logger.warn(`${logPrefix} [WARN] Discord 直发能力未就绪，跳过规则 [${senderIndex + 1}/${discordRoutes.length}]`);
+              continue;
+            }
+            if (!route.accountId || !route.targetId) {
+              this.logger.warn(`${logPrefix} [WARN] Discord 直发规则缺少账号或目标ID [${senderIndex + 1}/${discordRoutes.length}]`);
+              continue;
+            }
+            const directResult = await this.discordDirectSender({
+              accountId: route.accountId,
+              targetType: route.kind === "friend" ? "friend" : "channel",
+              targetId: route.targetId,
+              content: `${discordContent}`.trim(),
+              uploads,
+            });
+            if (directResult?.success && directResult.targetMessageId && directResult.targetChannelId) {
+              first = {
+                sourceMessageId: message.id,
+                targetMessageId: directResult.targetMessageId,
+                targetChannelId: directResult.targetChannelId,
+              };
+            } else {
+              this.logger.warn(
+                `${logPrefix} [WARN] Discord 直发失败 [${senderIndex + 1}/${discordRoutes.length}]: ${String(directResult?.error || "未知错误")}`,
+              );
+              continue;
+            }
+          }
+
+          if (first) {
+            const sourceMessageId = first.sourceMessageId || message.id;
+            if (senderIndex === 0) {
+              if (this.sourceToTarget.has(sourceMessageId)) {
+                this.sourceToTarget.delete(sourceMessageId);
+              }
+              this.sourceToTarget.set(sourceMessageId, {
+                channelId: first.targetChannelId,
+                messageId: first.targetMessageId,
+                timestamp: Date.now(),
+              });
+              this.limitMapSize();
+              this.isMappingDirty = true;
+            }
+
+            const authorTag = isWebhook
+              ? (webhookName !== "unknown" ? webhookName : "Webhook")
+              : (message.author?.tag || message.author?.username || "未知用户");
+            const contentPreview = collectMessageTextPieces(message).join("\n").trim();
+            const contentDisplay = formatLogPreview(contentPreview, 120);
+            const hasAttachments = (message.attachments?.size || 0) > 0;
+            const hasEmbeds = (message.embeds?.length || 0) > 0;
+            const isReply = !!message.reference;
+            const attachmentCount = message.attachments?.size || 0;
+
+            let logMsg = `${logPrefix} [SUCCESS] 转发成功 [${senderIndex + 1}/${discordRoutes.length}]: 作者: ${isWebhook ? "🔗 " : "@"}${authorTag} | 源频道: ${message.channelId} | 目标: ${route.targetLabel}`;
+            logMsg += `\n  内容: ${contentDisplay}`;
+            if (hasAttachments) logMsg += ` | 附件数: ${attachmentCount}`;
+            if (hasEmbeds) logMsg += ` | 嵌入: ${message.embeds.length}`;
+            if (isReply) logMsg += ` | 回复消息`;
+            if (isWebhook) logMsg += ` | Webhook消息`;
+            logMsg += `\n  源消息ID: ${sourceMessageId} -> 目标消息ID: ${first.targetMessageId}`;
+
+            console.log(logMsg);
+            this.logger.info(logMsg);
+            recordForwardStat(getStatsAccountId(this.config), "discord-to-discord");
           } else {
             this.logger.warn(`${logPrefix} [WARN] Send failed or returned no results [${senderIndex + 1}/${discordRoutes.length}]`);
           }
