@@ -1,0 +1,393 @@
+:root {
+  color-scheme: light;
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --text: #101828;
+  --muted: #667085;
+  --line: #e4e7ec;
+  --brand: #16a34a;
+  --brand-strong: #15803d;
+  --brand-soft: #ecfdf3;
+  --danger: #b42318;
+  --success: #067647;
+  --shadow: 0 8px 24px rgba(16, 24, 40, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Avenir Next", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.skipLink {
+  position: fixed;
+  top: -48px;
+  left: 12px;
+  z-index: 1000;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #101828;
+  color: #fff;
+  transition: top 0.2s ease;
+}
+
+.skipLink:focus-visible {
+  top: 10px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 0.94rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: all 0.16s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn:focus-visible {
+  outline: 2px solid #12b76a;
+  outline-offset: 2px;
+}
+
+.btn.primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.btn.primary:hover {
+  background: var(--brand-strong);
+  border-color: var(--brand-strong);
+}
+
+.btn.ghost {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.btn.subtle {
+  background: var(--brand-soft);
+  border-color: #abefc6;
+  color: var(--brand-strong);
+}
+
+.btn.block {
+  width: 100%;
+}
+
+.mentorPage {
+  width: min(1180px, 94vw);
+  margin: 0 auto;
+  padding: 18px 0 64px;
+}
+
+.mentorNav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 60px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(8px);
+}
+
+.mentorBrand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+.mentorMark {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #101828 0%, #101828 45%, #16a34a 45%, #16a34a 100%);
+  transform: rotate(-20deg);
+}
+
+.mentorLinks {
+  display: inline-flex;
+  align-items: center;
+  gap: 20px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.mentorLinks a:hover {
+  color: var(--text);
+}
+
+.mentorActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mentorHero {
+  margin: 72px auto 0;
+  text-align: center;
+  width: min(860px, 100%);
+}
+
+.mentorHero h1 {
+  margin: 0;
+  font-size: clamp(2.3rem, 6.2vw, 5rem);
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+  font-weight: 500;
+}
+
+.mentorHero h1 span {
+  color: var(--brand);
+}
+
+.mentorHero p {
+  margin: 22px auto 0;
+  color: var(--muted);
+  font-size: clamp(1rem, 1.8vw, 1.2rem);
+}
+
+.mentorHeroActions {
+  margin-top: 28px;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.minimalChips {
+  margin-top: 18px;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.minimalChips span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: #475467;
+  background: #fff;
+  font-size: 0.85rem;
+}
+
+.minimalFooter {
+  margin: 22px auto 0;
+  width: min(960px, 100%);
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.minimalFooter a:hover {
+  color: var(--text);
+}
+
+.authPage,
+.adminPage {
+  width: min(1120px, 94vw);
+  margin: 0 auto;
+  padding: 18px 0 40px;
+}
+
+.subPageFrame {
+  width: 100%;
+}
+
+.subNav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 60px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.subNav .homeLink {
+  font-weight: 700;
+}
+
+.authCard,
+.adminCard {
+  margin: 22px auto 0;
+  width: min(720px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+.adminCard {
+  width: 100%;
+}
+
+.authEyebrow {
+  margin: 0;
+  color: var(--brand-strong);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.authCard h1,
+.adminCard h1 {
+  margin: 8px 0 10px;
+  font-size: 1.75rem;
+}
+
+.authDescription {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.authForm {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.authForm label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.authForm input,
+.authForm textarea {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  background: #fff;
+}
+
+.authForm input:focus-visible,
+.authForm textarea:focus-visible {
+  outline: 2px solid #12b76a;
+  outline-offset: 1px;
+}
+
+.authHint {
+  margin: 14px 0 0;
+  color: var(--muted);
+}
+
+.authHint a {
+  color: var(--brand-strong);
+}
+
+.authError,
+.authSuccess {
+  margin: 2px 0;
+  font-size: 0.9rem;
+}
+
+.authError {
+  color: var(--danger);
+}
+
+.authSuccess {
+  color: var(--success);
+}
+
+.adminHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.leadMeta {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.leadTableWrap {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: auto;
+}
+
+.leadTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 700px;
+}
+
+.leadTable th,
+.leadTable td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.leadTable th {
+  background: var(--surface-soft);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 860px) {
+  .mentorNav {
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    min-height: auto;
+  }
+
+  .mentorLinks {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .mentorHero {
+    margin-top: 52px;
+  }
+}
+
+@media (max-width: 640px) {
+  .mentorLinks {
+    display: none;
+  }
+}

@@ -19,6 +19,7 @@ import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter
 import { resolveWatermarkList } from "./watermark.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import type { DispatchEnqueueHandler, ForwardDispatchJob, StandbyActivityStore } from "./scaling/dispatchTypes.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -55,6 +56,15 @@ type DiscordSendRoute = {
     mainChannelId: string;
     cooldownSeconds: number;
   };
+};
+
+type BotOptions = {
+  sharedClient?: boolean;
+  externalMessageSource?: boolean;
+  discordDirectSender?: DiscordDirectSendHandler;
+  dispatchEnqueue?: DispatchEnqueueHandler;
+  standbyActivityStore?: StandbyActivityStore;
+  instanceId?: string;
 };
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i;
@@ -517,6 +527,12 @@ function formatLogPreview(text?: string, limit = 160): string {
   return normalized.length > limit ? normalized.slice(0, limit) + "..." : normalized;
 }
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
 function applyLongMessageConfig(
   content: string,
   config?: { enabled?: boolean; threshold?: number; appendMessage?: string },
@@ -561,6 +577,10 @@ export class Bot {
   private senderBotsBySource?: Map<string, SenderBot[]>;  // 支持相同源ID对应多个webhook
   private feishuSendersBySource?: Map<string, FeishuSender>;
   private discordDirectSender?: DiscordDirectSendHandler;
+  private dispatchEnqueue?: DispatchEnqueueHandler;
+  private standbyActivityStore?: StandbyActivityStore;
+  private instanceId: string;
+  options?: BotOptions;
   config: Config;
   client: Client;
   // 记录频道最近活跃时间（用于主备模式）
@@ -602,14 +622,18 @@ export class Bot {
     senderBot: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot[]>,
     feishuSendersBySource?: Map<string, FeishuSender>,
-    options?: { sharedClient?: boolean; externalMessageSource?: boolean; discordDirectSender?: DiscordDirectSendHandler },
+    options?: BotOptions,
   ) {
     this.config = config;
     this.senderBot = senderBot;
     this.client = client;
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
+    this.options = options;
     this.discordDirectSender = options?.discordDirectSender;
+    this.dispatchEnqueue = options?.dispatchEnqueue;
+    this.standbyActivityStore = options?.standbyActivityStore;
+    this.instanceId = options?.instanceId || getStatsAccountId(config as any);
 
     // 初始化OCR客户端 - 自动根据屏蔽/触发词启用/禁用
     const hasOCRKeywords = this.hasOcrFilters(config);
@@ -730,12 +754,25 @@ export class Bot {
     senderBotsBySource?: Map<string, SenderBot[]>,
     feishuSendersBySource?: Map<string, FeishuSender>,
     discordDirectSender?: DiscordDirectSendHandler,
+    dispatchEnqueue?: DispatchEnqueueHandler,
+    standbyActivityStore?: StandbyActivityStore,
+    instanceId?: string,
   ) {
     this.config = config;
     this.senderBot = defaultSender;
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
     this.discordDirectSender = discordDirectSender;
+    this.dispatchEnqueue = dispatchEnqueue;
+    this.standbyActivityStore = standbyActivityStore;
+    this.instanceId = instanceId || this.instanceId || getStatsAccountId(config as any);
+    this.options = {
+      ...(this.options || {}),
+      discordDirectSender,
+      dispatchEnqueue,
+      standbyActivityStore,
+      instanceId: this.instanceId,
+    };
 
     // 更新OCR配置 - 自动根据屏蔽/触发词启用/禁用
     const hasOCRKeywords = this.hasOcrFilters(config);
@@ -974,6 +1011,46 @@ export class Bot {
     return `${text}||att:${attachments}||emb:${embeds}`;
   }
 
+  private buildWebhookDispatchJob(params: {
+    route: DiscordSendRoute;
+    sourceMessageId: string;
+    sourceChannelId: string;
+    senderIndex: number;
+    routeCount: number;
+    payload: ForwardDispatchJob["payload"];
+    logPrefix: string;
+  }): ForwardDispatchJob {
+    const webhookUrl = params.route.sender?.webhookUrl?.trim() || "";
+    const normalizedWebhook = this.normalizeWebhookUrl(webhookUrl) || "unknown";
+    const routeId = `webhook:${normalizedWebhook}`;
+    const dedupeKey = `${this.instanceId}:${params.sourceMessageId}:${routeId}`;
+
+    return {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+      instanceId: this.instanceId,
+      sourceMessageId: params.sourceMessageId,
+      routeId,
+      dedupeKey,
+      createdAt: Date.now(),
+      retryMeta: {
+        attempt: 0,
+        maxRetries: parsePositiveInt(process.env.DISPATCH_MAX_RETRIES, 5),
+      },
+      target: {
+        kind: "webhook",
+        webhookUrl,
+        targetLabel: params.route.targetLabel,
+      },
+      payload: params.payload,
+      context: {
+        sourceChannelId: params.sourceChannelId,
+        logPrefix: params.logPrefix,
+        senderIndex: params.senderIndex,
+        routeCount: params.routeCount,
+      },
+    };
+  }
+
   /**
    * 获取指定频道的规则级别完整配置
    * 返回该频道规则的所有过滤配置
@@ -1205,7 +1282,15 @@ export class Bot {
     }
 
     // 记录频道活跃时间（主备模式）
-    Bot.channelActivity.set(message.channelId, Date.now());
+    const activityTs = Date.now();
+    Bot.channelActivity.set(message.channelId, activityTs);
+    if (this.standbyActivityStore) {
+      try {
+        await this.standbyActivityStore.markActivity(message.channelId, activityTs);
+      } catch (e: any) {
+        this.logger.warn(`standby activity sync failed: ${String(e?.message || e)}`);
+      }
+    }
 
     // 快速检查：路由映射是否存在，不存在则快速返回
     const sendersForThis = this.getSendersForChannel(message.channelId);
@@ -2064,9 +2149,22 @@ export class Bot {
 
           await new Promise((resolve) => setTimeout(resolve, cooldownMs));
 
-          const lastMainTime = Bot.channelActivity.get(mainId) || 0;
-          if (lastMainTime > receivedAt) {
-            const mainAfterMs = Math.max(0, lastMainTime - receivedAt);
+          const localMainTime = Bot.channelActivity.get(mainId) || 0;
+          let mainActiveInWindow = localMainTime > receivedAt;
+          let mainAfterMs = Math.max(0, localMainTime - receivedAt);
+
+          if (!mainActiveInWindow && this.standbyActivityStore) {
+            try {
+              mainActiveInWindow = await this.standbyActivityStore.hasActivitySince(mainId, receivedAt);
+              if (mainActiveInWindow && mainAfterMs <= 0) {
+                mainAfterMs = cooldownMs;
+              }
+            } catch (e: any) {
+              this.logger.warn(`standby activity read failed: ${String(e?.message || e)}`);
+            }
+          }
+
+          if (mainActiveInWindow) {
             this.logger.info(
               `[STANDBY] 跳过备用频道消息: 主频道(${mainId})在观察窗口内活跃(${Math.ceil(mainAfterMs / 1000)}s内) | 规则=${senderIndex + 1}/${discordRoutes.length}`,
             );
@@ -2076,6 +2174,42 @@ export class Bot {
           this.logger.info(
             `[STANDBY] 触发备用频道转发: 主频道(${mainId})在观察窗口(${waitSeconds}s)内无消息 | 规则=${senderIndex + 1}/${discordRoutes.length}`,
           );
+        }
+
+        if (this.dispatchEnqueue && route.kind === "webhook") {
+          if (!route.sender || !route.sender.webhookUrl) {
+            this.logger.warn(`${logPrefix} [WARN] Webhook route missing sender [${senderIndex + 1}/${discordRoutes.length}]`);
+            continue;
+          }
+
+          const dispatchPayload: ForwardDispatchJob["payload"] = {
+            ...toSend[0],
+            uploads: toSend[0].uploads ? [...toSend[0].uploads] : undefined,
+            extraEmbeds: toSend[0].extraEmbeds ? [...toSend[0].extraEmbeds] : undefined,
+          };
+
+          const dispatchJob = this.buildWebhookDispatchJob({
+            route,
+            sourceMessageId: message.id,
+            sourceChannelId: message.channelId,
+            senderIndex,
+            routeCount: discordRoutes.length,
+            payload: dispatchPayload,
+            logPrefix,
+          });
+
+          try {
+            const queued = await this.dispatchEnqueue(dispatchJob);
+            this.logger.info(
+              `${logPrefix} [QUEUE] 已入队 [${senderIndex + 1}/${discordRoutes.length}] shard=${queued.shardId} key=${queued.queueKey}`,
+            );
+            recordForwardStat(getStatsAccountId(this.config), "discord-to-discord");
+          } catch (queueErr: any) {
+            this.logger.error(
+              `${logPrefix} [ERROR] Dispatch enqueue failed [${senderIndex + 1}/${discordRoutes.length}]: ${String(queueErr?.message || queueErr)}`,
+            );
+          }
+          continue;
         }
 
         try {

@@ -36,11 +36,15 @@ export function getAuthToken(req: NextRequest): string | undefined {
   return req.cookies.get(cookieName)?.value;
 }
 
-export async function isAuthenticated(req: NextRequest): Promise<boolean> {
-  const token = getAuthToken(req);
+export async function isAuthTokenValid(token?: string): Promise<boolean> {
   if (!token) return false;
   const state = await readAuthState();
   return Boolean(state.token && state.token === token);
+}
+
+export async function isAuthenticated(req: NextRequest): Promise<boolean> {
+  const token = getAuthToken(req);
+  return isAuthTokenValid(token);
 }
 
 export async function requireAuth(req: NextRequest): Promise<NextResponse | null> {

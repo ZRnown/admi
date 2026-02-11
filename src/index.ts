@@ -34,6 +34,13 @@ import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
 import { reconcileExternalForwarders, shutdownExternalForwarders } from "./externalForwarder.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { RedisDispatchQueue } from "./scaling/redisDispatchQueue.js";
+import type { DispatchEnqueueHandler, StandbyActivityStore } from "./scaling/dispatchTypes.js";
+import {
+  buildTopologyPlan,
+  formatTopologyPlan,
+  type InstanceRouteStats,
+} from "./scaling/topologyPlanner.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -43,6 +50,9 @@ const telegramSequentialDedupe = new Map<string, string>();
 const telegramStandbyActivity = new Map<string, number>();
 const telegramStandbyPending = new Map<string, NodeJS.Timeout>();
 let telegramStandbyPendingSeq = 0;
+let redisDispatchQueue: RedisDispatchQueue | null = null;
+let redisDispatchQueueInit: Promise<RedisDispatchQueue | null> | null = null;
+let dispatchFallbackLogged = false;
 
 interface RunningAccount {
   account: AccountConfig;
@@ -125,6 +135,7 @@ let lastTelegramWatchSummaryHash: string | null = null;
 let lastTelegramConfigPayloadHash: string | null = null;
 let telegramSyncProcessing = false;
 let discordLoginProcessing = false;
+let lastTopologySummaryHash: string | null = null;
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -142,6 +153,159 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 
 function isExternalForwardingType(type?: string): boolean {
   return typeof type === "string" && EXTERNAL_FORWARDING_TYPES.has(type);
+}
+
+function toPositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
+async function ensureRedisDispatchQueue(logger?: FileLogger): Promise<RedisDispatchQueue | null> {
+  const env = getEnv();
+  if (env.DISPATCH_MODE !== "redis") {
+    return null;
+  }
+
+  if (!env.REDIS_URL) {
+    if (!dispatchFallbackLogged) {
+      dispatchFallbackLogged = true;
+      console.warn("[DispatchQueue] DISPATCH_MODE=redis but REDIS_URL is missing, fallback to inline mode");
+      logger?.warn("DISPATCH_MODE=redis but REDIS_URL is missing, fallback to inline");
+    }
+    return null;
+  }
+
+  if (redisDispatchQueue) {
+    return redisDispatchQueue;
+  }
+
+  if (redisDispatchQueueInit) {
+    return redisDispatchQueueInit;
+  }
+
+  const shardCount = toPositiveInt(process.env.INSTANCE_SHARD_COUNT, 8);
+  const namespace = env.INSTANCE_QUEUE_NAMESPACE || "bridge";
+
+  redisDispatchQueueInit = (async () => {
+    try {
+      const queue = new RedisDispatchQueue({
+        redisUrl: env.REDIS_URL as string,
+        namespace,
+        shardCount,
+        standbyTtlSeconds: toPositiveInt(process.env.STANDBY_ACTIVITY_TTL_SEC, 120),
+      });
+      await queue.connect();
+      redisDispatchQueue = queue;
+      console.log(
+        `[DispatchQueue] Redis dispatch enabled | namespace=${namespace} | shardCount=${shardCount}`,
+      );
+      return queue;
+    } catch (e: any) {
+      logger?.error(`Redis dispatch init failed: ${String(e?.message || e)}`);
+      return null;
+    } finally {
+      redisDispatchQueueInit = null;
+    }
+  })();
+
+  return redisDispatchQueueInit;
+}
+
+async function closeRedisDispatchQueue() {
+  if (!redisDispatchQueue) {
+    return;
+  }
+  try {
+    await redisDispatchQueue.disconnect();
+  } catch (e: any) {
+    console.error(`[DispatchQueue] Failed to close Redis queue: ${String(e?.message || e)}`);
+  } finally {
+    redisDispatchQueue = null;
+    redisDispatchQueueInit = null;
+  }
+}
+
+function createDispatchEnqueue(logger: FileLogger): DispatchEnqueueHandler | undefined {
+  if (getEnv().DISPATCH_MODE !== "redis") {
+    return undefined;
+  }
+
+  return async (job) => {
+    const queue = await ensureRedisDispatchQueue(logger);
+    if (!queue) {
+      throw new Error("Redis dispatch queue unavailable");
+    }
+    return queue.enqueue(job);
+  };
+}
+
+function createStandbyActivityStore(logger: FileLogger): StandbyActivityStore | undefined {
+  if (getEnv().DISPATCH_MODE !== "redis") {
+    return undefined;
+  }
+
+  return {
+    markActivity: async (channelId: string, atMs = Date.now()) => {
+      const queue = await ensureRedisDispatchQueue(logger);
+      if (!queue) return;
+      await queue.markStandbyActivity(channelId, atMs);
+    },
+    hasActivitySince: async (channelId: string, sinceMs: number) => {
+      const queue = await ensureRedisDispatchQueue(logger);
+      if (!queue) return false;
+      return queue.hasStandbyActivitySince(channelId, sinceMs);
+    },
+  };
+}
+
+function collectInstanceRouteStats(config: MultiConfig): InstanceRouteStats[] {
+  return (config.accounts || [])
+    .filter((account) => !isExternalForwardingType(account.forwardingType))
+    .map((account) => {
+      const relayRoutes = Array.isArray(account.botRelays) ? account.botRelays.length : 0;
+      const webhookRoutes = account.channelWebhooks ? Object.keys(account.channelWebhooks).length : 0;
+      const channelRelayRoutes = account.channelRelayMap ? Object.keys(account.channelRelayMap).length : 0;
+      const feishuRoutes = account.channelFeishuWebhooks
+        ? Object.keys(account.channelFeishuWebhooks).length
+        : 0;
+      const telegramRoutes = account.telegramConfig?.mappings?.length || 0;
+      const standbyRouteCount = Array.isArray(account.botRelays)
+        ? account.botRelays.filter((relay: any) => relay?.standbyMode?.enabled === true).length
+        : 0;
+      const ocrSensitive =
+        (Array.isArray(account.ocrBlockedKeywords) && account.ocrBlockedKeywords.length > 0) ||
+        (Array.isArray(account.ocrTriggerKeywords) && account.ocrTriggerKeywords.length > 0);
+
+      return {
+        instanceId: account.id,
+        routeCount: relayRoutes + webhookRoutes + channelRelayRoutes + feishuRoutes + telegramRoutes,
+        standbyRouteCount,
+        mediaRouteCount: ocrSensitive ? 1 : 0,
+      };
+    });
+}
+
+function logTopologyPlan(config: MultiConfig) {
+  const stats = collectInstanceRouteStats(config);
+  if (stats.length === 0) return;
+
+  const envShardCap = Number(process.env.INSTANCE_SHARD_CAPACITY || 0);
+  const envRouteCap = Number(process.env.INSTANCE_WORKER_ROUTE_CAPACITY || 0);
+
+  const plan = buildTopologyPlan(stats, {
+    maxInstancesPerShard: Number.isFinite(envShardCap) && envShardCap > 0 ? envShardCap : 250,
+    maxRoutesPerWorker: Number.isFinite(envRouteCap) && envRouteCap > 0 ? envRouteCap : 500,
+  });
+
+  const summary = formatTopologyPlan(plan);
+  const hash = createHash("md5").update(summary).digest("hex");
+  if (hash === lastTopologySummaryHash) return;
+
+  lastTopologySummaryHash = hash;
+  console.log("[ScalePlan] " + summary);
 }
 
 function buildTelegramReplyKey(sourceChatId: string, sourceMessageId: string, targetChatId: string): string {
@@ -2850,7 +3014,16 @@ async function startAccount(
     existing.senderBotsBySource = senderBotsBySource;
     (existing as any).feishuSendersBySource = feishuSendersBySource;
     existing.defaultSenderBot = defaultSenderBot;
-    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, sendDiscordDirectMessageViaBridge);
+    existing.bot.updateRuntimeConfig(
+      legacyConfig,
+      defaultSenderBot,
+      senderBotsBySource,
+      feishuSendersBySource,
+      sendDiscordDirectMessageViaBridge,
+      createDispatchEnqueue(logger),
+      createStandbyActivityStore(logger),
+      account.id,
+    );
     refreshScheduledBroadcasts(account, existing, logger);
     if (shouldConnect) {
       await writeStatusForAccount(account.id, "pending", "正在连接...");
@@ -2865,6 +3038,9 @@ async function startAccount(
     const bot = new Bot(dummyClient, legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, {
       externalMessageSource: true,
       discordDirectSender: sendDiscordDirectMessageViaBridge,
+      dispatchEnqueue: createDispatchEnqueue(logger),
+      standbyActivityStore: createStandbyActivityStore(logger),
+      instanceId: account.id,
     });
 
     const runningInfo: RunningAccount = {
@@ -3055,7 +3231,12 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
         currentRunning.defaultSenderBot,
         currentRunning.senderBotsBySource,
         currentRunning.feishuSendersBySource,
-        { discordDirectSender: sendDiscordDirectMessageViaBridge },
+        {
+          discordDirectSender: sendDiscordDirectMessageViaBridge,
+          dispatchEnqueue: createDispatchEnqueue(logger),
+          standbyActivityStore: createStandbyActivityStore(logger),
+          instanceId: currentRunning.account.id,
+        },
       );
       
       // 更新运行信息
@@ -3471,7 +3652,16 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         }
 
         const legacyConfig = accountToLegacyConfig(account);
-        existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, sendDiscordDirectMessageViaBridge);
+        existing.bot.updateRuntimeConfig(
+      legacyConfig,
+      defaultSenderBot,
+      senderBotsBySource,
+      feishuSendersBySource,
+      sendDiscordDirectMessageViaBridge,
+      createDispatchEnqueue(logger),
+      createStandbyActivityStore(logger),
+      account.id,
+    );
         existing.account = account;
         existing.senderBotsBySource = senderBotsBySource;
         existing.defaultSenderBot = defaultSenderBot;
@@ -3558,7 +3748,16 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     const legacyConfig = accountToLegacyConfig(account);
-    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, sendDiscordDirectMessageViaBridge);
+    existing.bot.updateRuntimeConfig(
+      legacyConfig,
+      defaultSenderBot,
+      senderBotsBySource,
+      feishuSendersBySource,
+      sendDiscordDirectMessageViaBridge,
+      createDispatchEnqueue(logger),
+      createStandbyActivityStore(logger),
+      account.id,
+    );
     existing.account = account;
     existing.senderBotsBySource = senderBotsBySource;
     existing.defaultSenderBot = defaultSenderBot;
@@ -3607,6 +3806,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
   }
 
   currentConfig = newConfig;
+  logTopologyPlan(newConfig);
 }
 
 async function main() {
@@ -3620,6 +3820,7 @@ async function main() {
   const rawMulti = await getMultiConfig();
   const multi = resolveMultiConfigForRuntime(rawMulti);
   currentConfig = multi;
+  logTopologyPlan(multi);
 
   // 重启项目时不自动启动实例，重置所有账号的 loginRequested 为 false
   await logger.info("系统启动，重置所有实例状态（需手动启动）...");
@@ -3855,6 +4056,7 @@ process.on("SIGINT", async () => {
   console.log("[Main] Received SIGINT, shutting down...");
   shutdownExternalForwarders();
   await telegramBridgeManager.cleanup();
+  await closeRedisDispatchQueue();
   process.exit(0);
 });
 
@@ -3862,6 +4064,7 @@ process.on("SIGTERM", async () => {
   console.log("[Main] Received SIGTERM, shutting down...");
   shutdownExternalForwarders();
   await telegramBridgeManager.cleanup();
+  await closeRedisDispatchQueue();
   process.exit(0);
 });
 

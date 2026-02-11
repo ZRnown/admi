@@ -8,6 +8,13 @@ export interface Env {
   ENABLED_FORWARDING_TYPES?: string;
   FEISHU_APP_ID?: string;
   FEISHU_APP_SECRET?: string;
+  DISPATCH_MODE?: "inline" | "redis";
+  REDIS_URL?: string;
+  INSTANCE_QUEUE_NAMESPACE?: string;
+  DISPATCH_MAX_RETRIES?: number;
+  DISPATCH_RETRY_BASE_MS?: number;
+  DISPATCH_DLQ_TTL_SEC?: number;
+  DISPATCH_DEDUPE_TTL_SEC?: number;
 }
 
 function readEnvFile(): Record<string, string> {
@@ -42,6 +49,14 @@ function readEnvFile(): Record<string, string> {
   return result;
 }
 
+
+function parsePositiveNumber(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n;
+}
+
 function resolveEnvPath(): string {
   const root = findRepoRoot(process.cwd());
   return path.resolve(root || process.cwd(), ".env");
@@ -66,6 +81,9 @@ export function getEnv(): Env {
   const envFile = readEnvFile();
   
   // 优先使用文件中的值，如果没有则使用 process.env（兼容环境变量）
+  const dispatchModeRaw = (envFile.DISPATCH_MODE || process.env.DISPATCH_MODE || "inline").toLowerCase();
+  const dispatchMode = dispatchModeRaw === "redis" ? "redis" : "inline";
+
   return {
     DISCORD_TOKEN: envFile.DISCORD_TOKEN || process.env.DISCORD_TOKEN || "",
     PROXY_URL: envFile.PROXY_URL || process.env.PROXY_URL || undefined,
@@ -73,5 +91,17 @@ export function getEnv(): Env {
       envFile.ENABLED_FORWARDING_TYPES || process.env.ENABLED_FORWARDING_TYPES || undefined,
     FEISHU_APP_ID: envFile.FEISHU_APP_ID || process.env.FEISHU_APP_ID || undefined,
     FEISHU_APP_SECRET: envFile.FEISHU_APP_SECRET || process.env.FEISHU_APP_SECRET || undefined,
+    DISPATCH_MODE: dispatchMode,
+    REDIS_URL: envFile.REDIS_URL || process.env.REDIS_URL || undefined,
+    INSTANCE_QUEUE_NAMESPACE:
+      envFile.INSTANCE_QUEUE_NAMESPACE || process.env.INSTANCE_QUEUE_NAMESPACE || "bridge",
+    DISPATCH_MAX_RETRIES: parsePositiveNumber(envFile.DISPATCH_MAX_RETRIES || process.env.DISPATCH_MAX_RETRIES),
+    DISPATCH_RETRY_BASE_MS: parsePositiveNumber(
+      envFile.DISPATCH_RETRY_BASE_MS || process.env.DISPATCH_RETRY_BASE_MS,
+    ),
+    DISPATCH_DLQ_TTL_SEC: parsePositiveNumber(envFile.DISPATCH_DLQ_TTL_SEC || process.env.DISPATCH_DLQ_TTL_SEC),
+    DISPATCH_DEDUPE_TTL_SEC: parsePositiveNumber(
+      envFile.DISPATCH_DEDUPE_TTL_SEC || process.env.DISPATCH_DEDUPE_TTL_SEC,
+    ),
   };
 }

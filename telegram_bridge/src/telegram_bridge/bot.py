@@ -5,6 +5,7 @@ Telegram机器人管理器
 
 import asyncio
 import os
+import random
 import time
 import json
 import aiohttp
@@ -15,6 +16,7 @@ from telethon.tl.types import User, Chat, Channel
 from loguru import logger
 from .telegram_types import TelegramAccount, ConnectionStatus, ConnectionState, TelegramChannel, TelegramMessage
 from .connection import ConnectionManager, ReconnectConfig
+from .connection_errors import ThrottledErrorLogger
 from .media_handler import MediaHandler
 
 
@@ -53,6 +55,12 @@ class TelegramBotManager:
         self._entity_cache_seconds = 60 * 60
         self._watched_chats: Dict[str, set] = {}
         self._unwatched_log_count: Dict[str, int] = {}
+        self._keepalive_interval_seconds = max(10.0, float(os.getenv("TELEGRAM_KEEPALIVE_INTERVAL_SEC", "30")))
+        self._keepalive_jitter_seconds = max(0.0, float(os.getenv("TELEGRAM_KEEPALIVE_JITTER_SEC", "5")))
+        self._keepalive_failures: Dict[str, int] = {}
+        self._connection_error_logger = ThrottledErrorLogger(
+            window_seconds=float(os.getenv("TELEGRAM_TRANSIENT_LOG_WINDOW_SEC", "60"))
+        )
         self._setup_connection_callbacks()
 
     def _get_http_session(self) -> aiohttp.ClientSession:
@@ -72,6 +80,28 @@ class TelegramBotManager:
     def _setup_connection_callbacks(self):
         """设置连接状态回调"""
         pass  # 动态注册在connect时处理
+
+    def _next_keepalive_sleep(self) -> float:
+        return self._keepalive_interval_seconds + random.uniform(0, self._keepalive_jitter_seconds)
+
+    def _record_keepalive_failure(self, account_id: str):
+        self._keepalive_failures[account_id] = self._keepalive_failures.get(account_id, 0) + 1
+
+    def _clear_keepalive_failure(self, account_id: str):
+        if self._keepalive_failures.get(account_id):
+            self._keepalive_failures[account_id] = 0
+
+    def _log_connection_exception(
+        self,
+        account_id: str,
+        context: str,
+        error: Exception,
+        *,
+        update_state: bool = True,
+    ):
+        classification = self._connection_error_logger.log(account_id, context, error)
+        if update_state:
+            self.connection_manager.update_state(account_id, ConnectionStatus.ERROR, classification.message)
 
     def _format_account_label(self, account_id: str) -> str:
         user_info = None
@@ -224,6 +254,9 @@ class TelegramBotManager:
     def _get_task_key(self, account_id: str) -> str:
         return self._shared_by_account.get(account_id) or account_id
 
+    def _resolve_status_account(self, task_key: str) -> str:
+        return self._shared_primary.get(task_key) or task_key
+
     def _build_shared_key(self, account: TelegramAccount) -> Optional[str]:
         token = account.token or ""
         if not token:
@@ -306,12 +339,13 @@ class TelegramBotManager:
             pass
 
     async def _run_update_loop(self, account_id: str, client: TelegramClient):
+        status_account = self._resolve_status_account(account_id)
         try:
             await client.run_until_disconnected()
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Bot update loop crashed for account {account_id}: {e}")
+            self._log_connection_exception(status_account, "Bot update loop crashed", e)
 
     def _start_keepalive_task(self, account_id: str, client: TelegramClient):
         task_key = self._get_task_key(account_id)
@@ -333,16 +367,57 @@ class TelegramBotManager:
             pass
 
     async def _keepalive_loop(self, account_id: str, client: TelegramClient):
+        status_account = self._resolve_status_account(account_id)
+        await asyncio.sleep(min(10.0, self._next_keepalive_sleep()))
+
         while True:
             try:
-                await asyncio.sleep(60)
                 if not client.is_connected():
+                    await asyncio.sleep(self._next_keepalive_sleep())
                     continue
-                await client.get_dialogs(limit=1)
+
+                watched_chat_ids = self._get_keepalive_chat_ids(account_id)
+                probe_ok = False
+                last_error: Optional[Exception] = None
+
+                for chat_id in watched_chat_ids[:3]:
+                    try:
+                        await client.get_messages(chat_id, limit=1)
+                        probe_ok = True
+                        break
+                    except Exception as e:
+                        last_error = e
+
+                if not probe_ok:
+                    try:
+                        await client.get_dialogs(limit=1)
+                        probe_ok = True
+                    except Exception as e:
+                        last_error = e
+
+                if probe_ok:
+                    self._clear_keepalive_failure(status_account)
+                elif last_error is not None:
+                    self._record_keepalive_failure(status_account)
+                    self._log_connection_exception(
+                        status_account,
+                        f"Bot keepalive probe failed (count={self._keepalive_failures.get(status_account, 0)})",
+                        last_error,
+                        update_state=self._keepalive_failures.get(status_account, 0) >= 3,
+                    )
+
+                await asyncio.sleep(self._next_keepalive_sleep())
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug(f"Keepalive error for bot {account_id}: {e}")
+                self._record_keepalive_failure(status_account)
+                self._log_connection_exception(
+                    status_account,
+                    f"Bot keepalive loop error (count={self._keepalive_failures.get(status_account, 0)})",
+                    e,
+                    update_state=self._keepalive_failures.get(status_account, 0) >= 3,
+                )
+                await asyncio.sleep(self._next_keepalive_sleep())
 
     def _should_refresh_sender(self, account_id: str, sender: Any, sender_id: Optional[int]) -> bool:
         if not sender_id:
@@ -561,6 +636,9 @@ class TelegramBotManager:
                 "error": "DISCONNECT_FAILED",
                 "message": str(e)
             }
+        finally:
+            self._keepalive_failures.pop(account_id, None)
+            self._connection_error_logger.clear_account(account_id)
 
     async def _disconnect_inner(self, account_id: str) -> Dict[str, Any]:
         """断开Telegram机器人连接（内部方法，不处理锁）"""

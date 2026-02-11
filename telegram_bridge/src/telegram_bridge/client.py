@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import os
 import json
+import random
 import time
 import uuid
 from pathlib import Path
@@ -19,6 +20,7 @@ from loguru import logger
 from .telegram_types import TelegramAccount, ConnectionStatus, ConnectionState, TelegramChannel, TelegramMessage
 from .session import SessionManager
 from .connection import ConnectionManager, ReconnectConfig
+from .connection_errors import ThrottledErrorLogger
 from .media_handler import MediaHandler
 
 
@@ -58,12 +60,40 @@ class TelegramClientManager:
         self.avatar_cache: Dict[int, float] = {}
         self.avatar_ttl_seconds = 6 * 60 * 60
         self._entity_cache_seconds = 60 * 60
+        self._keepalive_interval_seconds = max(10.0, float(os.getenv("TELEGRAM_KEEPALIVE_INTERVAL_SEC", "30")))
+        self._keepalive_jitter_seconds = max(0.0, float(os.getenv("TELEGRAM_KEEPALIVE_JITTER_SEC", "5")))
+        self._keepalive_failures: Dict[str, int] = {}
+        self._connection_error_logger = ThrottledErrorLogger(
+            window_seconds=float(os.getenv("TELEGRAM_TRANSIENT_LOG_WINDOW_SEC", "60"))
+        )
         self._setup_connection_callbacks()
 
     def _setup_connection_callbacks(self):
         """设置连接状态回调"""
         # 为所有可能的账号设置回调
         pass  # 动态注册在connect时处理
+
+    def _next_keepalive_sleep(self) -> float:
+        return self._keepalive_interval_seconds + random.uniform(0, self._keepalive_jitter_seconds)
+
+    def _record_keepalive_failure(self, account_id: str):
+        self._keepalive_failures[account_id] = self._keepalive_failures.get(account_id, 0) + 1
+
+    def _clear_keepalive_failure(self, account_id: str):
+        if self._keepalive_failures.get(account_id):
+            self._keepalive_failures[account_id] = 0
+
+    def _log_connection_exception(
+        self,
+        account_id: str,
+        context: str,
+        error: Exception,
+        *,
+        update_state: bool = True,
+    ):
+        classification = self._connection_error_logger.log(account_id, context, error)
+        if update_state:
+            self.connection_manager.update_state(account_id, ConnectionStatus.ERROR, classification.message)
 
     def _build_dialog_entry(self, chat_id: int, chat_title: Optional[str], chat_username: Optional[str], chat_type: Optional[str]):
         chat_id_str = str(chat_id) if chat_id is not None else ""
@@ -169,6 +199,9 @@ class TelegramClientManager:
 
     def _get_task_key(self, account_id: str) -> str:
         return self._shared_by_account.get(account_id) or account_id
+
+    def _resolve_status_account(self, task_key: str) -> str:
+        return self._shared_primary.get(task_key) or task_key
 
     def _get_keepalive_chat_ids(self, task_key: str) -> List[Union[int, str]]:
         if task_key in self._shared_account_ids:
@@ -315,6 +348,8 @@ class TelegramClientManager:
                 "message": str(e)
             }
         finally:
+            self._keepalive_failures.pop(account_id, None)
+            self._connection_error_logger.clear_account(account_id)
             # 清理手动断开标记
             self._manually_disconnecting.discard(account_id)
 
@@ -336,12 +371,13 @@ class TelegramClientManager:
             pass
 
     async def _run_update_loop(self, account_id: str, client: TelegramClient):
+        status_account = self._resolve_status_account(account_id)
         try:
             await client.run_until_disconnected()
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Update loop crashed for account {account_id}: {e}")
+            self._log_connection_exception(status_account, "Client update loop crashed", e)
 
     def _start_keepalive_task(self, account_id: str, client: TelegramClient):
         task_key = self._get_task_key(account_id)
@@ -363,38 +399,60 @@ class TelegramClientManager:
             pass
 
     async def _keepalive_loop(self, account_id: str, client: TelegramClient):
-        """
-        心跳保活循环：只对配置的频道执行 GetHistory 操作，避免休眠。
-        """
-        await asyncio.sleep(10)
+        """心跳保活循环：优先探活监听聊天，无监听时降级为 dialogs 探活。"""
+
+        status_account = self._resolve_status_account(account_id)
+        await asyncio.sleep(min(10.0, self._next_keepalive_sleep()))
 
         while True:
             try:
                 if not client.is_connected():
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(self._next_keepalive_sleep())
                     continue
 
                 watched_chat_ids = self._get_keepalive_chat_ids(account_id)
-                if not watched_chat_ids:
-                    await asyncio.sleep(60)
-                    continue
+                probe_ok = False
+                last_error: Optional[Exception] = None
 
-                logger.debug(f"Keepalive: {account_id} watching {len(watched_chat_ids)} chats")
-
-                for chat_id in watched_chat_ids:
+                for chat_id in watched_chat_ids[:3]:
                     try:
                         await client.get_messages(chat_id, limit=1)
-                        await asyncio.sleep(2)
+                        probe_ok = True
+                        break
                     except Exception as e:
-                        logger.debug(f"Keepalive failed for chat {chat_id}: {e}")
+                        last_error = e
 
-                await asyncio.sleep(60)
+                if not probe_ok:
+                    try:
+                        await client.get_dialogs(limit=1)
+                        probe_ok = True
+                    except Exception as e:
+                        last_error = e
+
+                if probe_ok:
+                    self._clear_keepalive_failure(status_account)
+                elif last_error is not None:
+                    self._record_keepalive_failure(status_account)
+                    self._log_connection_exception(
+                        status_account,
+                        f"Keepalive probe failed (count={self._keepalive_failures.get(status_account, 0)})",
+                        last_error,
+                        update_state=self._keepalive_failures.get(status_account, 0) >= 3,
+                    )
+
+                await asyncio.sleep(self._next_keepalive_sleep())
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug(f"Keepalive loop error for {account_id}: {e}")
-                await asyncio.sleep(60)
+                self._record_keepalive_failure(status_account)
+                self._log_connection_exception(
+                    status_account,
+                    f"Keepalive loop error (count={self._keepalive_failures.get(status_account, 0)})",
+                    e,
+                    update_state=self._keepalive_failures.get(status_account, 0) >= 3,
+                )
+                await asyncio.sleep(self._next_keepalive_sleep())
 
     def _normalize_watched_chat_id(self, chat_id: Any) -> Optional[Union[int, str]]:
         if chat_id is None:

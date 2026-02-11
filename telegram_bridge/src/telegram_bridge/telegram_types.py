@@ -109,6 +109,9 @@ class ConnectionState(BaseModel):
     reconnect_count: int = 0
     error_message: Optional[str] = None
     user_info: Optional[Dict[str, Any]] = None
+    last_disconnect_reason: Optional[str] = None
+    last_recovery_duration_ms: Optional[int] = None
+    consecutive_disconnect_count: int = 0
 
 
 class IPCMessage(BaseModel):
