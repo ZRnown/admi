@@ -2170,10 +2170,10 @@ function setupDiscordBridgeClient() {
       if (!accountId) return;
       const state = params?.state;
       const user = params?.user;
-      const isLibraryAccount = Boolean(currentConfig?.discordAccounts?.some((acc) => acc.id === accountId));
-      const isInstanceAccount = Boolean(currentConfig?.accounts?.some((acc) => acc.id === accountId));
-
       const running = runningAccounts.get(accountId);
+      const isLibraryAccount = Boolean(currentConfig?.discordAccounts?.some((acc) => acc.id === accountId));
+      // 新实例启动时 currentConfig 可能尚未更新，优先以运行态集合判断实例身份
+      const isInstanceAccount = Boolean(running) || Boolean(currentConfig?.accounts?.some((acc) => acc.id === accountId));
       if (running && user) {
         running.bot.setSelfUser(user);
       }

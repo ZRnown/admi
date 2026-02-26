@@ -423,6 +423,16 @@ class DiscordBridge:
 
                 if session.has_account(acc_id):
                     session.update_listen_channels(acc_id, listen_channels)
+                    # 账号已存在且会话已就绪时，补发 online，避免上层状态卡在 pending
+                    if session.ready_event.is_set():
+                        await self.ipc_server.send_notification(
+                            "discord_status",
+                            {
+                                "accountId": acc_id,
+                                "state": "online",
+                                "user": session.user_payload,
+                            },
+                        )
                 else:
                     await session.add_shared_account(acc_id, listen_channels)
 

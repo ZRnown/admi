@@ -11357,6 +11357,51 @@
     }
 
     // ==================== 配置导入导出函数 ====================
+    function buildInstanceExportPayload(payload, instanceId) {
+      if (!payload || !Array.isArray(payload.accounts) || !instanceId) return payload;
+      const instance = payload.accounts.find((item) => item?.id === instanceId);
+      if (!instance) return payload;
+
+      const discordIds = new Set();
+      const telegramIds = new Set();
+      const xIds = new Set();
+      const truthIds = new Set();
+
+      if (instance.discordAccountId) discordIds.add(instance.discordAccountId);
+      if (instance.discordSenderAccountId) discordIds.add(instance.discordSenderAccountId);
+      if (instance.telegramListenerAccountId) telegramIds.add(instance.telegramListenerAccountId);
+      if (instance.telegramSenderAccountId) telegramIds.add(instance.telegramSenderAccountId);
+      if (instance.xAccountId) xIds.add(instance.xAccountId);
+      if (instance.truthSocialAccountId) truthIds.add(instance.truthSocialAccountId);
+
+      const ruleSources = []
+        .concat(Array.isArray(instance.mappings) ? instance.mappings : [])
+        .concat(Array.isArray(instance.telegramConfig?.mappings) ? instance.telegramConfig.mappings : []);
+      ruleSources.forEach((rule) => {
+        if (rule?.discordSenderAccountId) {
+          discordIds.add(rule.discordSenderAccountId);
+        }
+      });
+
+      return {
+        ...payload,
+        accounts: [instance],
+        activeId: instance.id,
+        discordAccounts: Array.isArray(payload.discordAccounts)
+          ? payload.discordAccounts.filter((acc) => discordIds.has(acc.id))
+          : payload.discordAccounts,
+        telegramAccounts: Array.isArray(payload.telegramAccounts)
+          ? payload.telegramAccounts.filter((acc) => telegramIds.has(acc.id))
+          : payload.telegramAccounts,
+        xAccounts: Array.isArray(payload.xAccounts)
+          ? payload.xAccounts.filter((acc) => xIds.has(acc.id))
+          : payload.xAccounts,
+        truthSocialAccounts: Array.isArray(payload.truthSocialAccounts)
+          ? payload.truthSocialAccounts.filter((acc) => truthIds.has(acc.id))
+          : payload.truthSocialAccounts,
+      };
+    }
+
     async function exportConfig() {
       try {
         const res = await fetch('/api/config?includeSecrets=1');
@@ -11365,11 +11410,18 @@
           return;
         }
         const data = await res.json();
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const exportData = buildInstanceExportPayload(data, state.activeId || data.activeId);
+        const exportedInstance = Array.isArray(exportData?.accounts) ? exportData.accounts[0] : null;
+        const safeInstanceName = (exportedInstance?.name || exportedInstance?.id || 'instance')
+          .replace(/[^\w\u4e00-\u9fa5-]+/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '') || 'instance';
+
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `转发狗-config-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+        a.download = `转发狗-${safeInstanceName}-config-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
         a.click();
         URL.revokeObjectURL(url);
       } catch (e) {

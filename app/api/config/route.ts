@@ -232,6 +232,7 @@ interface FrontendMapping {
   sourceChannelId: string;
   sourceGuildId?: string;
   targetWebhookUrl: string;
+  inputMode?: "manual" | "select";
   note?: string;
   // 是否开启翻译
   translate?: boolean;
@@ -780,6 +781,12 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         sourceChannelId: channelId,
         sourceGuildId: typeof savedRule.sourceGuildId === "string" ? savedRule.sourceGuildId : undefined,
         targetWebhookUrl: String(savedRule.targetWebhookUrl),
+        inputMode:
+          savedRule.inputMode === "manual"
+            ? "manual"
+            : savedRule.inputMode === "select"
+              ? "select"
+              : undefined,
         note: savedRule.note || account.channelNotes?.[channelId],
         translateDirection: !account.enableTranslation
           ? "off"
@@ -818,6 +825,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         id: channelId,
         sourceChannelId: channelId,
         targetWebhookUrl: webhookUrl,
+        inputMode: undefined,
         note: account.channelNotes?.[channelId],
         translateDirection: !account.enableTranslation
           ? "off"
