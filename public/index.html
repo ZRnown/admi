@@ -6588,7 +6588,6 @@
       const startIdx = (feishuPage - 1) * pageSize;
       const endIdx = startIdx + pageSize;
       const currentPageEntries = entries.slice(startIdx, endIdx);
-      const mode = globalRuleInputMode;
       const discordAccountId = acc.discordAccountId || '';
 
       if (entries.length === 0) {
@@ -6596,12 +6595,14 @@
       }
 
       const entriesHtml = currentPageEntries.map((m, idx) => {
+        const originalIndex = idx + startIdx;
+        const ruleInputMode = resolveRuleInputMode(m.inputMode);
         // 源频道输入
         let sourceInput;
-        if (mode === 'select' && discordAccountId) {
+        if (ruleInputMode === 'select' && discordAccountId) {
           const savedGuildId = m.sourceGuildId || '';
           const savedChannelId = m.sourceChannelId || '';
-          const mappingKey = `feishu:${idx + startIdx}`;
+          const mappingKey = `feishu:${originalIndex}`;
 
           // 加载服务器列表
           if (discordAccountId) {
@@ -6638,43 +6639,53 @@
           const guildSelectId = `feishu-guild-select-${mappingKey}`;
           const savedGuildName = m.sourceGuildName || '';
           sourceInput = `<div class="flex items-center gap-1">
-            <select id="${guildSelectId}" onchange="onFeishuGuildSelect('${discordAccountId}', this.value, '${channelSelectId}', ${idx + startIdx})"
+            <select id="${guildSelectId}" onchange="onFeishuGuildSelect('${discordAccountId}', this.value, '${channelSelectId}', ${originalIndex})"
               class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
               ${getCachedGuildsOptions(savedGuildId, savedGuildName)}
             </select>
-            <select id="${channelSelectId}" onchange="updateFeishuSource(${idx + startIdx}, this.value, '${guildSelectId}')"
+            <select id="${channelSelectId}" onchange="updateFeishuSource(${originalIndex}, this.value, '${guildSelectId}')"
               class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
               ${channelOptions}
             </select>
           </div>`;
         } else {
-          sourceInput = `<input type="text" value="${(m.sourceChannelId || '').startsWith('new_') ? '' : (m.sourceChannelId || '')}" onchange="updateFeishuSource(${idx + startIdx}, this.value)"
+          sourceInput = `<input type="text" value="${(m.sourceChannelId || '').startsWith('new_') ? '' : (m.sourceChannelId || '')}" onchange="updateFeishuSource(${originalIndex}, this.value)"
             placeholder="Discord 频道 ID" class="w-48 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">`;
         }
 
         return `
         <div class="w-full flex flex-col gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/30">
           <div class="w-full flex gap-3 items-center flex-wrap min-w-0">
+            <div class="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px]">
+              <button onclick="setFeishuMappingInputMode(${originalIndex}, 'select')"
+                class="px-2.5 py-1 ${ruleInputMode === 'select' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}">
+                列表
+              </button>
+              <button onclick="setFeishuMappingInputMode(${originalIndex}, 'manual')"
+                class="px-2.5 py-1 ${ruleInputMode === 'manual' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}">
+                ID
+              </button>
+            </div>
             ${sourceInput}
             <span class="text-slate-300">→</span>
-            <select onchange="updateFeishuMode(${idx + startIdx}, this.value)"
+            <select onchange="updateFeishuMode(${originalIndex}, this.value)"
               class="px-2 py-2 rounded-lg border border-slate-200 text-sm">
               <option value="webhook" ${m.mode === 'thread' ? '' : 'selected'}>Webhook</option>
               <option value="thread" ${m.mode === 'thread' ? 'selected' : ''}>话题 Thread</option>
             </select>
             ${m.mode === 'thread' ? `
-              <input type="text" value="${m.threadId || ''}" onchange="updateFeishuThreadId(${idx + startIdx}, this.value)"
+              <input type="text" value="${m.threadId || ''}" onchange="updateFeishuThreadId(${originalIndex}, this.value)"
                 placeholder="话题 Thread ID (root_id)" class="flex-1 min-w-[220px] px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             ` : `
-              <input type="text" value="${m.webhookUrl || ''}" onchange="updateFeishuWebhookEntry(${idx + startIdx}, this.value)"
+              <input type="text" value="${m.webhookUrl || ''}" onchange="updateFeishuWebhookEntry(${originalIndex}, this.value)"
                 placeholder="飞书 Webhook 地址" class="flex-1 min-w-[260px] px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono">
             `}
-            <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${idx + startIdx}, this.value)"
+            <input type="text" value="${m.note || ''}" onchange="updateFeishuNote(${originalIndex}, this.value)"
               placeholder="备注" class="w-64 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-            <button onclick="openRuleConfigModal(${idx + startIdx}, 'discord-to-feishu')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="规则配置">
+            <button onclick="openRuleConfigModal(${originalIndex}, 'discord-to-feishu')" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" title="规则配置">
               ⚙️
             </button>
-            <button onclick="removeFeishuMapping(${idx + startIdx})" class="p-2 text-slate-400 hover:text-red-500">删除</button>
+            <button onclick="removeFeishuMapping(${originalIndex})" class="p-2 text-slate-400 hover:text-red-500">删除</button>
           </div>
         </div>
       `}).join('');
@@ -6716,6 +6727,7 @@
       const guildMap = acc.feishuSourceGuildMap || {};
       const channelNameMap = acc.feishuSourceChannelNameMap || {};
       const guildNameMap = acc.feishuSourceGuildNameMap || {};
+      const ruleConfigs = acc.feishuRuleConfigs || {};
 
       // 将entries转换为数组，并按照特定顺序排序
       const entries = Object.entries(hooks);
@@ -6731,6 +6743,7 @@
 
       return entries.map(([source, raw]) => {
         const target = normalizeFeishuTargetValue(raw);
+        const rule = ruleConfigs[source] || {};
         return {
           sourceChannelId: source,
           sourceGuildId: guildMap[source] || '',
@@ -6739,7 +6752,13 @@
           mode: target.mode,
           webhookUrl: target.webhookUrl,
           threadId: target.threadId,
-          note: notes[source] || ''
+          note: notes[source] || '',
+          inputMode:
+            rule.inputMode === 'manual'
+              ? 'manual'
+              : rule.inputMode === 'select'
+                ? 'select'
+                : undefined
         };
       });
     }
@@ -10292,12 +10311,35 @@
       render();
     }
 
+    function setFeishuMappingInputMode(idx, mode) {
+      const acc = getActiveAccount();
+      const entries = getFeishuMappings(acc);
+      const hit = entries[idx];
+      if (!hit) return;
+      if (!acc.feishuRuleConfigs) acc.feishuRuleConfigs = {};
+      const source = hit.sourceChannelId;
+      const current = acc.feishuRuleConfigs[source] && typeof acc.feishuRuleConfigs[source] === 'object'
+        ? acc.feishuRuleConfigs[source]
+        : {};
+      acc.feishuRuleConfigs[source] = {
+        ...current,
+        inputMode: mode === 'manual' ? 'manual' : 'select',
+      };
+      saveConfigImmediate();
+      render();
+    }
+
     function addFeishuMapping() {
       const acc = getActiveAccount();
       if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
+      if (!acc.feishuRuleConfigs) acc.feishuRuleConfigs = {};
       // 使用时间戳作为key，确保新规则排在前面
       const newKey = 'new_' + Date.now();
       acc.channelFeishuWebhooks[newKey] = { mode: 'webhook', webhookUrl: '' };
+      acc.feishuRuleConfigs[newKey] = {
+        ...(acc.feishuRuleConfigs[newKey] || {}),
+        inputMode: globalRuleInputMode === 'manual' ? 'manual' : 'select',
+      };
       pagination.feishuPage = 1;
       saveConfig();
       render();

@@ -267,6 +267,8 @@ export interface RuleLevelConfig {
     mainGuildId?: string;
     mainGuildName?: string;
   };
+  // 规则输入模式（用于来源频道选择方式）
+  inputMode?: "manual" | "select";
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -844,6 +846,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermarks: undefined,
       scheduledBroadcast: undefined,
       standbyMode: undefined,
+      inputMode: undefined,
     };
   }
   const watermark = normalizeWatermarkConfig(raw.watermark);
@@ -899,6 +902,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermarks,
     scheduledBroadcast,
     standbyMode,
+    inputMode:
+      raw.inputMode === "manual" ? "manual" : raw.inputMode === "select" ? "select" : undefined,
   };
 }
 

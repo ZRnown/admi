@@ -465,6 +465,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermarkSecondary: undefined,
       watermarks: undefined,
       scheduledBroadcast: undefined,
+      inputMode: undefined,
     };
   }
   const watermark = raw.watermark && typeof raw.watermark === "object" ? raw.watermark : undefined;
@@ -519,6 +520,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermarkSecondary,
     watermarks,
     scheduledBroadcast,
+    inputMode:
+      raw.inputMode === "manual" ? "manual" : raw.inputMode === "select" ? "select" : undefined,
   };
 }
 
