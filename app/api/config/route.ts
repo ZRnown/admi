@@ -1266,6 +1266,12 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           sourceChannelId: key,
           sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
           targetWebhookUrl: String(mapping.targetWebhookUrl),
+          inputMode:
+            mapping.inputMode === "manual"
+              ? "manual"
+              : mapping.inputMode === "select"
+                ? "select"
+                : undefined,
           note: mapping.note,
           translateDirection: mapping.translateDirection,
           longMessage: mapping.longMessage,
