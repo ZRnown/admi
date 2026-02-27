@@ -10389,10 +10389,19 @@
       const newSource = value || '';
       const webhook = acc.channelFeishuWebhooks[oldSource];
       const notes = acc.channelNotes || {};
-
-      delete acc.channelFeishuWebhooks[oldSource];
-      if (newSource) {
-        acc.channelFeishuWebhooks[newSource] = webhook;
+      if (oldSource !== newSource) {
+        const currentEntries = Object.entries(acc.channelFeishuWebhooks);
+        const oldIndex = currentEntries.findIndex(([sourceId]) => sourceId === oldSource);
+        const nextEntries = currentEntries.filter(([sourceId]) => sourceId !== oldSource);
+        if (newSource) {
+          // 占位规则（new_）第一次选中频道后，保持在顶部，避免跳到尾页
+          const preferredIndex =
+            oldSource.startsWith('new_') && !newSource.startsWith('new_') ? 0 : oldIndex;
+          const insertIndex =
+            preferredIndex >= 0 && preferredIndex <= nextEntries.length ? preferredIndex : nextEntries.length;
+          nextEntries.splice(insertIndex, 0, [newSource, webhook]);
+        }
+        acc.channelFeishuWebhooks = Object.fromEntries(nextEntries);
       }
 
       // 修复：从 DOM 获取当前选择的服务器ID，确保服务器ID被正确保存
