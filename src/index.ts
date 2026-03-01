@@ -3405,14 +3405,8 @@ async function main() {
   const multi = resolveMultiConfigForRuntime(rawMulti);
   currentConfig = multi;
 
-  // 重启项目时不自动启动实例，重置所有账号的 loginRequested 为 false
-  await logger.info("系统启动，重置所有实例状态（需手动启动）...");
-  for (const account of multi.accounts) {
-    account.loginRequested = false;
-    await writeStatus(account.id, "idle", "等待手动启动");
-  }
-  // 保存重置后的配置
-  await saveMultiConfig(multi);
+  // 按配置恢复实例运行意图：保留 loginRequested，不在启动时强制清空
+  await logger.info("系统启动，按配置恢复实例状态...");
 
 
   // 按 sharedKey 分组实例，实现多实例共享同一 Discord 账号
