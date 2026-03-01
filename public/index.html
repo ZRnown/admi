@@ -832,6 +832,30 @@
       return unique;
     }
 
+    function hasDiscordListenChannelsForStart(acc, type) {
+      if (!acc) return false;
+      if (type === 'discord-to-discord') {
+        return (acc.mappings || []).some((m) => {
+          const source = typeof m?.sourceChannelId === 'string' ? m.sourceChannelId.trim() : '';
+          return source && !source.startsWith('new_');
+        });
+      }
+      if (type === 'discord-to-feishu') {
+        return Object.keys(acc.channelFeishuWebhooks || {}).some((sourceId) => {
+          const source = String(sourceId || '').trim();
+          return source && !source.startsWith('new_');
+        });
+      }
+      if (type === 'discord-to-telegram') {
+        return (acc.telegramConfig?.mappings || []).some((m) => {
+          if (m?.type !== 'discord-to-telegram') return false;
+          const source = typeof m?.sourceChannelId === 'string' ? m.sourceChannelId.trim() : '';
+          return source && !source.startsWith('new_');
+        });
+      }
+      return true;
+    }
+
     async function connectTelegramLibraryAccountSilent(accountId, role) {
       const entry = getTelegramLibraryAccountById(accountId);
       if (!entry) return { success: false, message: '未找到 Telegram 账号' };
@@ -964,6 +988,11 @@
         }
       }
       const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
+      if (needsDiscord && !hasDiscordListenChannelsForStart(acc, type)) {
+        showToast('当前转发类型下没有可监听的来源频道，请先添加并填写来源频道', 'error');
+        render();
+        return;
+      }
       if (needsDiscord) {
         if (usingDiscordLibrary) {
           if (!discordLibraryId) {
