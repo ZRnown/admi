@@ -939,6 +939,9 @@
       const usingLibrary = hasTelegramLibrarySelection(acc);
       const discordLibraryId = acc.discordAccountId || acc.discordSenderAccountId;
       const usingDiscordLibrary = Boolean(discordLibraryId);
+      const wasLoginRequested = acc.loginRequested === true;
+      const discordRuntimeState = normalizeDiscordInstanceState(acc.loginState || 'idle');
+      const shouldRetryDiscordConnection = wasLoginRequested && discordRuntimeState !== 'online';
       const targets = getTelegramLibraryTargetsForInstance(acc, type);
       if (requiresTelegram && usingLibrary && targets.length === 0) {
         showToast('请先选择 Telegram 账号', 'error');
@@ -975,9 +978,14 @@
             render();
             return;
           }
-          if (!acc.loginRequested) {
+          if (!acc.loginRequested || shouldRetryDiscordConnection) {
             acc.loginRequested = true;
-            acc.loginNonce = (acc.loginNonce || 0) + 1;
+            if (!wasLoginRequested) {
+              acc.loginNonce = (acc.loginNonce || 0) + 1;
+            }
+            if (shouldRetryDiscordConnection) {
+              acc.restartNonce = (acc.restartNonce || 0) + 1;
+            }
             acc.loginState = 'pending';
             acc.loginMessage = '启动中...';
             setConnectHold(`discord:${acc.id}`);
@@ -985,6 +993,9 @@
         } else {
           acc.loginRequested = true;
           acc.loginNonce = (acc.loginNonce || 0) + 1;
+          if (shouldRetryDiscordConnection) {
+            acc.restartNonce = (acc.restartNonce || 0) + 1;
+          }
           acc.loginState = 'pending';
           acc.loginMessage = '启动中...';
           setConnectHold(`discord:${acc.id}`);
