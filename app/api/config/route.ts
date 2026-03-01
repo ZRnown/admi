@@ -218,6 +218,12 @@ function normalizeTelegramState(state?: string): string {
   return state || "idle";
 }
 
+function normalizeDiscordState(state?: string): string {
+  if (!state) return "idle";
+  if (String(state).toLowerCase() === "stopped") return "idle";
+  return state;
+}
+
 function normalizeTelegramMessage(state: string, message?: string): string {
   const trimmed = typeof message === "string" ? message.trim() : "";
   if (trimmed) return trimmed;
@@ -1566,9 +1572,10 @@ export async function GET(req: NextRequest) {
     const discordAccounts = Array.isArray(multi.discordAccounts) ? multi.discordAccounts : [];
     const frontendDiscordAccounts: FrontendDiscordAccountLibrary[] = discordAccounts.map((acc) => {
       const statusEntry = discordLibraryStatus[acc.id];
+      const rawLoginState = typeof statusEntry?.loginState === "string" ? statusEntry.loginState : undefined;
       return {
         ...acc,
-        loginState: typeof statusEntry?.loginState === "string" ? statusEntry.loginState : undefined,
+        loginState: rawLoginState ? normalizeDiscordState(rawLoginState) : undefined,
         loginMessage: typeof statusEntry?.loginMessage === "string" ? statusEntry.loginMessage : undefined,
       };
     });
@@ -1576,12 +1583,18 @@ export async function GET(req: NextRequest) {
     const truthSocialAccounts = Array.isArray(multi.truthSocialAccounts) ? multi.truthSocialAccounts : [];
     const payload: FrontendPayload = {
       accounts: multi.accounts.map((acc) => {
+        const frontendBase = accountToFrontend(acc);
+        const runtimeStatus = status[acc.id] || {};
+        const normalizedLoginState = normalizeDiscordState(
+          typeof runtimeStatus.loginState === "string" ? runtimeStatus.loginState : frontendBase.loginState,
+        );
         const { botStatus, clientStatus } = resolveTelegramAccountStatuses(acc, telegramStatus, telegramLibraryById);
         const botState = normalizeTelegramState(botStatus?.state);
         const clientState = normalizeTelegramState(clientStatus?.state);
         const frontend = {
-          ...accountToFrontend(acc),
-          ...(status[acc.id] || {}),
+          ...frontendBase,
+          ...runtimeStatus,
+          loginState: normalizedLoginState,
           telegramBotState: botState,
           telegramBotMessage: normalizeTelegramMessage(botState, botStatus?.message),
           telegramClientState: clientState,

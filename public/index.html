@@ -711,18 +711,23 @@
       catch (e) { return '—'; }
     }
 
+    function normalizeRuntimeStatus(state) {
+      if (!state || state === 'stopped') return 'idle';
+      return state;
+    }
+
     const statusLabelMap = {
-      online: '已启动', idle: '未启动', pending: '启动中',
+      online: '已启动', idle: '未启动', stopped: '未启动', pending: '启动中',
       connecting: '连接中', disconnecting: '断开中', error: '异常'
     };
 
     function getStatusLabel(state) {
-      if (!state) return statusLabelMap.idle;
-      return statusLabelMap[state] || state;
+      const normalized = normalizeRuntimeStatus(state);
+      return statusLabelMap[normalized] || normalized;
     }
 
     function getBadgeClass(state) {
-      const normalized = state || 'idle';
+      const normalized = normalizeRuntimeStatus(state);
       if (normalized === 'online') return 'bg-emerald-50 text-emerald-700';
       if (normalized === 'error') return 'bg-red-50 text-red-700';
       if (normalized === 'disconnecting') return 'bg-orange-50 text-orange-700';
@@ -744,7 +749,7 @@
         }
         const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
         if (uniqueIds.length === 0) return 'idle';
-        const states = uniqueIds.map((id) => (getTelegramLibraryStatus(id)?.state || 'idle'));
+        const states = uniqueIds.map((id) => normalizeRuntimeStatus(getTelegramLibraryStatus(id)?.state || 'idle'));
         if (states.includes('error')) return 'error';
         if (states.some((s) => s === 'disconnecting')) return 'disconnecting';
         if (states.some((s) => s === 'pending' || s === 'connecting')) return 'pending';
@@ -755,8 +760,8 @@
       if (type === 'telegram-to-discord') {
         return acc?.telegramClientState || 'idle';
       }
-      const botState = acc?.telegramBotState || 'idle';
-      const clientState = acc?.telegramClientState || 'idle';
+      const botState = normalizeRuntimeStatus(acc?.telegramBotState || 'idle');
+      const clientState = normalizeRuntimeStatus(acc?.telegramClientState || 'idle');
       const states = [botState, clientState];
       return states.includes('error') ? 'error'
         : states.some(s => s === 'disconnecting') ? 'disconnecting'
@@ -792,7 +797,7 @@
         return resolveTelegramInstanceState(acc, type);
       }
       if (type === 'x-to-discord' || type === 'truthsocial-to-discord') {
-        return acc?.loginState || 'idle';
+        return normalizeRuntimeStatus(acc?.loginState || 'idle');
       }
       return resolveDiscordInstanceState(acc, type);
     }
@@ -4334,8 +4339,7 @@
     }
 
     function normalizeDiscordInstanceState(state) {
-      if (!state || state === 'stopped') return 'idle';
-      return state;
+      return normalizeRuntimeStatus(state);
     }
 
     function getDiscordLibraryStatus(accountId) {
@@ -11715,7 +11719,7 @@
     }
 
     function updateRelayStatusElement(relayId, state, message) {
-      const normalizedState = state || 'idle';
+      const normalizedState = normalizeRuntimeStatus(state || 'idle');
       const displayLabels = {
         online: '已启动',
         idle: '未启动',
@@ -11754,11 +11758,13 @@
     }
 
     function shouldApplyRemoteState(localState, remoteState, holdUntil) {
+      const normalizedLocalState = normalizeRuntimeStatus(localState || 'idle');
+      const normalizedRemoteState = normalizeRuntimeStatus(remoteState || 'idle');
       const holdActive = typeof holdUntil === 'number' ? holdUntil > Date.now() : false;
-      if (localState === 'disconnecting' && (remoteState === 'online' || remoteState === 'pending' || remoteState === 'connecting')) {
+      if (normalizedLocalState === 'disconnecting' && (normalizedRemoteState === 'online' || normalizedRemoteState === 'pending' || normalizedRemoteState === 'connecting')) {
         return !holdActive;
       }
-      if ((localState === 'pending' || localState === 'connecting') && remoteState === 'idle') {
+      if ((normalizedLocalState === 'pending' || normalizedLocalState === 'connecting') && normalizedRemoteState === 'idle') {
         return !holdActive;
       }
       return true;
@@ -11793,9 +11799,9 @@
 
             const loginHoldUntil = getDisconnectHold(`discord:${localAcc.id}`);
             const connectHoldUntil = getConnectHold(`discord:${localAcc.id}`);
-            const remoteLoginState = remoteAcc.loginState || 'idle';
+            const remoteLoginState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
             const remoteLoginMessage = remoteAcc.loginMessage || '';
-            const localLoginState = localAcc.loginState || 'idle';
+            const localLoginState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
             const ignoreOnlineDuringStart =
               (localLoginState === 'pending' || localLoginState === 'connecting') &&
               remoteLoginState === 'online' &&
@@ -11803,8 +11809,8 @@
             const loginHold = (localLoginState === 'pending' || localLoginState === 'connecting')
               ? connectHoldUntil
               : loginHoldUntil;
-            if (!ignoreOnlineDuringStart && shouldApplyRemoteState(localAcc.loginState, remoteLoginState, loginHold)) {
-              const loginChanged = remoteLoginState !== localAcc.loginState || remoteLoginMessage !== localAcc.loginMessage;
+            if (!ignoreOnlineDuringStart && shouldApplyRemoteState(localLoginState, remoteLoginState, loginHold)) {
+              const loginChanged = remoteLoginState !== normalizeRuntimeStatus(localAcc.loginState || 'idle') || remoteLoginMessage !== localAcc.loginMessage;
               if (loginChanged) {
                 localAcc.loginState = remoteLoginState;
                 localAcc.loginMessage = remoteLoginMessage;
@@ -11823,15 +11829,15 @@
 
             const botHoldUntil = getDisconnectHold(`tg-bot:${localAcc.id}`);
             const botConnectHoldUntil = getConnectHold(`tg-bot:${localAcc.id}`);
-            const remoteBotState = remoteAcc.telegramBotState || 'idle';
+            const remoteBotState = normalizeRuntimeStatus(remoteAcc.telegramBotState || 'idle');
             const remoteBotMessage = remoteAcc.telegramBotMessage || '';
-            const localBotState = localAcc.telegramBotState || 'idle';
+            const localBotState = normalizeRuntimeStatus(localAcc.telegramBotState || 'idle');
             const ignoreBotOnlineDuringStart =
               (localBotState === 'pending' || localBotState === 'connecting') &&
               remoteBotState === 'online' &&
               botConnectHoldUntil > Date.now();
-            if (!ignoreBotOnlineDuringStart && shouldApplyRemoteState(localAcc.telegramBotState, remoteBotState, botHoldUntil)) {
-              const botChanged = remoteBotState !== localAcc.telegramBotState || remoteBotMessage !== localAcc.telegramBotMessage;
+            if (!ignoreBotOnlineDuringStart && shouldApplyRemoteState(localBotState, remoteBotState, botHoldUntil)) {
+              const botChanged = remoteBotState !== normalizeRuntimeStatus(localAcc.telegramBotState || 'idle') || remoteBotMessage !== localAcc.telegramBotMessage;
               if (botChanged) {
                 localAcc.telegramBotState = remoteBotState;
                 localAcc.telegramBotMessage = remoteBotMessage;
@@ -11850,15 +11856,15 @@
 
             const clientHoldUntil = getDisconnectHold(`tg-client:${localAcc.id}`);
             const clientConnectHoldUntil = getConnectHold(`tg-client:${localAcc.id}`);
-            const remoteClientState = remoteAcc.telegramClientState || 'idle';
+            const remoteClientState = normalizeRuntimeStatus(remoteAcc.telegramClientState || 'idle');
             const remoteClientMessage = remoteAcc.telegramClientMessage || '';
-            const localClientState = localAcc.telegramClientState || 'idle';
+            const localClientState = normalizeRuntimeStatus(localAcc.telegramClientState || 'idle');
             const ignoreClientOnlineDuringStart =
               (localClientState === 'pending' || localClientState === 'connecting') &&
               remoteClientState === 'online' &&
               clientConnectHoldUntil > Date.now();
-            if (!ignoreClientOnlineDuringStart && shouldApplyRemoteState(localAcc.telegramClientState, remoteClientState, clientHoldUntil)) {
-              const clientChanged = remoteClientState !== localAcc.telegramClientState || remoteClientMessage !== localAcc.telegramClientMessage;
+            if (!ignoreClientOnlineDuringStart && shouldApplyRemoteState(localClientState, remoteClientState, clientHoldUntil)) {
+              const clientChanged = remoteClientState !== normalizeRuntimeStatus(localAcc.telegramClientState || 'idle') || remoteClientMessage !== localAcc.telegramClientMessage;
               if (clientChanged) {
                 localAcc.telegramClientState = remoteClientState;
                 localAcc.telegramClientMessage = remoteClientMessage;
@@ -11920,13 +11926,14 @@
                 } else {
                   remoteAcc.botRelays.forEach((relay, idx) => {
                     const localRelay = localAcc.botRelays[idx];
-                    const remoteState = relay?.loginState || 'idle';
+                    const remoteState = normalizeRuntimeStatus(relay?.loginState || 'idle');
+                    const localRelayState = normalizeRuntimeStatus(localRelay?.loginState || 'idle');
                     const remoteMessage = relay?.loginMessage || '';
-                    if (!shouldApplyRemoteState(localRelay?.loginState, remoteState)) {
+                    if (!shouldApplyRemoteState(localRelayState, remoteState)) {
                       return;
                     }
                     const relayChanged =
-                      remoteState !== localRelay?.loginState || remoteMessage !== localRelay?.loginMessage;
+                      remoteState !== localRelayState || remoteMessage !== localRelay?.loginMessage;
                     if (relayChanged) {
                       localRelay.loginState = remoteState;
                       localRelay.loginMessage = remoteMessage;
@@ -11978,9 +11985,9 @@
                   shouldRender = true;
                   return;
                 }
-                const remoteState = remoteAcc.loginState || 'idle';
+                const remoteState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
                 const remoteMessage = remoteAcc.loginMessage || '';
-                const localState = localAcc.loginState || 'idle';
+                const localState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
                 const wasOnline = localState === 'online';
                 const connectHoldUntil = getConnectHold(`discord-lib:${remoteAcc.id}`);
                 const disconnectHoldUntil = getDisconnectHold(`discord-lib:${remoteAcc.id}`);
@@ -12041,9 +12048,9 @@
                   shouldRender = true;
                   return;
                 }
-                const remoteState = remoteAcc.loginState || 'idle';
+                const remoteState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
                 const remoteMessage = remoteAcc.loginMessage || '';
-                const localState = localAcc.loginState || 'idle';
+                const localState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
                 const connectHoldUntil = getConnectHold(`tg-lib:${remoteAcc.id}`);
                 const disconnectHoldUntil = getDisconnectHold(`tg-lib:${remoteAcc.id}`);
                 const holdUntil = (localState === 'pending' || localState === 'connecting') ? connectHoldUntil : disconnectHoldUntil;

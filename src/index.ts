@@ -2727,7 +2727,7 @@ async function stopAccount(accountId: string, logger: FileLogger, manual: boolea
   }
   runningAccounts.delete(accountId);
   await logger.info(`账号 "${running.account.name}" 已停止`);
-  await writeStatus(accountId, "stopped", "已停止");
+  await writeStatus(accountId, "idle", "已停止");
 }
 
 // 自动重连函数
