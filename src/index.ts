@@ -121,6 +121,10 @@ let telegramLoginProcessing = false;
 let lastTelegramWatchSummaryHash: string | null = null;
 let telegramSyncProcessing = false;
 let discordLoginProcessing = false;
+let statusWriteQueue: Promise<void> = Promise.resolve();
+let statusCache: Record<string, any> | null = null;
+let discordLibraryStatusWriteQueue: Promise<void> = Promise.resolve();
+let discordLibraryStatusCache: Record<string, { loginState?: string; loginMessage?: string }> | null = null;
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -933,38 +937,67 @@ function refreshScheduledBroadcasts(account: AccountConfig, running: RunningAcco
 }
 
 export async function writeStatus(accountId: string, state: string, message?: string) {
+  statusWriteQueue = statusWriteQueue
+    .catch(() => {})
+    .then(async () => {
+      try {
+        await fs.mkdir(path.dirname(statusFile), { recursive: true });
+        if (!statusCache) {
+          try {
+            const buf = await fs.readFile(statusFile, "utf-8");
+            statusCache = JSON.parse(buf.toString());
+          } catch {
+            statusCache = {};
+          }
+        }
+        const nextStatusMap = statusCache || {};
+        nextStatusMap[accountId] = { loginState: state, loginMessage: message || "" };
+        statusCache = nextStatusMap;
+        const tmpPath = `${statusFile}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        await fs.writeFile(tmpPath, JSON.stringify(nextStatusMap, null, 2));
+        await fs.rename(tmpPath, statusFile);
+      } catch {}
+    });
+  await statusWriteQueue;
+}
+
+async function ensureDiscordLibraryStatusCacheLoaded() {
+  if (discordLibraryStatusCache) return;
   try {
-    await fs.mkdir(path.dirname(statusFile), { recursive: true });
-    let obj: Record<string, any> = {};
-    try {
-      const buf = await fs.readFile(statusFile, "utf-8");
-      obj = JSON.parse(buf.toString());
-    } catch {}
-    obj[accountId] = { loginState: state, loginMessage: message || "" };
-    await fs.writeFile(statusFile, JSON.stringify(obj, null, 2));
-  } catch {}
+    const buf = await fs.readFile(discordLibraryStatusFile, "utf-8");
+    discordLibraryStatusCache = JSON.parse(buf.toString());
+  } catch {
+    discordLibraryStatusCache = {};
+  }
+}
+
+async function persistDiscordLibraryStatusCache() {
+  await fs.mkdir(path.dirname(discordLibraryStatusFile), { recursive: true });
+  const tmpPath = `${discordLibraryStatusFile}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  await fs.writeFile(tmpPath, JSON.stringify(discordLibraryStatusCache || {}, null, 2));
+  await fs.rename(tmpPath, discordLibraryStatusFile);
 }
 
 async function writeDiscordLibraryStatus(accountId: string, state: string, message?: string) {
-  try {
-    await fs.mkdir(path.dirname(discordLibraryStatusFile), { recursive: true });
-    let obj: Record<string, any> = {};
-    try {
-      const buf = await fs.readFile(discordLibraryStatusFile, "utf-8");
-      obj = JSON.parse(buf.toString());
-    } catch {}
-    obj[accountId] = { loginState: state, loginMessage: message || "" };
-    await fs.writeFile(discordLibraryStatusFile, JSON.stringify(obj, null, 2));
-  } catch {}
+  discordLibraryStatusWriteQueue = discordLibraryStatusWriteQueue
+    .catch(() => {})
+    .then(async () => {
+      try {
+        await ensureDiscordLibraryStatusCacheLoaded();
+        (discordLibraryStatusCache as Record<string, { loginState?: string; loginMessage?: string }>)[accountId] = {
+          loginState: state,
+          loginMessage: message || "",
+        };
+        await persistDiscordLibraryStatusCache();
+      } catch {}
+    });
+  await discordLibraryStatusWriteQueue;
 }
 
 async function readDiscordLibraryStatusMap(): Promise<Record<string, { loginState?: string; loginMessage?: string }>> {
-  try {
-    const buf = await fs.readFile(discordLibraryStatusFile, "utf-8");
-    return JSON.parse(buf.toString());
-  } catch {
-    return {};
-  }
+  await discordLibraryStatusWriteQueue.catch(() => {});
+  await ensureDiscordLibraryStatusCacheLoaded();
+  return { ...(discordLibraryStatusCache || {}) };
 }
 
 async function primeDiscordLibraryStatus(accounts: DiscordAccountLibrary[]) {
@@ -996,10 +1029,15 @@ async function primeDiscordLibraryStatus(accounts: DiscordAccountLibrary[]) {
     }
   }
   if (changed) {
-    try {
-      await fs.mkdir(path.dirname(discordLibraryStatusFile), { recursive: true });
-      await fs.writeFile(discordLibraryStatusFile, JSON.stringify(statusMap, null, 2));
-    } catch {}
+    discordLibraryStatusWriteQueue = discordLibraryStatusWriteQueue
+      .catch(() => {})
+      .then(async () => {
+        try {
+          discordLibraryStatusCache = statusMap;
+          await persistDiscordLibraryStatusCache();
+        } catch {}
+      });
+    await discordLibraryStatusWriteQueue;
   }
 }
 
