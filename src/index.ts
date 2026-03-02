@@ -1234,19 +1234,24 @@ function collectDiscordListenChannels(account: AccountConfig): Set<string> {
   for (const channelId of Object.keys(webhooks)) {
     if (channelId) listenChannels.add(channelId);
   }
-  for (const channelId of Object.keys(feishuWebhooks)) {
-    if (channelId) listenChannels.add(channelId);
+  for (const [channelId, rawTarget] of Object.entries(feishuWebhooks)) {
+    if (!channelId) continue;
+    if (!parseFeishuTarget(rawTarget)) continue;
+    listenChannels.add(channelId);
   }
   for (const mapping of mappings) {
-    if (mapping?.sourceChannelId) {
-      listenChannels.add(String(mapping.sourceChannelId));
-    }
+    const sourceChannelId = String(mapping?.sourceChannelId || "").trim();
+    const targetWebhookUrl = String(mapping?.targetWebhookUrl || "").trim();
+    if (!sourceChannelId || !targetWebhookUrl) continue;
+    listenChannels.add(sourceChannelId);
   }
   const telegramMappings = account.telegramConfig?.mappings || [];
   for (const mapping of telegramMappings) {
-    if (mapping?.type === "discord-to-telegram" && mapping.sourceChannelId) {
-      listenChannels.add(String(mapping.sourceChannelId));
-    }
+    if (mapping?.type !== "discord-to-telegram") continue;
+    const sourceChannelId = String(mapping?.sourceChannelId || "").trim();
+    const targetChannelId = String(mapping?.targetChannelId || "").trim();
+    if (!sourceChannelId || !targetChannelId) continue;
+    listenChannels.add(sourceChannelId);
   }
   return listenChannels;
 }

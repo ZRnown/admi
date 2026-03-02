@@ -837,25 +837,36 @@
       return unique;
     }
 
+    function hasValidRuleSourceChannel(sourceId) {
+      const source = typeof sourceId === 'string' ? sourceId.trim() : '';
+      return !!source && !source.startsWith('new_');
+    }
+
     function hasDiscordListenChannelsForStart(acc, type) {
       if (!acc) return false;
       if (type === 'discord-to-discord') {
         return (acc.mappings || []).some((m) => {
-          const source = typeof m?.sourceChannelId === 'string' ? m.sourceChannelId.trim() : '';
-          return source && !source.startsWith('new_');
+          if (!hasValidRuleSourceChannel(m?.sourceChannelId)) return false;
+          const target = typeof m?.targetWebhookUrl === 'string' ? m.targetWebhookUrl.trim() : '';
+          return !!target;
         });
       }
       if (type === 'discord-to-feishu') {
-        return Object.keys(acc.channelFeishuWebhooks || {}).some((sourceId) => {
-          const source = String(sourceId || '').trim();
-          return source && !source.startsWith('new_');
+        return Object.entries(acc.channelFeishuWebhooks || {}).some(([sourceId, rawTarget]) => {
+          if (!hasValidRuleSourceChannel(sourceId)) return false;
+          const target = normalizeFeishuTargetValue(rawTarget);
+          if (target.mode === 'thread') {
+            return !!String(target.threadId || '').trim();
+          }
+          return !!String(target.webhookUrl || '').trim();
         });
       }
       if (type === 'discord-to-telegram') {
         return (acc.telegramConfig?.mappings || []).some((m) => {
           if (m?.type !== 'discord-to-telegram') return false;
-          const source = typeof m?.sourceChannelId === 'string' ? m.sourceChannelId.trim() : '';
-          return source && !source.startsWith('new_');
+          if (!hasValidRuleSourceChannel(m?.sourceChannelId)) return false;
+          const target = String(m?.targetChannelId || '').trim();
+          return !!target;
         });
       }
       return true;
@@ -994,7 +1005,7 @@
       }
       const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
       if (needsDiscord && !hasDiscordListenChannelsForStart(acc, type)) {
-        showToast('当前转发类型下没有可监听的来源频道，请先添加并填写来源频道', 'error');
+        showToast('当前转发类型缺少完整规则，请先填写来源频道和目标', 'error');
         render();
         return;
       }
