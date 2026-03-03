@@ -19,6 +19,7 @@ const FORWARDING_TYPES = [
   "telegram-to-discord",
   "telegram-to-telegram",
   "discord-to-feishu",
+  "discord-to-dingtalk",
   "x-to-discord",
   "truthsocial-to-discord",
 ] as const;
@@ -277,6 +278,7 @@ export interface DiscordMappingRule extends RuleLevelConfig {
   sourceChannelId: string;
   sourceGuildId?: string;
   targetWebhookUrl: string;
+  dingtalkSecret?: string;
   inputMode?: "manual" | "select";
   note?: string;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
@@ -1361,6 +1363,10 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
           sourceGuildId: typeof m.sourceGuildId === "string" ? m.sourceGuildId : undefined,
           targetWebhookUrl: typeof m.targetWebhookUrl === "string" ? m.targetWebhookUrl : "",
+          dingtalkSecret:
+            typeof m.dingtalkSecret === "string" && m.dingtalkSecret.trim()
+              ? m.dingtalkSecret.trim()
+              : undefined,
           inputMode: m.inputMode === "manual" ? "manual" : m.inputMode === "select" ? "select" : undefined,
           note: typeof m.note === "string" ? m.note : undefined,
           translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,

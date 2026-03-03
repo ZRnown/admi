@@ -22,6 +22,7 @@ import {
 import { getEnv } from "./env.js";
 import { SenderBot } from "./senderBot.js";
 import { FeishuSender } from "./feishuSender.js";
+import { DingTalkSender } from "./dingtalkSender.js";
 import { ProxyAgent } from "proxy-agent";
 import { FileLogger } from "./logger.js";
 import { telegramBridgeManager, discordBridgeManager } from "./processManager.js";
@@ -48,6 +49,7 @@ interface RunningAccount {
   senderBotsBySource: Map<string, SenderBot[]>;  // 支持相同源ID对应多个webhook
   defaultSenderBot?: SenderBot; // 如果关闭 Discord 转发，可能为 undefined
   feishuSendersBySource?: Map<string, any>;
+  dingtalkSendersBySource?: Map<string, DingTalkSender[]>;
   isManuallyStopped: boolean; // 标记是否手动停止
   reconnectTimer?: NodeJS.Timeout; // 重连定时器
   reconnectCount: number; // 重连次数
@@ -1305,8 +1307,10 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   // 修改为数组类型，支持相同源ID对应多个webhook
   const senderBotsBySource = new Map<string, SenderBot[]>();
   const feishuSendersBySource = new Map<string, FeishuSender>();
+  const dingtalkSendersBySource = new Map<string, DingTalkSender[]>();
   let defaultSenderBot: SenderBot | undefined;
   const prepares: Promise<any>[] = [];
+  const forwardingType = account.forwardingType || "discord-to-discord";
 
   const feishuWebhooks = account.enableFeishuForward ? account.channelFeishuWebhooks || {} : {};
   const replacements = account.replacementsDictionary || {};
@@ -1328,7 +1332,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   const mappings = (account as any).mappings || [];
   const webhooks = account.enableDiscordForward !== false ? (account.channelWebhooks || {}) : {};
 
-  if (account.enableDiscordForward !== false) {
+  if (account.enableDiscordForward !== false && forwardingType === "discord-to-discord") {
     if (mappings.length > 0) {
       // 使用 mappings 数组构建（支持相同源ID多个webhook）
       for (const mapping of mappings) {
@@ -1390,6 +1394,30 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
     }
   }
 
+  if (forwardingType === "discord-to-dingtalk") {
+    const dingtalkMappings =
+      mappings.length > 0
+        ? mappings
+        : Object.entries(account.channelWebhooks || {}).map(([sourceChannelId, targetWebhookUrl]) => ({
+            sourceChannelId,
+            targetWebhookUrl,
+          }));
+
+    for (const mapping of dingtalkMappings) {
+      if (!mapping?.sourceChannelId || !mapping?.targetWebhookUrl) continue;
+      const channelId = String(mapping.sourceChannelId || "").trim();
+      const webhookUrl = String(mapping.targetWebhookUrl || "").trim();
+      if (!channelId || !webhookUrl) continue;
+      const sender = new DingTalkSender(webhookUrl, {
+        secret: typeof mapping.dingtalkSecret === "string" ? mapping.dingtalkSecret : undefined,
+        httpAgent,
+      });
+      const existing = dingtalkSendersBySource.get(channelId) || [];
+      existing.push(sender);
+      dingtalkSendersBySource.set(channelId, existing);
+    }
+  }
+
   if (Object.keys(feishuWebhooks).length > 0) {
     for (const [channelId, rawTarget] of Object.entries(feishuWebhooks)) {
       const target = parseFeishuTarget(rawTarget);
@@ -1414,13 +1442,25 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   // 检查是否配置了任何转发规则
   const hasDiscordWebhooks = Object.keys(webhooks).length > 0;
   const hasFeishuWebhooks = Object.keys(feishuWebhooks).length > 0;
+  const hasDingTalkMappings = Array.from(dingtalkSendersBySource.values()).some((items) => items.length > 0);
   const hasTelegramMappings = (account.telegramConfig?.mappings || []).some(
     (m: any) => m.type === 'discord-to-telegram'
   );
+  const requiresDiscordSourceRules =
+    forwardingType === "discord-to-discord" ||
+    forwardingType === "discord-to-telegram" ||
+    forwardingType === "discord-to-feishu" ||
+    forwardingType === "discord-to-dingtalk";
 
-  // 如果没有配置任何转发规则（Discord/Feishu/Telegram），且 Discord 转发未关闭，则报错
-  if (!defaultSenderBot && !hasFeishuWebhooks && account.enableDiscordForward !== false && !hasTelegramMappings) {
-    throw new Error("At least one forwarding rule must be configured (Discord webhook, Feishu webhook, or Telegram mapping).");
+  // 如果没有配置任何规则（Discord/Feishu/DingTalk/Telegram），则报错
+  if (
+    requiresDiscordSourceRules &&
+    !hasDiscordWebhooks &&
+    !hasFeishuWebhooks &&
+    !hasDingTalkMappings &&
+    !hasTelegramMappings
+  ) {
+    throw new Error("At least one forwarding rule must be configured (Discord webhook, Feishu webhook, DingTalk webhook, or Telegram mapping).");
   }
 
   await Promise.all(prepares);
@@ -1428,7 +1468,7 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
   // 移除重复的 webhook 日志输出，只在日志文件中记录一次
   logger.info(`account "${account.name}" senderBots 构建完成，映射频道数=${senderBotsBySource.size}`);
 
-  return { senderBotsBySource, defaultSenderBot, feishuSendersBySource };
+  return { senderBotsBySource, defaultSenderBot, feishuSendersBySource, dingtalkSendersBySource };
 }
 
 function setupTelegramBridgeClient() {
@@ -2679,13 +2719,20 @@ async function startAccount(
 
   const existing = runningAccounts.get(account.id);
   if (existing) {
-    const { senderBotsBySource, defaultSenderBot, feishuSendersBySource } = await buildSenderBots(account, logger);
+    const { senderBotsBySource, defaultSenderBot, feishuSendersBySource, dingtalkSendersBySource } = await buildSenderBots(account, logger);
     const legacyConfig = accountToLegacyConfig(account);
     existing.account = account;
     existing.senderBotsBySource = senderBotsBySource;
     (existing as any).feishuSendersBySource = feishuSendersBySource;
+    existing.dingtalkSendersBySource = dingtalkSendersBySource;
     existing.defaultSenderBot = defaultSenderBot;
-    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
+    existing.bot.updateRuntimeConfig(
+      legacyConfig,
+      defaultSenderBot,
+      senderBotsBySource,
+      feishuSendersBySource,
+      dingtalkSendersBySource,
+    );
     refreshScheduledBroadcasts(account, existing, logger);
     if (shouldConnect) {
       await writeStatusForAccount(account.id, "pending", "正在连接...");
@@ -2694,12 +2741,20 @@ async function startAccount(
   }
 
   try {
-    const { senderBotsBySource, defaultSenderBot, feishuSendersBySource } = await buildSenderBots(account, logger);
+    const { senderBotsBySource, defaultSenderBot, feishuSendersBySource, dingtalkSendersBySource } = await buildSenderBots(account, logger);
     const legacyConfig = accountToLegacyConfig(account);
     const dummyClient = {} as any;
-    const bot = new Bot(dummyClient, legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource, {
-      externalMessageSource: true,
-    });
+    const bot = new Bot(
+      dummyClient,
+      legacyConfig,
+      defaultSenderBot,
+      senderBotsBySource,
+      feishuSendersBySource,
+      dingtalkSendersBySource,
+      {
+        externalMessageSource: true,
+      },
+    );
 
     const runningInfo: RunningAccount = {
       account,
@@ -2708,6 +2763,7 @@ async function startAccount(
       senderBotsBySource,
       defaultSenderBot,
       feishuSendersBySource,
+      dingtalkSendersBySource,
       isManuallyStopped: false,
       reconnectCount: 0,
       lastReconnectTime: 0,
@@ -2883,7 +2939,14 @@ async function reconnectAccount(accountId: string, logger: FileLogger, delay: nu
       
       // 重新创建 Bot 实例
       const legacyConfig = accountToLegacyConfig(currentRunning.account);
-      const bot = new Bot(client, legacyConfig, currentRunning.defaultSenderBot, currentRunning.senderBotsBySource);
+      const bot = new Bot(
+        client,
+        legacyConfig,
+        currentRunning.defaultSenderBot,
+        currentRunning.senderBotsBySource,
+        currentRunning.feishuSendersBySource,
+        currentRunning.dingtalkSendersBySource,
+      );
       
       // 更新运行信息
       currentRunning.client = client;
@@ -3273,6 +3336,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         let senderBotsBySource = existing.senderBotsBySource;
         let defaultSenderBot = existing.defaultSenderBot;
         let feishuSendersBySource = (existing as any).feishuSendersBySource;
+        let dingtalkSendersBySource = existing.dingtalkSendersBySource;
         // 如果映射或翻译配置变化，需要重新构建 SenderBot
         // 注意：ruleConfigChanged 包含 mappings 数组的变化，支持相同源ID多个webhook
         if (
@@ -3290,6 +3354,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
             senderBotsBySource = built.senderBotsBySource;
             defaultSenderBot = built.defaultSenderBot;
             feishuSendersBySource = built.feishuSendersBySource;
+            dingtalkSendersBySource = built.dingtalkSendersBySource;
           } catch (e: any) {
             await logger.error(`账号 "${account.name}" 重新构建 SenderBot 失败: ${String(e?.message || e)}`);
             await writeStatus(account.id, "error", `配置错误: ${String(e?.message || e)}`);
@@ -3298,11 +3363,18 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
         }
 
         const legacyConfig = accountToLegacyConfig(account);
-        existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
+        existing.bot.updateRuntimeConfig(
+          legacyConfig,
+          defaultSenderBot,
+          senderBotsBySource,
+          feishuSendersBySource,
+          dingtalkSendersBySource,
+        );
         existing.account = account;
         existing.senderBotsBySource = senderBotsBySource;
         existing.defaultSenderBot = defaultSenderBot;
         (existing as any).feishuSendersBySource = feishuSendersBySource;
+        existing.dingtalkSendersBySource = dingtalkSendersBySource;
         if (ruleConfigChanged || scheduledChanged || forwardingTypeChanged || telegramForwardChanged) {
           refreshScheduledBroadcasts(account, existing, logger);
         }
@@ -3370,6 +3442,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     let senderBotsBySource = existing.senderBotsBySource;
     let defaultSenderBot = existing.defaultSenderBot;
     let feishuSendersBySource = (existing as any).feishuSendersBySource;
+    let dingtalkSendersBySource = existing.dingtalkSendersBySource;
     // 如果映射或翻译配置变化，需要重新构建 SenderBot
     if (mappingsChanged || translationChanged || relayChanged || forwardSettingsChanged || feishuConfigChanged || proxyChanged) {
       try {
@@ -3377,6 +3450,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       senderBotsBySource = built.senderBotsBySource;
       defaultSenderBot = built.defaultSenderBot;
         feishuSendersBySource = built.feishuSendersBySource;
+        dingtalkSendersBySource = built.dingtalkSendersBySource;
       } catch (e: any) {
         await logger.error(`账号 "${account.name}" 重新构建 SenderBot 失败: ${String(e?.message || e)}`);
         await writeStatus(account.id, "error", `配置错误: ${String(e?.message || e)}`);
@@ -3385,11 +3459,18 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     }
 
     const legacyConfig = accountToLegacyConfig(account);
-    existing.bot.updateRuntimeConfig(legacyConfig, defaultSenderBot, senderBotsBySource, feishuSendersBySource);
+    existing.bot.updateRuntimeConfig(
+      legacyConfig,
+      defaultSenderBot,
+      senderBotsBySource,
+      feishuSendersBySource,
+      dingtalkSendersBySource,
+    );
     existing.account = account;
     existing.senderBotsBySource = senderBotsBySource;
     existing.defaultSenderBot = defaultSenderBot;
     (existing as any).feishuSendersBySource = feishuSendersBySource;
+    existing.dingtalkSendersBySource = dingtalkSendersBySource;
 
     if (
       keywordsChanged ||

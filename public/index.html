@@ -699,6 +699,7 @@
         case 'telegram-to-discord': return 'Telegram → Discord';
         case 'telegram-to-telegram': return 'Telegram → Telegram';
         case 'discord-to-feishu': return 'Discord → 飞书';
+        case 'discord-to-dingtalk': return 'Discord → 钉钉';
         case 'x-to-discord': return 'X → Discord';
         case 'truthsocial-to-discord': return 'TruthSocial → Discord';
         default: return value;
@@ -861,6 +862,13 @@
           return !!String(target.webhookUrl || '').trim();
         });
       }
+      if (type === 'discord-to-dingtalk') {
+        return (acc.mappings || []).some((m) => {
+          if (!hasValidRuleSourceChannel(m?.sourceChannelId)) return false;
+          const target = typeof m?.targetWebhookUrl === 'string' ? m.targetWebhookUrl.trim() : '';
+          return !!target;
+        });
+      }
       if (type === 'discord-to-telegram') {
         return (acc.telegramConfig?.mappings || []).some((m) => {
           if (m?.type !== 'discord-to-telegram') return false;
@@ -1003,7 +1011,7 @@
           return;
         }
       }
-      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
+      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu' || type === 'discord-to-dingtalk';
       if (needsDiscord && !hasDiscordListenChannelsForStart(acc, type)) {
         showToast('当前转发类型缺少完整规则，请先填写来源频道和目标', 'error');
         render();
@@ -1091,7 +1099,7 @@
       const type = acc.forwardingType || 'discord-to-discord';
       const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
       const usingLibrary = hasTelegramLibrarySelection(acc);
-      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
+      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu' || type === 'discord-to-dingtalk';
       if (needsDiscord) {
         const usingDiscordLibrary = Boolean(acc.discordAccountId || acc.discordSenderAccountId);
         if (!usingDiscordLibrary) {
@@ -1203,7 +1211,7 @@
 
     function buildAccountDetailHtml(acc, type, summary) {
       const parts = [];
-      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu';
+      const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu' || type === 'discord-to-dingtalk';
       if (needsDiscord) {
         if (acc.discordAccountId) {
           const name = getDiscordLibraryDisplayName(acc.discordAccountId);
@@ -2248,6 +2256,13 @@
       if (forwardingType === 'discord-to-feishu') {
         return `<input type="text" value="${savedTargetId}"
           onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
+          placeholder="${placeholder}"
+          class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
+      }
+
+      if (forwardingType === 'discord-to-dingtalk') {
+        return `<input type="text" value="${m.targetWebhookUrl || ''}"
+          onchange="updateMapping(${idx}, 'targetWebhookUrl', this.value)"
           placeholder="${placeholder}"
           class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
       }
@@ -3497,7 +3512,7 @@
       }
       const allowed = new Set();
       state.enabledForwardingTypes.forEach((type) => {
-        if (type === 'discord-to-discord' || type === 'discord-to-feishu') {
+        if (type === 'discord-to-discord' || type === 'discord-to-feishu' || type === 'discord-to-dingtalk') {
           allowed.add('discord');
         } else if (type === 'discord-to-telegram') {
           allowed.add('discord');
@@ -5442,7 +5457,11 @@
     }
 
     function renderAccountSelectors(acc, forwardingType) {
-      const needsDiscordListener = forwardingType === 'discord-to-discord' || forwardingType === 'discord-to-telegram' || forwardingType === 'discord-to-feishu';
+      const needsDiscordListener =
+        forwardingType === 'discord-to-discord' ||
+        forwardingType === 'discord-to-telegram' ||
+        forwardingType === 'discord-to-feishu' ||
+        forwardingType === 'discord-to-dingtalk';
       const needsDiscordSender = forwardingType === 'discord-to-discord';
       const needsTelegramListener = forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram';
       const needsTelegramSender = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram';
@@ -5795,6 +5814,7 @@
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-discord')) ? `<option value="telegram-to-discord" ${acc.forwardingType === 'telegram-to-discord' ? 'selected' : ''}>Telegram → Discord</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-telegram')) ? `<option value="telegram-to-telegram" ${acc.forwardingType === 'telegram-to-telegram' ? 'selected' : ''}>Telegram → Telegram</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-feishu')) ? `<option value="discord-to-feishu" ${acc.forwardingType === 'discord-to-feishu' ? 'selected' : ''}>Discord → 飞书</option>` : ''}
+                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-dingtalk')) ? `<option value="discord-to-dingtalk" ${acc.forwardingType === 'discord-to-dingtalk' ? 'selected' : ''}>Discord → 钉钉</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('x-to-discord')) ? `<option value="x-to-discord" ${acc.forwardingType === 'x-to-discord' ? 'selected' : ''}>X → Discord</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('truthsocial-to-discord')) ? `<option value="truthsocial-to-discord" ${acc.forwardingType === 'truthsocial-to-discord' ? 'selected' : ''}>TruthSocial → Discord</option>` : ''}
               </select>
@@ -5832,6 +5852,17 @@
               </div>
               <p class="text-xs text-slate-500 mt-2">在飞书开发者后台创建企业自建应用，开通 im:resource:upload 和 im:message:send_as_bot 权限</p>
               <p class="text-xs text-amber-600 mt-1">未填写 AppID/Secret 时只能走 Webhook 文本转发，图片/视频无法转发。</p>
+            </div>
+            ` : ''}
+
+            ${forwardingType === 'discord-to-dingtalk' ? `
+            <div class="border-t pt-4 border-slate-200">
+              <h3 class="text-sm font-medium text-slate-800 mb-3">钉钉机器人配置</h3>
+              <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                <p>1) 在钉钉群添加「自定义机器人」，复制 Webhook 地址到规则目标。</p>
+                <p>2) 若安全设置选择「加签」，请在规则中填写对应「加签密钥（secret）」。</p>
+                <p>3) 图片将以 Markdown 图片形式发送；视频/音频/文档将以可点击链接发送。</p>
+              </div>
             </div>
             ` : ''}
 
@@ -5965,6 +5996,7 @@
                     forwardingType === 'telegram-to-discord' ? 'Telegram → Discord 转发规则' :
                     forwardingType === 'telegram-to-telegram' ? 'Telegram → Telegram 转发规则' :
                     forwardingType === 'discord-to-feishu' ? 'Discord → 飞书 转发规则' :
+                    forwardingType === 'discord-to-dingtalk' ? 'Discord → 钉钉 转发规则' :
                     forwardingType === 'x-to-discord' ? 'X → Discord 转发规则' :
                     'TruthSocial → Discord 转发规则'}
                 </h2>
@@ -5974,6 +6006,7 @@
                     forwardingType === 'telegram-to-discord' ? '配置Telegram消息转发到Discord频道的映射关系' :
                     forwardingType === 'telegram-to-telegram' ? '配置Telegram消息转发到Telegram频道的映射关系' :
                     forwardingType === 'discord-to-feishu' ? '配置Discord消息转发到飞书的映射关系' :
+                    forwardingType === 'discord-to-dingtalk' ? '配置Discord消息转发到钉钉机器人的映射关系' :
                     forwardingType === 'x-to-discord' ? '配置 X 平台内容转发到 Discord 的规则' :
                 '配置 TruthSocial 内容转发到 Discord 的规则'}
                 </p>
@@ -6088,6 +6121,20 @@
                 <p>话题 Thread：填写 thread_id（话题根消息 message_id）。获取方式：订阅 <code class="px-1 bg-slate-100 rounded">im.message.receive_v1</code> 事件保存 message_id，或用历史消息接口找到 root_id 为空的 message_id。可为不同 Discord 频道配置不同 thread_id。</p>
               </div>
               ${renderFeishuMappings(acc)}
+            </div>
+            ` : forwardingType === 'discord-to-dingtalk' ? `
+            <div class="w-full space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm text-slate-800 font-medium">钉钉转发规则</span>
+                </div>
+                <button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
+              </div>
+              <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                <p>目标填写钉钉自定义机器人 Webhook。</p>
+                <p>若启用加签，请在规则行填写「加签密钥」。</p>
+              </div>
+              ${renderMappings(acc, forwardingType)}
             </div>
             ` : ''}
           </div>
@@ -6442,6 +6489,7 @@
                         forwardingType === 'discord-to-telegram' ? 'Discord→Telegram' :
                         forwardingType === 'telegram-to-discord' ? 'Telegram→Discord' :
                         forwardingType === 'telegram-to-telegram' ? 'Telegram→Telegram' :
+                        forwardingType === 'discord-to-dingtalk' ? 'Discord→钉钉' :
                         'Discord→飞书';
         return `<div class="text-center py-8 text-slate-400 text-sm">暂无 ${typeName} 规则，点击"添加规则"创建</div>`;
       }
@@ -6476,6 +6524,10 @@
           sourcePlaceholder = 'Discord 频道/子区 ID';
           targetPlaceholder = '飞书 Webhook 地址';
           arrowIcon = '→';
+        } else if (forwardingType === 'discord-to-dingtalk') {
+          sourcePlaceholder = 'Discord 频道/子区 ID';
+          targetPlaceholder = '钉钉 Webhook 地址';
+          arrowIcon = '→';
         }
 
         return `
@@ -6494,6 +6546,10 @@
             ${renderSourceChannelInput(acc, m, originalIndex, forwardingType, sourcePlaceholder)}
             <span class="text-slate-300">${arrowIcon}</span>
             ${renderTargetChannelInput(acc, m, originalIndex, forwardingType, targetPlaceholder)}
+            ${forwardingType === 'discord-to-dingtalk' ? `
+            <input type="password" value="${m.dingtalkSecret || ''}" onchange="updateMapping(${originalIndex}, 'dingtalkSecret', this.value)"
+              placeholder="加签密钥（可选）" class="w-52 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs font-mono focus:border-indigo-500 focus:outline-none">
+            ` : ''}
             ${forwardingType === 'discord-to-discord' ? `
             <select onchange="updateMappingRelay(${originalIndex}, this.value)" class="w-44 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="">Webhook 默认</option>
@@ -9082,7 +9138,7 @@
 
     // 规则配置弹窗相关函数
     let currentRuleConfigIndex = -1;
-    let currentRuleConfigType = ''; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'telegram-to-telegram' | 'discord-to-feishu'
+    let currentRuleConfigType = ''; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'telegram-to-telegram' | 'discord-to-feishu' | 'discord-to-dingtalk'
     // 临时存储规则配置数据
     let ruleConfigData = {
       allowedUsersIds: [],
@@ -9429,7 +9485,7 @@
       document.getElementById('ruleStripChinese').checked = ruleConfigData.stripChinese;
 
       const standbySection = document.getElementById('ruleStandbySection');
-      const supportsStandby = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu'].includes(forwardingType);
+      const supportsStandby = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(forwardingType);
       if (standbySection) {
         if (supportsStandby) {
           standbySection.classList.remove('hidden');
@@ -9478,7 +9534,7 @@
 
       // 超长消息处理（Discord/TG/飞书规则）
       const longMsgSection = document.getElementById('ruleLongMessageSection');
-      const supportsLongMessage = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu'].includes(forwardingType);
+      const supportsLongMessage = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(forwardingType);
       if (supportsLongMessage) {
         longMsgSection.classList.remove('hidden');
         const longMsg = mapping.longMessage || {};
@@ -9570,7 +9626,7 @@
       mapping.ignoreChineseThreshold = Number.isFinite(ruleChineseThreshold) ? ruleChineseThreshold : undefined;
 
       // 主备模式（规则级别）
-      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu'].includes(currentRuleConfigType)) {
+      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(currentRuleConfigType)) {
         const standbyEnabled = document.getElementById('ruleStandbyEnabled').checked;
         if (standbyEnabled) {
           const cooldownValue = parseInt(document.getElementById('ruleStandbyCooldown').value, 10);
@@ -9639,7 +9695,7 @@
       }
 
       // 超长消息处理（Discord/TG/飞书规则）
-      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu'].includes(currentRuleConfigType)) {
+      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(currentRuleConfigType)) {
         mapping.longMessage = {
           enabled: document.getElementById('ruleLongMessageEnabled').checked,
           threshold: parseInt(document.getElementById('ruleLongMessageThreshold').value) || 0,
@@ -9822,7 +9878,7 @@
           }
         }
         // 如果之前是需要 Discord 的类型，现在切换到 Telegram-only，断开 Discord
-        if ((previousType === 'discord-to-discord' || previousType === 'discord-to-telegram' || previousType === 'discord-to-feishu')
+        if ((previousType === 'discord-to-discord' || previousType === 'discord-to-telegram' || previousType === 'discord-to-feishu' || previousType === 'discord-to-dingtalk')
             && (forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram')
             && acc.loginState === 'online') {
           requestStop();
@@ -9877,6 +9933,9 @@
         if (!acc.feishuAppId) acc.feishuAppId = '';
         if (!acc.feishuAppSecret) acc.feishuAppSecret = '';
         acc.enableFeishuForward = acc.enableFeishuForward !== true ? true : acc.enableFeishuForward;
+      }
+      if (forwardingType === 'discord-to-dingtalk') {
+        if (!acc.token) acc.token = '';
       }
       saveConfig();
       render();

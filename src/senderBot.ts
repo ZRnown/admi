@@ -973,6 +973,129 @@ export class SenderBot {
     return results;
   }
 
+  async editForwardedMessage(params: {
+    targetChannelId: string;
+    targetMessageId: string;
+    content: string;
+    useEmbed?: boolean;
+    extraEmbeds?: any[];
+    components?: any[];
+    enableTranslationOverride?: boolean;
+    translationDirection?: "auto" | "zh-en" | "en-zh" | "off";
+    ruleReplacementsDictionary?: Record<string, string>;
+    stripEnglish?: boolean;
+    stripChinese?: boolean;
+  }) {
+    let text = params.content || "";
+    for (const [a, b] of Object.entries(this.replacementsDictionary)) {
+      text = text.replaceAll(a, b);
+    }
+    if (params.ruleReplacementsDictionary) {
+      for (const [a, b] of Object.entries(params.ruleReplacementsDictionary)) {
+        text = text.replaceAll(a, b);
+      }
+    }
+
+    const alreadyTranslated = text.includes("\n---\n");
+    const enableForThis =
+      typeof params.enableTranslationOverride === "boolean"
+        ? params.enableTranslationOverride
+        : this.enableTranslation;
+
+    let targetLang: "zh" | "en" | "zh-en" | "en-zh" | null = null;
+    if (!alreadyTranslated && enableForThis && params.translationDirection !== "off") {
+      if (params.translationDirection && params.translationDirection !== "auto") {
+        targetLang = params.translationDirection;
+      } else {
+        targetLang = this.chooseTranslateTarget(text);
+      }
+    }
+    if (!alreadyTranslated && targetLang && text.trim()) {
+      const translated = await this.translateText(text, targetLang);
+      if (translated) {
+        text = `${text}\n---\n${translated}`;
+      }
+    }
+
+    if (params.stripEnglish || params.stripChinese) {
+      text = stripLanguages(text, {
+        stripEnglish: params.stripEnglish,
+        stripChinese: params.stripChinese,
+      });
+    }
+
+    const payload: any = {
+      allowed_mentions: { parse: [], replied_user: false },
+    };
+
+    if (params.useEmbed) {
+      payload.content = "";
+      const base = text ? [{ description: text.slice(0, 4096) }] : [];
+      let embeds: any[] = [...base, ...((params.extraEmbeds as any[]) || [])];
+
+      if (enableForThis && params.translationDirection !== "off" && embeds.length > 0) {
+        const formatTranslated = (orig: string, t?: string | null) => {
+          if (!t || t.trim() === orig.trim()) return orig;
+          return `${orig}\n---\n${t}`;
+        };
+        embeds = await Promise.all(
+          embeds.map(async (e: any) => {
+            const translateField = async (txt?: string) => {
+              if (!txt) return txt;
+              if (txt.includes("\n---\n")) return txt;
+              if (params.translationDirection === "off") return txt;
+              const target =
+                params.translationDirection && params.translationDirection !== "auto"
+                  ? params.translationDirection
+                  : this.chooseTranslateTarget(txt);
+              if (!target) return txt;
+              const t = await this.translateText(txt, target);
+              return formatTranslated(txt, t || undefined);
+            };
+            return {
+              ...e,
+              title: await translateField(e.title),
+              description: await translateField(e.description),
+              footer: e.footer ? { ...e.footer, text: await translateField(e.footer.text) } : e.footer,
+              author: e.author ? { ...e.author, name: await translateField(e.author.name) } : e.author,
+              fields: e.fields
+                ? await Promise.all(
+                    e.fields.map(async (f: any) => ({
+                      ...f,
+                      name: await translateField(f.name),
+                      value: await translateField(f.value),
+                    })),
+                  )
+                : e.fields,
+            };
+          }),
+        );
+      }
+
+      payload.embeds = embeds;
+    } else {
+      payload.content = text.slice(0, 2000);
+      if (params.extraEmbeds && params.extraEmbeds.length > 0) {
+        payload.embeds = params.extraEmbeds;
+      }
+    }
+
+    if (params.components && params.components.length > 0) {
+      payload.components = params.components;
+    }
+
+    const hasEmbeds = Array.isArray(payload.embeds) && payload.embeds.length > 0;
+    const hasComponents = Array.isArray(payload.components) && payload.components.length > 0;
+    if (!payload.content && !hasEmbeds && !hasComponents) {
+      payload.content = " ";
+    }
+
+    if (this.enableBotRelay && this.botRelayToken && params.targetChannelId) {
+      return await this.patchViaBotAPI(params.targetChannelId, params.targetMessageId, payload);
+    }
+    return await this.patchWebhookMessage(params.targetMessageId, payload);
+  }
+
   private async postToWebhook(body: Record<string, any>, wait = false): Promise<any> {
     const url = new URL(this.webhookUrl);
     if (wait) {
@@ -1028,6 +1151,102 @@ export class SenderBot {
       });
       req.setTimeout(30000, () => {
         req.destroy(new Error("Webhook request timeout"));
+      });
+      req.on("error", (err) => reject(err));
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private async patchWebhookMessage(messageId: string, body: Record<string, any>): Promise<any> {
+    const url = new URL(this.webhookUrl);
+    const safeMessageId = encodeURIComponent(messageId);
+    const payload = JSON.stringify(body);
+
+    const options: https.RequestOptions = {
+      method: "PATCH",
+      hostname: url.hostname,
+      path: `${url.pathname}/messages/${safeMessageId}${url.search}`,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+      agent: this.httpAgent as any,
+    };
+
+    return await new Promise<any>((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(responseBody ? JSON.parse(responseBody) : null);
+            } catch {
+              resolve(null);
+            }
+          } else {
+            reject(
+              new Error(
+                `Webhook edit failed with status ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`,
+              ),
+            );
+          }
+        });
+      });
+      req.setTimeout(30000, () => {
+        req.destroy(new Error("Webhook edit request timeout"));
+      });
+      req.on("error", (err) => reject(err));
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private async patchViaBotAPI(channelId: string, messageId: string, body: Record<string, any>): Promise<any> {
+    if (!this.botRelayToken) {
+      throw new Error("Bot relay token is not configured");
+    }
+
+    const safeChannelId = encodeURIComponent(channelId);
+    const safeMessageId = encodeURIComponent(messageId);
+    const url = new URL(`https://discord.com/api/v10/channels/${safeChannelId}/messages/${safeMessageId}`);
+    const payload = JSON.stringify(body);
+
+    const options: https.RequestOptions = {
+      method: "PATCH",
+      hostname: url.hostname,
+      path: url.pathname,
+      headers: {
+        Authorization: `Bot ${this.botRelayToken}`,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+      agent: this.httpAgent as any,
+    };
+
+    return await new Promise<any>((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(responseBody ? JSON.parse(responseBody) : null);
+            } catch {
+              resolve(null);
+            }
+          } else {
+            reject(
+              new Error(
+                `Bot API edit failed with status ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`,
+              ),
+            );
+          }
+        });
+      });
+      req.setTimeout(30000, () => {
+        req.destroy(new Error("Bot API edit request timeout"));
       });
       req.on("error", (err) => reject(err));
       req.write(payload);

@@ -238,6 +238,7 @@ interface FrontendMapping {
   sourceChannelId: string;
   sourceGuildId?: string;
   targetWebhookUrl: string;
+  dingtalkSecret?: string;
   inputMode?: "manual" | "select";
   note?: string;
   // 是否开启翻译
@@ -283,7 +284,15 @@ interface FrontendAccount {
   id: string;
   name: string;
   type: "bot" | "selfbot";
-  forwardingType?: "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu" | "x-to-discord" | "truthsocial-to-discord";
+  forwardingType?:
+    | "discord-to-discord"
+    | "discord-to-telegram"
+    | "telegram-to-discord"
+    | "telegram-to-telegram"
+    | "discord-to-feishu"
+    | "discord-to-dingtalk"
+    | "x-to-discord"
+    | "truthsocial-to-discord";
   token: string;
   proxyUrl: string;
   loginRequested: boolean;
@@ -412,7 +421,14 @@ interface FrontendPayload {
   telegramAvatarBaseUrl?: string;
   forwardStats?: ForwardStatsSnapshot;
   enabledForwardingTypes?: Array<
-    "discord-to-discord" | "discord-to-telegram" | "telegram-to-discord" | "telegram-to-telegram" | "discord-to-feishu" | "x-to-discord" | "truthsocial-to-discord"
+    | "discord-to-discord"
+    | "discord-to-telegram"
+    | "telegram-to-discord"
+    | "telegram-to-telegram"
+    | "discord-to-feishu"
+    | "discord-to-dingtalk"
+    | "x-to-discord"
+    | "truthsocial-to-discord"
   >;
 }
 
@@ -790,6 +806,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         sourceChannelId: channelId,
         sourceGuildId: typeof savedRule.sourceGuildId === "string" ? savedRule.sourceGuildId : undefined,
         targetWebhookUrl: String(savedRule.targetWebhookUrl),
+        dingtalkSecret:
+          typeof (savedRule as any).dingtalkSecret === "string" ? (savedRule as any).dingtalkSecret : undefined,
         inputMode:
           savedRule.inputMode === "manual"
             ? "manual"
@@ -834,6 +852,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         id: channelId,
         sourceChannelId: channelId,
         targetWebhookUrl: webhookUrl,
+        dingtalkSecret: undefined,
         inputMode: undefined,
         note: account.channelNotes?.[channelId],
         translateDirection: !account.enableTranslation
@@ -973,6 +992,13 @@ function maskFrontendAccount(account: FrontendAccount): FrontendAccount {
       ...masked.truthSocialConfig,
       password: maskSecret(masked.truthSocialConfig.password),
     };
+  }
+
+  if (Array.isArray(masked.mappings)) {
+    masked.mappings = masked.mappings.map((mapping) => ({
+      ...mapping,
+      dingtalkSecret: maskSecret(mapping?.dingtalkSecret),
+    }));
   }
 
   if (Array.isArray(masked.botRelays)) {
@@ -1235,6 +1261,19 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       ? dto.feishuRuleConfigs
       : (base as any).feishuRuleConfigs,
   );
+  const baseDingTalkSecretById = new Map<string, string | undefined>();
+  const baseDingTalkSecretByKey = new Map<string, string | undefined>();
+  for (const item of base.mappings || []) {
+    if (!item) continue;
+    if (item.id) {
+      baseDingTalkSecretById.set(item.id, (item as any).dingtalkSecret);
+    }
+    const source = String((item as any).sourceChannelId || "").trim();
+    const target = String((item as any).targetWebhookUrl || "").trim();
+    if (source && target) {
+      baseDingTalkSecretByKey.set(`${source}::${target}`, (item as any).dingtalkSecret);
+    }
+  }
 
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
@@ -1270,11 +1309,21 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           mapping.watermark,
           mapping.watermarkSecondary,
         );
+        const fallbackDingTalkSecret =
+          (typeof mapping.id === "string" && mapping.id
+            ? baseDingTalkSecretById.get(mapping.id)
+            : undefined) ||
+          baseDingTalkSecretByKey.get(`${key}::${String(mapping.targetWebhookUrl)}`);
+        const resolvedDingTalkSecret = resolveSecretValue(mapping.dingtalkSecret, fallbackDingTalkSecret);
         savedMappings.push({
           id: mapping.id || randomUUID(),
           sourceChannelId: key,
           sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
           targetWebhookUrl: String(mapping.targetWebhookUrl),
+          dingtalkSecret:
+            typeof resolvedDingTalkSecret === "string" && resolvedDingTalkSecret.trim()
+              ? resolvedDingTalkSecret.trim()
+              : undefined,
           inputMode:
             mapping.inputMode === "manual"
               ? "manual"
