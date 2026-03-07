@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
           {
             id: requestId,
             action: "password",
-            params: { email, password, totpSecret },
+            params: { email, password, totpSecret, proxyUrl: account.proxyUrl },
             createdAt: Date.now(),
           },
           null,
@@ -189,7 +189,7 @@ export async function POST(req: NextRequest) {
         {
           id: requestId,
           action: "password",
-          params: { email, password, totpSecret },
+          params: { email, password, totpSecret, proxyUrl: account.proxyUrl },
           createdAt: Date.now(),
         },
         null,

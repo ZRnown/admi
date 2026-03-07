@@ -14,11 +14,12 @@
     "start:paddle-ocr-server": "node paddle_ocr_server.js"
   },
   "dependencies": {
+    "debug": "^4.3.7",
     "discord.js": "^14.25.0",
     "dotenv": "^17.2.3",
-    "debug": "^4.3.7",
     "jimp": "^0.22.10",
     "next": "^16.0.10",
+    "playwright": "^1.58.2",
     "proxy-agent": "^6.5.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
