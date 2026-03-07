@@ -19,7 +19,6 @@
     "dotenv": "^17.2.3",
     "jimp": "^0.22.10",
     "next": "^16.0.10",
-    "playwright": "^1.58.2",
     "proxy-agent": "^6.5.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"

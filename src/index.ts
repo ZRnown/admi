@@ -34,7 +34,6 @@ import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
 import { reconcileExternalForwarders, shutdownExternalForwarders } from "./externalForwarder.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
-import { loginDiscordWithPassword } from "./discordPasswordLogin.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -2672,24 +2671,11 @@ async function processDiscordLoginRequest(logger: FileLogger) {
 
     let result: any = null;
     if (request.action === "password") {
-      const email = typeof request?.params?.email === "string" ? request.params.email.trim() : "";
-      const password = typeof request?.params?.password === "string" ? request.params.password : "";
-      const totpSecret = typeof request?.params?.totpSecret === "string" ? request.params.totpSecret.trim() : undefined;
-      const proxyUrl = typeof request?.params?.proxyUrl === "string" ? request.params.proxyUrl.trim() : undefined;
-      if (!email || !password) {
-        result = { success: false, error: "INVALID_CREDENTIALS", message: "缺少邮箱或密码" };
-      } else {
-        try {
-          const loginResult = await loginDiscordWithPassword({ email, password, totpSecret, proxyUrl });
-          result = { success: true, token: loginResult.token };
-        } catch (error: any) {
-          result = {
-            success: false,
-            error: "PASSWORD_LOGIN_FAILED",
-            message: String(error?.message || error || "密码登录失败"),
-          };
-        }
-      }
+      result = {
+        success: false,
+        error: "PASSWORD_LOGIN_NOT_SUPPORTED",
+        message: "Discord 账号仅支持 Token 登录",
+      };
     } else {
       result = { success: false, error: "UNKNOWN_ACTION" };
     }
@@ -3766,7 +3752,7 @@ async function main() {
     processTelegramSyncRequest(logger).catch(() => {});
   }, 1000);
 
-  // 处理 Discord 邮箱密码登录请求
+  // 处理 Discord 登录请求（仅支持 Token）
   setInterval(() => {
     processDiscordLoginRequest(logger).catch(() => {});
   }, 1000);

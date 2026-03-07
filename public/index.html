@@ -2814,46 +2814,10 @@
           return { success: false, error: '账号不存在' };
         }
 
-        // 获取 token（如无 token 则尝试邮箱密码登录）
-        let token = account.token;
+        // 获取 token（仅支持 Token 登录）
+        const token = account.token;
         if (!token) {
-          const isBot = account.type === 'bot';
-          const ui = getLibraryUiState('discord', account.id, account);
-          const loginMode = isBot ? 'token' : (ui.loginMode === 'password' ? 'password' : 'token');
-          if (isBot) {
-            return { success: false, error: '机器人账号仅支持 Token 登录' };
-          }
-          if (loginMode !== 'password') {
-            return { success: false, error: '请先填写 Token' };
-          }
-          const hasPasswordLogin = account.email && account.password;
-          if (!hasPasswordLogin) {
-            return { success: false, error: '请先填写邮箱和密码' };
-          }
-          const loginRes = await fetch('/api/account/discord-login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              discordAccountId: account.id,
-              useLibrary: true,
-              mode: 'password',
-              email: account.email,
-              password: account.password,
-              totpSecret: account.totpSecret || undefined,
-              autoLogin: false
-            })
-          });
-          const loginData = await loginRes.json().catch(() => ({}));
-          if (!loginRes.ok) {
-            return { success: false, error: loginData?.error || '登录失败' };
-          }
-          await loadConfig();
-          render();
-          account = (state.discordAccounts || []).find(a => a.id === accountId);
-          token = account?.token;
-          if (!token) {
-            return { success: false, error: '登录成功但未获取到 Token' };
-          }
+          return { success: false, error: '请先填写 Token' };
         }
 
         console.log('[同步] 正在同步 Discord 账号:', account.name || accountId);
@@ -3225,7 +3189,6 @@
                 `}
               </div>
               <div class="flex flex-wrap gap-2 mt-3">
-                ${item.type === 'bot' ? '' : `<button onclick="loginDiscordLibrary('${item.id}')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">邮箱密码登录获取 Token</button>`}
                 <button onclick="removeDiscordLibraryAccount('${item.id}')" class="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50">删除</button>
               </div>
             </div>
@@ -3869,8 +3832,7 @@
             <select id="createDiscordLoginMode" onchange="onCreateDiscordLoginModeChange(this.value)"
               class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="token">Token</option>
-              <option value="password">账号密码</option>
-            </select>
+                          </select>
           </div>
         </div>
         <div id="createDiscordTokenFields" class="mt-4">
@@ -3927,8 +3889,9 @@
         onCreateDiscordLoginModeChange('token');
         return;
       }
-      if (loginWrap) loginWrap.classList.remove('hidden');
-      onCreateDiscordLoginModeChange(loginSelect?.value || 'token');
+      if (loginWrap) loginWrap.classList.add('hidden');
+      if (loginSelect) loginSelect.value = 'token';
+      onCreateDiscordLoginModeChange('token');
     }
 
     function renderTelegramCreateFields() {
@@ -4500,7 +4463,7 @@
       const ui = getLibraryUiState(kind, account.id, account);
       if (kind === 'discord') {
         const isBot = account.type === 'bot';
-        const loginMode = isBot ? 'token' : (ui.loginMode === 'password' ? 'password' : 'token');
+        const loginMode = 'token';
         return `
           <div class="grid gap-3 md:grid-cols-2">
             <div>
@@ -4517,7 +4480,6 @@
               <select onchange="setLibraryLoginMode('discord', '${account.id}', this.value)"
                 class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                 <option value="token" ${loginMode === 'token' ? 'selected' : ''}>Token</option>
-                <option value="password" ${loginMode === 'password' ? 'selected' : ''}>账号密码</option>
               </select>
             </div>
             `}
@@ -4546,8 +4508,6 @@
               <p class="mt-1 text-[11px] text-slate-500">账号启用 MFA 时需填写 Google Authenticator 的密钥</p>
             </div>
             <div class="md:col-span-2">
-              <button onclick="loginDiscordLibrary('${account.id}')"
-                class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500">账号密码登录获取 Token</button>
             </div>
             `}
           </div>
@@ -4799,44 +4759,10 @@
       if (account.token) return { ok: true };
       const isBot = account.type === 'bot';
       const ui = getLibraryUiState('discord', account.id, account);
-      const loginMode = isBot ? 'token' : (ui.loginMode === 'password' ? 'password' : 'token');
       if (isBot) {
         return { ok: false, error: '机器人账号仅支持 Token 登录' };
       }
-      if (loginMode === 'token') {
-        return { ok: false, error: '请先填写 Token' };
-      }
-      if (!account.email || !account.password) {
-        return { ok: false, error: '请先填写邮箱和密码' };
-      }
-      try {
-        const res = await fetch('/api/account/discord-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            discordAccountId: account.id,
-            useLibrary: true,
-            mode: 'password',
-            email: account.email,
-            password: account.password,
-            totpSecret: account.totpSecret || undefined,
-            autoLogin: false
-          })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          return { ok: false, error: data?.error || '登录失败' };
-        }
-        await loadConfig();
-        render();
-        const refreshed = getDiscordLibraryAccountById(account.id);
-        if (!refreshed?.token) {
-          return { ok: false, error: '登录成功但未获取到 Token' };
-        }
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, error: e?.message || '登录失败' };
-      }
+      return { ok: false, error: '请先填写 Token' };
     }
 
     async function connectDiscordLibraryAccounts(accountIds) {
@@ -7634,43 +7560,7 @@
     }
 
     async function loginDiscordLibrary(accountId) {
-      const entry = (state.discordAccounts || []).find((item) => item.id === accountId);
-      if (!entry) return;
-      if (entry.type === 'bot') {
-        showToast('机器人账号仅支持 Token 登录', 'error');
-        return;
-      }
-      if (!entry.email || !entry.password) {
-        showToast('请先填写邮箱和密码', 'error');
-        return;
-      }
-      try {
-        await saveConfigImmediate();
-        const res = await fetch('/api/account/discord-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            discordAccountId: entry.id,
-            useLibrary: true,
-            mode: 'password',
-            email: entry.email,
-            password: entry.password,
-            totpSecret: entry.totpSecret || undefined,
-            autoLogin: false
-          })
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          showToast(data?.error || '登录失败', 'error');
-          return;
-        }
-        await loadConfig();
-        render();
-        showToast('Token 已保存，正在同步账号信息...', 'success');
-        await syncDiscordAccountData(accountId);
-      } catch (e) {
-        showToast('登录失败: ' + (e?.message || e), 'error');
-      }
+      showToast('Discord 账号仅支持 Token 登录', 'error');
     }
 
     function isDiscordTokenInvalidMessage(message) {
@@ -7688,47 +7578,7 @@
     }
 
     async function autoReloginDiscordLibraryAccount(accountId, reason) {
-      if (!accountId) return;
-      if (discordAutoReloginInFlight.has(accountId)) return;
-      const last = discordAutoReloginAt.get(accountId) || 0;
-      if (Date.now() - last < 60000) return;
-      const entry = getDiscordLibraryAccountById(accountId);
-      if (!entry || entry.type === 'bot') return;
-      if (!entry.email || !entry.password) return;
-      if (entry.loginEnabled === false) return;
-      discordAutoReloginAt.set(accountId, Date.now());
-      discordAutoReloginInFlight.add(accountId);
-      try {
-        const res = await fetch('/api/account/discord-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            discordAccountId: entry.id,
-            useLibrary: true,
-            mode: 'password',
-            email: entry.email,
-            password: entry.password,
-            totpSecret: entry.totpSecret || undefined,
-            autoLogin: false
-          })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          entry.loginState = 'error';
-          entry.loginMessage = data?.error || reason || '登录失败';
-          updateDiscordLibraryStatusElement(entry.id);
-          return;
-        }
-        await loadConfig();
-        render();
-        await connectDiscordLibraryAccount(accountId);
-      } catch (e) {
-        entry.loginState = 'error';
-        entry.loginMessage = e?.message || reason || '登录失败';
-        updateDiscordLibraryStatusElement(entry.id);
-      } finally {
-        discordAutoReloginInFlight.delete(accountId);
-      }
+      return;
     }
 
     function addTelegramLibraryAccount() {
@@ -11677,7 +11527,7 @@
           { element: '#accountLibraryModal', popover: { title: '2. 账号库面板', description: '这里统一管理 Discord/Telegram/Truth 账号。', side: 'bottom', align: 'center' }, onHighlightStarted: () => openAccountLibrary() },
           { element: '#libraryFilterSelect', popover: { title: '3. 类型筛选', description: '按类型过滤账号列表，便于管理。', side: 'bottom', align: 'start' } },
           { element: 'button[onclick="addLibraryAccountFromSelect()"]', popover: { title: '4. 新建账号', description: '创建后会弹出编辑窗口，填写账号凭据。', side: 'bottom', align: 'start' } },
-          { popover: { title: '5. 填写凭据', description: 'Discord 可用 Token / 邮箱密码登录；Telegram 支持 Bot Token / Session / 手机号登录。', side: 'center', align: 'center' } },
+          { popover: { title: '5. 填写凭据', description: 'Discord 仅支持 Token 登录；Telegram 支持 Bot Token / Session / 手机号登录。', side: 'center', align: 'center' } },
           { popover: { title: '6. 备注可选', description: '账号备注仅用于区分账号，不影响功能。', side: 'center', align: 'center' } },
           { element: '#librarySyncAllBtn', popover: { title: '7. 一键同步', description: '同步后才能在下拉列表里选择服务器和频道。', side: 'bottom', align: 'start' } },
           { element: '#librarySyncInfoHeader', popover: { title: '8. 同步信息', description: '点击“同步数据”列可查看详情。', side: 'bottom', align: 'start' } },

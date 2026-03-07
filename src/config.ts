@@ -468,7 +468,7 @@ export interface LegacyConfig {
   mappings?: DiscordMappingRule[];
   // 飞书规则级别过滤配置
   feishuRuleConfigs?: Record<string, RuleLevelConfig>;
-  // Discord 邮箱密码登录配置
+  // Discord 登录配置（兼容旧字段）
   discordLogin?: {
     email?: string;
     password?: string;
