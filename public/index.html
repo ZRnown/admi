@@ -297,7 +297,14 @@
               </select>
             </div>
           </div>
-          <p class="text-xs text-slate-500 mt-2">使用全局 Wavespeed API Key。OCR 模式按图片边缘文字启发式判断疑似水印；仅对 Discord / Telegram / 飞书这类可重新上传图片的目标生效。</p>
+          <div class="mt-4">
+            <label class="block text-xs text-slate-600 mb-2">去水印 OCR 关键词（命中才调用）</label>
+            <div id="ruleWatermarkRemovalKeywordsTags" class="flex flex-wrap gap-2 mb-3"></div>
+            <input type="text" placeholder="输入关键词后回车；逗号或 & 表示同时包含"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();handleRuleKeywordEnter(this, 'watermarkRemovalKeywords')}"
+              class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+          </div>
+          <p class="text-xs text-slate-500 mt-2">如果这里填写了关键词，OCR 模式会优先按关键词命中来判断是否调用 Wavespeed；不填时才回退到边缘文字启发式。</p>
         </div>
 
         <!-- 定时发送（规则级别） -->
@@ -6471,7 +6478,20 @@
                   class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
             </div>
-            <p class="text-xs text-slate-500">OCR 模式只在识别到疑似文字水印时才调用 Wavespeed；Logo-only 或复杂水印建议用“直接去除”。</p>
+            <div>
+              <label class="block text-xs text-slate-600 mb-2">去水印 OCR 关键词（命中才调用）</label>
+              <div class="flex flex-wrap gap-2 mb-3">
+                ${(watermarkRemoval.triggerKeywords || []).map((k, idx) => `
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 text-sm border border-violet-100">
+                    ${formatKeywordLabel(k)} <button onclick="removeWatermarkRemovalKeyword(${idx})" class="hover:text-violet-900">✕</button>
+                  </span>
+                `).join('')}
+                <input type="text" placeholder="输入关键词后回车；逗号或 & 表示同时包含"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();handleWatermarkRemovalKeywordEnter(this)}"
+                  class="flex-1 min-w-[160px] px-3 py-1 border-none focus:outline-none text-sm">
+              </div>
+            </div>
+            <p class="text-xs text-slate-500">如果这里填写了关键词，OCR 模式会优先按关键词命中来判断是否调用 Wavespeed；不填时才回退到边缘文字启发式。</p>
           </div>
         </div>
         ` : ''}
@@ -8035,7 +8055,7 @@
 
     function ensureWatermarkRemovalConfig(acc) {
       if (!acc.watermarkRemoval || typeof acc.watermarkRemoval !== 'object') {
-        acc.watermarkRemoval = { enabled: false, mode: 'ocr', apiKey: '' };
+        acc.watermarkRemoval = { enabled: false, mode: 'ocr', apiKey: '', triggerKeywords: [] };
       }
       if (acc.watermarkRemoval.mode !== 'always' && acc.watermarkRemoval.mode !== 'ocr') {
         acc.watermarkRemoval.mode = 'ocr';
@@ -8043,7 +8063,32 @@
       if (typeof acc.watermarkRemoval.apiKey !== 'string') {
         acc.watermarkRemoval.apiKey = '';
       }
+      if (!Array.isArray(acc.watermarkRemoval.triggerKeywords)) {
+        acc.watermarkRemoval.triggerKeywords = [];
+      }
       return acc.watermarkRemoval;
+    }
+
+    function handleWatermarkRemovalKeywordEnter(input) {
+      const value = input.value.trim();
+      if (!value) return;
+      const acc = getActiveAccount();
+      const config = ensureWatermarkRemovalConfig(acc);
+      if (!config.triggerKeywords.includes(value)) {
+        config.triggerKeywords.push(value);
+      }
+      input.value = '';
+      saveConfig();
+      render();
+    }
+
+    function removeWatermarkRemovalKeyword(idx) {
+      const acc = getActiveAccount();
+      const config = ensureWatermarkRemovalConfig(acc);
+      if (idx < 0 || idx >= config.triggerKeywords.length) return;
+      config.triggerKeywords.splice(idx, 1);
+      saveConfig();
+      render();
     }
 
     function updateWatermarkRemovalField(field, value) {
@@ -9244,6 +9289,7 @@
       stripChinese: false,
       watermarkMode: "inherit",
       watermarkRemovalMode: 'inherit',
+      watermarkRemovalKeywords: [],
       watermarks: [],
       senderAccountType: "bot",
       scheduledBroadcastMode: "inherit",
@@ -9266,14 +9312,15 @@
       if (!container) return;
 
       const data = ruleConfigData[field] || [];
-      const keywordFields = new Set(["blockedKeywords", "excludeKeywords", "ocrBlockedKeywords", "ocrTriggerKeywords"]);
+      const keywordFields = new Set(["blockedKeywords", "excludeKeywords", "ocrBlockedKeywords", "ocrTriggerKeywords", "watermarkRemovalKeywords"]);
       const colorMap = {
         allowedUsersIds: { bg: 'bg-green-50', text: 'text-green-600', border: 'border-green-100', hover: 'hover:text-green-800' },
         mutedUsersIds: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-100', hover: 'hover:text-red-800' },
         blockedKeywords: { bg: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-100', hover: 'hover:text-indigo-800' },
         excludeKeywords: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-100', hover: 'hover:text-amber-900' },
         ocrBlockedKeywords: { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-100', hover: 'hover:text-orange-800' },
-        ocrTriggerKeywords: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-100', hover: 'hover:text-emerald-900' }
+        ocrTriggerKeywords: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-100', hover: 'hover:text-emerald-900' },
+        watermarkRemovalKeywords: { bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-100', hover: 'hover:text-violet-900' }
       };
       const colors = colorMap[field] || colorMap.blockedKeywords;
 
@@ -9547,6 +9594,7 @@
         stripChinese: mapping.stripChinese === true,
         watermarkMode,
         watermarkRemovalMode,
+        watermarkRemovalKeywords: [...(mapping.watermarkRemoval?.triggerKeywords || [])],
         watermarks: ruleWatermarks,
         senderAccountType: forwardingType === 'discord-to-telegram'
           ? getEffectiveTelegramSenderType(acc, forwardingType, mapping)
@@ -9639,6 +9687,7 @@
       renderRuleTags('excludeKeywords');
       renderRuleTags('ocrBlockedKeywords');
       renderRuleTags('ocrTriggerKeywords');
+      renderRuleTags('watermarkRemovalKeywords');
       renderRuleReplacements();
 
       // 超长消息处理（Discord/TG/飞书规则）
@@ -9791,11 +9840,12 @@
       if (watermarkRemovalMode === 'inherit') {
         delete mapping.watermarkRemoval;
       } else if (watermarkRemovalMode === 'disable') {
-        mapping.watermarkRemoval = { enabled: false };
+        mapping.watermarkRemoval = { enabled: false, triggerKeywords: [...(ruleConfigData.watermarkRemovalKeywords || [])] };
       } else {
         mapping.watermarkRemoval = {
           enabled: true,
-          mode: watermarkRemovalMode === 'ocr' ? 'ocr' : 'always'
+          mode: watermarkRemovalMode === 'ocr' ? 'ocr' : 'always',
+          triggerKeywords: [...(ruleConfigData.watermarkRemovalKeywords || [])]
         };
       }
 
@@ -10136,7 +10186,7 @@
         dedupeSequentialMessages: false,
         watermarks: [],
         watermarkEnabled: true,
-        watermarkRemoval: { enabled: false, mode: 'ocr', apiKey: '' },
+        watermarkRemoval: { enabled: false, mode: 'ocr', apiKey: '', triggerKeywords: [] },
         scheduledContents: [],
         scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
         ocrServerUrl: 'http://localhost:9003',

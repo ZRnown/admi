@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   detectTextWatermarkFromOCR,
   extractWavespeedOutputUrl,
+  matchWatermarkRemovalTriggerKeywords,
   resolveWatermarkRemovalConfig,
 } from "../src/watermarkRemoval.ts";
 
@@ -17,6 +18,7 @@ test("resolveWatermarkRemovalConfig merges global api key with rule mode overrid
     enabled: true,
     mode: "ocr",
     apiKey: "global-key",
+    triggerKeywords: undefined,
   });
 });
 
@@ -92,4 +94,29 @@ test("extractWavespeedOutputUrl supports array and nested data payloads", () => 
     }),
     "https://cdn.example.com/b.png",
   );
+});
+
+
+test("resolveWatermarkRemovalConfig carries explicit trigger keywords", () => {
+  const resolved = resolveWatermarkRemovalConfig(
+    { enabled: true, mode: "ocr", apiKey: "global-key", triggerKeywords: ["抖音", "小红书"] },
+    { triggerKeywords: ["视频号"] },
+  );
+
+  assert.deepEqual(resolved, {
+    enabled: true,
+    mode: "ocr",
+    apiKey: "global-key",
+    triggerKeywords: ["视频号"],
+  });
+});
+
+test("matchWatermarkRemovalTriggerKeywords matches OCR text by configured keywords", () => {
+  const result = matchWatermarkRemovalTriggerKeywords(
+    "关注我的抖音号 @abc 官方同款",
+    [["抖音"], ["小红书", "店铺"]],
+  );
+
+  assert.equal(result.matched, true);
+  assert.deepEqual(result.matchedKeywords, ["抖音"]);
 });

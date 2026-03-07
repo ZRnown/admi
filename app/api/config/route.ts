@@ -466,14 +466,18 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
   const mode = raw.mode === "ocr" ? "ocr" : "always";
+  const triggerKeywords = Array.isArray(raw.triggerKeywords)
+    ? raw.triggerKeywords.map((item: any) => String(item || "").trim()).filter(Boolean)
+    : undefined;
   const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey);
-  if (!enabled && !apiKey && raw.mode === undefined) {
+  if (!enabled && !apiKey && raw.mode === undefined && triggerKeywords === undefined) {
     return undefined;
   }
   return {
     enabled,
     mode,
     apiKey,
+    triggerKeywords,
   };
 }
 
@@ -961,7 +965,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     watermarkSecondary: account.watermarkSecondary,
     watermarks: resolveFrontendWatermarks(account.watermarks, account.watermark, account.watermarkSecondary),
     watermarkEnabled: account.watermarkEnabled !== false,
-    watermarkRemoval: normalizeFrontendWatermarkRemoval(account.watermarkRemoval) || { enabled: false, mode: "ocr", apiKey: "" },
+    watermarkRemoval: normalizeFrontendWatermarkRemoval(account.watermarkRemoval) || { enabled: false, mode: "ocr", apiKey: "", triggerKeywords: [] },
     scheduledContents: normalizeScheduledContentList(account.scheduledContents),
     scheduledBroadcast: normalizeScheduledBroadcastConfig(account.scheduledBroadcast),
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
@@ -1276,7 +1280,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       stripEnglish: dto.stripEnglish === true,
       stripChinese: dto.stripChinese === true,
       dedupeSequentialMessages: dto.dedupeSequentialMessages === true,
-      watermarkRemoval: { enabled: false, mode: "ocr", apiKey: "" },
+      watermarkRemoval: { enabled: false, mode: "ocr", apiKey: "", triggerKeywords: [] },
       feishuStyle: "style1",
     } as AccountConfig);
 

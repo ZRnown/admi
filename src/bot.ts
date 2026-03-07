@@ -20,6 +20,7 @@ import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter
 import { resolveWatermarkList } from "./watermark.js";
 import {
   detectTextWatermarkFromOCR,
+  matchWatermarkRemovalTriggerKeywords,
   resolveWatermarkRemovalConfig,
   shouldUseOcrWatermarkDetection,
   type WatermarkRemovalConfig,
@@ -1214,6 +1215,8 @@ export class Bot {
       ruleConfig.watermarkRemoval,
     );
     const shouldDetectWatermarkWithOcr = shouldUseOcrWatermarkDetection(effectiveWatermarkRemoval);
+    const watermarkRemovalTriggerGroups = parseKeywordGroups(effectiveWatermarkRemoval?.triggerKeywords);
+    const shouldUseWatermarkRemovalKeywords = watermarkRemovalTriggerGroups.length > 0;
     const watermarkRemovalTargets = new Set<string>();
     const markWatermarkRemovalTarget = (targetUrl?: string) => {
       if (!targetUrl) return;
@@ -1362,12 +1365,26 @@ export class Bot {
                 checkedImages++;
 
                 if (shouldDetectWatermarkWithOcr) {
-                  const detection = detectTextWatermarkFromOCR(ocrResult);
-                  if (detection.matched) {
-                    markWatermarkRemovalTarget(url);
-                    const detectMsg = `${logPrefix} [WATERMARK] OCR检测到疑似水印: ${detection.texts.join("、")} (${detection.reason || "heuristic"})`;
-                    console.log(`[OCR] ${detectMsg}`);
-                    this.logger.info(detectMsg);
+                  if (shouldUseWatermarkRemovalKeywords) {
+                    const keywordMatch = matchWatermarkRemovalTriggerKeywords(
+                      ocrText,
+                      watermarkRemovalTriggerGroups,
+                      caseInsensitive,
+                    );
+                    if (keywordMatch.matched) {
+                      markWatermarkRemovalTarget(url);
+                      const detectMsg = `${logPrefix} [WATERMARK] OCR命中去水印关键词: ${keywordMatch.matchedKeywords.join("、")}`;
+                      console.log(`[OCR] ${detectMsg}`);
+                      this.logger.info(detectMsg);
+                    }
+                  } else {
+                    const detection = detectTextWatermarkFromOCR(ocrResult);
+                    if (detection.matched) {
+                      markWatermarkRemovalTarget(url);
+                      const detectMsg = `${logPrefix} [WATERMARK] OCR检测到疑似水印: ${detection.texts.join("、")} (${detection.reason || "heuristic"})`;
+                      console.log(`[OCR] ${detectMsg}`);
+                      this.logger.info(detectMsg);
+                    }
                   }
                 }
 

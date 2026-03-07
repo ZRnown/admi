@@ -201,6 +201,7 @@ export interface WatermarkRemovalConfig {
   enabled?: boolean;
   mode?: WatermarkRemovalMode;
   apiKey?: string;
+  triggerKeywords?: string[];
 }
 
 export type ScheduledMediaType = "image" | "video";
@@ -609,7 +610,7 @@ function createDefaultAccount(): AccountConfig {
     ocrServerUrl: "http://localhost:9003",
     ocrBlockedKeywords: [],
     ocrTriggerKeywords: [],
-    watermarkRemoval: { enabled: false, mode: "ocr", apiKey: undefined },
+    watermarkRemoval: { enabled: false, mode: "ocr", apiKey: undefined, triggerKeywords: [] },
     discordLogin: undefined,
     botRelays: [],
     channelRelayMap: {},
@@ -759,14 +760,18 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
   const mode: WatermarkRemovalMode = raw.mode === "ocr" ? "ocr" : "always";
+  const triggerKeywords = Array.isArray(raw.triggerKeywords)
+    ? raw.triggerKeywords.map((item: any) => String(item || "").trim()).filter(Boolean)
+    : undefined;
   const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey);
-  if (!enabled && !apiKey && raw.mode === undefined) {
+  if (!enabled && !apiKey && raw.mode === undefined && triggerKeywords === undefined) {
     return undefined;
   }
   return {
     enabled,
     mode,
     apiKey,
+    triggerKeywords,
   };
 }
 
@@ -1936,7 +1941,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       excludeKeywords: [],
       ocrBlockedKeywords: [],
       ocrTriggerKeywords: [],
-      watermarkRemoval: { enabled: false, mode: "ocr", apiKey: undefined },
+      watermarkRemoval: { enabled: false, mode: "ocr", apiKey: undefined, triggerKeywords: [] },
       showSourceIdentity: false,
       publicBaseUrl: undefined,
       replacementsDictionary: {},

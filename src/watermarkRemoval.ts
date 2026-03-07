@@ -4,6 +4,7 @@ export interface WatermarkRemovalConfig {
   enabled?: boolean;
   mode?: WatermarkRemovalMode;
   apiKey?: string;
+  triggerKeywords?: string[];
 }
 
 export interface OcrTextBlock {
@@ -24,6 +25,8 @@ export interface WatermarkDetectionResult {
   texts: string[];
 }
 
+export type KeywordGroup = string[];
+
 const WAVESPEED_ENDPOINT = "https://api.wavespeed.ai/api/v3/wavespeed-ai/image-watermark-remover";
 const URL_RE = /^https?:\/\//i;
 const WATERMARK_HINT_RE =
@@ -36,6 +39,44 @@ function firstNonEmptyString(...values: Array<unknown>): string | undefined {
     }
   }
   return undefined;
+}
+
+function normalizeTriggerKeywords(input?: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const result = input.map((item) => String(item || "").trim()).filter(Boolean);
+  return result.length > 0 ? result : [];
+}
+
+function normalizeMatchText(value: string, caseInsensitive: boolean): string {
+  let output = String(value ?? "");
+  try {
+    output = output.normalize("NFKC");
+  } catch {}
+  output = output.replace(/\p{Cf}/gu, "");
+  return caseInsensitive ? output.toLowerCase() : output;
+}
+
+export function matchWatermarkRemovalTriggerKeywords(
+  text: string,
+  groups: KeywordGroup[],
+  caseInsensitive = true,
+): { matched: boolean; matchedGroups: KeywordGroup[]; matchedKeywords: string[] } {
+  if (groups.length === 0) {
+    return { matched: false, matchedGroups: [], matchedKeywords: [] };
+  }
+  const haystack = normalizeMatchText(text, caseInsensitive);
+  const matchedGroups = groups.filter((group) =>
+    group.every((keyword) => {
+      const needle = normalizeMatchText(keyword, caseInsensitive);
+      return haystack.includes(needle);
+    }),
+  );
+  const matchedKeywords = Array.from(new Set(matchedGroups.flat()));
+  return {
+    matched: matchedGroups.length > 0,
+    matchedGroups,
+    matchedKeywords,
+  };
 }
 
 export function resolveWatermarkRemovalConfig(
@@ -61,6 +102,7 @@ export function resolveWatermarkRemovalConfig(
     enabled: true,
     mode: merged.mode === "ocr" ? "ocr" : "always",
     apiKey,
+    triggerKeywords: normalizeTriggerKeywords(merged.triggerKeywords),
   };
 }
 
