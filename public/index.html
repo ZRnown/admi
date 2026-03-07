@@ -2694,9 +2694,13 @@
     // 检查 Discord 账号是否在运行中的实例中使用
     function isDiscordAccountInUse(accountId) {
       return state.accounts.some(acc => {
-        const isUsed = acc.discordAccountId === accountId || acc.discordSenderAccountId === accountId;
+        const direct = acc.discordAccountId === accountId || acc.discordSenderAccountId === accountId;
+        const ruleUsed = []
+          .concat(Array.isArray(acc.mappings) ? acc.mappings : [])
+          .concat(Array.isArray(acc.telegramConfig?.mappings) ? acc.telegramConfig.mappings : [])
+          .some(rule => rule?.discordSenderAccountId === accountId);
         const isRunning = acc.loginState === 'online' || acc.loginState === 'connecting';
-        return isUsed && isRunning;
+        return (direct || ruleUsed) && isRunning;
       });
     }
 
@@ -2714,7 +2718,12 @@
     function getInstancesUsingAccount(kind, accountId) {
       return state.accounts.filter(acc => {
         if (kind === 'discord') {
-          return acc.discordAccountId === accountId || acc.discordSenderAccountId === accountId;
+          const direct = acc.discordAccountId === accountId || acc.discordSenderAccountId === accountId;
+          const ruleUsed = []
+            .concat(Array.isArray(acc.mappings) ? acc.mappings : [])
+            .concat(Array.isArray(acc.telegramConfig?.mappings) ? acc.telegramConfig.mappings : [])
+            .some(rule => rule?.discordSenderAccountId === accountId);
+          return direct || ruleUsed;
         } else if (kind === 'telegram') {
           const tgConfig = acc.telegramConfig || {};
           return tgConfig.accountId === accountId || tgConfig.senderAccountId === accountId;
@@ -4385,7 +4394,12 @@
     function countInstancesUsingLibraryAccount(kind, id) {
       return state.accounts.filter(acc => {
         if (kind === 'discord') {
-          return acc.discordAccountId === id || acc.discordSenderAccountId === id;
+          const direct = acc.discordAccountId === id || acc.discordSenderAccountId === id;
+          const ruleUsed = []
+            .concat(Array.isArray(acc.mappings) ? acc.mappings : [])
+            .concat(Array.isArray(acc.telegramConfig?.mappings) ? acc.telegramConfig.mappings : [])
+            .some(rule => rule?.discordSenderAccountId === id);
+          return direct || ruleUsed;
         } else if (kind === 'telegram') {
           return acc.telegramListenerAccountId === id || acc.telegramSenderAccountId === id;
         }
@@ -7592,6 +7606,14 @@
         if (acc.discordSenderAccountId === accountId) {
           acc.discordSenderAccountId = '';
         }
+        const allRules = []
+          .concat(Array.isArray(acc.mappings) ? acc.mappings : [])
+          .concat(Array.isArray(acc.telegramConfig?.mappings) ? acc.telegramConfig.mappings : []);
+        allRules.forEach((rule) => {
+          if (rule?.discordSenderAccountId === accountId) {
+            delete rule.discordSenderAccountId;
+          }
+        });
       });
       librarySelection.delete(getLibrarySelectionKey('discord', accountId));
       clearLibraryCreatePending('discord', accountId);

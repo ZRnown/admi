@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import path from "node:path";
 import { randomUUID } from "crypto";
 import { getEnv } from "./env";
+import { clearDiscordLibraryReferences } from "./discordLibraryCleanup";
 
 export type ChannelId = number | string;
 export type ChatId = ChannelId;
@@ -1717,34 +1718,9 @@ function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; cha
     return id;
   };
 
-  if (discordAccounts.length === 0) {
-    for (const account of config.accounts) {
-      const hasToken = typeof account.token === "string" && account.token.trim();
-      const login = account.discordLogin || {};
-      const hasLogin =
-        typeof login.email === "string" ||
-        typeof login.password === "string" ||
-        typeof login.totpSecret === "string";
-      if (!hasToken && !hasLogin) continue;
-      const entryId = ensureUniqueId(discordIdSet, account.discordAccountId);
-      discordAccounts.push({
-        id: entryId,
-        name: account.name ? `${account.name} Discord` : "Discord 账号",
-        type: account.type,
-        token: hasToken ? account.token : undefined,
-        email: typeof login.email === "string" ? login.email : undefined,
-        password: typeof login.password === "string" ? login.password : undefined,
-        totpSecret: typeof login.totpSecret === "string" ? login.totpSecret : undefined,
-        proxyUrl: account.proxyUrl,
-        loginEnabled: true,
-      });
-      discordIdSet.add(entryId);
-      if (!account.discordAccountId) {
-        account.discordAccountId = entryId;
-        changed = true;
-      }
-      changed = true;
-    }
+  // Discord 账号库不再自动从实例凭据回填，完全由用户手动维护。
+  if (clearDiscordLibraryReferences(config.accounts as any[], Array.from(discordIdSet))) {
+    changed = true;
   }
 
   // Telegram 账号库不再自动创建，完全由用户手动维护。
