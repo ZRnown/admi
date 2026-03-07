@@ -1957,6 +1957,12 @@
       return String(acc?.discordAccountId || acc?.id || '').trim();
     }
 
+    function getDiscordChannelEmptyMessage(hasCacheEntry, guildId, selectedId) {
+      if (!guildId) return '请先选择服务器';
+      if (selectedId) return '加载频道中...';
+      return hasCacheEntry ? '暂无可用频道' : '暂无频道（请先同步）';
+    }
+
     function requestDiscordGuilds(accountId) {
       if (!shouldFetchDiscordGuilds(accountId)) return;
       cachedGuildsLoading = true;
@@ -1996,14 +2002,14 @@
     // 获取缓存的频道选项HTML
     function getCachedChannelsOptions(accountId, guildId, selectedId, selectedLabel) {
       const cacheKey = `${accountId}:${guildId}`;
+      const hasCacheEntry = Object.prototype.hasOwnProperty.call(cachedChannels, cacheKey);
       const channels = cachedChannels[cacheKey] || [];
       if (channels.length === 0) {
-        // 修复：如果缓存为空但有选中的ID，显示加载状态而不是空
         if (selectedId) {
           const label = selectedLabel ? escapeHtml(selectedLabel) : `加载频道中... (${selectedId})`;
           return `<option value="${selectedId}" selected>${label}</option>`;
         }
-        return guildId ? '<option value="">暂无频道（请先同步）</option>' : '<option value="">请先选择服务器</option>';
+        return `<option value="">${getDiscordChannelEmptyMessage(hasCacheEntry, guildId, selectedId)}</option>`;
       }
       let html = '<option value="">选择频道</option>';
       channels.forEach(ch => {
@@ -2444,6 +2450,7 @@
         if (!res.ok) return [];
         const data = await res.json();
         cachedTelegramToDiscordGuilds[accountId] = data.guilds || [];
+        void prewarmDiscordChannelsForAccount(accountId, cachedTelegramToDiscordGuilds[accountId], { force: false, includeSourceCache: false });
         return cachedTelegramToDiscordGuilds[accountId];
       } catch (e) {
         console.error('获取服务器列表失败', e);
@@ -2475,6 +2482,23 @@
         console.error('获取频道列表失败', e);
         return [];
       }
+    }
+
+    async function prewarmDiscordChannelsForAccount(accountId, guilds, options = {}) {
+      if (!accountId || !Array.isArray(guilds) || guilds.length === 0) return;
+      const force = options.force === true;
+      const includeSourceCache = options.includeSourceCache === true;
+      await Promise.all(guilds.map(async (guild) => {
+        const guildId = typeof guild?.id === 'string' ? guild.id : '';
+        if (!guildId) return;
+        const tasks = [fetchTelegramToDiscordChannels(accountId, guildId, { force })];
+        if (includeSourceCache) {
+          tasks.push(fetchDiscordChannels(accountId, guildId, { force }));
+        }
+        await Promise.all(tasks).catch((e) => {
+          console.warn('[Discord预热] 频道缓存预热失败', accountId, guildId, e?.message || e);
+        });
+      }));
     }
 
     // Telegram→Discord: 更新发送方式
@@ -2787,7 +2811,8 @@
           return;
         }
         await fetchDiscordGuildsForLibrary(accountId);
-        await fetchDiscordGuilds(accountId);
+        const guilds = await fetchDiscordGuilds(accountId);
+        await prewarmDiscordChannelsForAccount(accountId, guilds, { force: true, includeSourceCache: true });
         showToast(`Discord 数据同步完成（${result.guildsCount || 0} 个服务器）`, 'success');
       } finally {
         setLibrarySyncing('discord', accountId, false);
@@ -2940,7 +2965,8 @@
         const result = await syncDiscordAccountDataOnly(accountId);
         if (result?.success) {
           await fetchDiscordGuildsForLibrary(accountId);
-          await fetchDiscordGuilds(accountId);
+          const guilds = await fetchDiscordGuilds(accountId);
+          await prewarmDiscordChannelsForAccount(accountId, guilds, { force: true, includeSourceCache: true });
           showToast(`Discord 账号已登录，已自动同步（${result.guildsCount || 0} 个服务器）`, 'success');
         } else if (result?.error) {
           showToast(result.error || '自动同步失败', 'error');

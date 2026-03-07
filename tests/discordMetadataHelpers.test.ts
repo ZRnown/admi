@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  getDiscordChannelEmptyMessage,
   getDiscordMetadataAccountId,
   shouldReuseDiscordChannelsCache,
 } from "../src/discordMetadataHelpers.ts";
@@ -17,4 +18,11 @@ test("shouldReuseDiscordChannelsCache allows force refresh even when empty cache
   assert.equal(shouldReuseDiscordChannelsCache(cache, "acc:guild"), true);
   assert.equal(shouldReuseDiscordChannelsCache(cache, "acc:guild", true), false);
   assert.equal(shouldReuseDiscordChannelsCache(cache, "missing"), false);
+});
+
+
+test("getDiscordChannelEmptyMessage distinguishes unsynced from synced-empty states", () => {
+  assert.equal(getDiscordChannelEmptyMessage(false, 'guild-1', ''), '暂无频道（请先同步）');
+  assert.equal(getDiscordChannelEmptyMessage(true, 'guild-1', ''), '暂无可用频道');
+  assert.equal(getDiscordChannelEmptyMessage(false, '', ''), '请先选择服务器');
 });
