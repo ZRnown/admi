@@ -2253,7 +2253,7 @@
             // 加载频道列表（如果已选择服务器）
             if (senderAccountId && targetGuildId) {
               const cacheKey = `${senderAccountId}:${targetGuildId}`;
-              if (!cachedTelegramToDiscordChannels[cacheKey] && !window[`loadingD2DChannels_${cacheKey}`]) {
+              if (!Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey) && !window[`loadingD2DChannels_${cacheKey}`]) {
                 window[`loadingD2DChannels_${cacheKey}`] = true;
                 fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).then(() => {
                   delete window[`loadingD2DChannels_${cacheKey}`];
@@ -2336,7 +2336,7 @@
 
             if (targetGuildId) {
               const cacheKey = `${senderAccountId}:${targetGuildId}`;
-              if (!cachedTelegramToDiscordChannels[cacheKey] && !window[`loadingT2DChannels_${cacheKey}`]) {
+              if (!Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey) && !window[`loadingT2DChannels_${cacheKey}`]) {
                 window[`loadingT2DChannels_${cacheKey}`] = true;
                 fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).then(() => {
                   delete window[`loadingT2DChannels_${cacheKey}`];
@@ -2428,9 +2428,12 @@
     }
 
     // Telegram→Discord: 获取服务器列表
-    async function fetchTelegramToDiscordGuilds(accountId) {
+    async function fetchTelegramToDiscordGuilds(accountId, options = {}) {
       if (!accountId) return [];
-      if (cachedTelegramToDiscordGuilds[accountId]) return cachedTelegramToDiscordGuilds[accountId];
+      const force = options.force === true;
+      if (!force && Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordGuilds, accountId)) {
+        return cachedTelegramToDiscordGuilds[accountId];
+      }
       cachedTelegramToDiscordGuildsLoading[accountId] = true;
       try {
         const res = await fetch('/api/metadata/discord/guilds', {
@@ -2451,10 +2454,13 @@
     }
 
     // Telegram→Discord: 获取频道列表
-    async function fetchTelegramToDiscordChannels(accountId, guildId) {
+    async function fetchTelegramToDiscordChannels(accountId, guildId, options = {}) {
       if (!accountId || !guildId) return [];
       const cacheKey = `${accountId}:${guildId}`;
-      if (cachedTelegramToDiscordChannels[cacheKey]) return cachedTelegramToDiscordChannels[cacheKey];
+      const force = options.force === true;
+      if (!force && Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey)) {
+        return cachedTelegramToDiscordChannels[cacheKey];
+      }
       try {
         const res = await fetch('/api/metadata/discord/channels', {
           method: 'POST',
@@ -2502,12 +2508,28 @@
     }
 
     // Telegram→Discord: 更新目标服务器
-    function updateTelegramToDiscordGuild(idx, guildId) {
+    async function updateTelegramToDiscordGuild(idx, guildId) {
       const acc = getActiveAccount();
       if (!acc?.telegramConfig?.mappings?.[idx]) return;
+      const senderAccountId = acc.telegramConfig.mappings[idx].discordSenderAccountId || '';
       acc.telegramConfig.mappings[idx].targetGuildId = guildId;
       acc.telegramConfig.mappings[idx].targetChannelId = '';
+      if (senderAccountId && guildId) {
+        const cacheKey = `${senderAccountId}:${guildId}`;
+        delete cachedTelegramToDiscordChannels[cacheKey];
+      }
       saveConfig();
+      if (senderAccountId && guildId) {
+        await fetchTelegramToDiscordChannels(senderAccountId, guildId, { force: true });
+        const cacheKey = `${senderAccountId}:${guildId}`;
+        const channels = cachedTelegramToDiscordChannels[cacheKey] || [];
+        if (channels.length === 0) {
+          const syncResult = await syncDiscordAccountDataOnly(senderAccountId);
+          if (syncResult?.success) {
+            await fetchTelegramToDiscordChannels(senderAccountId, guildId, { force: true });
+          }
+        }
+      }
       render();
     }
 
@@ -2539,12 +2561,28 @@
     }
 
     // Discord→Discord: 更新目标服务器
-    function updateDiscordToDiscordGuild(idx, guildId) {
+    async function updateDiscordToDiscordGuild(idx, guildId) {
       const acc = getActiveAccount();
       if (!acc?.mappings?.[idx]) return;
+      const senderAccountId = acc.mappings[idx].discordSenderAccountId || '';
       acc.mappings[idx].targetGuildId = guildId;
       acc.mappings[idx].targetChannelId = '';
+      if (senderAccountId && guildId) {
+        const cacheKey = `${senderAccountId}:${guildId}`;
+        delete cachedTelegramToDiscordChannels[cacheKey];
+      }
       saveConfig();
+      if (senderAccountId && guildId) {
+        await fetchTelegramToDiscordChannels(senderAccountId, guildId, { force: true });
+        const cacheKey = `${senderAccountId}:${guildId}`;
+        const channels = cachedTelegramToDiscordChannels[cacheKey] || [];
+        if (channels.length === 0) {
+          const syncResult = await syncDiscordAccountDataOnly(senderAccountId);
+          if (syncResult?.success) {
+            await fetchTelegramToDiscordChannels(senderAccountId, guildId, { force: true });
+          }
+        }
+      }
       render();
     }
 
