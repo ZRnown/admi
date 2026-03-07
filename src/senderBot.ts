@@ -4,6 +4,7 @@ import { URL, fileURLToPath } from "node:url";
 
 import { ChannelId, WatermarkConfig } from "./config.js";
 import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark.js";
+import { removeWatermarkFromImageUrl, type WatermarkRemovalConfig } from "./watermarkRemoval.js";
 import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
 
@@ -168,7 +169,13 @@ export class SenderBot {
   }
 
   private async downloadUploads(
-    uploads: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean }>,
+    uploads: Array<{
+      url?: string;
+      localPath?: string;
+      filename: string;
+      isImage?: boolean;
+      watermarkRemoval?: WatermarkRemovalConfig;
+    }>,
     watermark?: WatermarkConfig,
     watermarkSecondary?: WatermarkConfig,
     watermarks?: WatermarkConfig[],
@@ -186,13 +193,22 @@ export class SenderBot {
         );
     for (const u of uploads) {
       let buf: Buffer;
+      let resolvedUrl = u.url;
+      if (u.isImage && resolvedUrl && u.watermarkRemoval) {
+        try {
+          resolvedUrl = await removeWatermarkFromImageUrl(resolvedUrl, u.watermarkRemoval);
+        } catch (error: any) {
+          console.error(`[去水印] 处理失败，回退原图: ${u.filename} ${String(error?.message || error)}`);
+          resolvedUrl = u.url;
+        }
+      }
       if (u.localPath) {
         buf = await this.readLocalFile(u.localPath);
-      } else if (u.url) {
-        if (u.url.startsWith("file://")) {
-          buf = await this.readLocalFile(fileURLToPath(u.url));
+      } else if (resolvedUrl) {
+        if (resolvedUrl.startsWith("file://")) {
+          buf = await this.readLocalFile(fileURLToPath(resolvedUrl));
         } else {
-          buf = await this.downloadUrl(u.url);
+          buf = await this.downloadUrl(resolvedUrl);
         }
       } else {
         continue;
@@ -672,7 +688,14 @@ export class SenderBot {
     replyToTarget?: { channelId: string; messageId: string };
     useEmbed?: boolean;
     extraEmbeds?: any[];
-    uploads?: Array<{ url?: string; localPath?: string; filename: string; isImage?: boolean; isVideo?: boolean }>;
+    uploads?: Array<{
+      url?: string;
+      localPath?: string;
+      filename: string;
+      isImage?: boolean;
+      isVideo?: boolean;
+      watermarkRemoval?: WatermarkRemovalConfig;
+    }>;
     components?: any[];
     // 可选：覆盖当前消息是否启用翻译；未设置则沿用实例级 enableTranslation
     enableTranslationOverride?: boolean;

@@ -48,6 +48,7 @@ export interface HandleDiscordMessageParams {
       url: string;
       contentType?: string;
       name?: string;
+      watermarkRemoval?: any;
     }>;
     embeds?: any[];
   };

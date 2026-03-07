@@ -14,6 +14,8 @@ from typing import Dict, Optional, Any, Tuple
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 
+from .wavespeed_watermark_remover import remove_watermark_from_image_url
+
 AUTO_FONT_DOWNLOAD = os.getenv("WATERMARK_AUTO_FONT_DOWNLOAD", "1") != "0"
 FONT_CACHE_DIR = Path(os.getcwd()) / ".data" / "watermark_fonts"
 DEFAULT_CJK_FONT_URLS = [
@@ -397,6 +399,14 @@ class MediaHandler:
                     media_type = "audio"
 
             logger.info(f"process_discord_attachment: contentType={content_type}, isImage={attachment.get('isImage')}, filename={filename}, media_type={media_type}")
+
+            watermark_removal = attachment.get("watermarkRemoval")
+            if media_type == "photo" and url and watermark_removal:
+                try:
+                    url = await remove_watermark_from_image_url(url, watermark_removal, self._get_http_session())
+                    logger.info(f"Watermark removed via WaveSpeed: {filename or url}")
+                except Exception as removal_error:
+                    logger.error(f"Failed to remove watermark, fallback original image: {removal_error}")
 
             # 下载文件
             filename = attachment.get("filename", f"attachment_{hash(url) % 10000}")

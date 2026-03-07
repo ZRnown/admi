@@ -16,6 +16,7 @@ import {
   type RuleLevelConfig,
   type TruthSocialConfig,
   type WatermarkConfig,
+  type WatermarkRemovalConfig,
   type XSourceConfig,
   type ScheduledBroadcastConfig,
   type ScheduledContentItem,
@@ -277,6 +278,7 @@ interface FrontendMapping {
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
   watermarkEnabled?: boolean;
+  watermarkRemoval?: WatermarkRemovalConfig;
   scheduledBroadcast?: ScheduledBroadcastConfig;
 }
 
@@ -348,6 +350,7 @@ interface FrontendAccount {
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
   watermarkEnabled?: boolean;
+  watermarkRemoval?: WatermarkRemovalConfig;
   scheduledContents?: ScheduledContentItem[];
   scheduledBroadcast?: ScheduledBroadcastConfig;
   // OCR 图片检测相关
@@ -459,6 +462,21 @@ function normalizeFeishuTargets(raw: any): Record<string, FeishuTargetConfig> {
   return result;
 }
 
+function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
+  const mode = raw.mode === "ocr" ? "ocr" : "always";
+  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey);
+  if (!enabled && !apiKey && raw.mode === undefined) {
+    return undefined;
+  }
+  return {
+    enabled,
+    mode,
+    apiKey,
+  };
+}
+
 function normalizeRuleConfig(raw: any): RuleLevelConfig {
   if (!raw || typeof raw !== "object") {
     return {
@@ -486,6 +504,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermark: undefined,
       watermarkSecondary: undefined,
       watermarks: undefined,
+      watermarkRemoval: undefined,
       scheduledBroadcast: undefined,
       inputMode: undefined,
     };
@@ -494,6 +513,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
   const watermarkSecondary =
     raw.watermarkSecondary && typeof raw.watermarkSecondary === "object" ? raw.watermarkSecondary : undefined;
   const watermarks = resolveFrontendWatermarks(raw.watermarks, watermark, watermarkSecondary);
+  const watermarkRemoval = normalizeFrontendWatermarkRemoval(raw.watermarkRemoval);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(raw.scheduledBroadcast);
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
@@ -541,6 +561,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermark,
     watermarkSecondary,
     watermarks,
+    watermarkRemoval,
     scheduledBroadcast,
     inputMode:
       raw.inputMode === "manual" ? "manual" : raw.inputMode === "select" ? "select" : undefined,
@@ -842,6 +863,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         watermark: savedRule.watermark,
         watermarkSecondary: savedRule.watermarkSecondary,
         watermarks: resolvedWatermarks,
+        watermarkRemoval: normalizeFrontendWatermarkRemoval((savedRule as any).watermarkRemoval),
         scheduledBroadcast: normalizeScheduledBroadcastConfig(savedRule.scheduledBroadcast),
       });
     }
@@ -869,6 +891,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
         watermark: undefined,
         watermarkSecondary: undefined,
         watermarks: undefined,
+        watermarkRemoval: undefined,
         scheduledBroadcast: undefined,
       });
     }
@@ -938,6 +961,7 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
     watermarkSecondary: account.watermarkSecondary,
     watermarks: resolveFrontendWatermarks(account.watermarks, account.watermark, account.watermarkSecondary),
     watermarkEnabled: account.watermarkEnabled !== false,
+    watermarkRemoval: normalizeFrontendWatermarkRemoval(account.watermarkRemoval) || { enabled: false, mode: "ocr", apiKey: "" },
     scheduledContents: normalizeScheduledContentList(account.scheduledContents),
     scheduledBroadcast: normalizeScheduledBroadcastConfig(account.scheduledBroadcast),
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
@@ -971,6 +995,12 @@ function maskFrontendAccount(account: FrontendAccount): FrontendAccount {
   masked.translationSecret = maskSecret(account.translationSecret);
   masked.deepseekApiKey = maskSecret(account.deepseekApiKey);
   masked.feishuAppSecret = maskSecret(account.feishuAppSecret);
+  if (masked.watermarkRemoval) {
+    masked.watermarkRemoval = {
+      ...masked.watermarkRemoval,
+      apiKey: maskSecret(masked.watermarkRemoval.apiKey),
+    };
+  }
   masked.telegramBotToken = maskSecret(account.telegramBotToken);
   masked.telegramApiHash = maskSecret(account.telegramApiHash);
   masked.telegramSessionString = maskSecret(account.telegramSessionString);
@@ -1246,6 +1276,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       stripEnglish: dto.stripEnglish === true,
       stripChinese: dto.stripChinese === true,
       dedupeSequentialMessages: dto.dedupeSequentialMessages === true,
+      watermarkRemoval: { enabled: false, mode: "ocr", apiKey: "" },
       feishuStyle: "style1",
     } as AccountConfig);
 
@@ -1356,6 +1387,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           watermark: mapping.watermark,
           watermarkSecondary: mapping.watermarkSecondary,
           watermarks: mappingWatermarks,
+          watermarkRemoval: normalizeFrontendWatermarkRemoval(mapping.watermarkRemoval),
           scheduledBroadcast: normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast),
         });
       }
@@ -1417,6 +1449,14 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     dto.watermark,
     dto.watermarkSecondary,
   );
+  const resolvedAccountWatermarkRemoval = {
+    ...base.watermarkRemoval,
+    ...normalizeFrontendWatermarkRemoval(dto.watermarkRemoval),
+    apiKey: resolveSecretValue(dto.watermarkRemoval?.apiKey, base.watermarkRemoval?.apiKey),
+  };
+  if (dto.watermarkRemoval?.enabled === false) {
+    resolvedAccountWatermarkRemoval.enabled = false;
+  }
   const resolvedScheduledContents = normalizeScheduledContentList(dto.scheduledContents);
   const resolvedScheduledBroadcast = normalizeScheduledBroadcastConfig(dto.scheduledBroadcast);
   const mergedDiscordLogin = mergeDiscordLogin(dto.discordLogin, base.discordLogin);
@@ -1547,6 +1587,14 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         : base.watermarkSecondary,
     watermarks: resolvedAccountWatermarks ?? base.watermarks,
     watermarkEnabled: dto.watermarkEnabled === false ? false : true,
+    watermarkRemoval:
+      resolvedAccountWatermarkRemoval.apiKey || resolvedAccountWatermarkRemoval.enabled === false
+        ? {
+            enabled: resolvedAccountWatermarkRemoval.enabled === false ? false : true,
+            mode: resolvedAccountWatermarkRemoval.mode === "ocr" ? "ocr" : "always",
+            apiKey: resolvedAccountWatermarkRemoval.apiKey,
+          }
+        : undefined,
     scheduledContents: resolvedScheduledContents ?? base.scheduledContents,
     scheduledBroadcast: resolvedScheduledBroadcast ?? base.scheduledBroadcast,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",

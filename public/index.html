@@ -284,6 +284,22 @@
           <p class="text-xs text-slate-500 mt-2">策略为“强制启用”时才会使用此处的水印设置。</p>
         </div>
 
+        <div id="ruleWatermarkRemovalSection" class="hidden border border-slate-200 rounded-lg p-4">
+          <h3 class="font-medium text-slate-800 mb-3">去水印设置（规则级别）</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">规则去水印策略</label>
+              <select id="ruleWatermarkRemovalMode" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                <option value="inherit">继承全局</option>
+                <option value="ocr">OCR 检测后去除</option>
+                <option value="always">直接去除</option>
+                <option value="disable">强制关闭</option>
+              </select>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 mt-2">使用全局 Wavespeed API Key。OCR 模式按图片边缘文字启发式判断疑似水印；仅对 Discord / Telegram / 飞书这类可重新上传图片的目标生效。</p>
+        </div>
+
         <!-- 定时发送（规则级别） -->
         <div class="border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-3">定时发送（规则级别）</h3>
@@ -3199,6 +3215,7 @@
             </div>
           `).join('')}
         </div>
+
       `;
     }
 
@@ -3297,6 +3314,7 @@
             </div>
           `).join('')}
         </div>
+
       `;
     }
 
@@ -3333,6 +3351,7 @@
             </div>
           `).join('')}
         </div>
+
       `;
     }
 
@@ -3861,6 +3880,7 @@
             <p class="mt-1 text-[11px] text-slate-500">账号启用 MFA 时需填写 Google Authenticator 的密钥</p>
           </div>
         </div>
+
       `;
     }
 
@@ -3976,6 +3996,7 @@
             <div id="sessionFilePreview" class="hidden mt-2 p-2 bg-slate-50 rounded text-xs text-slate-600"></div>
           </div>
         </div>
+
       `;
     }
 
@@ -4141,6 +4162,7 @@
           <textarea id="createTruthCookie" rows="3" placeholder="输入 TruthSocial Cookie"
             class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"></textarea>
         </div>
+
       `;
     }
 
@@ -5453,6 +5475,7 @@
         <div class="mt-4">
           ${renderLibraryAccountFields(current.kind, account)}
         </div>
+
       `;
     }
 
@@ -5518,6 +5541,7 @@
             ` : ''}
           </div>
         </div>
+
       `;
     }
 
@@ -5529,6 +5553,8 @@
       const scheduledContents = getVisibleScheduledContents(acc);
       const scheduledBroadcast = ensureScheduledBroadcast(acc);
       const watermarkList = getWatermarkList(acc);
+      const watermarkRemoval = ensureWatermarkRemovalConfig(acc);
+      const supportsWatermarkRemoval = ['discord-to-discord', 'discord-to-telegram', 'discord-to-feishu'].includes(forwardingType);
       const showScheduledLibrary = true;
 
       const renderExternalStatusSection = (kind) => {
@@ -6417,6 +6443,38 @@
             </div>
           </div>
         </div>
+
+        ${supportsWatermarkRemoval ? `
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100">
+            <h2 class="font-semibold text-slate-800">去水印设置</h2>
+            <p class="text-xs text-slate-500 mt-1">为当前转发类型配置默认去水印策略；规则里可按频道覆盖。</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="grid gap-4 md:grid-cols-3">
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" ${watermarkRemoval.enabled === true ? 'checked' : ''} onchange="updateWatermarkRemovalField('enabled', this.checked)"
+                  class="h-4 w-4 rounded border-slate-300">
+                启用去水印
+              </label>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">默认模式</label>
+                <select onchange="updateWatermarkRemovalField('mode', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="ocr" ${watermarkRemoval.mode === 'ocr' ? 'selected' : ''}>OCR 检测后去除</option>
+                  <option value="always" ${watermarkRemoval.mode === 'always' ? 'selected' : ''}>直接去除</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">Wavespeed API Key</label>
+                <input type="password" value="${escapeHtml(watermarkRemoval.apiKey || '')}" onchange="updateWatermarkRemovalField('apiKey', this.value)"
+                  placeholder="ws_xxx"
+                  class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+            </div>
+            <p class="text-xs text-slate-500">OCR 模式只在识别到疑似文字水印时才调用 Wavespeed；Logo-only 或复杂水印建议用“直接去除”。</p>
+          </div>
+        </div>
+        ` : ''}
       `;
     }
 
@@ -7228,6 +7286,7 @@
           `).join('')}
           ${paginationHtml}
         </div>
+
       `;
     }
 
@@ -7974,6 +8033,33 @@
       return acc.watermarks;
     }
 
+    function ensureWatermarkRemovalConfig(acc) {
+      if (!acc.watermarkRemoval || typeof acc.watermarkRemoval !== 'object') {
+        acc.watermarkRemoval = { enabled: false, mode: 'ocr', apiKey: '' };
+      }
+      if (acc.watermarkRemoval.mode !== 'always' && acc.watermarkRemoval.mode !== 'ocr') {
+        acc.watermarkRemoval.mode = 'ocr';
+      }
+      if (typeof acc.watermarkRemoval.apiKey !== 'string') {
+        acc.watermarkRemoval.apiKey = '';
+      }
+      return acc.watermarkRemoval;
+    }
+
+    function updateWatermarkRemovalField(field, value) {
+      const acc = getActiveAccount();
+      const config = ensureWatermarkRemovalConfig(acc);
+      if (field === 'enabled') {
+        config.enabled = value === true;
+      } else if (field === 'mode') {
+        config.mode = value === 'always' ? 'always' : 'ocr';
+      } else if (field === 'apiKey') {
+        config.apiKey = value || '';
+      }
+      saveConfig();
+      render();
+    }
+
     function ensureWatermarkItem(acc, index) {
       const list = ensureWatermarkList(acc);
       if (!list[index] || typeof list[index] !== 'object') {
@@ -8357,6 +8443,7 @@
             </div>
           </div>
         </div>
+
       `;
     }
 
@@ -8691,6 +8778,7 @@
         <div id="watermarkPreviewBox-${acc.id}" class="relative overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100" style="width:${previewWidth}px;height:${previewHeight}px;max-width:100%;">
           ${overlayItems.join('')}
         </div>
+
       `;
     }
 
@@ -9155,6 +9243,7 @@
       stripEnglish: false,
       stripChinese: false,
       watermarkMode: "inherit",
+      watermarkRemovalMode: 'inherit',
       watermarks: [],
       senderAccountType: "bot",
       scheduledBroadcastMode: "inherit",
@@ -9414,6 +9503,12 @@
       } else if (ruleWatermarks.length > 0) {
         watermarkMode = 'enable';
       }
+      let watermarkRemovalMode = 'inherit';
+      if (mapping.watermarkRemoval && mapping.watermarkRemoval.enabled === false) {
+        watermarkRemovalMode = 'disable';
+      } else if (mapping.watermarkRemoval && mapping.watermarkRemoval.enabled === true) {
+        watermarkRemovalMode = mapping.watermarkRemoval.mode === 'ocr' ? 'ocr' : 'always';
+      }
       const globalSchedule = acc.scheduledBroadcast || {};
       const ruleSchedule = mapping.scheduledBroadcast || {};
       let scheduleMode = 'inherit';
@@ -9451,6 +9546,7 @@
         stripEnglish: mapping.stripEnglish === true,
         stripChinese: mapping.stripChinese === true,
         watermarkMode,
+        watermarkRemovalMode,
         watermarks: ruleWatermarks,
         senderAccountType: forwardingType === 'discord-to-telegram'
           ? getEffectiveTelegramSenderType(acc, forwardingType, mapping)
@@ -9501,6 +9597,15 @@
       }
 
       const senderSection = document.getElementById('ruleTelegramSenderSection');
+      const watermarkRemovalSection = document.getElementById('ruleWatermarkRemovalSection');
+      const supportsWatermarkRemoval = ['discord-to-discord', 'discord-to-telegram', 'discord-to-feishu'].includes(forwardingType);
+      if (watermarkRemovalSection) {
+        if (supportsWatermarkRemoval) {
+          watermarkRemovalSection.classList.remove('hidden');
+        } else {
+          watermarkRemovalSection.classList.add('hidden');
+        }
+      }
       if (forwardingType === 'discord-to-telegram') {
         const librarySender = getTelegramLibraryAccountById(acc.telegramSenderAccountId);
         if (librarySender) {
@@ -9515,6 +9620,10 @@
 
       document.getElementById('ruleWatermarkMode').value = ruleConfigData.watermarkMode;
       updateRuleWatermarkMode(ruleConfigData.watermarkMode);
+      const ruleWatermarkRemovalModeEl = document.getElementById('ruleWatermarkRemovalMode');
+      if (ruleWatermarkRemovalModeEl) {
+        ruleWatermarkRemovalModeEl.value = ruleConfigData.watermarkRemovalMode || 'inherit';
+      }
 
       document.getElementById('ruleScheduleMode').value = ruleConfigData.scheduledBroadcastMode;
       updateRuleScheduleMode(ruleConfigData.scheduledBroadcastMode);
@@ -9676,6 +9785,18 @@
         mapping.watermarks = list;
         delete mapping.watermark;
         delete mapping.watermarkSecondary;
+      }
+
+      const watermarkRemovalMode = document.getElementById('ruleWatermarkRemovalMode')?.value || 'inherit';
+      if (watermarkRemovalMode === 'inherit') {
+        delete mapping.watermarkRemoval;
+      } else if (watermarkRemovalMode === 'disable') {
+        mapping.watermarkRemoval = { enabled: false };
+      } else {
+        mapping.watermarkRemoval = {
+          enabled: true,
+          mode: watermarkRemovalMode === 'ocr' ? 'ocr' : 'always'
+        };
       }
 
       const scheduleMode = document.getElementById('ruleScheduleMode').value;
@@ -10015,6 +10136,7 @@
         dedupeSequentialMessages: false,
         watermarks: [],
         watermarkEnabled: true,
+        watermarkRemoval: { enabled: false, mode: 'ocr', apiKey: '' },
         scheduledContents: [],
         scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
         ocrServerUrl: 'http://localhost:9003',

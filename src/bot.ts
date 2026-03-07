@@ -18,6 +18,12 @@ import { getTelegramBridgeClient } from "./index.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { resolveWatermarkList } from "./watermark.js";
+import {
+  detectTextWatermarkFromOCR,
+  resolveWatermarkRemovalConfig,
+  shouldUseOcrWatermarkDetection,
+  type WatermarkRemovalConfig,
+} from "./watermarkRemoval.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { promises as fs } from "node:fs";
@@ -46,6 +52,7 @@ export type Client<Ready extends boolean = boolean> = BotClient<Ready>;
 
 export interface BridgeDiscordMessagePayload {
   accountId?: string;
+  eventType?: string;
   id: string;
   channelId: string;
   guildId?: string;
@@ -768,6 +775,11 @@ export class Bot {
     await this.processAndSend(message);
   }
 
+  async handleExternalMessageUpdate(payload: BridgeDiscordMessagePayload) {
+    const message = buildBridgeMessage(payload);
+    await this.handleMessageUpdate(message as any, message as any);
+  }
+
   private getSendersForChannel(channelId: string): SenderBot[] {
     return this.senderBotsBySource?.get(channelId) || [];
   }
@@ -776,8 +788,13 @@ export class Bot {
     if ((config.ocrBlockedKeywords?.length || 0) > 0 || (config.ocrTriggerKeywords?.length || 0) > 0) {
       return true;
     }
+    if (shouldUseOcrWatermarkDetection(resolveWatermarkRemovalConfig((config as any).watermarkRemoval))) {
+      return true;
+    }
     const hasRuleOcr = (rule: any) =>
-      (rule?.ocrBlockedKeywords?.length || 0) > 0 || (rule?.ocrTriggerKeywords?.length || 0) > 0;
+      (rule?.ocrBlockedKeywords?.length || 0) > 0 ||
+      (rule?.ocrTriggerKeywords?.length || 0) > 0 ||
+      shouldUseOcrWatermarkDetection(resolveWatermarkRemovalConfig((config as any).watermarkRemoval, rule?.watermarkRemoval));
     const mappings = (config as any).mappings || [];
     for (const rule of mappings) {
       if (hasRuleOcr(rule)) return true;
@@ -890,6 +907,7 @@ export class Bot {
     watermark?: WatermarkConfig;
     watermarkSecondary?: WatermarkConfig;
     watermarks?: WatermarkConfig[];
+    watermarkRemoval?: WatermarkRemovalConfig;
     standbyMode?: {
       enabled: boolean;
       mainChannelId: string;
@@ -937,6 +955,7 @@ export class Bot {
         watermark: undefined,
         watermarkSecondary: undefined,
         watermarks: undefined,
+        watermarkRemoval: undefined,
         standbyMode: undefined,
       };
     }
@@ -972,6 +991,7 @@ export class Bot {
       watermark: rule.watermark,
       watermarkSecondary: rule.watermarkSecondary,
       watermarks: rule.watermarks,
+      watermarkRemoval: rule.watermarkRemoval,
       standbyMode: rule.standbyMode,
     };
   }
@@ -1189,6 +1209,20 @@ export class Bot {
           this.config.watermarkSecondary,
           ruleConfig.watermarkSecondary,
         );
+    const effectiveWatermarkRemoval = resolveWatermarkRemovalConfig(
+      (this.config as any).watermarkRemoval,
+      ruleConfig.watermarkRemoval,
+    );
+    const shouldDetectWatermarkWithOcr = shouldUseOcrWatermarkDetection(effectiveWatermarkRemoval);
+    const watermarkRemovalTargets = new Set<string>();
+    const markWatermarkRemovalTarget = (targetUrl?: string) => {
+      if (!targetUrl) return;
+      watermarkRemovalTargets.add(targetUrl);
+      const normalized = normalizeImageUrl(targetUrl);
+      if (normalized) {
+        watermarkRemovalTargets.add(normalized);
+      }
+    };
 
     // 忽略选项检查（规则级别优先，未设置则使用全局设置）
     try {
@@ -1285,76 +1319,99 @@ export class Bot {
       const globalOcrTrigger = parseKeywordGroups(this.config.ocrTriggerKeywords);
       const ruleOcrTrigger = parseKeywordGroups(ruleConfig.ocrTriggerKeywords);
       const activeOcrTrigger = globalOcrTrigger.length > 0 ? globalOcrTrigger : ruleOcrTrigger;
-      const needsOcrCheck = allOcrBlocked.length > 0 || activeOcrTrigger.length > 0;
+      const needsOcrFilterCheck = allOcrBlocked.length > 0 || activeOcrTrigger.length > 0;
+      const needsOcrCheck = needsOcrFilterCheck || shouldDetectWatermarkWithOcr;
 
       if (needsOcrCheck) {
         const imageAttachments = collectImageAssets(message);
+        if (shouldDetectWatermarkWithOcr) {
+          for (const embedUrl of collectEmbedImageUrls(message.embeds || [])) {
+            if (!imageAttachments.some((item) => item.url === embedUrl)) {
+              imageAttachments.push({ url: embedUrl });
+            }
+          }
+        }
 
         if (imageAttachments.length > 0) {
           if (!this.ocrClient) {
-            const msg = `${logPrefix} [OCR] OCR客户端未初始化，无法检测图片，跳过转发`;
+            if (needsOcrFilterCheck) {
+              const msg = `${logPrefix} [OCR] OCR客户端未初始化，无法检测图片，跳过转发`;
+              console.log(`[OCR] ${msg}`);
+              this.logger.info(msg);
+              return;
+            }
+            const msg = `${logPrefix} [OCR] OCR客户端未初始化，跳过水印检测，保留原图`;
             console.log(`[OCR] ${msg}`);
             this.logger.info(msg);
-            return;
-          }
+          } else {
+            console.log(`[OCR] 消息包含 ${imageAttachments.length} 张图片，开始检测...`);
+            this.logger.info(`${logPrefix} [OCR] 开始检测图片中的文字...`);
 
-          console.log(`[OCR] 消息包含 ${imageAttachments.length} 张图片，开始检测...`);
-          this.logger.info(`${logPrefix} [OCR] 开始检测图片中的文字...`);
+            let checkedImages = 0;
+            let triggerMatched = activeOcrTrigger.length === 0;
 
-          let checkedImages = 0;
-          let triggerMatched = activeOcrTrigger.length === 0;
-
-          for (const attachment of imageAttachments) {
+            for (const attachment of imageAttachments) {
               const url = attachment.url;
               const contentType = attachment.contentType || "";
               console.log(`[OCR] 检测到图片 ${attachment.name || attachment.url} (类型: ${contentType || "unknown"})`);
 
-            try {
-              console.log(`[OCR] 开始OCR识别...`);
-              const ocrResult = await this.ocrClient.recognizeImage(url);
-              const ocrText = OCRClient.extractText(ocrResult);
-              checkedImages++;
+              try {
+                console.log(`[OCR] 开始OCR识别...`);
+                const ocrResult = await this.ocrClient.recognizeImage(url);
+                const ocrText = OCRClient.extractText(ocrResult);
+                checkedImages++;
 
-              if (allOcrBlocked.length > 0) {
-                const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(ocrText, allOcrBlocked, {
-                  caseInsensitive,
-                });
-                if (matchedGroups.length > 0) {
-                  const errorMsg = `${logPrefix} [OCR] 检测到屏蔽文字 "${matchedKeywords.join('", "')}"，跳过转发`;
-                  console.log(`[OCR] ${errorMsg}`);
-                  this.logger.info(errorMsg);
-                  return;
+                if (shouldDetectWatermarkWithOcr) {
+                  const detection = detectTextWatermarkFromOCR(ocrResult);
+                  if (detection.matched) {
+                    markWatermarkRemovalTarget(url);
+                    const detectMsg = `${logPrefix} [WATERMARK] OCR检测到疑似水印: ${detection.texts.join("、")} (${detection.reason || "heuristic"})`;
+                    console.log(`[OCR] ${detectMsg}`);
+                    this.logger.info(detectMsg);
+                  }
                 }
-              }
 
-              if (!triggerMatched && activeOcrTrigger.length > 0) {
-                const { matchedGroups } = matchParsedKeywordGroups(ocrText, activeOcrTrigger, { caseInsensitive });
-                if (matchedGroups.length > 0) {
-                  triggerMatched = true;
-                  const hitMsg = `${logPrefix} [OCR] 触发关键词命中: ${formatKeywordGroups(matchedGroups)}`;
-                  console.log(`[OCR] ${hitMsg}`);
-                  this.logger.info(hitMsg);
+                if (allOcrBlocked.length > 0) {
+                  const { matchedGroups, matchedKeywords } = matchParsedKeywordGroups(ocrText, allOcrBlocked, {
+                    caseInsensitive,
+                  });
+                  if (matchedGroups.length > 0) {
+                    const errorMsg = `${logPrefix} [OCR] 检测到屏蔽文字 "${matchedKeywords.join('", "')}"，跳过转发`;
+                    console.log(`[OCR] ${errorMsg}`);
+                    this.logger.info(errorMsg);
+                    return;
+                  }
                 }
+
+                if (!triggerMatched && activeOcrTrigger.length > 0) {
+                  const { matchedGroups } = matchParsedKeywordGroups(ocrText, activeOcrTrigger, { caseInsensitive });
+                  if (matchedGroups.length > 0) {
+                    triggerMatched = true;
+                    const hitMsg = `${logPrefix} [OCR] 触发关键词命中: ${formatKeywordGroups(matchedGroups)}`;
+                    console.log(`[OCR] ${hitMsg}`);
+                    this.logger.info(hitMsg);
+                  }
+                }
+              } catch (ocrError: any) {
+                const errorMsg = `${logPrefix} [OCR] 识别失败: ${ocrError.message}，继续处理其他附件`;
+                console.error(`[OCR] ${errorMsg}`);
+                console.error(`[OCR] 错误详情:`, ocrError);
+                console.error(`[OCR] 错误堆栈: ${ocrError.stack}`);
+                this.logger.error(errorMsg);
               }
-            } catch (ocrError: any) {
-              const errorMsg = `${logPrefix} [OCR] 识别失败: ${ocrError.message}，继续处理其他附件`;
-              console.error(`[OCR] ${errorMsg}`);
-              console.error(`[OCR] 错误详情:`, ocrError);
-              console.error(`[OCR] 错误堆栈: ${ocrError.stack}`);
-              this.logger.error(errorMsg);
             }
-          }
 
-          if (activeOcrTrigger.length > 0 && !triggerMatched) {
-            const msg = `${logPrefix} [OCR] 未命中触发关键词，跳过转发`;
-            console.log(`[OCR] ${msg}`);
-            this.logger.info(msg);
-            return;
-          }
+            if (activeOcrTrigger.length > 0 && !triggerMatched) {
+              const msg = `${logPrefix} [OCR] 未命中触发关键词，跳过转发`;
+              console.log(`[OCR] ${msg}`);
+              this.logger.info(msg);
+              return;
+            }
 
-          const finalMsg = `${logPrefix} [OCR] 图片检测完成，总图片数=${imageAttachments.length}，已检测=${checkedImages}，允许转发`;
-          console.log(`[OCR] ${finalMsg}`);
-          this.logger.info(finalMsg);
+            const finalMsg = `${logPrefix} [OCR] 图片检测完成，总图片数=${imageAttachments.length}，已检测=${checkedImages}，允许转发`;
+            console.log(`[OCR] ${finalMsg}`);
+            this.logger.info(finalMsg);
+          }
         }
       }
     } catch (e: any) {
@@ -1776,7 +1833,13 @@ export class Bot {
 
     // 收集需要上传的附件：首张图片将内嵌到同一个 Embed，视频/其他作为同条消息的附件（可直接播放）
     // 根据忽略设置过滤附件
-    const uploads: Array<{ url: string; filename: string; isImage?: boolean; isVideo?: boolean }> = [];
+    const uploads: Array<{
+      url: string;
+      filename: string;
+      isImage?: boolean;
+      isVideo?: boolean;
+      watermarkRemoval?: WatermarkRemovalConfig;
+    }> = [];
     let hasCurrentImage = false;
     const imageUrlToFilename = new Map<string, string>();
     let imageIndex = 0;
@@ -1791,6 +1854,25 @@ export class Bot {
         : this.config.ignoreAudio;
       const skipVideo = this.config.ignoreVideo;
       const skipDocuments = this.config.ignoreDocuments;
+      const decorateUpload = (item: {
+        url: string;
+        filename: string;
+        isImage?: boolean;
+        isVideo?: boolean;
+      }) => {
+        if (!item.isImage || !effectiveWatermarkRemoval) {
+          return item;
+        }
+        if (effectiveWatermarkRemoval.mode === "always") {
+          return { ...item, watermarkRemoval: effectiveWatermarkRemoval };
+        }
+        const normalized = normalizeImageUrl(item.url);
+        if (watermarkRemovalTargets.has(item.url) || (normalized && watermarkRemovalTargets.has(normalized))) {
+          return { ...item, watermarkRemoval: effectiveWatermarkRemoval };
+        }
+        return item;
+      };
+      const shouldRewriteEmbedImages = (effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval) && !skipImages;
 
       for (const att of message.attachments.values()) {
         const url = att.url;
@@ -1824,7 +1906,7 @@ export class Bot {
         }
 
         if (isImage) hasCurrentImage = true;
-        uploads.push({ url, filename, isImage, isVideo });
+        uploads.push(decorateUpload({ url, filename, isImage, isVideo }));
         if (isImage) {
           imageUrlToFilename.set(url, filename);
           const normalized = normalizeImageUrl(url);
@@ -1847,16 +1929,16 @@ export class Bot {
           seenUploads.add(asset.url);
           if (normalized) seenUploads.add(normalized);
           const filename = buildImageFilename(asset.url, ++imageIndex, asset.name);
-          uploads.push({
+          uploads.push(decorateUpload({
             url: asset.url,
             filename,
             isImage: true,
-          });
+          }));
           imageUrlToFilename.set(asset.url, filename);
           if (normalized) imageUrlToFilename.set(normalized, filename);
         }
       }
-      if (effectiveWatermarks.length > 0 && !skipImages) {
+      if (shouldRewriteEmbedImages) {
         const embedUrls = collectEmbedImageUrls(message.embeds || []);
         for (const url of embedUrls) {
           if (!url) continue;
@@ -1865,11 +1947,11 @@ export class Bot {
           seenUploads.add(url);
           if (normalized) seenUploads.add(normalized);
           const filename = buildImageFilename(url, ++imageIndex, "embed");
-          uploads.push({
+          uploads.push(decorateUpload({
             url,
             filename,
             isImage: true,
-          });
+          }));
           imageUrlToFilename.set(url, filename);
           if (normalized) imageUrlToFilename.set(normalized, filename);
         }
@@ -1917,7 +1999,7 @@ export class Bot {
       extraEmbeds = stripEmbedTitles(extraEmbeds);
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
-    if (effectiveWatermarks.length > 0) {
+    if (effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval) {
       extraEmbeds = replaceEmbedImageUrls(extraEmbeds, imageUrlToFilename);
     }
     const toSend = [{
@@ -2030,7 +2112,12 @@ export class Bot {
           content: feishuContent,
           username: username,
           avatarUrl: avatarUrl,
-          attachments: uploads.map((u) => ({ url: u.url, filename: u.filename, isImage: u.isImage })),
+          attachments: uploads.map((u) => ({
+            url: u.url,
+            filename: u.filename,
+            isImage: u.isImage,
+            watermarkRemoval: u.watermarkRemoval,
+          })),
           embeds: feishuEmbeds && feishuEmbeds.length > 0 ? feishuEmbeds : undefined,
           watermark: effectiveWatermarks[0],
           watermarkSecondary: effectiveWatermarks[1],
@@ -2142,6 +2229,7 @@ export class Bot {
                   isImage: u.isImage,
                   isVideo: u.isVideo,
                   contentType: u.isImage ? "image/jpeg" : u.isVideo ? "video/mp4" : "application/octet-stream",
+                  watermarkRemoval: u.watermarkRemoval,
                 })),
                 embeds: telegramEmbeds && telegramEmbeds.length > 0 ? telegramEmbeds : undefined,
                 watermark: effectiveWatermarks[0],
@@ -2198,6 +2286,7 @@ export class Bot {
 
     const mappedTargets = this.getMappedTargets(sourceMessageId);
     if (mappedTargets.length === 0) {
+      this.logger.debug(`[EDIT] Skip update, no target mapping for source ${sourceMessageId}`);
       return;
     }
 
@@ -2216,6 +2305,10 @@ export class Bot {
     if (this.config.enableDiscordForward === false) {
       return;
     }
+
+    this.logger.info(
+      `[EDIT] Received source update: message=${sourceMessageId} channel=${sourceChannelId} targets=${mappedTargets.length}`,
+    );
 
     const messageAny = resolvedMessage as any;
     const ruleConfig = this.getRuleLevelConfig(sourceChannelId);

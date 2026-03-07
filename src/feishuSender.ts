@@ -2,6 +2,7 @@ import https from "node:https";
 import { URL } from "node:url";
 import { getEnv } from "./env";
 import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark";
+import { removeWatermarkFromImageUrl, type WatermarkRemovalConfig } from "./watermarkRemoval";
 import type { WatermarkConfig } from "./config";
 
 const MASKED_SECRET = "********";
@@ -18,7 +19,7 @@ export interface FeishuSendPayload {
   username?: string;
   avatarUrl?: string;
   // Discord 附件（其中图片会被下载后上传到飞书）
-  attachments?: Array<{ url: string; filename: string; isImage?: boolean }>;
+  attachments?: Array<{ url: string; filename: string; isImage?: boolean; watermarkRemoval?: WatermarkRemovalConfig }>;
   embeds?: any[];
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
@@ -103,11 +104,21 @@ export class FeishuSender {
     watermark?: WatermarkConfig,
     watermarkSecondary?: WatermarkConfig,
     watermarks?: WatermarkConfig[],
+    watermarkRemoval?: WatermarkRemovalConfig,
   ): Promise<string | null> {
     try {
       // 2.1 下载图片 Buffer
-      console.log(`[FeishuSender] 开始下载图片: ${imgUrl.substring(0, 80)}...`);
-      const imgBuffer = await this.download(imgUrl);
+      let resolvedUrl = imgUrl;
+      if (watermarkRemoval) {
+        try {
+          resolvedUrl = await removeWatermarkFromImageUrl(imgUrl, watermarkRemoval);
+        } catch (error: any) {
+          console.error(`[FeishuSender] 去水印失败，回退原图: ${String(error?.message || error)}`);
+          resolvedUrl = imgUrl;
+        }
+      }
+      console.log(`[FeishuSender] 开始下载图片: ${resolvedUrl.substring(0, 80)}...`);
+      const imgBuffer = await this.download(resolvedUrl);
       console.log(`[FeishuSender] 图片下载完成，大小: ${imgBuffer.length} bytes`);
       const effectiveWatermarks = this.watermarkEnabled === false
         ? []
@@ -250,7 +261,7 @@ export class FeishuSender {
       if (isImage) {
         console.log(`[FeishuSender] 识别为图片，开始上传: ${att.filename || "unknown"} (${att.url.substring(0, 50)}...)`);
         try {
-          const key = await this.uploadImage(att.url, token, watermark, watermarkSecondary, watermarks);
+          const key = await this.uploadImage(att.url, token, watermark, watermarkSecondary, watermarks, att.watermarkRemoval);
           if (key) {
             imageKeys.push(key);
             console.log(`[FeishuSender] 图片上传成功: ${att.filename || att.url} -> image_key: ${key.substring(0, 20)}...`);

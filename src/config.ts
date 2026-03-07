@@ -195,6 +195,14 @@ export interface WatermarkConfig {
 
 export type WatermarkList = WatermarkConfig[];
 
+export type WatermarkRemovalMode = "ocr" | "always";
+
+export interface WatermarkRemovalConfig {
+  enabled?: boolean;
+  mode?: WatermarkRemovalMode;
+  apiKey?: string;
+}
+
 export type ScheduledMediaType = "image" | "video";
 export type ScheduledMediaSource = "local" | "url";
 
@@ -260,6 +268,7 @@ export interface RuleLevelConfig {
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
+  watermarkRemoval?: WatermarkRemovalConfig;
   scheduledBroadcast?: ScheduledBroadcastConfig;
   standbyMode?: {
     enabled: boolean;
@@ -375,6 +384,7 @@ export interface LegacyConfig {
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
   watermarkEnabled?: boolean;
+  watermarkRemoval?: WatermarkRemovalConfig;
   scheduledContents?: ScheduledContentItem[];
   scheduledBroadcast?: ScheduledBroadcastConfig;
   historyScan?: {
@@ -511,6 +521,7 @@ export interface AccountConfig extends LegacyConfig {
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
   watermarkEnabled?: boolean;
+  watermarkRemoval?: WatermarkRemovalConfig;
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
@@ -598,6 +609,7 @@ function createDefaultAccount(): AccountConfig {
     ocrServerUrl: "http://localhost:9003",
     ocrBlockedKeywords: [],
     ocrTriggerKeywords: [],
+    watermarkRemoval: { enabled: false, mode: "ocr", apiKey: undefined },
     discordLogin: undefined,
     botRelays: [],
     channelRelayMap: {},
@@ -743,6 +755,21 @@ function mergeLegacyWatermarks(
   return legacy.length > 0 ? legacy : undefined;
 }
 
+function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
+  const mode: WatermarkRemovalMode = raw.mode === "ocr" ? "ocr" : "always";
+  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey);
+  if (!enabled && !apiKey && raw.mode === undefined) {
+    return undefined;
+  }
+  return {
+    enabled,
+    mode,
+    apiKey,
+  };
+}
+
 function normalizeScheduledContentItem(raw: any): ScheduledContentItem | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const id =
@@ -846,6 +873,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermark: undefined,
       watermarkSecondary: undefined,
       watermarks: undefined,
+      watermarkRemoval: undefined,
       scheduledBroadcast: undefined,
       standbyMode: undefined,
       inputMode: undefined,
@@ -854,6 +882,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
   const watermark = normalizeWatermarkConfig(raw.watermark);
   const watermarkSecondary = normalizeWatermarkConfig(raw.watermarkSecondary);
   const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(raw.watermarks), watermark, watermarkSecondary);
+  const watermarkRemoval = normalizeWatermarkRemovalConfig(raw.watermarkRemoval);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(raw.scheduledBroadcast);
   const standbyMode = normalizeStandbyMode(raw.standbyMode);
   return {
@@ -902,6 +931,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermark,
     watermarkSecondary,
     watermarks,
+    watermarkRemoval,
     scheduledBroadcast,
     standbyMode,
     inputMode:
@@ -1315,6 +1345,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     accountWatermarkSecondary,
   );
   const watermarkEnabled = input?.watermarkEnabled === false ? false : true;
+  const watermarkRemoval = normalizeWatermarkRemovalConfig(input?.watermarkRemoval);
   const scheduledContents = normalizeScheduledContentList(input?.scheduledContents);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(input?.scheduledBroadcast);
   const discordLoginRaw = input?.discordLogin && typeof input.discordLogin === "object" ? input.discordLogin : {};
@@ -1358,6 +1389,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         const watermark = normalizeWatermarkConfig(m.watermark);
         const watermarkSecondary = normalizeWatermarkConfig(m.watermarkSecondary);
         const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(m.watermarks), watermark, watermarkSecondary);
+        const watermarkRemoval = normalizeWatermarkRemovalConfig(m.watermarkRemoval);
         return {
           id: typeof m.id === "string" ? m.id : randomUUID(),
           sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
@@ -1413,6 +1445,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           watermark,
           watermarkSecondary,
           watermarks,
+          watermarkRemoval,
           scheduledBroadcast: normalizeScheduledBroadcastConfig(m.scheduledBroadcast),
           standbyMode: normalizeStandbyMode(m.standbyMode),
         };
@@ -1442,6 +1475,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             watermark,
             watermarkSecondary,
           );
+          const watermarkRemoval = normalizeWatermarkRemovalConfig(mapping.watermarkRemoval);
           const scheduledBroadcast = normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast);
           return {
             id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
@@ -1493,6 +1527,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             watermark,
             watermarkSecondary,
             watermarks,
+            watermarkRemoval,
             scheduledBroadcast,
             standbyMode: normalizeStandbyMode(mapping.standbyMode),
           };
@@ -1607,6 +1642,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     ocrServerUrl: typeof input?.ocrServerUrl === "string" && input.ocrServerUrl.trim() ? input.ocrServerUrl.trim() : "http://localhost:9003",
     ocrBlockedKeywords: Array.isArray(input?.ocrBlockedKeywords) ? input.ocrBlockedKeywords : [],
     ocrTriggerKeywords: Array.isArray(input?.ocrTriggerKeywords) ? input.ocrTriggerKeywords : [],
+    watermarkRemoval,
     discordLogin,
 
     // --- 修复：添加 Telegram 相关顶层字段 ---
@@ -1900,6 +1936,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       excludeKeywords: [],
       ocrBlockedKeywords: [],
       ocrTriggerKeywords: [],
+      watermarkRemoval: { enabled: false, mode: "ocr", apiKey: undefined },
       showSourceIdentity: false,
       publicBaseUrl: undefined,
       replacementsDictionary: {},
@@ -1974,6 +2011,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
     watermarks: account.watermarks,
+    watermarkRemoval: account.watermarkRemoval,
     scheduledContents: account.scheduledContents,
     scheduledBroadcast: account.scheduledBroadcast,
     historyScan: account.historyScan,

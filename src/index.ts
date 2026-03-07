@@ -2247,6 +2247,18 @@ function setupDiscordBridgeClient() {
     }
   });
 
+  discordBridgeClient.on("discord_message_update", async (params) => {
+    try {
+      const accountId = params?.accountId;
+      if (!accountId) return;
+      const running = runningAccounts.get(accountId);
+      if (!running) return;
+      await running.bot.handleExternalMessageUpdate(params);
+    } catch (err: any) {
+      discordForwardLogger.error(`Discord bridge message update handling failed: ${String(err?.message || err)}`);
+    }
+  });
+
   discordBridgeClient.on("discord_status", async (params) => {
     try {
       const accountId = params?.accountId;
@@ -3272,6 +3284,7 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
       JSON.stringify(account.watermarks || []) !== JSON.stringify(oldAccount.watermarks || []) ||
       JSON.stringify(account.watermark || {}) !== JSON.stringify(oldAccount.watermark || {}) ||
       JSON.stringify(account.watermarkSecondary || {}) !== JSON.stringify(oldAccount.watermarkSecondary || {}) ||
+      JSON.stringify((account as any).watermarkRemoval || {}) !== JSON.stringify((oldAccount as any).watermarkRemoval || {}) ||
       account.watermarkEnabled !== oldAccount.watermarkEnabled;
     const styleChanged = account.feishuStyle !== oldAccount.feishuStyle;
     const forwardSettingsChanged =
