@@ -1953,6 +1953,10 @@
       return cachedGuilds.length === 0;
     }
 
+    function getDiscordMetadataAccountId(acc) {
+      return String(acc?.discordAccountId || acc?.id || '').trim();
+    }
+
     function requestDiscordGuilds(accountId) {
       if (!shouldFetchDiscordGuilds(accountId)) return;
       cachedGuildsLoading = true;
@@ -2105,7 +2109,7 @@
         discordAutoSyncAttempted.add(accountId);
         const syncResult = await syncDiscordAccountDataOnly(accountId);
         if (syncResult?.success) {
-          await fetchDiscordChannels(accountId, guildId);
+          await fetchDiscordChannels(accountId, guildId, { force: true });
         }
       }
 
@@ -2119,7 +2123,7 @@
     function renderSourceChannelInput(acc, m, idx, forwardingType, placeholder) {
       const mappingKey = `${acc.id}:${forwardingType}:${idx}`;
       const mode = getRuleInputMode(m);
-      const discordAccountId = acc.discordAccountId || '';
+      const discordAccountId = getDiscordMetadataAccountId(acc);
       const telegramAccountId = acc.telegramListenerAccountId || '';
       const isDiscordSource = forwardingType.startsWith('discord-');
       const isTelegramSource = forwardingType.startsWith('telegram-');
@@ -2402,10 +2406,11 @@
     }
 
     // 获取 Discord 频道列表
-    async function fetchDiscordChannels(accountId, guildId) {
+    async function fetchDiscordChannels(accountId, guildId, options = {}) {
       if (!accountId || !guildId) return [];
       const cacheKey = `${accountId}:${guildId}`;
-      if (cachedChannels[cacheKey]) return cachedChannels[cacheKey];
+      const force = options.force === true;
+      if (!force && Object.prototype.hasOwnProperty.call(cachedChannels, cacheKey)) return cachedChannels[cacheKey];
       try {
         const res = await fetch('/api/metadata/discord/channels', {
           method: 'POST',
@@ -2801,8 +2806,13 @@
       const RETRY_DELAY = 1500; // 1.5秒
 
       try {
-        // 从账号库获取账号信息
+        // 优先从账号库找，找不到则回退到当前实例配置
         let account = (state.discordAccounts || []).find(a => a.id === accountId);
+        let isLibraryAccount = true;
+        if (!account) {
+          account = (state.accounts || []).find(a => a.id === accountId);
+          isLibraryAccount = false;
+        }
         if (!account) {
           // 如果账号不存在且还有重试次数，等待后重新加载配置再试
           if (retryCount < MAX_RETRIES) {
@@ -2840,7 +2850,14 @@
           return { success: false, error: `${data.error}${detail}` };
         }
 
-        // 更新账号库中的用户信息
+        // 清空该账号的旧频道缓存，避免“已同步但仍命中空缓存”
+        Object.keys(cachedChannels).forEach((key) => {
+          if (key.startsWith(`${accountId}:`)) {
+            delete cachedChannels[key];
+          }
+        });
+
+        // 更新账号信息
         if (account) {
           if (data.user) {
             const derivedName = data.user.tag
@@ -2857,7 +2874,9 @@
           account.guildsCount = Number.isFinite(data.guildsCount) ? data.guildsCount : 0;
           account.channelsCount = Number.isFinite(data.channelsCount) ? data.channelsCount : 0;
           account.lastSyncTime = new Date().toISOString();
-          await saveConfigImmediate();
+          if (isLibraryAccount) {
+            await saveConfigImmediate();
+          }
           render();
         }
 
@@ -6717,7 +6736,7 @@
       const startIdx = (feishuPage - 1) * pageSize;
       const endIdx = startIdx + pageSize;
       const currentPageEntries = entries.slice(startIdx, endIdx);
-      const discordAccountId = acc.discordAccountId || '';
+      const discordAccountId = getDiscordMetadataAccountId(acc);
 
       if (entries.length === 0) {
         return '<div class="text-center py-8 text-slate-400 text-sm">暂无飞书规则，点击"添加规则"创建</div>';
@@ -9295,7 +9314,7 @@
       const mode = resolveRuleInputMode(ruleConfigData?.inputMode);
       const isDiscordSource = forwardingType.startsWith('discord-') || forwardingType === 'discord-to-feishu';
       const isTelegramSource = forwardingType.startsWith('telegram-');
-      const discordAccountId = acc?.discordAccountId || '';
+      const discordAccountId = getDiscordMetadataAccountId(acc);
       const telegramAccountId = acc?.telegramListenerAccountId || acc?.telegramSenderAccountId || '';
 
       if (isTelegramSource && mode === 'select' && telegramAccountId) {
