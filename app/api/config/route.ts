@@ -280,6 +280,8 @@ interface FrontendMapping {
   watermarks?: WatermarkConfig[];
   watermarkEnabled?: boolean;
   watermarkRemoval?: WatermarkRemovalConfig;
+  targetWebhookName?: string;
+  targetWebhookAvatarUrl?: string;
   scheduledBroadcast?: ScheduledBroadcastConfig;
 }
 
@@ -510,6 +512,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermarkSecondary: undefined,
       watermarks: undefined,
       watermarkRemoval: undefined,
+      targetWebhookName: undefined,
+      targetWebhookAvatarUrl: undefined,
       scheduledBroadcast: undefined,
       inputMode: undefined,
     };
@@ -567,6 +571,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermarkSecondary,
     watermarks,
     watermarkRemoval,
+    targetWebhookName: typeof raw.targetWebhookName === "string" && raw.targetWebhookName.trim() ? raw.targetWebhookName.trim() : undefined,
+    targetWebhookAvatarUrl: typeof raw.targetWebhookAvatarUrl === "string" && raw.targetWebhookAvatarUrl.trim() ? raw.targetWebhookAvatarUrl.trim() : undefined,
     scheduledBroadcast,
     inputMode:
       raw.inputMode === "manual" ? "manual" : raw.inputMode === "select" ? "select" : undefined,
@@ -841,6 +847,8 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
               ? "select"
               : undefined,
         note: savedRule.note || account.channelNotes?.[channelId],
+        targetWebhookName: typeof (savedRule as any).targetWebhookName === "string" ? (savedRule as any).targetWebhookName : undefined,
+        targetWebhookAvatarUrl: typeof (savedRule as any).targetWebhookAvatarUrl === "string" ? (savedRule as any).targetWebhookAvatarUrl : undefined,
         translateDirection: !account.enableTranslation
           ? "off"
           : savedRule.translateDirection || (channelTranslateDirection[channelId] as any) || "auto",
@@ -1367,6 +1375,14 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
                 ? "select"
                 : undefined,
           note: mapping.note,
+          targetWebhookName:
+            typeof mapping.targetWebhookName === "string" && mapping.targetWebhookName.trim()
+              ? mapping.targetWebhookName.trim()
+              : undefined,
+          targetWebhookAvatarUrl:
+            typeof mapping.targetWebhookAvatarUrl === "string" && mapping.targetWebhookAvatarUrl.trim()
+              ? mapping.targetWebhookAvatarUrl.trim()
+              : undefined,
           translateDirection: mapping.translateDirection,
           longMessage: mapping.longMessage,
           allowedUsersIds: mapping.allowedUsersIds || [],

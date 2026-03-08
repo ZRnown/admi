@@ -7,6 +7,7 @@ import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark.js";
 import { removeWatermarkFromImageUrl, type WatermarkRemovalConfig } from "./watermarkRemoval.js";
 import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
+import { resolveWebhookIdentity } from "./webhookIdentity.js";
 
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30000;
@@ -69,6 +70,8 @@ export class SenderBot {
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkConfig[];
   watermarkEnabled?: boolean;
+  targetWebhookName?: string;
+  targetWebhookAvatarUrl?: string;
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
@@ -85,6 +88,8 @@ export class SenderBot {
     watermarkSecondary?: WatermarkConfig;
     watermarks?: WatermarkConfig[];
     watermarkEnabled?: boolean;
+    targetWebhookName?: string;
+    targetWebhookAvatarUrl?: string;
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
@@ -100,6 +105,8 @@ export class SenderBot {
     this.watermarkSecondary = options.watermarkSecondary;
     this.watermarks = options.watermarks;
     this.watermarkEnabled = options.watermarkEnabled;
+    this.targetWebhookName = options.targetWebhookName;
+    this.targetWebhookAvatarUrl = options.targetWebhookAvatarUrl;
   }
 
   private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
@@ -844,8 +851,14 @@ export class SenderBot {
           const useWebhookMode = !this.enableBotRelay;
 
           if (useWebhookMode) {
-          if (item.username) payload.username = item.username;
-          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          const webhookIdentity = resolveWebhookIdentity(
+            item.username,
+            item.avatarUrl,
+            this.targetWebhookName,
+            this.targetWebhookAvatarUrl,
+          );
+          if (webhookIdentity.username) payload.username = webhookIdentity.username;
+          if (webhookIdentity.avatarUrl) payload.avatar_url = webhookIdentity.avatarUrl;
           }
           
           if (item.components && item.components.length > 0) {
@@ -949,8 +962,14 @@ export class SenderBot {
           const useWebhookMode = !this.enableBotRelay;
           
           if (useWebhookMode) {
-          if (item.username) payload.username = item.username;
-          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          const webhookIdentity = resolveWebhookIdentity(
+            item.username,
+            item.avatarUrl,
+            this.targetWebhookName,
+            this.targetWebhookAvatarUrl,
+          );
+          if (webhookIdentity.username) payload.username = webhookIdentity.username;
+          if (webhookIdentity.avatarUrl) payload.avatar_url = webhookIdentity.avatarUrl;
           }
           
           if (item.replyToTarget?.messageId) {

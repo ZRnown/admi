@@ -1393,6 +1393,8 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
           watermarkSecondary,
           watermarks,
           watermarkEnabled: account.watermarkEnabled !== false,
+          targetWebhookName: mapping.targetWebhookName,
+          targetWebhookAvatarUrl: mapping.targetWebhookAvatarUrl,
         });
         prepares.push(sb.prepare());
         // 将 SenderBot 添加到数组中

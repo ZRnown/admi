@@ -281,6 +281,8 @@ export interface RuleLevelConfig {
   };
   // 规则输入模式（用于来源频道选择方式）
   inputMode?: "manual" | "select";
+  targetWebhookName?: string;
+  targetWebhookAvatarUrl?: string;
 }
 
 // Discord→Discord 规则映射（支持规则级别的完整配置）
@@ -1407,6 +1409,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
               : undefined,
           inputMode: m.inputMode === "manual" ? "manual" : m.inputMode === "select" ? "select" : undefined,
           note: typeof m.note === "string" ? m.note : undefined,
+          targetWebhookName: typeof m.targetWebhookName === "string" && m.targetWebhookName.trim() ? m.targetWebhookName.trim() : undefined,
+          targetWebhookAvatarUrl: typeof m.targetWebhookAvatarUrl === "string" && m.targetWebhookAvatarUrl.trim() ? m.targetWebhookAvatarUrl.trim() : undefined,
           translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,
           // RuleLevelConfig 规则级别过滤配置
           allowedUsersIds: Array.isArray(m.allowedUsersIds) ? m.allowedUsersIds : [],
