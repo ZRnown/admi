@@ -16,3 +16,10 @@ export function getDiscordChannelEmptyMessage(hasCacheEntry: boolean, guildId: s
   if (selectedId) return "加载频道中...";
   return hasCacheEntry ? "暂无可用频道" : "暂无频道（请先同步）";
 }
+
+export function preserveDiscordChannelsOnFetchFailure<T>(existing: T[] | undefined, fetched: T[], hadFetchError: boolean): T[] {
+  if (hadFetchError && Array.isArray(existing) && existing.length > 0) {
+    return existing;
+  }
+  return fetched;
+}

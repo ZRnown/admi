@@ -39,6 +39,68 @@ class DiscordAccountSession:
         self.shared_accounts: Dict[str, Set[int]] = {account_id: set()}
         self._build_client()
 
+    def _channel_type_value(self, channel: Any) -> Optional[int]:
+        raw = getattr(channel, "type", None)
+        if raw is None:
+            return None
+        try:
+            return int(raw.value) if hasattr(raw, "value") else int(raw)
+        except Exception:
+            return None
+
+    def build_cache_snapshot(self) -> Dict[str, Any]:
+        guilds_payload = []
+        channels_by_guild: Dict[str, list] = {}
+        client = self.client
+        if not client or not getattr(client, "guilds", None):
+            return {"user": self.user_payload, "guilds": guilds_payload, "channelsByGuild": channels_by_guild}
+
+        for guild in getattr(client, "guilds", []) or []:
+            guild_id = str(getattr(guild, "id", "") or "")
+            if not guild_id:
+                continue
+            guilds_payload.append({
+                "id": guild_id,
+                "name": getattr(guild, "name", None),
+                "icon": getattr(guild, "icon", None),
+            })
+            channels = []
+            for channel in getattr(guild, "channels", []) or []:
+                channels.append({
+                    "id": str(getattr(channel, "id", "") or ""),
+                    "name": getattr(channel, "name", None),
+                    "type": self._channel_type_value(channel),
+                    "parentId": str(getattr(channel, "category_id", None) or getattr(channel, "parent_id", None) or "") or None,
+                    "position": getattr(channel, "position", None),
+                })
+            channels_by_guild[guild_id] = channels
+
+        return {
+            "user": self.user_payload,
+            "guilds": guilds_payload,
+            "channelsByGuild": channels_by_guild,
+        }
+
+    async def emit_cache_snapshot(self, account_ids: Optional[list] = None) -> None:
+        snapshot = self.build_cache_snapshot()
+        target_ids = account_ids or list(self.shared_accounts.keys())
+        for acc_id in target_ids:
+            await self.ipc.send_notification(
+                "discord_cache_snapshot",
+                {
+                    "accountId": acc_id,
+                    **snapshot,
+                },
+            )
+
+    async def _emit_cache_snapshot_after_delay(self, delay_seconds: float) -> None:
+        try:
+            await asyncio.sleep(delay_seconds)
+            if self.ready_event.is_set():
+                await self.emit_cache_snapshot()
+        except Exception as exc:
+            logger.debug(f"Delayed cache snapshot skipped: {exc}")
+
     def _build_client(self) -> None:
         if hasattr(discord, "Intents"):
             intents = discord.Intents.default()
@@ -74,6 +136,9 @@ class DiscordAccountSession:
                         "user": payload,
                     },
                 )
+            await self.emit_cache_snapshot()
+            asyncio.create_task(self._emit_cache_snapshot_after_delay(5))
+            asyncio.create_task(self._emit_cache_snapshot_after_delay(15))
             shared_count = len(self.shared_accounts)
             user_label = None
             if payload:
@@ -147,6 +212,33 @@ class DiscordAccountSession:
                     await self.ipc.send_notification("discord_message", payload)
             except Exception as exc:
                 logger.error(f"Failed to handle message: {exc}")
+
+        @self.client.event
+        async def on_message_edit(before: Any, after: Any):
+            message = after or before
+            if message is None:
+                return
+            try:
+                channel = getattr(message, "channel", None)
+                channel_id = getattr(channel, "id", None)
+                if channel_id is None:
+                    return
+                channel_id_int = int(channel_id)
+
+                target_accounts = []
+                for acc_id, channels in self.shared_accounts.items():
+                    if not channels or channel_id_int in channels:
+                        target_accounts.append(acc_id)
+
+                if not target_accounts:
+                    return
+
+                for acc_id in target_accounts:
+                    payload = build_message_payload(message, acc_id)
+                    payload["eventType"] = "message_update"
+                    await self.ipc.send_notification("discord_message_update", payload)
+            except Exception as exc:
+                logger.error(f"Failed to handle message edit: {exc}")
 
     def _resolve_start_kwargs(self, bot_flag: Optional[bool]) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
@@ -335,6 +427,7 @@ class DiscordAccountSession:
                     "user": self.user_payload,
                 },
             )
+            await self.emit_cache_snapshot([account_id])
 
     async def remove_shared_account(self, account_id: str) -> bool:
         """移除共享账号，返回是否还有剩余账号"""
@@ -364,7 +457,21 @@ class DiscordBridge:
 
     async def start(self):
         self.ipc_server.register_handler("updateConfig", self._handle_update_config)
+        self.ipc_server.register_handler("getCacheSnapshot", self._handle_get_cache_snapshot)
         await self.ipc_server.start()
+
+
+    async def _handle_get_cache_snapshot(self, params: Dict[str, Any]):
+        account_id = params.get("accountId")
+        if not account_id:
+            return {"success": False, "error": "missing accountId"}
+        token = self.account_to_token.get(account_id)
+        if not token:
+            return {"success": False, "error": "account not connected"}
+        session = self.sessions_by_token.get(token)
+        if not session:
+            return {"success": False, "error": "session not found"}
+        return {"accountId": account_id, **session.build_cache_snapshot()}
 
     async def _handle_update_config(self, params: Dict[str, Any]):
         accounts = params.get("accounts") or []

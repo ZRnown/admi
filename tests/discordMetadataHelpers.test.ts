@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   getDiscordChannelEmptyMessage,
   getDiscordMetadataAccountId,
+  preserveDiscordChannelsOnFetchFailure,
   shouldReuseDiscordChannelsCache,
 } from "../src/discordMetadataHelpers.ts";
 
@@ -25,4 +26,11 @@ test("getDiscordChannelEmptyMessage distinguishes unsynced from synced-empty sta
   assert.equal(getDiscordChannelEmptyMessage(false, 'guild-1', ''), '暂无频道（请先同步）');
   assert.equal(getDiscordChannelEmptyMessage(true, 'guild-1', ''), '暂无可用频道');
   assert.equal(getDiscordChannelEmptyMessage(false, '', ''), '请先选择服务器');
+});
+
+
+test("preserveDiscordChannelsOnFetchFailure keeps existing channels when REST fetch fails", () => {
+  const existing = [{ id: '1', name: 'alpha', type: 0 }];
+  assert.deepEqual(preserveDiscordChannelsOnFetchFailure(existing, [], true), existing);
+  assert.deepEqual(preserveDiscordChannelsOnFetchFailure(existing, [], false), []);
 });

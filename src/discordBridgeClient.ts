@@ -159,4 +159,8 @@ export class DiscordBridgeClient extends EventEmitter {
   async updateConfig(params: DiscordBridgeUpdateConfigParams): Promise<{ success: boolean; accounts?: number }> {
     return this._sendRequest("updateConfig", params);
   }
+
+  async getCacheSnapshot(params: { accountId: string }): Promise<any> {
+    return this._sendRequest("getCacheSnapshot", params);
+  }
 }

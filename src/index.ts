@@ -34,6 +34,7 @@ import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
 import { reconcileExternalForwarders, shutdownExternalForwarders } from "./externalForwarder.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -1224,6 +1225,39 @@ async function writeDiscordChannelsCache(accountId: string, client: any) {
   }
 }
 
+
+async function writeDiscordGuildsCacheSnapshot(accountId: string, snapshot: { user?: any; guilds?: any[]; channelsByGuild?: Record<string, any[]> }) {
+  try {
+    const guilds = Array.isArray(snapshot.guilds) ? snapshot.guilds : [];
+    const channelsByGuild = snapshot.channelsByGuild && typeof snapshot.channelsByGuild === "object" ? snapshot.channelsByGuild : {};
+
+    let guildCache: Record<string, any> = {};
+    let channelCache: Record<string, any[]> = {};
+    try {
+      guildCache = JSON.parse(await fs.readFile(discordGuildsCacheFile, "utf-8"));
+    } catch {}
+    try {
+      channelCache = JSON.parse(await fs.readFile(discordChannelsCacheFile, "utf-8"));
+    } catch {}
+
+    guildCache[accountId] = {
+      user: snapshot.user || null,
+      guilds,
+      updatedAt: new Date().toISOString(),
+    };
+    for (const guild of guilds) {
+      const guildId = typeof guild?.id === "string" ? guild.id : String(guild?.id || "");
+      if (!guildId) continue;
+      const key = `${accountId}:${guildId}`;
+      channelCache[key] = Array.isArray(channelsByGuild[guildId]) ? channelsByGuild[guildId] : [];
+    }
+    await fs.writeFile(discordGuildsCacheFile, JSON.stringify(guildCache, null, 2));
+    await fs.writeFile(discordChannelsCacheFile, JSON.stringify(channelCache, null, 2));
+  } catch (e) {
+    console.error("写入 Discord live cache snapshot 失败:", e);
+  }
+}
+
 // 写入 Telegram 对话缓存
 async function writeTelegramDialogsCache(accountId: string, dialogs: any[]) {
   try {
@@ -2259,6 +2293,16 @@ function setupDiscordBridgeClient() {
     }
   });
 
+  discordBridgeClient.on("discord_cache_snapshot", async (params) => {
+    try {
+      const accountId = params?.accountId;
+      if (!accountId) return;
+      await writeDiscordGuildsCacheSnapshot(accountId, params);
+    } catch (err: any) {
+      discordForwardLogger.error(`Discord bridge cache snapshot handling failed: ${String(err?.message || err)}`);
+    }
+  });
+
   discordBridgeClient.on("discord_status", async (params) => {
     try {
       const accountId = params?.accountId;
@@ -2298,6 +2342,15 @@ function setupDiscordBridgeClient() {
 
       if (isInstanceAccount && instanceState.state) {
         await writeStatusForAccount(accountId, instanceState.state, instanceState.message);
+      }
+
+      if (state === "online" && discordBridgeClient) {
+        try {
+          const snapshot = await discordBridgeClient.getCacheSnapshot({ accountId });
+          if (snapshot) {
+            await writeDiscordGuildsCacheSnapshot(accountId, snapshot);
+          }
+        } catch {}
       }
 
       if (isLibraryAccount && libraryState.state) {

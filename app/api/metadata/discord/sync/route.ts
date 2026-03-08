@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { preserveDiscordChannelsOnFetchFailure } from "@/src/discordMetadataHelpers";
 
 // Discord API 基础 URL
 const DISCORD_API = "https://discord.com/api/v10";
@@ -144,24 +145,6 @@ export async function POST(request: NextRequest) {
       icon: g.icon,
     }));
 
-    // 获取每个服务器的频道列表
-    const channelsData: Record<string, any[]> = {};
-    for (const guild of guilds) {
-      try {
-        const channels = await getGuildChannels(authToken, guild.id);
-        channelsData[guild.id] = channels.map((c: any) => ({
-          id: c.id,
-          name: c.name,
-          type: c.type,
-          parentId: c.parent_id,
-          position: c.position,
-        }));
-      } catch (e) {
-        // 某些服务器可能没有权限获取频道
-        channelsData[guild.id] = [];
-      }
-    }
-
     // 读取现有缓存
     let guildsCache: Record<string, any> = {};
     let channelsCache: Record<string, any> = {};
@@ -178,6 +161,25 @@ export async function POST(request: NextRequest) {
       channelsCache = JSON.parse(data);
     } catch {
       // 文件不存在
+    }
+
+    // 获取每个服务器的频道列表
+    const channelsData: Record<string, any[]> = {};
+    for (const guild of guilds) {
+      const cacheKey = `${accountId}:${guild.id}`;
+      const existingChannels = Array.isArray(channelsCache[cacheKey]) ? channelsCache[cacheKey] : undefined;
+      try {
+        const channels = await getGuildChannels(authToken, guild.id);
+        channelsData[guild.id] = channels.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          type: c.type,
+          parentId: c.parent_id,
+          position: c.position,
+        }));
+      } catch (e) {
+        channelsData[guild.id] = preserveDiscordChannelsOnFetchFailure(existingChannels, [], true);
+      }
     }
 
     // 更新缓存
