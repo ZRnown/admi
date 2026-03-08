@@ -81,6 +81,38 @@ class DiscordAccountSession:
             "channelsByGuild": channels_by_guild,
         }
 
+    async def hydrate_empty_guild_channels(self) -> int:
+        client = self.client
+        if not client or not self.ready_event.is_set():
+            return 0
+        hydrated = 0
+        for guild in getattr(client, "guilds", []) or []:
+            try:
+                channels = list(getattr(guild, "channels", []) or [])
+                if channels:
+                    continue
+                subscribe = getattr(guild, "subscribe", None)
+                if not callable(subscribe):
+                    continue
+                await subscribe(typing=True, threads=True, member_updates=False)
+                hydrated += 1
+            except Exception as exc:
+                logger.debug(f"Failed to hydrate guild channels for {getattr(guild, 'id', 'unknown')}: {exc}")
+        return hydrated
+
+    async def _hydrate_and_emit_cache_snapshot(self, delay_seconds: float) -> None:
+        try:
+            await asyncio.sleep(delay_seconds)
+            if not self.ready_event.is_set():
+                return
+            hydrated = await self.hydrate_empty_guild_channels()
+            if hydrated > 0:
+                logger.info(f"Hydrating empty guild channel caches: {hydrated}")
+                await asyncio.sleep(4)
+            await self.emit_cache_snapshot()
+        except Exception as exc:
+            logger.debug(f"Hydrate cache snapshot skipped: {exc}")
+
     async def emit_cache_snapshot(self, account_ids: Optional[list] = None) -> None:
         snapshot = self.build_cache_snapshot()
         target_ids = account_ids or list(self.shared_accounts.keys())
@@ -138,7 +170,8 @@ class DiscordAccountSession:
                 )
             await self.emit_cache_snapshot()
             asyncio.create_task(self._emit_cache_snapshot_after_delay(5))
-            asyncio.create_task(self._emit_cache_snapshot_after_delay(15))
+            asyncio.create_task(self._hydrate_and_emit_cache_snapshot(8))
+            asyncio.create_task(self._hydrate_and_emit_cache_snapshot(18))
             shared_count = len(self.shared_accounts)
             user_label = None
             if payload:
