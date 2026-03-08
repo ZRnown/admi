@@ -241,6 +241,14 @@ export function extractWavespeedOutputUrl(payload: unknown): string | undefined 
   return results[0];
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function shouldRetryWaveSpeedStatus(status?: number): boolean {
+  return typeof status === "number" && (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500);
+}
+
 async function requestJson(url: string, init: RequestInit): Promise<any> {
   const response = await fetch(url, init);
   const raw = await response.text();
@@ -251,7 +259,10 @@ async function requestJson(url: string, init: RequestInit): Promise<any> {
     parsed = { raw };
   }
   if (!response.ok) {
-    throw new Error(`WaveSpeed request failed ${response.status}: ${JSON.stringify(parsed).slice(0, 280)}`);
+    const error = new Error(`WaveSpeed request failed ${response.status}: ${JSON.stringify(parsed).slice(0, 280)}`) as Error & { status?: number; payload?: any };
+    error.status = response.status;
+    error.payload = parsed;
+    throw error;
   }
   return parsed;
 }
@@ -265,18 +276,36 @@ export async function removeWatermarkFromImageUrl(
     return imageUrl;
   }
 
-  const response = await requestJson(WAVESPEED_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${effective.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      enable_sync_mode: true,
-      enable_base64_output: false,
-      image: imageUrl,
-    }),
-  });
+  let response: any = undefined;
+  let lastError: any = undefined;
+  const attempts = 3;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      response = await requestJson(WAVESPEED_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${effective.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          enable_sync_mode: true,
+          enable_base64_output: false,
+          image: imageUrl,
+        }),
+      });
+      lastError = undefined;
+      break;
+    } catch (error: any) {
+      lastError = error;
+      if (attempt >= attempts || !shouldRetryWaveSpeedStatus(error?.status)) {
+        break;
+      }
+      await sleep(attempt * 1500);
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
 
   const outputUrl = extractWavespeedOutputUrl(response);
   if (!outputUrl) {

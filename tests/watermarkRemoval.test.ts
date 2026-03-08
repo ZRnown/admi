@@ -7,6 +7,7 @@ import {
   matchWatermarkRemovalTriggerKeywords,
   resolveWatermarkRemovalConfig,
   shouldPersistWatermarkRemovalConfig,
+  shouldRetryWaveSpeedStatus,
 } from "../src/watermarkRemoval.ts";
 
 test("resolveWatermarkRemovalConfig merges global api key with rule mode override", () => {
@@ -142,4 +143,13 @@ test("shouldPersistWatermarkRemovalConfig drops empty config", () => {
     shouldPersistWatermarkRemovalConfig({ apiKey: "", triggerKeywords: [] }),
     false,
   );
+});
+
+
+test("shouldRetryWaveSpeedStatus retries timeout and server errors only", () => {
+  assert.equal(shouldRetryWaveSpeedStatus(504), true);
+  assert.equal(shouldRetryWaveSpeedStatus(500), true);
+  assert.equal(shouldRetryWaveSpeedStatus(429), true);
+  assert.equal(shouldRetryWaveSpeedStatus(400), false);
+  assert.equal(shouldRetryWaveSpeedStatus(undefined), false);
 });
