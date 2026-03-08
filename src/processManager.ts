@@ -516,3 +516,167 @@ export class DiscordBridgeManager extends EventEmitter {
 }
 
 export const discordBridgeManager = new DiscordBridgeManager();
+
+export class DiscordMetadataBridgeManager extends EventEmitter {
+  private process: ChildProcess | null = null;
+  private processInfo: ProcessInfo | null = null;
+  private restartAttempts = 0;
+  private maxRestartAttempts = 5;
+  private restartDelay = 5000;
+  private isShuttingDown = false;
+
+  async start(): Promise<{ success: boolean; message: string; pid?: number }> {
+    try {
+      if (this.process && !this.process.killed) {
+        return { success: false, message: "进程已在运行中" };
+      }
+
+      const bridgePath = path.join(process.cwd(), "discord_bridge");
+      const srcPath = path.join(bridgePath, "src");
+      const mainScript = path.join(bridgePath, "src", "discord_metadata_bridge", "main.py");
+      try {
+        await fs.access(mainScript);
+      } catch {
+        return { success: false, message: "Discord Metadata Bridge主程序不存在" };
+      }
+
+      const pythonCandidates = [process.env.PYTHON, process.env.PYTHON_BIN, process.env.PYTHON_EXECUTABLE, "python3.11", "python3.10", "python3", "python"].filter(Boolean) as string[];
+      const pythonBin = pythonCandidates.find((bin) => {
+        const result = spawnSync(bin, ["-V"], { stdio: "ignore" });
+        return !result.error;
+      });
+      if (!pythonBin) {
+        return { success: false, message: "未找到可用的Python可执行文件，请安装python3或设置PYTHON环境变量" };
+      }
+
+      this.process = spawn(pythonBin, ["-B", "-m", "discord_metadata_bridge.main"], {
+        cwd: srcPath,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPATH: path.join(bridgePath, "src") },
+      });
+      if (!this.process.pid) {
+        return { success: false, message: "无法启动进程" };
+      }
+
+      this.processInfo = {
+        pid: this.process.pid,
+        startTime: Date.now(),
+        status: "running",
+        restartCount: this.restartAttempts,
+        lastRestartTime: Date.now(),
+      };
+      this.setupProcessListeners();
+      this.restartAttempts = 0;
+      this.emit("started", this.processInfo);
+      console.log(`[ProcessManager] Discord Metadata Bridge started with PID: ${this.process.pid}`);
+      return { success: true, message: "Discord Metadata Bridge启动成功", pid: this.process.pid };
+    } catch (error: any) {
+      console.error(`[ProcessManager] Failed to start Discord Metadata Bridge: ${error.message}`);
+      return { success: false, message: `启动失败: ${error.message}` };
+    }
+  }
+
+  async stop(): Promise<{ success: boolean; message: string }> {
+    try {
+      this.isShuttingDown = true;
+      if (!this.process || this.process.killed) return { success: false, message: "进程未在运行" };
+      this.process.kill("SIGTERM");
+      const timeout = setTimeout(() => {
+        if (this.process && !this.process.killed) this.process.kill("SIGKILL");
+      }, 10000);
+      return await new Promise((resolve) => {
+        if (!this.process) {
+          clearTimeout(timeout);
+          resolve({ success: false, message: "进程不存在" });
+          return;
+        }
+        this.process.on("exit", (code) => {
+          clearTimeout(timeout);
+          this.process = null;
+          if (this.processInfo) this.processInfo.status = "stopped";
+          this.emit("stopped", code);
+          resolve({ success: true, message: "Discord Metadata Bridge已停止" });
+        });
+        this.process.on("error", (error) => {
+          clearTimeout(timeout);
+          resolve({ success: false, message: `停止失败: ${error.message}` });
+        });
+      });
+    } catch (error: any) {
+      return { success: false, message: `停止失败: ${error.message}` };
+    }
+  }
+
+  async restart(): Promise<{ success: boolean; message: string }> {
+    const stopResult = await this.stop();
+    if (!stopResult.success) return stopResult;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return await this.start();
+  }
+
+  getStatus(): ProcessInfo | null {
+    if (!this.processInfo) return null;
+    if (this.process && !this.process.killed) {
+      try {
+        const usage = process.memoryUsage();
+        this.processInfo.memoryUsage = usage.heapUsed;
+        this.processInfo.cpuUsage = 0;
+      } catch {}
+    }
+    return { ...this.processInfo };
+  }
+
+  isRunning(): boolean {
+    return this.process !== null && !this.process.killed && this.processInfo?.status === "running";
+  }
+
+  private setupProcessListeners(): void {
+    if (!this.process) return;
+    this.process.on("exit", (code, signal) => {
+      console.log(`[ProcessManager] Metadata process exited with code ${code}, signal ${signal}`);
+      if (this.processInfo) this.processInfo.status = "stopped";
+      this.process = null;
+      this.emit("exited", code, signal);
+      if (!this.isShuttingDown && this.restartAttempts < this.maxRestartAttempts) {
+        setTimeout(async () => {
+          if (!this.isShuttingDown) {
+            this.restartAttempts++;
+            await this.start();
+          }
+        }, this.restartDelay);
+      }
+    });
+    this.process.on("error", (error) => {
+      console.error(`[ProcessManager] Metadata process error: ${error.message}`);
+      if (this.processInfo) {
+        this.processInfo.status = "error";
+        this.processInfo.errorMessage = error.message;
+      }
+      this.emit("error", error);
+    });
+  }
+
+  getProcess(): ChildProcess | null {
+    return this.process;
+  }
+
+  sendMessage(message: string): boolean {
+    if (!this.process || this.process.killed || !this.process.stdin) return false;
+    try {
+      this.process.stdin.write(message + (message.endsWith("\n") ? "" : "\n"));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async cleanup(): Promise<void> {
+    if (this.process && !this.process.killed) {
+      await this.stop();
+    }
+    this.removeAllListeners();
+  }
+}
+
+export const discordMetadataBridgeManager = new DiscordMetadataBridgeManager();
+

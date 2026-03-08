@@ -25,9 +25,10 @@ import { FeishuSender } from "./feishuSender.js";
 import { DingTalkSender } from "./dingtalkSender.js";
 import { ProxyAgent } from "proxy-agent";
 import { FileLogger } from "./logger.js";
-import { telegramBridgeManager, discordBridgeManager } from "./processManager.js";
+import { telegramBridgeManager, discordBridgeManager, discordMetadataBridgeManager } from "./processManager.js";
 import { TelegramBridgeClient, type SendMessageParams } from "./telegramBridgeClient.js";
 import { DiscordBridgeClient, type DiscordBridgeAccountConfig } from "./discordBridgeClient.js";
+import { DiscordMetadataBridgeClient, type DiscordMetadataBridgeAccountConfig } from "./discordMetadataBridgeClient.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
@@ -40,6 +41,7 @@ import { preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.
 let telegramBridgeClient: TelegramBridgeClient | null = null;
 // 全局 Discord Bridge 客户端
 let discordBridgeClient: DiscordBridgeClient | null = null;
+let discordMetadataBridgeClient: DiscordMetadataBridgeClient | null = null;
 const telegramSequentialDedupe = new Map<string, string>();
 const telegramStandbyActivity = new Map<string, number>();
 
@@ -2371,6 +2373,128 @@ function setupDiscordBridgeClient() {
   });
 }
 
+function setupDiscordMetadataBridgeClient() {
+  const bridgeProcess = discordMetadataBridgeManager.getProcess();
+  if (!bridgeProcess) {
+    if (discordMetadataBridgeClient) {
+      discordMetadataBridgeClient.destroy();
+      discordMetadataBridgeClient = null;
+    }
+    return;
+  }
+
+  if (discordMetadataBridgeClient && discordMetadataBridgeClient.isForProcess(bridgeProcess)) {
+    return;
+  }
+
+  if (discordMetadataBridgeClient) {
+    discordMetadataBridgeClient.destroy();
+  }
+
+  discordMetadataBridgeClient = new DiscordMetadataBridgeClient(bridgeProcess);
+  console.log("[Main] Discord Metadata Bridge IPC client initialized");
+  const discordForwardLogger = new FileLogger();
+
+  discordMetadataBridgeClient.on("discord_metadata_snapshot", async (params) => {
+    try {
+      const accountId = params?.accountId;
+      if (!accountId) return;
+      await writeDiscordGuildsCacheSnapshot(accountId, params);
+    } catch (err: any) {
+      discordForwardLogger.error(`Discord metadata bridge snapshot handling failed: ${String(err?.message || err)}`);
+    }
+  });
+
+  discordMetadataBridgeClient.on("discord_metadata_status", async (params) => {
+    try {
+      const accountId = params?.accountId;
+      if (!accountId) return;
+      if (params?.state === "online" && discordMetadataBridgeClient) {
+        const snapshot = await discordMetadataBridgeClient.getCacheSnapshot({ accountId });
+        if (snapshot) {
+          await writeDiscordGuildsCacheSnapshot(accountId, snapshot);
+        }
+      }
+    } catch (err: any) {
+      discordForwardLogger.error(`Discord metadata bridge status handling failed: ${String(err?.message || err)}`);
+    }
+  });
+}
+
+async function hasDiscordMetadataAccounts(config: MultiConfig): Promise<boolean> {
+  return (config.discordAccounts || []).some(
+    (acc) => acc.loginEnabled !== false && typeof acc.token === "string" && acc.token.trim(),
+  );
+}
+
+async function ensureDiscordMetadataBridgeRunning(config: MultiConfig) {
+  if (discordMetadataBridgeManager.isRunning()) return true;
+  if (!(await hasDiscordMetadataAccounts(config))) {
+    return false;
+  }
+  try {
+    console.log("[Main] Starting Discord Metadata Bridge...");
+    discordMetadataBridgeManager.once("started", async () => {
+      setupDiscordMetadataBridgeClient();
+      if (currentConfig) {
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await syncConfigToDiscordMetadataBridge(currentConfig);
+          console.log("[Main] Config synced to Discord Metadata Bridge");
+        } catch (error: any) {
+          console.error(`[Main] Failed to sync config to Discord Metadata Bridge: ${error?.message || error}`);
+        }
+      }
+    });
+    const bridgeResult = await discordMetadataBridgeManager.start();
+    if (bridgeResult.success) {
+      console.log(`[Main] Discord Metadata Bridge started successfully (PID: ${bridgeResult.pid})`);
+      return true;
+    }
+    console.error(`[Main] Failed to start Discord Metadata Bridge: ${bridgeResult.message}`);
+  } catch (error: any) {
+    console.error(`[Main] Error starting Discord Metadata Bridge: ${error.message}`);
+  }
+  return false;
+}
+
+async function syncConfigToDiscordMetadataBridge(config: MultiConfig) {
+  if (!discordMetadataBridgeManager.isRunning()) {
+    const started = await ensureDiscordMetadataBridgeRunning(config);
+    if (!started) return;
+  }
+  if (!discordMetadataBridgeClient) {
+    setupDiscordMetadataBridgeClient();
+  }
+  const accountsById = new Map<string, DiscordMetadataBridgeAccountConfig>();
+  for (const account of config.accounts) {
+    if (typeof account.token !== "string" || !account.token.trim()) continue;
+    accountsById.set(account.id, {
+      id: account.id,
+      token: normalizeDiscordToken(account.token),
+      type: account.type === "bot" ? "bot" : "selfbot",
+      enabled: account.loginRequested === true,
+    });
+  }
+  for (const account of config.discordAccounts || []) {
+    if (account.loginEnabled === false) continue;
+    if (typeof account.token !== "string" || !account.token.trim()) continue;
+    accountsById.set(account.id, {
+      id: account.id,
+      token: normalizeDiscordToken(account.token),
+      type: account.type === "bot" ? "bot" : "selfbot",
+      enabled: true,
+    });
+  }
+  if (discordMetadataBridgeClient) {
+    try {
+      await discordMetadataBridgeClient.updateConfig({ accounts: Array.from(accountsById.values()) });
+    } catch (error: any) {
+      console.error(`[ConfigSync] Failed to sync config to Discord Metadata Bridge: ${error?.message || error}`);
+    }
+  }
+}
+
 async function processTelegramLoginRequest(logger: FileLogger) {
   if (telegramLoginProcessing) return;
   telegramLoginProcessing = true;
@@ -3576,6 +3700,13 @@ async function reconcileAccounts(newConfig: MultiConfig, logger: FileLogger) {
     await logger.error(`同步配置到Discord Bridge失败: ${error.message}`);
   }
 
+  // 同步配置到 Discord Metadata Bridge
+  try {
+    await syncConfigToDiscordMetadataBridge(newConfig);
+  } catch (error: any) {
+    await logger.error(`同步配置到Discord Metadata Bridge失败: ${error.message}`);
+  }
+
   // 同步外部平台转发（X / TruthSocial）
   try {
     await reconcileExternalForwarders(newConfig, logger);
@@ -3653,6 +3784,14 @@ async function main() {
     await syncConfigToDiscordBridge(multi);
   } catch (error: any) {
     console.error(`[Main] Error starting Discord Bridge: ${error.message}`);
+  }
+
+  // 启动 Discord Metadata Bridge 进程（按需）
+  try {
+    await ensureDiscordMetadataBridgeRunning(multi);
+    await syncConfigToDiscordMetadataBridge(multi);
+  } catch (error: any) {
+    console.error(`[Main] Error starting Discord Metadata Bridge: ${error.message}`);
   }
 
   // 启动Telegram Bridge进程
