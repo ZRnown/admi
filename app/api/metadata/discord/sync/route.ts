@@ -6,9 +6,52 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { spawnSync } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import { preserveDiscordChannelsOnFetchFailure } from "@/src/discordMetadataHelpers";
+
+
+function resolvePythonBin(): string | null {
+  const candidates = [process.env.PYTHON, process.env.PYTHON_BIN, process.env.PYTHON_EXECUTABLE, "python3.11", "python3.10", "python3", "python"].filter(Boolean) as string[];
+  for (const candidate of candidates) {
+    const result = spawnSync(candidate, ["-V"], { stdio: "ignore" });
+    if (!result.error) return candidate;
+  }
+  return null;
+}
+
+function hydrateDiscordChannelsViaSelfbot(token: string, type: string | undefined, guildIds: string[]): Record<string, any[]> {
+  if (!token || guildIds.length === 0) return {};
+  const pythonBin = resolvePythonBin();
+  if (!pythonBin) return {};
+  const bridgeSrc = path.join(process.cwd(), "discord_bridge", "src");
+  const input = JSON.stringify({ token, type, guildIds });
+  const result = spawnSync(
+    pythonBin,
+    ["-B", "-m", "discord_metadata_bridge.fetch_channels_once"],
+    {
+      cwd: bridgeSrc,
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPATH: bridgeSrc },
+      input,
+      encoding: "utf-8",
+      timeout: 120000,
+    },
+  );
+  if (result.error || result.status !== 0) {
+    console.error("discord.py-self fallback failed:", result.error || result.stderr || result.stdout);
+    return {};
+  }
+  try {
+    const payload = JSON.parse(result.stdout || "{}");
+    if (payload?.success && payload.channelsByGuild && typeof payload.channelsByGuild === "object") {
+      return payload.channelsByGuild;
+    }
+  } catch (error) {
+    console.error("discord.py-self fallback parse failed:", error);
+  }
+  return {};
+}
 
 // Discord API 基础 URL
 const DISCORD_API = "https://discord.com/api/v10";
@@ -165,6 +208,7 @@ export async function POST(request: NextRequest) {
 
     // 获取每个服务器的频道列表
     const channelsData: Record<string, any[]> = {};
+    const failedGuildIds: string[] = [];
     for (const guild of guilds) {
       const cacheKey = `${accountId}:${guild.id}`;
       const existingChannels = Array.isArray(channelsCache[cacheKey]) ? channelsCache[cacheKey] : undefined;
@@ -178,7 +222,18 @@ export async function POST(request: NextRequest) {
           position: c.position,
         }));
       } catch (e) {
+        failedGuildIds.push(String(guild.id));
         channelsData[guild.id] = preserveDiscordChannelsOnFetchFailure(existingChannels, [], true);
+      }
+    }
+
+    if (failedGuildIds.length > 0) {
+      const fallbackChannels = hydrateDiscordChannelsViaSelfbot(stripBotPrefix(String(token)), type, failedGuildIds);
+      for (const guildId of failedGuildIds) {
+        const hydrated = Array.isArray(fallbackChannels[guildId]) ? fallbackChannels[guildId] : [];
+        if (hydrated.length > 0) {
+          channelsData[guildId] = hydrated;
+        }
       }
     }
 
