@@ -72,6 +72,22 @@ class MetadataSession:
                     {"accountId": acc_id, "state": "disconnected"},
                 )
 
+    def _asset_to_string(self, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        try:
+            url = getattr(value, "url", None)
+            if url:
+                return str(url)
+        except Exception:
+            pass
+        try:
+            return str(value)
+        except Exception:
+            return None
+
     def _channel_type_value(self, channel: Any) -> Optional[int]:
         raw = getattr(channel, "type", None)
         if raw is None:
@@ -95,7 +111,7 @@ class MetadataSession:
             guilds_payload.append({
                 "id": guild_id,
                 "name": getattr(guild, "name", None),
-                "icon": getattr(guild, "icon", None),
+                "icon": self._asset_to_string(getattr(guild, "icon", None)),
             })
             cached_channels = list(getattr(guild, "channels", []) or [])
             source_channels = cached_channels if cached_channels else self.extra_channels_by_guild.get(guild_id, [])
