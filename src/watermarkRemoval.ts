@@ -274,9 +274,7 @@ export async function removeWatermarkFromImageUrl(
     body: JSON.stringify({
       enable_sync_mode: true,
       enable_base64_output: false,
-      input: {
-        image: imageUrl,
-      },
+      image: imageUrl,
     }),
   });
 
