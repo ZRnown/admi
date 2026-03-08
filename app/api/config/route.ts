@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { shouldPersistWatermarkRemovalConfig } from "@/src/watermarkRemoval";
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
@@ -1591,14 +1592,26 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         : base.watermarkSecondary,
     watermarks: resolvedAccountWatermarks ?? base.watermarks,
     watermarkEnabled: dto.watermarkEnabled === false ? false : true,
-    watermarkRemoval:
-      resolvedAccountWatermarkRemoval.apiKey || resolvedAccountWatermarkRemoval.enabled === false
-        ? {
-            enabled: resolvedAccountWatermarkRemoval.enabled === false ? false : true,
-            mode: resolvedAccountWatermarkRemoval.mode === "ocr" ? "ocr" : "always",
-            apiKey: resolvedAccountWatermarkRemoval.apiKey,
-          }
-        : undefined,
+    watermarkRemoval: shouldPersistWatermarkRemovalConfig(resolvedAccountWatermarkRemoval)
+      ? {
+          enabled:
+            resolvedAccountWatermarkRemoval.enabled === false
+              ? false
+              : resolvedAccountWatermarkRemoval.enabled === true
+                ? true
+                : undefined,
+          mode:
+            resolvedAccountWatermarkRemoval.mode === "ocr"
+              ? "ocr"
+              : resolvedAccountWatermarkRemoval.mode === "always"
+                ? "always"
+                : undefined,
+          apiKey: resolvedAccountWatermarkRemoval.apiKey,
+          triggerKeywords: Array.isArray(resolvedAccountWatermarkRemoval.triggerKeywords)
+            ? resolvedAccountWatermarkRemoval.triggerKeywords
+            : undefined,
+        }
+      : undefined,
     scheduledContents: resolvedScheduledContents ?? base.scheduledContents,
     scheduledBroadcast: resolvedScheduledBroadcast ?? base.scheduledBroadcast,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",

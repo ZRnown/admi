@@ -6,6 +6,7 @@ import {
   extractWavespeedOutputUrl,
   matchWatermarkRemovalTriggerKeywords,
   resolveWatermarkRemovalConfig,
+  shouldPersistWatermarkRemovalConfig,
 } from "../src/watermarkRemoval.ts";
 
 test("resolveWatermarkRemovalConfig merges global api key with rule mode override", () => {
@@ -119,4 +120,26 @@ test("matchWatermarkRemovalTriggerKeywords matches OCR text by configured keywor
 
   assert.equal(result.matched, true);
   assert.deepEqual(result.matchedKeywords, ["抖音"]);
+});
+
+
+test("shouldPersistWatermarkRemovalConfig keeps keyword-only config", () => {
+  assert.equal(
+    shouldPersistWatermarkRemovalConfig({ triggerKeywords: ["抖音"] }),
+    true,
+  );
+});
+
+test("shouldPersistWatermarkRemovalConfig keeps mode-only config", () => {
+  assert.equal(
+    shouldPersistWatermarkRemovalConfig({ enabled: true, mode: "ocr" }),
+    true,
+  );
+});
+
+test("shouldPersistWatermarkRemovalConfig drops empty config", () => {
+  assert.equal(
+    shouldPersistWatermarkRemovalConfig({ apiKey: "", triggerKeywords: [] }),
+    false,
+  );
 });

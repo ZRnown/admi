@@ -110,6 +110,15 @@ export function shouldUseOcrWatermarkDetection(config?: WatermarkRemovalConfig):
   return config?.enabled === true && config.mode === "ocr" && typeof config.apiKey === "string" && config.apiKey.trim().length > 0;
 }
 
+export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalConfig): boolean {
+  if (!config || typeof config !== "object") return false;
+  if (config.enabled === true || config.enabled === false) return true;
+  if (config.mode === "ocr" || config.mode === "always") return true;
+  if (typeof config.apiKey === "string" && config.apiKey.trim().length > 0) return true;
+  if (Array.isArray(config.triggerKeywords) && config.triggerKeywords.length > 0) return true;
+  return false;
+}
+
 function extractBoxMetrics(block: OcrTextBlock) {
   const points = Array.isArray(block.box) ? block.box : [];
   const xs = points.map((point) => Number(point?.[0])).filter((value) => Number.isFinite(value));
