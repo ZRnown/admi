@@ -4,7 +4,11 @@ import { URL, fileURLToPath } from "node:url";
 
 import { ChannelId, WatermarkConfig } from "./config.js";
 import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark.js";
-import { removeWatermarkFromImageUrl, type WatermarkRemovalConfig } from "./watermarkRemoval.js";
+import {
+  removeWatermarkFromImageUrl,
+  shouldApplyWatermarkAfterRemoval,
+  type WatermarkRemovalConfig,
+} from "./watermarkRemoval.js";
 import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
 import { resolveWebhookIdentity } from "./webhookIdentity.js";
@@ -201,11 +205,15 @@ export class SenderBot {
     for (const u of uploads) {
       let buf: Buffer;
       let resolvedUrl = u.url;
+      let removalAttempted = false;
+      let removalFailed = false;
       if (u.isImage && resolvedUrl && u.watermarkRemoval) {
+        removalAttempted = true;
         try {
           resolvedUrl = await removeWatermarkFromImageUrl(resolvedUrl, u.watermarkRemoval);
         } catch (error: any) {
-          console.error(`[去水印] 处理失败，回退原图: ${u.filename} ${String(error?.message || error)}`);
+          removalFailed = true;
+          console.error(`[去水印] 处理失败，回退原图并跳过新水印: ${u.filename} ${String(error?.message || error)}`);
           resolvedUrl = u.url;
         }
       }
@@ -220,7 +228,13 @@ export class SenderBot {
       } else {
         continue;
       }
-      const shouldWatermark = effectiveWatermarks.length > 0 && (u.isImage || looksLikeImage(buf));
+      const isImageLike = Boolean(u.isImage || looksLikeImage(buf));
+      const shouldWatermark = shouldApplyWatermarkAfterRemoval({
+        hasWatermarks: effectiveWatermarks.length > 0,
+        isImage: isImageLike,
+        removalAttempted,
+        removalFailed,
+      });
       let finalBuffer = buf;
       if (shouldWatermark) {
         finalBuffer = await applyWatermarksToBuffer(buf, effectiveWatermarks);
@@ -231,8 +245,10 @@ export class SenderBot {
         } else {
           console.log(`[水印] 图片未发生变化: ${u.filename}`);
         }
+      } else if (removalAttempted && removalFailed && effectiveWatermarks.length > 0 && isImageLike) {
+        console.warn(`[水印] 已跳过追加新水印: ${u.filename}（原因：去水印失败）`);
       }
-      results.push({ filename: u.filename, buffer: finalBuffer, isImage: u.isImage || shouldWatermark });
+      results.push({ filename: u.filename, buffer: finalBuffer, isImage: isImageLike });
     }
     return results;
   }

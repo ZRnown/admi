@@ -2,10 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  __resetWaveSpeedRateLimiterForTests,
   detectTextWatermarkFromOCR,
   extractWavespeedOutputUrl,
   matchWatermarkRemovalTriggerKeywords,
   resolveWatermarkRemovalConfig,
+  runWaveSpeedRateLimited,
+  shouldApplyWatermarkAfterRemoval,
   shouldPersistWatermarkRemovalConfig,
   shouldRetryWaveSpeedStatus,
 } from "../src/watermarkRemoval.ts";
@@ -152,4 +155,67 @@ test("shouldRetryWaveSpeedStatus retries timeout and server errors only", () => 
   assert.equal(shouldRetryWaveSpeedStatus(429), true);
   assert.equal(shouldRetryWaveSpeedStatus(400), false);
   assert.equal(shouldRetryWaveSpeedStatus(undefined), false);
+});
+
+test("shouldApplyWatermarkAfterRemoval skips new watermark when removal failed", () => {
+  assert.equal(
+    shouldApplyWatermarkAfterRemoval({
+      hasWatermarks: true,
+      isImage: true,
+      removalAttempted: true,
+      removalFailed: true,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldApplyWatermarkAfterRemoval({
+      hasWatermarks: true,
+      isImage: true,
+      removalAttempted: true,
+      removalFailed: false,
+    }),
+    true,
+  );
+});
+
+test("runWaveSpeedRateLimited serializes requests and enforces interval", async () => {
+  __resetWaveSpeedRateLimiterForTests();
+
+  let now = 1000;
+  const waits: number[] = [];
+  const started: number[] = [];
+
+  const wait = async (ms: number) => {
+    waits.push(ms);
+    now += ms;
+  };
+
+  const results = await Promise.all([
+    runWaveSpeedRateLimited(
+      async () => {
+        started.push(now);
+        return "first";
+      },
+      { now: () => now, wait, minIntervalMs: 2000 },
+    ),
+    runWaveSpeedRateLimited(
+      async () => {
+        started.push(now);
+        return "second";
+      },
+      { now: () => now, wait, minIntervalMs: 2000 },
+    ),
+    runWaveSpeedRateLimited(
+      async () => {
+        started.push(now);
+        return "third";
+      },
+      { now: () => now, wait, minIntervalMs: 2000 },
+    ),
+  ]);
+
+  assert.deepEqual(results, ["first", "second", "third"]);
+  assert.deepEqual(started, [1000, 3000, 5000]);
+  assert.deepEqual(waits, [2000, 2000]);
 });

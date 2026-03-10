@@ -2,7 +2,11 @@ import https from "node:https";
 import { URL } from "node:url";
 import { getEnv } from "./env";
 import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark";
-import { removeWatermarkFromImageUrl, type WatermarkRemovalConfig } from "./watermarkRemoval";
+import {
+  removeWatermarkFromImageUrl,
+  shouldApplyWatermarkAfterRemoval,
+  type WatermarkRemovalConfig,
+} from "./watermarkRemoval";
 import type { WatermarkConfig } from "./config";
 
 const MASKED_SECRET = "********";
@@ -109,11 +113,15 @@ export class FeishuSender {
     try {
       // 2.1 下载图片 Buffer
       let resolvedUrl = imgUrl;
+      let removalAttempted = false;
+      let removalFailed = false;
       if (watermarkRemoval) {
+        removalAttempted = true;
         try {
           resolvedUrl = await removeWatermarkFromImageUrl(imgUrl, watermarkRemoval);
         } catch (error: any) {
-          console.error(`[FeishuSender] 去水印失败，回退原图: ${String(error?.message || error)}`);
+          removalFailed = true;
+          console.error(`[FeishuSender] 去水印失败，回退原图并跳过新水印: ${String(error?.message || error)}`);
           resolvedUrl = imgUrl;
         }
       }
@@ -130,9 +138,18 @@ export class FeishuSender {
             this.watermarkSecondary,
             watermarkSecondary,
           );
-      const finalBuffer = effectiveWatermarks.length > 0
+      const shouldWatermark = shouldApplyWatermarkAfterRemoval({
+        hasWatermarks: effectiveWatermarks.length > 0,
+        isImage: true,
+        removalAttempted,
+        removalFailed,
+      });
+      const finalBuffer = shouldWatermark
         ? await applyWatermarksToBuffer(imgBuffer, effectiveWatermarks)
         : imgBuffer;
+      if (!shouldWatermark && removalAttempted && removalFailed && effectiveWatermarks.length > 0) {
+        console.warn("[FeishuSender] 已跳过追加新水印（原因：去水印失败）");
+      }
 
       // 2.2 构造 multipart/form-data 上传到飞书
       const boundary = "----FeishuBoundary" + Math.random().toString(16).slice(2);

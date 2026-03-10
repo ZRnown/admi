@@ -26,11 +26,25 @@ export interface WatermarkDetectionResult {
 }
 
 export type KeywordGroup = string[];
+export interface WatermarkPostProcessOptions {
+  hasWatermarks: boolean;
+  isImage: boolean;
+  removalAttempted: boolean;
+  removalFailed: boolean;
+}
+interface WaveSpeedRateLimitOptions {
+  now?: () => number;
+  wait?: (ms: number) => Promise<void>;
+  minIntervalMs?: number;
+}
 
 const WAVESPEED_ENDPOINT = "https://api.wavespeed.ai/api/v3/wavespeed-ai/image-watermark-remover";
+const WAVESPEED_MIN_INTERVAL_MS = 2000;
 const URL_RE = /^https?:\/\//i;
 const WATERMARK_HINT_RE =
   /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|vx|wx|ins|instagram|telegram|tg|店铺|同款|关注|原创|搬运|出处)/i;
+let waveSpeedQueue: Promise<void> = Promise.resolve();
+let nextWaveSpeedStartAt = 0;
 
 function firstNonEmptyString(...values: Array<unknown>): string | undefined {
   for (const value of values) {
@@ -117,6 +131,16 @@ export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalCon
   if (typeof config.apiKey === "string" && config.apiKey.trim().length > 0) return true;
   if (Array.isArray(config.triggerKeywords) && config.triggerKeywords.length > 0) return true;
   return false;
+}
+
+export function shouldApplyWatermarkAfterRemoval(options: WatermarkPostProcessOptions): boolean {
+  if (!options.hasWatermarks || !options.isImage) {
+    return false;
+  }
+  if (options.removalAttempted && options.removalFailed) {
+    return false;
+  }
+  return true;
 }
 
 function extractBoxMetrics(block: OcrTextBlock) {
@@ -245,6 +269,45 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export async function runWaveSpeedRateLimited<T>(
+  task: () => Promise<T>,
+  options: WaveSpeedRateLimitOptions = {},
+): Promise<T> {
+  const now = options.now ?? (() => Date.now());
+  const wait = options.wait ?? sleep;
+  const minIntervalMs =
+    typeof options.minIntervalMs === "number" && options.minIntervalMs >= 0
+      ? options.minIntervalMs
+      : WAVESPEED_MIN_INTERVAL_MS;
+
+  const previous = waveSpeedQueue.catch(() => {});
+  let release!: () => void;
+  waveSpeedQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+
+  const current = now();
+  const startAt = Math.max(current, nextWaveSpeedStartAt);
+  nextWaveSpeedStartAt = startAt + minIntervalMs;
+  const delay = startAt - current;
+  if (delay > 0) {
+    await wait(delay);
+  }
+
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
+
+export function __resetWaveSpeedRateLimiterForTests(): void {
+  waveSpeedQueue = Promise.resolve();
+  nextWaveSpeedStartAt = 0;
+}
+
 export function shouldRetryWaveSpeedStatus(status?: number): boolean {
   return typeof status === "number" && (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500);
 }
@@ -281,18 +344,20 @@ export async function removeWatermarkFromImageUrl(
   const attempts = 3;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      response = await requestJson(WAVESPEED_ENDPOINT, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${effective.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          enable_sync_mode: true,
-          enable_base64_output: false,
-          image: imageUrl,
+      response = await runWaveSpeedRateLimited(() =>
+        requestJson(WAVESPEED_ENDPOINT, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${effective.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            enable_sync_mode: true,
+            enable_base64_output: false,
+            image: imageUrl,
+          }),
         }),
-      });
+      );
       lastError = undefined;
       break;
     } catch (error: any) {
