@@ -401,11 +401,16 @@ class MediaHandler:
             logger.info(f"process_discord_attachment: contentType={content_type}, isImage={attachment.get('isImage')}, filename={filename}, media_type={media_type}")
 
             watermark_removal = attachment.get("watermarkRemoval")
-            if media_type == "photo" and url and watermark_removal:
+            watermark_removal_state = attachment.get("watermarkRemovalState") or {}
+            removal_attempted = bool(watermark_removal_state.get("attempted"))
+            removal_failed = bool(watermark_removal_state.get("failed"))
+            if media_type == "photo" and url and watermark_removal and not watermark_removal_state:
                 try:
+                    removal_attempted = True
                     url = await remove_watermark_from_image_url(url, watermark_removal, self._get_http_session())
                     logger.info(f"Watermark removed via WaveSpeed: {filename or url}")
                 except Exception as removal_error:
+                    removal_failed = True
                     logger.error(f"Failed to remove watermark, fallback original image: {removal_error}")
 
             # 下载文件
@@ -415,8 +420,10 @@ class MediaHandler:
             else:
                 file_path = await self.download_media(url, filename)
 
-            if file_path and media_type == "photo":
+            if file_path and media_type == "photo" and not (removal_attempted and removal_failed):
                 await self._apply_watermark(file_path, watermark)
+            elif file_path and media_type == "photo" and removal_attempted and removal_failed and watermark:
+                logger.info("Skip adding new watermark because watermark removal failed")
 
             return (file_path, media_type) if file_path else None
 

@@ -6,6 +6,7 @@ import {
   detectTextWatermarkFromOCR,
   extractWavespeedOutputUrl,
   matchWatermarkRemovalTriggerKeywords,
+  prepareImageForOcrAndForward,
   resolveWatermarkRemovalConfig,
   runWaveSpeedRateLimited,
   shouldApplyWatermarkAfterRemoval,
@@ -177,6 +178,38 @@ test("shouldApplyWatermarkAfterRemoval skips new watermark when removal failed",
     }),
     true,
   );
+});
+
+test("prepareImageForOcrAndForward uses removed image for OCR after successful removal", async () => {
+  const prepared = await prepareImageForOcrAndForward("https://cdn.example.com/original.png", {
+    shouldRemoveWatermark: true,
+    removeWatermark: async (imageUrl) => `${imageUrl}?clean=1`,
+  });
+
+  assert.deepEqual(prepared, {
+    originalUrl: "https://cdn.example.com/original.png",
+    forwardUrl: "https://cdn.example.com/original.png?clean=1",
+    ocrUrl: "https://cdn.example.com/original.png?clean=1",
+    removalAttempted: true,
+    removalFailed: false,
+  });
+});
+
+test("prepareImageForOcrAndForward falls back to original image for OCR when removal fails", async () => {
+  const prepared = await prepareImageForOcrAndForward("https://cdn.example.com/original.png", {
+    shouldRemoveWatermark: true,
+    removeWatermark: async () => {
+      throw new Error("wavespeed unavailable");
+    },
+  });
+
+  assert.deepEqual(prepared, {
+    originalUrl: "https://cdn.example.com/original.png",
+    forwardUrl: "https://cdn.example.com/original.png",
+    ocrUrl: "https://cdn.example.com/original.png",
+    removalAttempted: true,
+    removalFailed: true,
+  });
 });
 
 test("runWaveSpeedRateLimited serializes requests and enforces interval", async () => {

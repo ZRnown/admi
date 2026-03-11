@@ -8,6 +8,7 @@ import {
   removeWatermarkFromImageUrl,
   shouldApplyWatermarkAfterRemoval,
   type WatermarkRemovalConfig,
+  type WatermarkRemovalRuntimeState,
 } from "./watermarkRemoval.js";
 import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
@@ -186,6 +187,7 @@ export class SenderBot {
       filename: string;
       isImage?: boolean;
       watermarkRemoval?: WatermarkRemovalConfig;
+      watermarkRemovalState?: WatermarkRemovalRuntimeState;
     }>,
     watermark?: WatermarkConfig,
     watermarkSecondary?: WatermarkConfig,
@@ -205,9 +207,9 @@ export class SenderBot {
     for (const u of uploads) {
       let buf: Buffer;
       let resolvedUrl = u.url;
-      let removalAttempted = false;
-      let removalFailed = false;
-      if (u.isImage && resolvedUrl && u.watermarkRemoval) {
+      let removalAttempted = Boolean(u.watermarkRemovalState?.attempted);
+      let removalFailed = Boolean(u.watermarkRemovalState?.failed);
+      if (u.isImage && resolvedUrl && u.watermarkRemoval && !u.watermarkRemovalState) {
         removalAttempted = true;
         try {
           resolvedUrl = await removeWatermarkFromImageUrl(resolvedUrl, u.watermarkRemoval);
@@ -718,6 +720,7 @@ export class SenderBot {
       isImage?: boolean;
       isVideo?: boolean;
       watermarkRemoval?: WatermarkRemovalConfig;
+      watermarkRemovalState?: WatermarkRemovalRuntimeState;
     }>;
     components?: any[];
     // 可选：覆盖当前消息是否启用翻译；未设置则沿用实例级 enableTranslation

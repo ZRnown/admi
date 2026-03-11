@@ -32,6 +32,22 @@ export interface WatermarkPostProcessOptions {
   removalAttempted: boolean;
   removalFailed: boolean;
 }
+export interface WatermarkRemovalRuntimeState {
+  attempted: boolean;
+  failed: boolean;
+}
+export interface PreparedImageForOcrAndForward {
+  originalUrl: string;
+  forwardUrl: string;
+  ocrUrl: string;
+  removalAttempted: boolean;
+  removalFailed: boolean;
+}
+export interface PrepareImageForOcrOptions {
+  shouldRemoveWatermark: boolean;
+  config?: WatermarkRemovalConfig;
+  removeWatermark?: (imageUrl: string, config?: WatermarkRemovalConfig) => Promise<string>;
+}
 interface WaveSpeedRateLimitOptions {
   now?: () => number;
   wait?: (ms: number) => Promise<void>;
@@ -141,6 +157,38 @@ export function shouldApplyWatermarkAfterRemoval(options: WatermarkPostProcessOp
     return false;
   }
   return true;
+}
+
+export async function prepareImageForOcrAndForward(
+  imageUrl: string,
+  options: PrepareImageForOcrOptions,
+): Promise<PreparedImageForOcrAndForward> {
+  const prepared: PreparedImageForOcrAndForward = {
+    originalUrl: imageUrl,
+    forwardUrl: imageUrl,
+    ocrUrl: imageUrl,
+    removalAttempted: false,
+    removalFailed: false,
+  };
+
+  if (!imageUrl || !options.shouldRemoveWatermark) {
+    return prepared;
+  }
+
+  prepared.removalAttempted = true;
+
+  try {
+    const removeWatermark = options.removeWatermark ?? removeWatermarkFromImageUrl;
+    const resolvedUrl = await removeWatermark(imageUrl, options.config);
+    if (typeof resolvedUrl === "string" && resolvedUrl.trim()) {
+      prepared.forwardUrl = resolvedUrl;
+      prepared.ocrUrl = resolvedUrl;
+    }
+    return prepared;
+  } catch {
+    prepared.removalFailed = true;
+    return prepared;
+  }
 }
 
 function extractBoxMetrics(block: OcrTextBlock) {

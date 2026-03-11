@@ -6,6 +6,7 @@ import {
   removeWatermarkFromImageUrl,
   shouldApplyWatermarkAfterRemoval,
   type WatermarkRemovalConfig,
+  type WatermarkRemovalRuntimeState,
 } from "./watermarkRemoval";
 import type { WatermarkConfig } from "./config";
 
@@ -23,7 +24,13 @@ export interface FeishuSendPayload {
   username?: string;
   avatarUrl?: string;
   // Discord 附件（其中图片会被下载后上传到飞书）
-  attachments?: Array<{ url: string; filename: string; isImage?: boolean; watermarkRemoval?: WatermarkRemovalConfig }>;
+  attachments?: Array<{
+    url: string;
+    filename: string;
+    isImage?: boolean;
+    watermarkRemoval?: WatermarkRemovalConfig;
+    watermarkRemovalState?: WatermarkRemovalRuntimeState;
+  }>;
   embeds?: any[];
   watermark?: WatermarkConfig;
   watermarkSecondary?: WatermarkConfig;
@@ -109,13 +116,14 @@ export class FeishuSender {
     watermarkSecondary?: WatermarkConfig,
     watermarks?: WatermarkConfig[],
     watermarkRemoval?: WatermarkRemovalConfig,
+    watermarkRemovalState?: WatermarkRemovalRuntimeState,
   ): Promise<string | null> {
     try {
       // 2.1 下载图片 Buffer
       let resolvedUrl = imgUrl;
-      let removalAttempted = false;
-      let removalFailed = false;
-      if (watermarkRemoval) {
+      let removalAttempted = Boolean(watermarkRemovalState?.attempted);
+      let removalFailed = Boolean(watermarkRemovalState?.failed);
+      if (watermarkRemoval && !watermarkRemovalState) {
         removalAttempted = true;
         try {
           resolvedUrl = await removeWatermarkFromImageUrl(imgUrl, watermarkRemoval);
@@ -278,7 +286,15 @@ export class FeishuSender {
       if (isImage) {
         console.log(`[FeishuSender] 识别为图片，开始上传: ${att.filename || "unknown"} (${att.url.substring(0, 50)}...)`);
         try {
-          const key = await this.uploadImage(att.url, token, watermark, watermarkSecondary, watermarks, att.watermarkRemoval);
+          const key = await this.uploadImage(
+            att.url,
+            token,
+            watermark,
+            watermarkSecondary,
+            watermarks,
+            att.watermarkRemoval,
+            att.watermarkRemovalState,
+          );
           if (key) {
             imageKeys.push(key);
             console.log(`[FeishuSender] 图片上传成功: ${att.filename || att.url} -> image_key: ${key.substring(0, 20)}...`);

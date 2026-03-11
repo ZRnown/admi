@@ -49,6 +49,10 @@ export interface HandleDiscordMessageParams {
       contentType?: string;
       name?: string;
       watermarkRemoval?: any;
+      watermarkRemovalState?: {
+        attempted?: boolean;
+        failed?: boolean;
+      };
     }>;
     embeds?: any[];
   };
