@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import inspect
 import json
 import sys
@@ -75,7 +76,7 @@ async def _run(payload: Dict[str, Any]) -> Dict[str, Any]:
     finally:
         if not runner.done():
             runner.cancel()
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await runner
 
 
