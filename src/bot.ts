@@ -17,6 +17,11 @@ import { FileLogger } from "./logger.js";
 import { getTelegramBridgeClient } from "./index.js";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher.js";
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
+import {
+  filterBlockedUploads,
+  markBlockedImageUrl,
+  stripBlockedEmbedImages,
+} from "./ocrImageFilter.js";
 import { resolveWatermarkList } from "./watermark.js";
 import {
   detectTextWatermarkFromOCR,
@@ -1225,6 +1230,7 @@ export class Bot {
     const watermarkRemovalTriggerGroups = parseKeywordGroups(effectiveWatermarkRemoval?.triggerKeywords);
     const shouldUseWatermarkRemovalKeywords = watermarkRemovalTriggerGroups.length > 0;
     const watermarkRemovalTargets = new Set<string>();
+    const ocrBlockedImageUrls = new Set<string>();
     const preparedImageAssets = new Map<string, PreparedImageAsset>();
     const markWatermarkRemovalTarget = (targetUrl?: string) => {
       if (!targetUrl) return;
@@ -1388,6 +1394,7 @@ export class Bot {
 
             let watermarkDetectionCheckedImages = 0;
             let checkedImages = 0;
+            let blockedImages = 0;
             let triggerMatched = activeOcrTrigger.length === 0;
 
             if (shouldDetectWatermarkWithOcr) {
@@ -1487,10 +1494,14 @@ export class Bot {
                       caseInsensitive,
                     });
                     if (matchedGroups.length > 0) {
-                      const errorMsg = `${logPrefix} [OCR] 检测到屏蔽文字 "${matchedKeywords.join('", "')}"，跳过转发`;
+                      markBlockedImageUrl(ocrBlockedImageUrls, attachment.url);
+                      markBlockedImageUrl(ocrBlockedImageUrls, ocrUrl);
+                      blockedImages++;
+                      const errorMsg =
+                        `${logPrefix} [OCR] 检测到屏蔽文字 "${matchedKeywords.join('", "')}"，屏蔽该图片并继续转发文字`;
                       console.log(`[OCR] ${errorMsg}`);
                       this.logger.info(errorMsg);
-                      return;
+                      continue;
                     }
                   }
 
@@ -1522,7 +1533,7 @@ export class Bot {
               }
 
               const finalMsg =
-                `${logPrefix} [OCR] 图片检测完成，总图片数=${imageAttachments.length}，预检测=${watermarkDetectionCheckedImages}，过滤检测=${checkedImages}，允许转发`;
+                `${logPrefix} [OCR] 图片检测完成，总图片数=${imageAttachments.length}，预检测=${watermarkDetectionCheckedImages}，过滤检测=${checkedImages}，屏蔽图片=${blockedImages}，允许转发`;
               console.log(`[OCR] ${finalMsg}`);
               this.logger.info(finalMsg);
             } else if (shouldDetectWatermarkWithOcr) {
@@ -1963,7 +1974,6 @@ export class Bot {
       watermarkRemovalState?: WatermarkRemovalRuntimeState;
     }> = [];
     let hasCurrentImage = false;
-    const imageUrlToFilename = new Map<string, string>();
     let imageIndex = 0;
     try {
       // 获取忽略设置（全局 + 规则级别）
@@ -2038,11 +2048,6 @@ export class Bot {
 
         if (isImage) hasCurrentImage = true;
         uploads.push(decorateUpload({ url, filename, isImage, isVideo }));
-        if (isImage) {
-          imageUrlToFilename.set(url, filename);
-          const normalized = normalizeImageUrl(url);
-          if (normalized) imageUrlToFilename.set(normalized, filename);
-        }
       }
 
       const extraImages = collectImageAssets(message);
@@ -2070,8 +2075,6 @@ export class Bot {
             filename,
             isImage: true,
           }));
-          imageUrlToFilename.set(asset.url, filename);
-          if (normalized) imageUrlToFilename.set(normalized, filename);
         }
       }
       if (shouldRewriteEmbedImages) {
@@ -2088,8 +2091,6 @@ export class Bot {
             filename,
             isImage: true,
           }));
-          imageUrlToFilename.set(url, filename);
-          if (normalized) imageUrlToFilename.set(normalized, filename);
         }
       }
     } catch {}
@@ -2135,8 +2136,26 @@ export class Bot {
       extraEmbeds = stripEmbedTitles(extraEmbeds);
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
+    extraEmbeds = stripBlockedEmbedImages(extraEmbeds, ocrBlockedImageUrls);
+    const finalUploads = filterBlockedUploads(uploads, ocrBlockedImageUrls);
+    const finalImageUrlToFilename = new Map<string, string>();
+    for (const item of finalUploads) {
+      if (!item.isImage) continue;
+      finalImageUrlToFilename.set(item.url, item.filename);
+      const normalized = normalizeImageUrl(item.url);
+      if (normalized) {
+        finalImageUrlToFilename.set(normalized, item.filename);
+      }
+      if (item.sourceUrl) {
+        finalImageUrlToFilename.set(item.sourceUrl, item.filename);
+        const normalizedSource = normalizeImageUrl(item.sourceUrl);
+        if (normalizedSource) {
+          finalImageUrlToFilename.set(normalizedSource, item.filename);
+        }
+      }
+    }
     if (effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval) {
-      extraEmbeds = replaceEmbedImageUrls(extraEmbeds, imageUrlToFilename);
+      extraEmbeds = replaceEmbedImageUrls(extraEmbeds, finalImageUrlToFilename);
     }
     const toSend = [{
       content: `${discordContent}`.trim(),
@@ -2146,7 +2165,7 @@ export class Bot {
       username,
       avatarUrl,
       useEmbed,
-      uploads,
+      uploads: finalUploads,
       extraEmbeds,
       enableTranslationOverride: enableTranslationForThis,
       translationDirection: translationDirectionForThis as any,
@@ -2167,7 +2186,7 @@ export class Bot {
       this.logger.info(`${logPrefix} [SKIP] Discord 转发已关闭，跳过转发`);
     }
 
-    this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${discordContent.length}, uploads=${uploads.length}, useEmbed=${useEmbed}, style=${forwardStyle})`);
+    this.logger.info(`${logPrefix} [SEND] Preparing to send message (contentLength=${discordContent.length}, uploads=${finalUploads.length}, useEmbed=${useEmbed}, style=${forwardStyle})`);
     if (shouldSendDiscord) {
       const pendingMappings = new Map<string, TargetMessageRef[]>();
       // 遍历所有匹配的 SenderBot，向每个 webhook 发送消息
@@ -2243,12 +2262,15 @@ export class Bot {
           ),
           stripOptions,
         );
-        const feishuEmbeds = stripEmbedText(message.embeds, stripOptions);
+        const feishuEmbeds = stripBlockedEmbedImages(
+          stripEmbedText(message.embeds, stripOptions),
+          ocrBlockedImageUrls,
+        );
         await feishuSenderForThis.send({
           content: feishuContent,
           username: username,
           avatarUrl: avatarUrl,
-          attachments: uploads.map((u) => ({
+          attachments: finalUploads.map((u) => ({
             url: u.url,
             filename: u.filename,
             isImage: u.isImage,
@@ -2262,10 +2284,10 @@ export class Bot {
         });
         const feishuTarget = feishuSenderForThis.target;
         const feishuPreview = formatLogPreview(feishuContent);
-        const imageCount = uploads.filter((u) => u.isImage).length;
+        const imageCount = finalUploads.filter((u) => u.isImage).length;
         const logMsg =
           `${logPrefix} [FEISHU] 转发成功 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
-          `目标: ${feishuTarget} | 内容: ${feishuPreview} | 附件: ${uploads.length} | 图片: ${imageCount}`;
+          `目标: ${feishuTarget} | 内容: ${feishuPreview} | 附件: ${finalUploads.length} | 图片: ${imageCount}`;
         console.log(logMsg);
         this.logger.info(logMsg);
         recordForwardStat(getStatsAccountId(this.config), "discord-to-feishu");
@@ -2288,14 +2310,17 @@ export class Bot {
         ),
         stripOptions,
       );
-      const dingtalkEmbeds = stripEmbedText(message.embeds, stripOptions);
+      const dingtalkEmbeds = stripBlockedEmbedImages(
+        stripEmbedText(message.embeds, stripOptions),
+        ocrBlockedImageUrls,
+      );
       for (let senderIndex = 0; senderIndex < dingtalkSendersForThis.length; senderIndex++) {
         const sender = dingtalkSendersForThis[senderIndex];
         try {
           await sender.send({
             content: dingtalkContent,
             username,
-            attachments: uploads.map((u) => ({
+            attachments: finalUploads.map((u) => ({
               url: u.url,
               filename: u.filename,
               isImage: u.isImage,
@@ -2347,7 +2372,10 @@ export class Bot {
             );
             contentForTelegram = stripLanguages(contentForTelegram, stripOptions);
             const contentPreview = formatLogPreview(contentForTelegram);
-            const telegramEmbeds = stripEmbedText(message.embeds, stripOptions);
+            const telegramEmbeds = stripBlockedEmbedImages(
+              stripEmbedText(message.embeds, stripOptions),
+              ocrBlockedImageUrls,
+            );
 
             // 准备消息数据
             const messageData = {
@@ -2360,7 +2388,7 @@ export class Bot {
                   avatarURL: undefined,
                   displayName: message.member?.displayName || message.author?.username || message.author?.tag,
                 },
-                attachments: uploads.map((u) => ({
+                attachments: finalUploads.map((u) => ({
                   url: u.url,
                   filename: u.filename,
                   isImage: u.isImage,
@@ -2384,7 +2412,7 @@ export class Bot {
 
             const logMsg =
               `${logPrefix} [TELEGRAM] 转发成功 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
-              `目标: ${mapping.targetChannelId} | 内容: ${contentPreview} | 附件: ${uploads.length}`;
+              `目标: ${mapping.targetChannelId} | 内容: ${contentPreview} | 附件: ${finalUploads.length}`;
             console.log(logMsg);
             this.logger.info(logMsg);
             recordForwardStat(getStatsAccountId(this.config), "discord-to-telegram");
