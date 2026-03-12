@@ -142,7 +142,7 @@
 
   <!-- 规则配置弹窗 -->
   <div id="ruleConfigModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+    <div class="bg-white rounded-xl border border-slate-200 shadow-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-visible">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-bold text-slate-900">规则配置</h2>
         <button onclick="closeRuleConfigModal()" class="text-slate-400 hover:text-slate-600">
@@ -153,7 +153,7 @@
       </div>
       <p class="text-sm text-slate-500 mb-4">配置此规则的过滤选项（优先级低于全局设置）</p>
 
-      <div class="space-y-6">
+      <div class="space-y-6 max-h-[calc(90vh-9rem)] overflow-y-auto pr-1">
         <!-- 超长消息处理（规则级别） -->
         <div id="ruleLongMessageSection" class="hidden border border-slate-200 rounded-lg p-4">
           <h3 class="font-medium text-slate-800 mb-3">超长消息处理</h3>
@@ -1951,6 +1951,8 @@
     let cachedTelegramToDiscordGuilds = {};  // { accountId: guilds[] }
     let cachedTelegramToDiscordGuildsLoading = {};
     let cachedTelegramToDiscordChannels = {};  // { accountId:guildId: channels[] }
+    let discordSelectSearchQueries = {};
+    let discordSelectDropdownOpen = {};
 
     // 全局规则填写模式 (manual: 手动输入, select: 从列表选择)
     let globalRuleInputMode = 'select';
@@ -2001,6 +2003,296 @@
       return hasCacheEntry ? '暂无可用频道' : '暂无频道（请先同步）';
     }
 
+    function normalizeDiscordNamedQuery(query) {
+      return String(query || '').trim().toLowerCase();
+    }
+
+    function escapeJsString(value) {
+      return String(value || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n');
+    }
+
+    function filterDiscordNamedItems(items, query, selectedId) {
+      const list = Array.isArray(items) ? items.slice() : [];
+      const normalizedQuery = normalizeDiscordNamedQuery(query);
+      if (!normalizedQuery) return list;
+
+      const filtered = list.filter(item => {
+        const id = String(item?.id || '').toLowerCase();
+        const name = String(item?.name || '').toLowerCase();
+        return id.includes(normalizedQuery) || name.includes(normalizedQuery);
+      });
+
+      if (!selectedId) return filtered;
+
+      const selected = list.find(item => String(item?.id || '') === String(selectedId));
+      if (selected && !filtered.some(item => String(item?.id || '') === String(selectedId))) {
+        filtered.push(selected);
+      }
+      return filtered;
+    }
+
+    function buildDiscordSearchableDropdownModel(items, options) {
+      const list = Array.isArray(items) ? items.slice() : [];
+      const visibleItems = filterDiscordNamedItems(list, options?.query, options?.selectedId);
+      const selectedItem = list.find(item => String(item?.id || '') === String(options?.selectedId || ''));
+      const fallbackSelectedLabel = String(options?.selectedLabel || '').trim();
+      const triggerLabel = selectedItem?.name || fallbackSelectedLabel || options?.placeholderLabel || '请选择';
+      const emptyLabel = visibleItems.length === 0 && normalizeDiscordNamedQuery(options?.query)
+        ? (options?.emptyResultsLabel || '')
+        : '';
+      return { visibleItems, triggerLabel, emptyLabel };
+    }
+
+    function getDiscordSelectSearchQuery(selectId) {
+      return selectId ? (discordSelectSearchQueries[selectId] || '') : '';
+    }
+
+    function setDiscordSelectSearchQuery(selectId, value) {
+      if (!selectId) return;
+      const next = String(value || '');
+      if (next) {
+        discordSelectSearchQueries[selectId] = next;
+      } else {
+        delete discordSelectSearchQueries[selectId];
+      }
+    }
+
+    function clearDiscordSelectSearchQuery(selectId) {
+      if (!selectId) return;
+      delete discordSelectSearchQueries[selectId];
+    }
+
+    function closeAllDiscordSearchableSelects(exceptId = '') {
+      Object.keys(discordSelectDropdownOpen).forEach(selectId => {
+        if (selectId !== exceptId) {
+          delete discordSelectDropdownOpen[selectId];
+          syncDiscordSearchableSelect(selectId);
+        }
+      });
+    }
+
+    function isDiscordSearchableSelectOpen(selectId) {
+      return discordSelectDropdownOpen[selectId] === true;
+    }
+
+    function getDiscordSelectTriggerFallbackLabel(selectedId, selectedLabel, placeholderLabel, unknownPrefix) {
+      const label = String(selectedLabel || '').trim();
+      if (label) return label;
+      if (selectedId) {
+        return unknownPrefix ? `${unknownPrefix} (${selectedId})` : String(selectedId);
+      }
+      return placeholderLabel;
+    }
+
+    function getDiscordSelectTriggerLabel(select) {
+      if (!select) return '请选择';
+      const placeholderLabel = select.dataset.placeholderLabel || '请选择';
+      const selectedId = String(select.value || select.dataset.selectedId || '');
+      if (!selectedId) return placeholderLabel;
+      const selectedOption = Array.from(select.options).find(option => option.value === selectedId);
+      if (selectedOption && selectedOption.textContent) {
+        return selectedOption.textContent;
+      }
+      return select.dataset.selectedLabel || placeholderLabel;
+    }
+
+    function isDiscordSearchableOptionDisabled(option) {
+      if (!option) return true;
+      if (option.value) return false;
+      const text = String(option.textContent || '').trim();
+      return !/^选择服务器$/.test(text) && !/^选择频道$/.test(text);
+    }
+
+    function buildDiscordSearchableOptionButtons(selectId) {
+      const select = document.getElementById(selectId);
+      if (!select) return '';
+      return Array.from(select.options).map(option => {
+        const value = option.value || '';
+        const text = option.textContent || '';
+        const disabled = isDiscordSearchableOptionDisabled(option);
+        const selected = value === select.value;
+        if (disabled) {
+          return `<div class="px-3 py-2 text-xs text-slate-400">${escapeHtml(text)}</div>`;
+        }
+        return `<button type="button"
+          onclick="selectDiscordSearchableOption('${escapeJsString(selectId)}', '${escapeJsString(value)}'); event.stopPropagation();"
+          class="w-full px-3 py-2 text-left text-xs ${selected ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50'}">
+          ${escapeHtml(text)}
+        </button>`;
+      }).join('');
+    }
+
+    function syncDiscordSearchableSelect(selectId) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+      const labelEl = document.getElementById(`${selectId}-label`);
+      const panelEl = document.getElementById(`${selectId}-panel`);
+      const searchInputEl = document.getElementById(`${selectId}-search`);
+      const optionsEl = document.getElementById(`${selectId}-options`);
+      const triggerEl = document.getElementById(`${selectId}-trigger`);
+      const open = isDiscordSearchableSelectOpen(selectId);
+
+      if (labelEl) {
+        labelEl.textContent = getDiscordSelectTriggerLabel(select);
+      }
+      if (panelEl) {
+        panelEl.classList.toggle('hidden', !open);
+      }
+      if (triggerEl) {
+        triggerEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+      if (searchInputEl) {
+        const query = getDiscordSelectSearchQuery(selectId);
+        if (searchInputEl.value !== query) {
+          searchInputEl.value = query;
+        }
+      }
+      if (optionsEl) {
+        optionsEl.innerHTML = buildDiscordSearchableOptionButtons(selectId);
+      }
+    }
+
+    function syncAllDiscordSearchableSelects() {
+      document.querySelectorAll('select[data-search-source]').forEach(select => {
+        if (select.id) syncDiscordSearchableSelect(select.id);
+      });
+    }
+
+    function setDiscordSearchableSelectOpen(selectId, open) {
+      if (!selectId) return;
+      if (open) {
+        closeAllDiscordSearchableSelects(selectId);
+        discordSelectDropdownOpen[selectId] = true;
+        refreshDiscordSelectOptions(selectId);
+        requestAnimationFrame(() => {
+          const searchInput = document.getElementById(`${selectId}-search`);
+          if (searchInput) {
+            searchInput.focus();
+            searchInput.select();
+          }
+        });
+        return;
+      }
+      delete discordSelectDropdownOpen[selectId];
+      syncDiscordSearchableSelect(selectId);
+    }
+
+    function toggleDiscordSearchableSelect(selectId) {
+      setDiscordSearchableSelectOpen(selectId, !isDiscordSearchableSelectOpen(selectId));
+    }
+
+    function selectDiscordSearchableOption(selectId, value) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+      const nextValue = String(value || '');
+      clearDiscordSelectSearchQuery(selectId);
+      delete discordSelectDropdownOpen[selectId];
+      select.dataset.selectedId = nextValue;
+      select.value = nextValue;
+      const selectedOption = Array.from(select.options).find(option => option.value === nextValue);
+      if (selectedOption && nextValue) {
+        select.dataset.selectedLabel = selectedOption.textContent || '';
+      }
+      syncDiscordSearchableSelect(selectId);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function renderDiscordSearchableSelectBlock(selectId, searchPlaceholder, wrapperClass, triggerClass, selectHtml, triggerLabel) {
+      return `<div id="${selectId}-wrapper" class="discord-searchable-select relative ${wrapperClass}" onclick="event.stopPropagation()">
+        ${selectHtml}
+        <button type="button" id="${selectId}-trigger"
+          onclick="toggleDiscordSearchableSelect('${escapeJsString(selectId)}'); event.stopPropagation();"
+          class="${triggerClass}">
+          <span id="${selectId}-label" class="truncate">${escapeHtml(triggerLabel)}</span>
+          <span class="shrink-0 text-[10px] text-slate-400">▾</span>
+        </button>
+        <div id="${selectId}-panel" class="hidden absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl" onclick="event.stopPropagation()">
+          <div class="border-b border-slate-100 p-2">
+            <input id="${selectId}-search" type="text" value="${escapeHtml(getDiscordSelectSearchQuery(selectId))}"
+              oninput="onDiscordSelectSearchInput('${escapeJsString(selectId)}', this.value)"
+              placeholder="${searchPlaceholder}"
+              class="w-full rounded-md border border-slate-200 px-2 py-1.5 text-xs focus:border-indigo-500 focus:outline-none">
+          </div>
+          <div id="${selectId}-options" class="max-h-64 overflow-auto"></div>
+        </div>
+      </div>`;
+    }
+
+    function getDiscordGuildOptionsHtml(guilds, selectedId, selectedLabel, query) {
+      if (!guilds || guilds.length === 0) {
+        if (selectedId) {
+          const label = selectedLabel ? escapeHtml(selectedLabel) : `加载中... (${selectedId})`;
+          return `<option value="${selectedId}" selected>${label}</option>`;
+        }
+        return '<option value="">选择服务器</option>';
+      }
+      const model = buildDiscordSearchableDropdownModel(guilds, {
+        selectedId,
+        selectedLabel,
+        query,
+        placeholderLabel: '选择服务器',
+        emptyResultsLabel: '无匹配服务器',
+      });
+      const filteredGuilds = model.visibleItems;
+      const emptyLabel = model.emptyLabel || '选择服务器';
+      let html = `<option value="">${emptyLabel}</option>`;
+      filteredGuilds.forEach(g => {
+        html += `<option value="${g.id}" ${g.id === selectedId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`;
+      });
+      if (selectedId && !guilds.some(g => g.id === selectedId)) {
+        const label = selectedLabel ? escapeHtml(selectedLabel) : `未知服务器 (${selectedId})`;
+        html += `<option value="${selectedId}" selected>${label}</option>`;
+      }
+      return html;
+    }
+
+    function getDiscordSourceChannelOptionsHtml(channels, selectedId, selectedLabel, query) {
+      const model = buildDiscordSearchableDropdownModel(channels, {
+        selectedId,
+        selectedLabel,
+        query,
+        placeholderLabel: '选择频道',
+        emptyResultsLabel: '无匹配频道',
+      });
+      const filteredChannels = model.visibleItems;
+      const emptyLabel = model.emptyLabel || '选择频道';
+      let html = `<option value="">${emptyLabel}</option>`;
+      filteredChannels.forEach(ch => {
+        const icon = ch.type === 0 ? '#' : ch.type === 2 ? '🔊' : '•';
+        html += `<option value="${ch.id}" ${ch.id === selectedId ? 'selected' : ''}>${icon} ${escapeHtml(ch.name)}</option>`;
+      });
+      if (selectedId && !channels.some(ch => ch.id === selectedId)) {
+        const label = selectedLabel ? escapeHtml(selectedLabel) : `未知频道 (${selectedId})`;
+        html += `<option value="${selectedId}" selected>${label}</option>`;
+      }
+      return html;
+    }
+
+    function getDiscordTargetChannelOptionsHtml(channels, selectedId, selectedLabel, query) {
+      const model = buildDiscordSearchableDropdownModel(channels, {
+        selectedId,
+        selectedLabel,
+        query,
+        placeholderLabel: '选择频道',
+        emptyResultsLabel: '无匹配频道',
+      });
+      const filteredChannels = model.visibleItems;
+      const emptyLabel = model.emptyLabel || '选择频道';
+      let html = `<option value="">${emptyLabel}</option>`;
+      filteredChannels.forEach(ch => {
+        html += `<option value="${ch.id}" ${ch.id === selectedId ? 'selected' : ''}># ${escapeHtml(ch.name)}</option>`;
+      });
+      if (selectedId && !channels.some(ch => ch.id === selectedId)) {
+        const label = selectedLabel ? escapeHtml(selectedLabel) : `未知频道 (${selectedId})`;
+        html += `<option value="${selectedId}" selected>${label}</option>`;
+      }
+      return html;
+    }
+
     function requestDiscordGuilds(accountId) {
       if (!shouldFetchDiscordGuilds(accountId)) return;
       cachedGuildsLoading = true;
@@ -2016,32 +2308,15 @@
     }
 
     // 获取缓存的服务器选项HTML
-    function getCachedGuildsOptions(selectedId, selectedLabel) {
-      if (!cachedGuilds || cachedGuilds.length === 0) {
-        // 修复：如果缓存为空但有选中的ID，显示保存的名称或加载状态
-        if (selectedId) {
-          const label = selectedLabel ? escapeHtml(selectedLabel) : `加载中... (${selectedId})`;
-          return `<option value="${selectedId}" selected>${label}</option>`;
-        }
-        return '<option value="">选择服务器</option>';
-      }
-      let html = '<option value="">选择服务器</option>';
-      cachedGuilds.forEach(g => {
-        html += `<option value="${g.id}" ${g.id === selectedId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`;
-      });
-      // 修复：如果选中的ID不在列表中（可能由其他账号可见），保留它
-      if (selectedId && !cachedGuilds.some(g => g.id === selectedId)) {
-        const label = selectedLabel ? escapeHtml(selectedLabel) : `未知服务器 (${selectedId})`;
-        html += `<option value="${selectedId}" selected>${label}</option>`;
-      }
-      return html;
+    function getCachedGuildsOptions(selectedId, selectedLabel, query = '') {
+      return getDiscordGuildOptionsHtml(cachedGuilds || [], selectedId, selectedLabel, query);
     }
 
     // 获取缓存的频道选项HTML
-    function getCachedChannelsOptions(accountId, guildId, selectedId, selectedLabel) {
+    function getCachedChannelsOptions(accountId, guildId, selectedId, selectedLabel, query = '') {
       const cacheKey = `${accountId}:${guildId}`;
       const hasCacheEntry = Object.prototype.hasOwnProperty.call(cachedChannels, cacheKey);
-      const channels = cachedChannels[cacheKey] || [];
+      const channels = (cachedChannels[cacheKey] || []).filter(ch => ch.type !== 4 && ch.type !== 2 && ch.type !== 13);
       if (channels.length === 0) {
         if (selectedId) {
           const label = selectedLabel ? escapeHtml(selectedLabel) : `加载频道中... (${selectedId})`;
@@ -2049,20 +2324,85 @@
         }
         return `<option value="">${getDiscordChannelEmptyMessage(hasCacheEntry, guildId, selectedId)}</option>`;
       }
-      let html = '<option value="">选择频道</option>';
-      channels.forEach(ch => {
-        if (ch.type === 4) return; // skip categories
-        if (ch.type === 2 || ch.type === 13) return; // skip voice/stage
-        const icon = ch.type === 0 ? '#' : ch.type === 2 ? '🔊' : '•';
-        html += `<option value="${ch.id}" ${ch.id === selectedId ? 'selected' : ''}>${icon} ${escapeHtml(ch.name)}</option>`;
-      });
-      // 修复：如果选中的ID不在列表中，保留它
-      if (selectedId && !channels.some(ch => ch.id === selectedId)) {
-        const label = selectedLabel ? escapeHtml(selectedLabel) : `未知频道 (${selectedId})`;
-        html += `<option value="${selectedId}" selected>${label}</option>`;
-      }
-      return html;
+      return getDiscordSourceChannelOptionsHtml(channels, selectedId, selectedLabel, query);
     }
+
+    function getTelegramToDiscordGuildOptions(accountId, selectedId, selectedLabel, query = '') {
+      const guilds = accountId ? (cachedTelegramToDiscordGuilds[accountId] || []) : [];
+      return getDiscordGuildOptionsHtml(guilds, selectedId, selectedLabel, query);
+    }
+
+    function getTelegramToDiscordChannelsOptions(accountId, guildId, selectedId, selectedLabel, query = '') {
+      const cacheKey = `${accountId}:${guildId}`;
+      const hasCacheEntry = Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey);
+      const channels = (cachedTelegramToDiscordChannels[cacheKey] || []).filter(ch => ch.type === 0 || ch.type === 5);
+      if (channels.length === 0) {
+        if (selectedId) {
+          const label = selectedLabel ? escapeHtml(selectedLabel) : `加载频道中... (${selectedId})`;
+          return `<option value="${selectedId}" selected>${label}</option>`;
+        }
+        return `<option value="">${getDiscordChannelEmptyMessage(hasCacheEntry, guildId, selectedId)}</option>`;
+      }
+      return getDiscordTargetChannelOptionsHtml(channels, selectedId, selectedLabel, query);
+    }
+
+    function refreshDiscordSelectOptions(selectId, selectedIdOverride) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+
+      const searchSource = select.dataset.searchSource || '';
+      const accountId = select.dataset.accountId || '';
+      const guildId = select.dataset.guildId || '';
+      const selectedLabel = select.dataset.selectedLabel || '';
+      const selectedId = selectedIdOverride !== undefined
+        ? String(selectedIdOverride || '')
+        : String(select.value || select.dataset.selectedId || '');
+      const query = getDiscordSelectSearchQuery(selectId);
+
+      let html = '';
+      if (searchSource === 'cachedGuilds') {
+        html = getCachedGuildsOptions(selectedId, selectedLabel, query);
+      } else if (searchSource === 'cachedChannels') {
+        html = getCachedChannelsOptions(accountId, guildId, selectedId, selectedLabel, query);
+      } else if (searchSource === 'telegramToDiscordGuilds') {
+        html = getTelegramToDiscordGuildOptions(accountId, selectedId, selectedLabel, query);
+      } else if (searchSource === 'telegramToDiscordChannels') {
+        html = getTelegramToDiscordChannelsOptions(accountId, guildId, selectedId, selectedLabel, query);
+      }
+
+      if (!html) return;
+
+      select.dataset.selectedId = selectedId;
+      select.innerHTML = html;
+      if (selectedId) {
+        const hasSelectedOption = Array.from(select.options).some(option => option.value === selectedId);
+        if (hasSelectedOption) {
+          select.value = selectedId;
+        } else {
+          select.value = '';
+        }
+      } else {
+        select.value = '';
+      }
+      syncDiscordSearchableSelect(selectId);
+    }
+
+    function onDiscordSelectSearchInput(selectId, value) {
+      setDiscordSelectSearchQuery(selectId, value);
+      refreshDiscordSelectOptions(selectId);
+    }
+
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('.discord-searchable-select')) {
+        closeAllDiscordSearchableSelects();
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeAllDiscordSearchableSelects();
+      }
+    });
 
     // 获取 Telegram 对话列表（用于规则选择）
     async function fetchTelegramDialogsForRule(accountId) {
@@ -2123,6 +2463,9 @@
       console.log('[DEBUG] onGuildSelectForRule called:', { accountId, guildId, channelSelectId, mappingIdx });
       const channelSelect = document.getElementById(channelSelectId);
       if (!channelSelect) return;
+      clearDiscordSelectSearchQuery(channelSelectId);
+      channelSelect.dataset.guildId = guildId || '';
+      channelSelect.dataset.selectedId = '';
 
       // 保存选择的服务器ID和名称到规则中
       if (typeof mappingIdx === 'number') {
@@ -2141,10 +2484,14 @@
 
       if (!guildId) {
         channelSelect.innerHTML = '<option value="">请先选择服务器</option>';
+        channelSelect.value = '';
+        syncDiscordSearchableSelect(channelSelectId);
         return;
       }
 
       channelSelect.innerHTML = '<option value="">加载中...</option>';
+      channelSelect.value = '';
+      syncDiscordSearchableSelect(channelSelectId);
       await fetchDiscordChannels(accountId, guildId);
 
       const cacheKey = `${accountId}:${guildId}`;
@@ -2159,7 +2506,9 @@
 
       const latestSelect = document.getElementById(channelSelectId);
       if (latestSelect) {
-        latestSelect.innerHTML = getCachedChannelsOptions(accountId, guildId, '');
+        latestSelect.dataset.guildId = guildId || '';
+        latestSelect.dataset.selectedId = '';
+        refreshDiscordSelectOptions(channelSelectId, '');
       }
     }
 
@@ -2226,7 +2575,7 @@
         // 修复：即使 savedGuildId 为空，如果有 savedChannelId 也要保留显示
         let channelOptions;
         if (savedGuildId && discordAccountId) {
-          channelOptions = getCachedChannelsOptions(discordAccountId, savedGuildId, savedChannelId);
+          channelOptions = getCachedChannelsOptions(discordAccountId, savedGuildId, savedChannelId, m.sourceChannelName, getDiscordSelectSearchQuery(channelSelectId));
         } else if (savedChannelId) {
           channelOptions = `<option value="${savedChannelId}" selected>频道 (${savedChannelId}) - 请选择服务器</option>`;
         } else {
@@ -2234,15 +2583,37 @@
         }
 
         const guildSelectId = `guild-select-${mappingKey}`;
-        return `<div class="flex items-center gap-1">
-          <select id="${guildSelectId}" onchange="onGuildSelectForRule('${discordAccountId}', this.value, '${channelSelectId}', ${idx})"
-            class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-            ${getCachedGuildsOptions(savedGuildId, savedGuildName)}
-          </select>
-          <select id="${channelSelectId}" onchange="updateMappingWithGuild(${idx}, 'sourceChannelId', this.value, '${guildSelectId}')"
-            class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+        const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="cachedGuilds" data-selected-label="${escapeHtml(savedGuildName)}" data-placeholder-label="选择服务器"
+            onchange="onGuildSelectForRule('${discordAccountId}', this.value, '${channelSelectId}', ${idx})"
+            class="hidden">
+            ${getCachedGuildsOptions(savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId))}
+          </select>`;
+        const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="cachedChannels"
+            data-account-id="${escapeHtml(discordAccountId)}"
+            data-guild-id="${escapeHtml(savedGuildId)}"
+            data-selected-label="${escapeHtml(m.sourceChannelName || '')}"
+            data-placeholder-label="选择频道"
+            onchange="updateMappingWithGuild(${idx}, 'sourceChannelId', this.value, '${guildSelectId}')"
+            class="hidden">
             ${channelOptions}
-          </select>
+          </select>`;
+        return `<div class="flex items-start gap-1 flex-wrap">
+          ${renderDiscordSearchableSelectBlock(
+            guildSelectId,
+            '搜索服务器',
+            'w-36',
+            'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+            guildSelectHtml,
+            getDiscordSelectTriggerFallbackLabel(savedGuildId, savedGuildName, '选择服务器', '服务器')
+          )}
+          ${renderDiscordSearchableSelectBlock(
+            channelSelectId,
+            '搜索频道',
+            'w-36',
+            'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+            channelSelectHtml,
+            getDiscordSelectTriggerFallbackLabel(savedChannelId, m.sourceChannelName, '选择频道', '频道')
+          )}
         </div>`;
       }
     }
@@ -2275,8 +2646,11 @@
             class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
         } else {
           // 账号发送模式：显示账号选择和频道选择
+          const mappingKey = `d2d-target:${acc.id}:${idx}`;
+          const guildSelectId = `guild-select-${mappingKey}`;
+          const channelSelectId = `channel-select-${mappingKey}`;
           const discordAccounts = state.discordAccounts || [];
-          html += `<select onchange="updateDiscordToDiscordAccount(${idx}, this.value)"
+          html += `<select onchange="updateDiscordToDiscordAccount(${idx}, this.value, '${guildSelectId}', '${channelSelectId}')"
             class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
             <option value="">选择账号</option>
             ${discordAccounts.map(a => `<option value="${a.id}" ${senderAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name || 'Discord账号')}</option>`).join('')}
@@ -2287,12 +2661,21 @@
             if (senderAccountId && !cachedTelegramToDiscordGuilds[senderAccountId] && !cachedTelegramToDiscordGuildsLoading[senderAccountId]) {
               fetchTelegramToDiscordGuilds(senderAccountId).then(() => render());
             }
-            const guilds = senderAccountId ? (cachedTelegramToDiscordGuilds[senderAccountId] || []) : [];
-            html += `<select onchange="updateDiscordToDiscordGuild(${idx}, this.value)"
-              class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="">选择服务器</option>
-              ${guilds.map(g => `<option value="${g.id}" ${targetGuildId === g.id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+            const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="telegramToDiscordGuilds"
+              data-account-id="${escapeHtml(senderAccountId)}"
+              data-placeholder-label="选择服务器"
+              onchange="updateDiscordToDiscordGuild(${idx}, this.value, '${channelSelectId}')"
+              class="hidden">
+              ${getTelegramToDiscordGuildOptions(senderAccountId, targetGuildId, '', getDiscordSelectSearchQuery(guildSelectId))}
             </select>`;
+            html += renderDiscordSearchableSelectBlock(
+              guildSelectId,
+              '搜索服务器',
+              'w-32',
+              'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+              guildSelectHtml,
+              getDiscordSelectTriggerFallbackLabel(targetGuildId, '', '选择服务器', '服务器')
+            );
 
             // 加载频道列表（如果已选择服务器）
             if (senderAccountId && targetGuildId) {
@@ -2305,13 +2688,22 @@
                 });
               }
             }
-            const cacheKey = `${senderAccountId}:${targetGuildId}`;
-            const channels = (senderAccountId && targetGuildId) ? (cachedTelegramToDiscordChannels[cacheKey] || []) : [];
-            html += `<select onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
-              class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="">选择频道</option>
-              ${channels.filter(ch => ch.type === 0 || ch.type === 5).map(ch => `<option value="${ch.id}" ${(m.targetChannelId || '') === ch.id ? 'selected' : ''}># ${escapeHtml(ch.name)}</option>`).join('')}
+            const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="telegramToDiscordChannels"
+              data-account-id="${escapeHtml(senderAccountId)}"
+              data-guild-id="${escapeHtml(targetGuildId)}"
+              data-placeholder-label="选择频道"
+              onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
+              class="hidden">
+              ${getTelegramToDiscordChannelsOptions(senderAccountId, targetGuildId, m.targetChannelId || '', '', getDiscordSelectSearchQuery(channelSelectId))}
             </select>`;
+            html += renderDiscordSearchableSelectBlock(
+              channelSelectId,
+              '搜索频道',
+              'w-32',
+              'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+              channelSelectHtml,
+              getDiscordSelectTriggerFallbackLabel(m.targetChannelId || '', '', '选择频道', '频道')
+            );
           } else {
             // 手动输入模式
             html += `<input type="text" value="${m.targetChannelId || ''}"
@@ -2359,8 +2751,11 @@
             class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
         } else {
           // 账号发送模式：显示账号选择和频道选择
+          const mappingKey = `t2d-target:${acc.id}:${idx}`;
+          const guildSelectId = `guild-select-${mappingKey}`;
+          const channelSelectId = `channel-select-${mappingKey}`;
           const discordAccounts = state.discordAccounts || [];
-          html += `<select onchange="updateTelegramToDiscordAccount(${idx}, this.value)"
+          html += `<select onchange="updateTelegramToDiscordAccount(${idx}, this.value, '${guildSelectId}', '${channelSelectId}')"
             class="flex-1 min-w-[12rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
             <option value="">选择账号</option>
             ${discordAccounts.map(a => `<option value="${a.id}" ${senderAccountId === a.id ? 'selected' : ''}>${escapeHtml(a.name || 'Discord账号')}</option>`).join('')}
@@ -2371,12 +2766,21 @@
             if (!cachedTelegramToDiscordGuilds[senderAccountId] && !cachedTelegramToDiscordGuildsLoading[senderAccountId]) {
               fetchTelegramToDiscordGuilds(senderAccountId).then(() => render());
             }
-            const guilds = cachedTelegramToDiscordGuilds[senderAccountId] || [];
-            html += `<select onchange="updateTelegramToDiscordGuild(${idx}, this.value)"
-              class="flex-1 min-w-[12rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-              <option value="">选择服务器</option>
-              ${guilds.map(g => `<option value="${g.id}" ${targetGuildId === g.id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+            const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="telegramToDiscordGuilds"
+              data-account-id="${escapeHtml(senderAccountId)}"
+              data-placeholder-label="选择服务器"
+              onchange="updateTelegramToDiscordGuild(${idx}, this.value, '${channelSelectId}')"
+              class="hidden">
+              ${getTelegramToDiscordGuildOptions(senderAccountId, targetGuildId, '', getDiscordSelectSearchQuery(guildSelectId))}
             </select>`;
+            html += renderDiscordSearchableSelectBlock(
+              guildSelectId,
+              '搜索服务器',
+              'flex-1 min-w-[12rem]',
+              'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+              guildSelectHtml,
+              getDiscordSelectTriggerFallbackLabel(targetGuildId, '', '选择服务器', '服务器')
+            );
 
             if (targetGuildId) {
               const cacheKey = `${senderAccountId}:${targetGuildId}`;
@@ -2387,12 +2791,22 @@
                   render();
                 });
               }
-              const channels = cachedTelegramToDiscordChannels[cacheKey] || [];
-              html += `<select onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
-                class="flex-1 min-w-[12rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-                <option value="">选择频道</option>
-                ${channels.filter(ch => ch.type === 0 || ch.type === 5).map(ch => `<option value="${ch.id}" ${savedTargetId === ch.id ? 'selected' : ''}># ${escapeHtml(ch.name)}</option>`).join('')}
+              const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="telegramToDiscordChannels"
+                data-account-id="${escapeHtml(senderAccountId)}"
+                data-guild-id="${escapeHtml(targetGuildId)}"
+                data-placeholder-label="选择频道"
+                onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
+                class="hidden">
+                ${getTelegramToDiscordChannelsOptions(senderAccountId, targetGuildId, savedTargetId, '', getDiscordSelectSearchQuery(channelSelectId))}
               </select>`;
+              html += renderDiscordSearchableSelectBlock(
+                channelSelectId,
+                '搜索频道',
+                'flex-1 min-w-[12rem]',
+                'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+                channelSelectHtml,
+                getDiscordSelectTriggerFallbackLabel(savedTargetId, '', '选择频道', '频道')
+              );
             }
           } else if (senderAccountId) {
             // 手动输入模式
@@ -2559,23 +2973,26 @@
     }
 
     // Telegram→Discord: 更新发送账号
-    function updateTelegramToDiscordAccount(idx, accountId) {
+    function updateTelegramToDiscordAccount(idx, accountId, guildSelectId, channelSelectId) {
       const acc = getActiveAccount();
       if (!acc?.telegramConfig?.mappings?.[idx]) return;
       acc.telegramConfig.mappings[idx].discordSenderAccountId = accountId;
       acc.telegramConfig.mappings[idx].targetGuildId = '';
       acc.telegramConfig.mappings[idx].targetChannelId = '';
+      clearDiscordSelectSearchQuery(guildSelectId);
+      clearDiscordSelectSearchQuery(channelSelectId);
       saveConfig();
       render();
     }
 
     // Telegram→Discord: 更新目标服务器
-    async function updateTelegramToDiscordGuild(idx, guildId) {
+    async function updateTelegramToDiscordGuild(idx, guildId, channelSelectId) {
       const acc = getActiveAccount();
       if (!acc?.telegramConfig?.mappings?.[idx]) return;
       const senderAccountId = acc.telegramConfig.mappings[idx].discordSenderAccountId || '';
       acc.telegramConfig.mappings[idx].targetGuildId = guildId;
       acc.telegramConfig.mappings[idx].targetChannelId = '';
+      clearDiscordSelectSearchQuery(channelSelectId);
       if (senderAccountId && guildId) {
         const cacheKey = `${senderAccountId}:${guildId}`;
         delete cachedTelegramToDiscordChannels[cacheKey];
@@ -2612,23 +3029,26 @@
     }
 
     // Discord→Discord: 更新发送账号
-    function updateDiscordToDiscordAccount(idx, accountId) {
+    function updateDiscordToDiscordAccount(idx, accountId, guildSelectId, channelSelectId) {
       const acc = getActiveAccount();
       if (!acc?.mappings?.[idx]) return;
       acc.mappings[idx].discordSenderAccountId = accountId;
       acc.mappings[idx].targetGuildId = '';
       acc.mappings[idx].targetChannelId = '';
+      clearDiscordSelectSearchQuery(guildSelectId);
+      clearDiscordSelectSearchQuery(channelSelectId);
       saveConfig();
       render();
     }
 
     // Discord→Discord: 更新目标服务器
-    async function updateDiscordToDiscordGuild(idx, guildId) {
+    async function updateDiscordToDiscordGuild(idx, guildId, channelSelectId) {
       const acc = getActiveAccount();
       if (!acc?.mappings?.[idx]) return;
       const senderAccountId = acc.mappings[idx].discordSenderAccountId || '';
       acc.mappings[idx].targetGuildId = guildId;
       acc.mappings[idx].targetChannelId = '';
+      clearDiscordSelectSearchQuery(channelSelectId);
       if (senderAccountId && guildId) {
         const cacheKey = `${senderAccountId}:${guildId}`;
         delete cachedTelegramToDiscordChannels[cacheKey];
@@ -3260,6 +3680,7 @@
 
       renderAccountLibraryModal();
       renderAccountLibraryEditModal();
+      syncAllDiscordSearchableSelects();
     }
 
     function renderDiscordLibrarySection() {
@@ -5862,7 +6283,7 @@
       
       return `
         <!-- 实例控制栏 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-visible mb-4">
           <div class="px-6 py-4 flex items-center justify-between">
             <div class="flex flex-col gap-1">
               <div class="flex items-center gap-3">
@@ -5887,7 +6308,7 @@
         </div>
 
         <!-- 基础设置 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-visible mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
             <h2 class="font-semibold text-slate-800">基础设置</h2>
             <p class="mt-1 text-xs text-slate-500">配置转发实例的基本信息和认证凭据</p>
@@ -6080,7 +6501,7 @@
         </div>
 
         <!-- 转发规则 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-visible mb-4">
           <div class="px-6 py-4 border-b border-slate-100">
             <div class="flex items-center justify-between">
               <div>
@@ -6852,7 +7273,7 @@
         if (ruleInputMode === 'select' && discordAccountId) {
           const savedGuildId = m.sourceGuildId || '';
           const savedChannelId = m.sourceChannelId || '';
-          const mappingKey = `feishu:${originalIndex}`;
+          const mappingKey = `${acc.id}:feishu:${originalIndex}`;
 
           // 加载服务器列表
           if (discordAccountId) {
@@ -6877,7 +7298,7 @@
           // 修复：即使 savedGuildId 为空，如果有 savedChannelId 也要保留显示
           let channelOptions;
           if (savedGuildId && discordAccountId) {
-            channelOptions = getCachedChannelsOptions(discordAccountId, savedGuildId, savedChannelId, m.sourceChannelName);
+            channelOptions = getCachedChannelsOptions(discordAccountId, savedGuildId, savedChannelId, m.sourceChannelName, getDiscordSelectSearchQuery(channelSelectId));
           } else if (savedChannelId && !savedChannelId.startsWith('new_')) {
             // 有频道ID但没有服务器ID，显示频道ID并提示
             const label = m.sourceChannelName ? escapeHtml(m.sourceChannelName) : `频道 (${savedChannelId})`;
@@ -6888,15 +7309,37 @@
 
           const guildSelectId = `feishu-guild-select-${mappingKey}`;
           const savedGuildName = m.sourceGuildName || '';
-          sourceInput = `<div class="flex items-center gap-1">
-            <select id="${guildSelectId}" onchange="onFeishuGuildSelect('${discordAccountId}', this.value, '${channelSelectId}', ${originalIndex})"
-              class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-              ${getCachedGuildsOptions(savedGuildId, savedGuildName)}
-            </select>
-            <select id="${channelSelectId}" onchange="updateFeishuSource(${originalIndex}, this.value, '${guildSelectId}')"
-              class="w-32 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+          const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="cachedGuilds" data-selected-label="${escapeHtml(savedGuildName)}" data-placeholder-label="选择服务器"
+              onchange="onFeishuGuildSelect('${discordAccountId}', this.value, '${channelSelectId}', ${originalIndex})"
+              class="hidden">
+              ${getCachedGuildsOptions(savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId))}
+            </select>`;
+          const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="cachedChannels"
+              data-account-id="${escapeHtml(discordAccountId)}"
+              data-guild-id="${escapeHtml(savedGuildId)}"
+              data-selected-label="${escapeHtml(m.sourceChannelName || '')}"
+              data-placeholder-label="选择频道"
+              onchange="updateFeishuSource(${originalIndex}, this.value, '${guildSelectId}')"
+              class="hidden">
               ${channelOptions}
-            </select>
+            </select>`;
+          sourceInput = `<div class="flex items-start gap-1 flex-wrap">
+            ${renderDiscordSearchableSelectBlock(
+              guildSelectId,
+              '搜索服务器',
+              'w-32',
+              'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+              guildSelectHtml,
+              getDiscordSelectTriggerFallbackLabel(savedGuildId, savedGuildName, '选择服务器', '服务器')
+            )}
+            ${renderDiscordSearchableSelectBlock(
+              channelSelectId,
+              '搜索频道',
+              'w-32',
+              'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+              channelSelectHtml,
+              getDiscordSelectTriggerFallbackLabel(savedChannelId, m.sourceChannelName, '选择频道', '频道')
+            )}
           </div>`;
         } else {
           sourceInput = `<input type="text" value="${(m.sourceChannelId || '').startsWith('new_') ? '' : (m.sourceChannelId || '')}" onchange="updateFeishuSource(${originalIndex}, this.value)"
@@ -9398,15 +9841,24 @@
       ruleConfigData.standbyMode.mainChannelId = '';
       const channelSelect = document.getElementById(channelSelectId);
       if (!channelSelect) return;
+      clearDiscordSelectSearchQuery(channelSelectId);
+      channelSelect.dataset.guildId = guildId || '';
+      channelSelect.dataset.selectedId = '';
       if (!guildId) {
         channelSelect.innerHTML = '<option value="">请先选择服务器</option>';
+        channelSelect.value = '';
+        syncDiscordSearchableSelect(channelSelectId);
         return;
       }
       channelSelect.innerHTML = '<option value="">加载中...</option>';
+      channelSelect.value = '';
+      syncDiscordSearchableSelect(channelSelectId);
       await fetchDiscordChannels(accountId, guildId);
       const latestSelect = document.getElementById(channelSelectId);
       if (latestSelect) {
-        latestSelect.innerHTML = getCachedChannelsOptions(accountId, guildId, '');
+        latestSelect.dataset.guildId = guildId || '';
+        latestSelect.dataset.selectedId = '';
+        refreshDiscordSelectOptions(channelSelectId, '');
       }
     }
 
@@ -9435,6 +9887,7 @@
       if (isDiscordSource && mode === 'select' && discordAccountId) {
         const savedGuildId = standby.mainGuildId || '';
         const savedGuildName = standby.mainGuildName || '';
+        const selectKey = `${acc.id}:${forwardingType}:rule-standby`;
         if (discordAccountId) {
           requestDiscordGuilds(discordAccountId);
         }
@@ -9451,25 +9904,46 @@
           }
         }
 
-        const channelSelectId = 'rule-standby-channel';
+        const channelSelectId = `rule-standby-channel-${selectKey}`;
         let channelOptions;
         if (savedGuildId && discordAccountId) {
-          channelOptions = getCachedChannelsOptions(discordAccountId, savedGuildId, mainId);
+          channelOptions = getCachedChannelsOptions(discordAccountId, savedGuildId, mainId, '', getDiscordSelectSearchQuery(channelSelectId));
         } else if (mainId) {
           channelOptions = `<option value="${mainId}" selected>频道 (${mainId}) - 请选择服务器</option>`;
         } else {
           channelOptions = '<option value="">请先选择服务器</option>';
         }
-        const guildSelectId = 'rule-standby-guild';
-        container.innerHTML = `<div class="flex items-center gap-1">
-          <select id="${guildSelectId}" onchange="onStandbyGuildSelect('${discordAccountId}', this.value, '${channelSelectId}')"
-            class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
-            ${getCachedGuildsOptions(savedGuildId, savedGuildName)}
-          </select>
-          <select id="${channelSelectId}" onchange="updateRuleStandbyMainChannel(this.value, '${guildSelectId}')"
-            class="w-36 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
+        const guildSelectId = `rule-standby-guild-${selectKey}`;
+        const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="cachedGuilds" data-selected-label="${escapeHtml(savedGuildName)}" data-placeholder-label="选择服务器"
+            onchange="onStandbyGuildSelect('${discordAccountId}', this.value, '${channelSelectId}')"
+            class="hidden">
+            ${getCachedGuildsOptions(savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId))}
+          </select>`;
+        const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="cachedChannels"
+            data-account-id="${escapeHtml(discordAccountId)}"
+            data-guild-id="${escapeHtml(savedGuildId)}"
+            data-placeholder-label="选择频道"
+            onchange="updateRuleStandbyMainChannel(this.value, '${guildSelectId}')"
+            class="hidden">
             ${channelOptions}
-          </select>
+          </select>`;
+        container.innerHTML = `<div class="flex items-start gap-1 flex-wrap">
+          ${renderDiscordSearchableSelectBlock(
+            guildSelectId,
+            '搜索服务器',
+            'w-36',
+            'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+            guildSelectHtml,
+            getDiscordSelectTriggerFallbackLabel(savedGuildId, savedGuildName, '选择服务器', '服务器')
+          )}
+          ${renderDiscordSearchableSelectBlock(
+            channelSelectId,
+            '搜索频道',
+            'w-36',
+            'w-full px-2 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:border-indigo-500 focus:outline-none flex items-center justify-between gap-2',
+            channelSelectHtml,
+            getDiscordSelectTriggerFallbackLabel(mainId, '', '选择频道', '频道')
+          )}
         </div>`;
         return;
       }
@@ -10703,6 +11177,9 @@
     async function onFeishuGuildSelect(accountId, guildId, channelSelectId, mappingIdx) {
       const channelSelect = document.getElementById(channelSelectId);
       if (!channelSelect) return;
+      clearDiscordSelectSearchQuery(channelSelectId);
+      channelSelect.dataset.guildId = guildId || '';
+      channelSelect.dataset.selectedId = '';
 
       // 保存选择的服务器ID和名称（使用立即保存，避免刷新时丢失）
       const acc = getActiveAccount();
@@ -10725,12 +11202,18 @@
 
       if (!guildId) {
         channelSelect.innerHTML = '<option value="">请先选择服务器</option>';
+        channelSelect.value = '';
+        syncDiscordSearchableSelect(channelSelectId);
         return;
       }
 
       channelSelect.innerHTML = '<option value="">加载中...</option>';
+      channelSelect.value = '';
+      syncDiscordSearchableSelect(channelSelectId);
       await fetchDiscordChannels(accountId, guildId);
-      channelSelect.innerHTML = getCachedChannelsOptions(accountId, guildId, '');
+      channelSelect.dataset.guildId = guildId || '';
+      channelSelect.dataset.selectedId = '';
+      refreshDiscordSelectOptions(channelSelectId, '');
     }
 
     function updateFeishuSource(idx, value, guildSelectId) {

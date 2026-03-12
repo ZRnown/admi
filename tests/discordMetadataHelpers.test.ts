@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildDiscordSearchableDropdownModel,
+  filterDiscordNamedItems,
   getDiscordChannelEmptyMessage,
   getDiscordMetadataAccountId,
   preserveDiscordChannelsOnFetchFailure,
@@ -33,4 +35,67 @@ test("preserveDiscordChannelsOnFetchFailure keeps existing channels when REST fe
   const existing = [{ id: '1', name: 'alpha', type: 0 }];
   assert.deepEqual(preserveDiscordChannelsOnFetchFailure(existing, [], true), existing);
   assert.deepEqual(preserveDiscordChannelsOnFetchFailure(existing, [], false), []);
+});
+
+test("filterDiscordNamedItems filters by query ignoring case and surrounding spaces", () => {
+  const items = [
+    { id: "guild-1", name: "Alpha Traders" },
+    { id: "guild-2", name: "Beta Room" },
+    { id: "guild-3", name: "Gamma Hub" },
+  ];
+
+  assert.deepEqual(filterDiscordNamedItems(items, "  beta "), [
+    { id: "guild-2", name: "Beta Room" },
+  ]);
+  assert.deepEqual(filterDiscordNamedItems(items, "GUILD-3"), [
+    { id: "guild-3", name: "Gamma Hub" },
+  ]);
+});
+
+test("filterDiscordNamedItems keeps the selected item visible even when it does not match the query", () => {
+  const items = [
+    { id: "guild-1", name: "Alpha Traders" },
+    { id: "guild-2", name: "Beta Room" },
+    { id: "guild-3", name: "Gamma Hub" },
+  ];
+
+  assert.deepEqual(filterDiscordNamedItems(items, "beta", "guild-1"), [
+    { id: "guild-2", name: "Beta Room" },
+    { id: "guild-1", name: "Alpha Traders" },
+  ]);
+});
+
+test("buildDiscordSearchableDropdownModel uses selected item name for trigger label", () => {
+  const model = buildDiscordSearchableDropdownModel(
+    [
+      { id: "guild-1", name: "Alpha Traders" },
+      { id: "guild-2", name: "Beta Room" },
+    ],
+    {
+      selectedId: "guild-2",
+      placeholderLabel: "选择服务器",
+      emptyResultsLabel: "无匹配服务器",
+    },
+  );
+
+  assert.equal(model.triggerLabel, "Beta Room");
+  assert.equal(model.emptyLabel, "");
+});
+
+test("buildDiscordSearchableDropdownModel shows empty label when query has no matches", () => {
+  const model = buildDiscordSearchableDropdownModel(
+    [
+      { id: "guild-1", name: "Alpha Traders" },
+      { id: "guild-2", name: "Beta Room" },
+    ],
+    {
+      query: "zzz",
+      placeholderLabel: "选择服务器",
+      emptyResultsLabel: "无匹配服务器",
+    },
+  );
+
+  assert.equal(model.triggerLabel, "选择服务器");
+  assert.equal(model.emptyLabel, "无匹配服务器");
+  assert.deepEqual(model.visibleItems, []);
 });
