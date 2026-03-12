@@ -1544,6 +1544,9 @@
     let isSaving = false;
     let suspendAutoSave = false;
     const disconnectHold = new Map();
+    const watermarkBalanceCache = new Map();
+    const watermarkBalanceInflight = new Map();
+    const WATERMARK_BALANCE_REFRESH_MS = 60 * 1000;
 
     function setDisconnectHold(key, durationMs = 5000) {
       disconnectHold.set(key, Date.now() + durationMs);
@@ -3681,6 +3684,9 @@
       renderAccountLibraryModal();
       renderAccountLibraryEditModal();
       syncAllDiscordSearchableSelects();
+      if (activeAccount && String(activeAccount.watermarkRemoval?.apiKey || '').trim()) {
+        ensureWatermarkBalanceFetch(activeAccount.id);
+      }
     }
 
     function renderDiscordLibrarySection() {
@@ -6935,9 +6941,19 @@
 
         ${supportsWatermarkRemoval ? `
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-          <div class="px-6 py-4 border-b border-slate-100">
-            <h2 class="font-semibold text-slate-800">去水印设置</h2>
-            <p class="text-xs text-slate-500 mt-1">为当前转发类型配置默认去水印策略；规则里可按频道覆盖。</p>
+          <div class="px-6 py-4 border-b border-slate-100 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 class="font-semibold text-slate-800">去水印设置</h2>
+              <p class="text-xs text-slate-500 mt-1">为当前转发类型配置默认去水印策略；规则里可按频道覆盖。</p>
+            </div>
+            <div class="flex items-center gap-2">
+              ${renderWatermarkBalanceBadge(acc.id)}
+              <button onclick="refreshWatermarkBalance('${acc.id}', { force: true })"
+                ${String(watermarkRemoval.apiKey || '').trim() ? '' : 'disabled'}
+                class="px-3 py-1.5 rounded-md border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400">
+                刷新余额
+              </button>
+            </div>
           </div>
           <div class="p-6 space-y-4">
             <div class="grid gap-4 md:grid-cols-3">
@@ -8505,6 +8521,125 @@
       return acc.watermarkRemoval;
     }
 
+    function clearWatermarkBalance(accountId) {
+      if (!accountId) return;
+      watermarkBalanceCache.delete(accountId);
+      watermarkBalanceInflight.delete(accountId);
+    }
+
+    function formatWatermarkBalanceValue(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+      if (Math.abs(value) >= 100) return value.toFixed(0);
+      if (Math.abs(value) >= 10) return value.toFixed(1).replace(/\.0$/, '');
+      return value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+    }
+
+    function renderWatermarkBalanceBadge(accountId) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      const apiKey = String(acc?.watermarkRemoval?.apiKey || '').trim();
+      if (!apiKey) {
+        return `<span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">未配置余额查询</span>`;
+      }
+
+      const entry = watermarkBalanceCache.get(accountId);
+      if (!entry || entry.status === 'loading') {
+        return `<span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700">余额读取中...</span>`;
+      }
+
+      if (entry.status === 'error') {
+        const title = escapeHtml(entry.message || '余额读取失败');
+        return `<span title="${title}" class="inline-flex items-center rounded-full bg-rose-50 px-3 py-1 text-xs text-rose-700">余额读取失败</span>`;
+      }
+
+      const planLabel = entry.planName ? ` · ${escapeHtml(entry.planName)}` : '';
+      if (typeof entry.remainingCredits === 'number' && Number.isFinite(entry.remainingCredits)) {
+        return `<span class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700">余额 ${escapeHtml(formatWatermarkBalanceValue(entry.remainingCredits))} credits${planLabel}</span>`;
+      }
+
+      return `<span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">已连接${planLabel || ''}</span>`;
+    }
+
+    async function refreshWatermarkBalance(accountId, options) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return null;
+
+      const config = ensureWatermarkRemovalConfig(acc);
+      const apiKey = String(config.apiKey || '').trim();
+      if (!apiKey) {
+        clearWatermarkBalance(accountId);
+        return null;
+      }
+
+      const force = options && options.force === true;
+      const cached = watermarkBalanceCache.get(accountId);
+      if (
+        !force &&
+        cached &&
+        cached.status === 'success' &&
+        cached.apiKey === apiKey &&
+        Date.now() - (cached.fetchedAt || 0) < WATERMARK_BALANCE_REFRESH_MS
+      ) {
+        return cached;
+      }
+
+      const inflight = watermarkBalanceInflight.get(accountId);
+      if (!force && inflight) {
+        return inflight;
+      }
+
+      watermarkBalanceCache.set(accountId, {
+        status: 'loading',
+        apiKey,
+        fetchedAt: Date.now()
+      });
+      if (accountId === state.activeId) {
+        render();
+      }
+
+      const request = (async () => {
+        try {
+          const res = await fetch(`/api/watermark/balance?accountId=${encodeURIComponent(accountId)}`);
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data?.error || `HTTP ${res.status}`);
+          }
+          const entry = {
+            status: 'success',
+            apiKey,
+            remainingCredits: typeof data?.remainingCredits === 'number' ? data.remainingCredits : undefined,
+            planName: typeof data?.planName === 'string' ? data.planName : '',
+            message: '',
+            fetchedAt: Date.now()
+          };
+          watermarkBalanceCache.set(accountId, entry);
+          return entry;
+        } catch (error) {
+          const entry = {
+            status: 'error',
+            apiKey,
+            message: String(error?.message || error || '获取余额失败'),
+            fetchedAt: Date.now()
+          };
+          watermarkBalanceCache.set(accountId, entry);
+          return entry;
+        } finally {
+          watermarkBalanceInflight.delete(accountId);
+          if (accountId === state.activeId) {
+            render();
+          }
+        }
+      })();
+
+      watermarkBalanceInflight.set(accountId, request);
+      return request;
+    }
+
+    function ensureWatermarkBalanceFetch(accountId) {
+      void refreshWatermarkBalance(accountId).catch((error) => {
+        console.error('加载 WaveSpeed 余额失败', error);
+      });
+    }
+
     function handleWatermarkRemovalKeywordEnter(input) {
       const value = input.value.trim();
       if (!value) return;
@@ -8536,6 +8671,7 @@
         config.mode = value === 'always' ? 'always' : 'ocr';
       } else if (field === 'apiKey') {
         config.apiKey = value || '';
+        clearWatermarkBalance(acc.id);
       }
       saveConfig();
       render();

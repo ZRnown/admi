@@ -252,3 +252,44 @@ test("runWaveSpeedRateLimited serializes requests and enforces interval", async 
   assert.deepEqual(started, [1000, 3000, 5000]);
   assert.deepEqual(waits, [2000, 2000]);
 });
+
+test("runWaveSpeedRateLimited enforces per-window request cap for burst uploads", async () => {
+  __resetWaveSpeedRateLimiterForTests();
+
+  let now = 1000;
+  const waits: number[] = [];
+  const started: number[] = [];
+
+  const wait = async (ms: number) => {
+    waits.push(ms);
+    now += ms;
+  };
+
+  const results = await Promise.all([
+    runWaveSpeedRateLimited(
+      async () => {
+        started.push(now);
+        return "first";
+      },
+      { now: () => now, wait, minIntervalMs: 0, windowMs: 10000, maxRequestsPerWindow: 2 },
+    ),
+    runWaveSpeedRateLimited(
+      async () => {
+        started.push(now);
+        return "second";
+      },
+      { now: () => now, wait, minIntervalMs: 0, windowMs: 10000, maxRequestsPerWindow: 2 },
+    ),
+    runWaveSpeedRateLimited(
+      async () => {
+        started.push(now);
+        return "third";
+      },
+      { now: () => now, wait, minIntervalMs: 0, windowMs: 10000, maxRequestsPerWindow: 2 },
+    ),
+  ]);
+
+  assert.deepEqual(results, ["first", "second", "third"]);
+  assert.deepEqual(started, [1000, 1000, 11000]);
+  assert.deepEqual(waits, [10000]);
+});

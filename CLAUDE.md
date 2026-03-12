@@ -108,6 +108,7 @@ cd discord_bridge && pip install -e . && python -m discord_bridge
 - `telegram-to-discord`: Telegram → Discord
 - `telegram-to-telegram`: Telegram 频道间转发
 - `discord-to-feishu`: Discord → 飞书
+- `discord-to-dingtalk`: Discord → 钉钉
 - `x-to-discord`: X (Twitter) → Discord
 - `truthsocial-to-discord`: Truth Social → Discord
 

@@ -52,15 +52,28 @@ interface WaveSpeedRateLimitOptions {
   now?: () => number;
   wait?: (ms: number) => Promise<void>;
   minIntervalMs?: number;
+  windowMs?: number;
+  maxRequestsPerWindow?: number;
 }
 
 const WAVESPEED_ENDPOINT = "https://api.wavespeed.ai/api/v3/wavespeed-ai/image-watermark-remover";
-const WAVESPEED_MIN_INTERVAL_MS = 2000;
+const WAVESPEED_MIN_INTERVAL_MS = parseNonNegativeInt(process.env.WAVESPEED_MIN_INTERVAL_MS, 2000);
+const WAVESPEED_RATE_LIMIT_WINDOW_MS = parseNonNegativeInt(process.env.WAVESPEED_RATE_LIMIT_WINDOW_MS, 60_000);
+const WAVESPEED_RATE_LIMIT_MAX_REQUESTS = parseNonNegativeInt(process.env.WAVESPEED_RATE_LIMIT_MAX_REQUESTS, 10);
 const URL_RE = /^https?:\/\//i;
 const WATERMARK_HINT_RE =
   /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|vx|wx|ins|instagram|telegram|tg|店铺|同款|关注|原创|搬运|出处)/i;
 let waveSpeedQueue: Promise<void> = Promise.resolve();
 let nextWaveSpeedStartAt = 0;
+let waveSpeedRecentStarts: number[] = [];
+
+function parseNonNegativeInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
 
 function firstNonEmptyString(...values: Array<unknown>): string | undefined {
   for (const value of values) {
@@ -327,6 +340,14 @@ export async function runWaveSpeedRateLimited<T>(
     typeof options.minIntervalMs === "number" && options.minIntervalMs >= 0
       ? options.minIntervalMs
       : WAVESPEED_MIN_INTERVAL_MS;
+  const windowMs =
+    typeof options.windowMs === "number" && options.windowMs >= 0
+      ? options.windowMs
+      : WAVESPEED_RATE_LIMIT_WINDOW_MS;
+  const maxRequestsPerWindow =
+    typeof options.maxRequestsPerWindow === "number" && options.maxRequestsPerWindow >= 0
+      ? options.maxRequestsPerWindow
+      : WAVESPEED_RATE_LIMIT_MAX_REQUESTS;
 
   const previous = waveSpeedQueue.catch(() => {});
   let release!: () => void;
@@ -337,12 +358,28 @@ export async function runWaveSpeedRateLimited<T>(
   await previous;
 
   const current = now();
-  const startAt = Math.max(current, nextWaveSpeedStartAt);
+  if (windowMs > 0) {
+    waveSpeedRecentStarts = waveSpeedRecentStarts.filter((startedAt) => current - startedAt < windowMs);
+  } else {
+    waveSpeedRecentStarts = [];
+  }
+
+  let startAt = Math.max(current, nextWaveSpeedStartAt);
+  if (windowMs > 0 && maxRequestsPerWindow > 0 && waveSpeedRecentStarts.length >= maxRequestsPerWindow) {
+    const windowReleaseAt = waveSpeedRecentStarts[0] + windowMs;
+    startAt = Math.max(startAt, windowReleaseAt);
+  }
   nextWaveSpeedStartAt = startAt + minIntervalMs;
   const delay = startAt - current;
   if (delay > 0) {
     await wait(delay);
   }
+  if (windowMs > 0) {
+    waveSpeedRecentStarts = waveSpeedRecentStarts.filter((startedAt) => startAt - startedAt < windowMs);
+  } else {
+    waveSpeedRecentStarts = [];
+  }
+  waveSpeedRecentStarts.push(startAt);
 
   try {
     return await task();
@@ -354,6 +391,7 @@ export async function runWaveSpeedRateLimited<T>(
 export function __resetWaveSpeedRateLimiterForTests(): void {
   waveSpeedQueue = Promise.resolve();
   nextWaveSpeedStartAt = 0;
+  waveSpeedRecentStarts = [];
 }
 
 export function shouldRetryWaveSpeedStatus(status?: number): boolean {
