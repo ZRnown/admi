@@ -10,22 +10,14 @@ import { spawnSync } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import { preserveDiscordChannelsOnFetchFailure } from "@/src/discordMetadataHelpers";
-
-
-function resolvePythonBin(): string | null {
-  const candidates = [process.env.PYTHON, process.env.PYTHON_BIN, process.env.PYTHON_EXECUTABLE, "python3.11", "python3.10", "python3", "python"].filter(Boolean) as string[];
-  for (const candidate of candidates) {
-    const result = spawnSync(candidate, ["-V"], { stdio: "ignore" });
-    if (!result.error) return candidate;
-  }
-  return null;
-}
+import { resolvePythonBin } from "@/src/pythonRuntime";
 
 function hydrateDiscordChannelsViaSelfbot(token: string, type: string | undefined, guildIds: string[]): Record<string, any[]> {
   if (!token || guildIds.length === 0) return {};
-  const pythonBin = resolvePythonBin();
+  const bridgeRoot = path.join(process.cwd(), "discord_bridge");
+  const pythonBin = resolvePythonBin({ cwd: process.cwd(), extraRoots: [bridgeRoot] });
   if (!pythonBin) return {};
-  const bridgeSrc = path.join(process.cwd(), "discord_bridge", "src");
+  const bridgeSrc = path.join(bridgeRoot, "src");
   const input = JSON.stringify({ token, type, guildIds });
   const result = spawnSync(
     pythonBin,

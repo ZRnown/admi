@@ -1,7 +1,8 @@
-import { spawn, spawnSync, ChildProcess } from "child_process";
+import { spawn, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import path from "path";
 import fs from "fs/promises";
+import { resolvePythonBin } from "./pythonRuntime";
 
 export interface ProcessInfo {
   pid: number;
@@ -46,19 +47,7 @@ export class TelegramBridgeManager extends EventEmitter {
         return { success: false, message: "Telegram Bridge主程序不存在" };
       }
 
-      const pythonCandidates = [
-        process.env.PYTHON,
-        process.env.PYTHON_BIN,
-        process.env.PYTHON_EXECUTABLE,
-        "python3.11",
-        "python3.10",
-        "python3",
-        "python",
-      ].filter(Boolean) as string[];
-      const pythonBin = pythonCandidates.find((bin) => {
-        const result = spawnSync(bin, ['-V'], { stdio: 'ignore' });
-        return !result.error;
-      });
+      const pythonBin = resolvePythonBin({ cwd: process.cwd(), extraRoots: [bridgePath] });
       if (!pythonBin) {
         return { success: false, message: "未找到可用的Python可执行文件，请安装python3或设置PYTHON环境变量" };
       }
@@ -319,19 +308,7 @@ export class DiscordBridgeManager extends EventEmitter {
         return { success: false, message: "Discord Bridge主程序不存在" };
       }
 
-      const pythonCandidates = [
-        process.env.PYTHON,
-        process.env.PYTHON_BIN,
-        process.env.PYTHON_EXECUTABLE,
-        "python3.11",
-        "python3.10",
-        "python3",
-        "python",
-      ].filter(Boolean) as string[];
-      const pythonBin = pythonCandidates.find((bin) => {
-        const result = spawnSync(bin, ["-V"], { stdio: "ignore" });
-        return !result.error;
-      });
+      const pythonBin = resolvePythonBin({ cwd: process.cwd(), extraRoots: [bridgePath] });
       if (!pythonBin) {
         return { success: false, message: "未找到可用的Python可执行文件，请安装python3或设置PYTHON环境变量" };
       }
@@ -540,11 +517,7 @@ export class DiscordMetadataBridgeManager extends EventEmitter {
         return { success: false, message: "Discord Metadata Bridge主程序不存在" };
       }
 
-      const pythonCandidates = [process.env.PYTHON, process.env.PYTHON_BIN, process.env.PYTHON_EXECUTABLE, "python3.11", "python3.10", "python3", "python"].filter(Boolean) as string[];
-      const pythonBin = pythonCandidates.find((bin) => {
-        const result = spawnSync(bin, ["-V"], { stdio: "ignore" });
-        return !result.error;
-      });
+      const pythonBin = resolvePythonBin({ cwd: process.cwd(), extraRoots: [bridgePath] });
       if (!pythonBin) {
         return { success: false, message: "未找到可用的Python可执行文件，请安装python3或设置PYTHON环境变量" };
       }
@@ -679,4 +652,3 @@ export class DiscordMetadataBridgeManager extends EventEmitter {
 }
 
 export const discordMetadataBridgeManager = new DiscordMetadataBridgeManager();
-
