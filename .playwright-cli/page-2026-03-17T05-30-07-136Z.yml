@@ -1,0 +1,402 @@
+- generic [ref=e1]:
+  - generic [ref=e14]:
+    - banner [ref=e15]:
+      - generic [ref=e16]:
+        - heading "转发狗" [level=1] [ref=e17]
+        - paragraph [ref=e18]: 可视化配置生成器 · 轻松管理转发规则
+      - generic [ref=e19]:
+        - button "🔐 修改账密" [ref=e20] [cursor=pointer]:
+          - generic [ref=e21]: 🔐
+          - text: 修改账密
+        - button "🚪 退出登录" [ref=e22] [cursor=pointer]:
+          - generic [ref=e23]: 🚪
+          - text: 退出登录
+        - generic [ref=e24]: 本地自动保存中
+    - generic [ref=e29]:
+      - generic [ref=e31]:
+        - generic [ref=e32]:
+          - button "铲屎官 异常 Discord → Discord" [ref=e346] [cursor=pointer]:
+            - generic [ref=e347]:
+              - generic [ref=e348]: 铲屎官
+              - generic [ref=e349]: 异常
+            - generic [ref=e350]: Discord → Discord
+          - button "DC葡萄 异常 Discord → Discord" [ref=e351] [cursor=pointer]:
+            - generic [ref=e352]:
+              - generic [ref=e353]: DC葡萄
+              - generic [ref=e354]: 异常
+            - generic [ref=e355]: Discord → Discord
+          - button "DC多巴柚 异常 Discord → Discord" [ref=e356] [cursor=pointer]:
+            - generic [ref=e357]:
+              - generic [ref=e358]: DC多巴柚
+              - generic [ref=e359]: 异常
+            - generic [ref=e360]: Discord → Discord
+          - button "TG-DC 已启动 Telegram → Discord" [ref=e361] [cursor=pointer]:
+            - generic [ref=e362]:
+              - generic [ref=e363]: TG-DC
+              - generic [ref=e364]: 已启动
+            - generic [ref=e365]: Telegram → Discord
+          - button "DC转TG 已启动 Discord → Telegram" [ref=e366] [cursor=pointer]:
+            - generic [ref=e367]:
+              - generic [ref=e368]: DC转TG
+              - generic [ref=e369]: 已启动
+            - generic [ref=e370]: Discord → Telegram
+          - button "DC-飞书 异常 Discord → 飞书" [ref=e371] [cursor=pointer]:
+            - generic [ref=e372]:
+              - generic [ref=e373]: DC-飞书
+              - generic [ref=e374]: 异常
+            - generic [ref=e375]: Discord → 飞书
+          - button "柚子TG-DC 已启动 Telegram → Discord" [ref=e376] [cursor=pointer]:
+            - generic [ref=e377]:
+              - generic [ref=e378]: 柚子TG-DC
+              - generic [ref=e379]: 已启动
+            - generic [ref=e380]: Telegram → Discord
+          - button "+ 添加转发实例 创建新的转发账号" [ref=e381] [cursor=pointer]:
+            - generic [ref=e382]: + 添加转发实例
+            - generic [ref=e383]: 创建新的转发账号
+        - generic [ref=e71]:
+          - button "🗂️ 账号库" [active] [ref=e72] [cursor=pointer]:
+            - generic [ref=e73]: 🗂️
+            - text: 账号库
+          - button "📖 新手教程" [ref=e74] [cursor=pointer]:
+            - generic [ref=e75]: 📖
+            - text: 新手教程
+          - button "⬇️ 导出配置" [ref=e76] [cursor=pointer]:
+            - generic [ref=e77]: ⬇️
+            - text: 导出配置
+          - button "⬆️ 导入配置" [ref=e78] [cursor=pointer]:
+            - generic [ref=e79]: ⬆️
+            - text: 导入配置
+          - button "删除当前实例" [ref=e80] [cursor=pointer]
+      - generic [ref=e81]:
+        - generic [ref=e385]:
+          - generic [ref=e386]:
+            - generic [ref=e387]:
+              - heading "TG-DC" [level=2] [ref=e388]
+              - generic [ref=e389]: 运行中
+            - generic [ref=e604]:
+              - generic [ref=e605]: TG监听:@suoluosi668 [葡萄] [Client]
+              - generic [ref=e606]: 已启动
+          - generic [ref=e394]:
+            - button "启动实例" [disabled] [ref=e395]
+            - button "停止实例" [ref=e396] [cursor=pointer]
+        - generic [ref=e397]:
+          - generic [ref=e398]:
+            - heading "基础设置" [level=2] [ref=e399]
+            - paragraph [ref=e400]: 配置转发实例的基本信息和认证凭据
+          - generic [ref=e401]:
+            - generic [ref=e402]:
+              - generic [ref=e403]:
+                - generic [ref=e404]: 实例名称
+                - textbox [ref=e405]: TG-DC
+              - generic [ref=e406]:
+                - generic [ref=e407]: 转发类型
+                - combobox [ref=e408]:
+                  - option "Discord → Discord"
+                  - option "Discord → Telegram"
+                  - option "Telegram → Discord" [selected]
+                  - option "Telegram → Telegram"
+                  - option "Discord → 飞书"
+                  - option "Discord → 钉钉"
+                  - option "X → Discord"
+                  - option "TruthSocial → Discord"
+            - generic [ref=e409]:
+              - heading "账号选择" [level=3] [ref=e410]
+              - generic [ref=e412]:
+                - generic [ref=e413]: Telegram 监听账号
+                - combobox [ref=e414]:
+                  - option "请选择账号"
+                  - option "@suoluosi668 [葡萄] [Client]" [selected]
+                  - option "@duobayou [柚子] [Client]"
+            - generic [ref=e415]:
+              - checkbox [checked] [ref=e416]
+              - generic [ref=e417]: 使用源用户的昵称和头像进行转发
+            - generic [ref=e418]:
+              - checkbox [ref=e419]
+              - generic [ref=e420]: 启用自动翻译
+        - generic [ref=e421]:
+          - generic [ref=e422]:
+            - heading "忽略选项" [level=2] [ref=e423]
+            - paragraph [ref=e424]: 选择您想要忽略的项目
+          - generic [ref=e425]:
+            - generic [ref=e426]:
+              - generic [ref=e427]:
+                - checkbox "忽略自己的消息" [ref=e428]
+                - text: 忽略自己的消息
+              - generic [ref=e429]:
+                - checkbox "忽略机器人消息" [ref=e430]
+                - text: 忽略机器人消息
+              - generic [ref=e431]:
+                - checkbox "忽略图片" [ref=e432]
+                - text: 忽略图片
+              - generic [ref=e433]:
+                - checkbox "忽略音频" [ref=e434]
+                - text: 忽略音频
+              - generic [ref=e435]:
+                - checkbox "忽略视频" [ref=e436]
+                - text: 忽略视频
+              - generic [ref=e437]:
+                - checkbox "忽略文档" [ref=e438]
+                - text: 忽略文档
+              - generic [ref=e439]:
+                - checkbox "剔除英文" [ref=e440]
+                - text: 剔除英文
+              - generic [ref=e441]:
+                - checkbox "剔除中文" [ref=e442]
+                - text: 剔除中文
+              - generic [ref=e443]:
+                - checkbox "连续重复去重" [ref=e444]
+                - text: 连续重复去重
+              - generic [ref=e445]:
+                - generic [ref=e446]:
+                  - checkbox "忽略英文" [ref=e447]
+                  - text: 忽略英文
+                - spinbutton [ref=e448]: "100"
+                - generic [ref=e449]: "%"
+              - generic [ref=e450]:
+                - generic [ref=e451]:
+                  - checkbox "忽略中文" [ref=e452]
+                  - text: 忽略中文
+                - spinbutton [ref=e453]: "100"
+                - generic [ref=e454]: "%"
+            - paragraph [ref=e455]: 提示：仅对文本生效；忽略会直接跳过整条消息，剔除会删除对应语言字符。
+        - generic [ref=e456]:
+          - generic [ref=e459]:
+            - heading "Telegram → Discord 转发规则" [level=2] [ref=e460]
+            - paragraph [ref=e461]: 配置Telegram消息转发到Discord频道的映射关系
+          - generic [ref=e462]:
+            - generic [ref=e463]:
+              - generic [ref=e464]: 转发样式：
+              - combobox [ref=e465]:
+                - option "样式1：内嵌" [selected]
+                - option "样式2：文本+时间"
+                - option "样式3：文本+时间（隐藏回复对象）"
+            - generic [ref=e466]:
+              - generic [ref=e467]:
+                - generic [ref=e469]: Telegram → Discord 转发规则
+                - button "+ 添加规则" [ref=e470] [cursor=pointer]
+              - generic [ref=e472]:
+                - generic [ref=e473]:
+                  - button "列表" [ref=e474] [cursor=pointer]
+                  - button "ID" [ref=e475] [cursor=pointer]
+                - combobox [ref=e476]:
+                  - option "选择对话"
+                  - option "👥 汇盈合约带单社区"
+                  - option "未知对话 (-5109488350)" [selected]
+                - generic [ref=e477]: →
+                - combobox [ref=e478]:
+                  - option "Webhook" [selected]
+                  - option "账号发送"
+                - textbox "Discord Webhook URL" [ref=e479]: https://discord.com/api/webhooks/1464926491396669481/e8x_1KLBDIWTBjBJN8DAQvZCl7YdIxuFf8b6pquz8eN46NjEzHG_tWbn4HsP8d-hf9WL
+                - textbox "备注" [ref=e480]: 电报-DC-飞书
+                - combobox [disabled] [ref=e481]:
+                  - option "关闭翻译" [selected]
+                  - option "自动检测"
+                  - option "中 → 英"
+                  - option "英 → 中"
+                - button "⚙️" [ref=e482] [cursor=pointer]
+                - button "删除" [ref=e483] [cursor=pointer]
+              - generic [ref=e485]:
+                - generic [ref=e486]:
+                  - button "列表" [ref=e487] [cursor=pointer]
+                  - button "ID" [ref=e488] [cursor=pointer]
+                - combobox [ref=e489]:
+                  - option "选择对话"
+                  - option "👥 汇盈合约带单社区" [selected]
+                - generic [ref=e490]: →
+                - combobox [ref=e491]:
+                  - option "Webhook" [selected]
+                  - option "账号发送"
+                - textbox "Discord Webhook URL" [ref=e492]: https://discord.com/api/webhooks/1464918808606277795/-CovEu5CFNscWgVd_OJqqjNdlhg33gljKudQVfBDaZcH_hjnNndnPKDVFtu7wIuRIYHo
+                - textbox "备注" [ref=e493]: 汇赢社区
+                - combobox [disabled] [ref=e494]:
+                  - option "关闭翻译" [selected]
+                  - option "自动检测"
+                  - option "中 → 英"
+                  - option "英 → 中"
+                - button "⚙️" [ref=e495] [cursor=pointer]
+                - button "删除" [ref=e496] [cursor=pointer]
+        - generic [ref=e497]:
+          - generic [ref=e498]:
+            - heading "关键词设置" [level=2] [ref=e499]
+            - paragraph [ref=e500]: 控制关键词匹配的全局规则
+          - generic [ref=e502]:
+            - checkbox "关键词不区分大小写（全局/规则/OCR）" [checked] [ref=e503]
+            - text: 关键词不区分大小写（全局/规则/OCR）
+        - generic [ref=e504]:
+          - heading "用户过滤（全局）" [level=2] [ref=e506]
+          - generic [ref=e508]:
+            - generic [ref=e509]:
+              - generic [ref=e510]: 用户白名单（只转发这些用户的消息）
+              - textbox "输入用户ID后回车..." [ref=e512]
+              - paragraph [ref=e513]: 留空表示不限制
+            - generic [ref=e514]:
+              - generic [ref=e515]: 用户黑名单（不转发这些用户的消息）
+              - textbox "输入用户ID后回车..." [ref=e517]
+              - paragraph [ref=e518]: 黑名单优先级高于白名单
+            - generic [ref=e519]:
+              - generic [ref=e520]: 身份组白名单（只转发这些身份组成员）
+              - textbox "输入身份组ID后回车..." [ref=e522]
+              - paragraph [ref=e523]: 用于 Discord 身份组过滤
+            - generic [ref=e524]:
+              - generic [ref=e525]: 身份组黑名单（不转发这些身份组成员）
+              - textbox "输入身份组ID后回车..." [ref=e527]
+              - paragraph [ref=e528]: 黑名单优先级高于白名单
+        - generic [ref=e529]:
+          - heading "关键词触发（至少命中一个才转发）" [level=2] [ref=e531]
+          - generic [ref=e532]:
+            - generic [ref=e533]:
+              - generic [ref=e534]: 文字关键词
+              - textbox "输入关键词后回车；逗号或 & 表示同时包含" [ref=e536]
+            - generic [ref=e537]:
+              - generic [ref=e538]: OCR 触发关键词（图片文字命中才转发）
+              - textbox "输入关键词后回车；逗号或 & 表示同时包含" [ref=e540]
+        - generic [ref=e541]:
+          - heading "屏蔽关键词（命中则不转发）" [level=2] [ref=e543]
+          - generic [ref=e544]:
+            - textbox "输入屏蔽词后回车；逗号或 & 表示同时包含（如：关键词A&关键词B）" [ref=e546]
+            - generic [ref=e548]:
+              - generic [ref=e549]: OCR 屏蔽关键词（检测到这些词的图片不会转发）
+              - textbox "输入屏蔽词后回车；逗号或 & 表示同时包含（如：关键词A&关键词B）" [ref=e551]
+        - generic [ref=e552]:
+          - heading "关键词替换" [level=2] [ref=e554]
+          - button "+ 添加替换规则" [ref=e556] [cursor=pointer]
+        - generic [ref=e557]:
+          - generic [ref=e558]:
+            - heading "定时内容库" [level=2] [ref=e559]
+            - paragraph [ref=e560]: 可创建文字/图片/视频内容，用于定时发送
+          - generic [ref=e561]:
+            - generic [ref=e562]:
+              - paragraph [ref=e563]: 内容可单独启用/禁用，支持本地文件或 URL
+              - button "+ 添加内容" [ref=e564] [cursor=pointer]
+            - table [ref=e566]:
+              - rowgroup [ref=e567]:
+                - row "名称 类型 内容摘要 发送间隔 操作" [ref=e568]:
+                  - columnheader "名称" [ref=e569]
+                  - columnheader "类型" [ref=e570]
+                  - columnheader "内容摘要" [ref=e571]
+                  - columnheader "发送间隔" [ref=e572]
+                  - columnheader "操作" [ref=e573]
+              - rowgroup [ref=e574]:
+                - row "暂无定时内容，请点击\"添加内容\"" [ref=e575]:
+                  - cell "暂无定时内容，请点击\"添加内容\"" [ref=e576]
+        - generic [ref=e577]:
+          - generic [ref=e578]:
+            - heading "水印设置" [level=2] [ref=e579]
+            - paragraph [ref=e580]: 仅对图片生效，可添加多个水印（每个水印可独立设置文字或图片）
+          - generic [ref=e581]:
+            - generic [ref=e582]:
+              - generic [ref=e583]:
+                - paragraph [ref=e584]: 支持平铺或单个水印，顺序按列表叠加
+                - generic [ref=e585]:
+                  - checkbox "启用水印" [checked] [ref=e586]
+                  - text: 启用水印
+              - button "+ 添加水印" [ref=e587] [cursor=pointer]
+            - paragraph [ref=e588]: 关闭后仅停用水印，配置会保留。
+            - generic [ref=e590]: 暂无水印，请点击“添加水印”
+            - generic [ref=e591]:
+              - generic [ref=e592]: 水印预览
+              - generic [ref=e593]:
+                - generic [ref=e594]:
+                  - generic [ref=e595]: 预览宽度
+                  - slider [ref=e596]: "180"
+                  - spinbutton [ref=e597]: "180"
+                - generic [ref=e598]:
+                  - generic [ref=e599]: 预览高度
+                  - slider [ref=e600]: "180"
+                  - spinbutton [ref=e601]: "180"
+              - generic [ref=e603]: 未启用水印
+    - contentinfo [ref=e26]:
+      - paragraph [ref=e27]: 转发狗管理
+      - paragraph [ref=e28]: "技术支持：Discord: zrnown | Telegram: @momoShuangXiangBot"
+  - generic [ref=e608]:
+    - generic [ref=e609]:
+      - heading "账号库" [level=2] [ref=e610]
+      - button [ref=e611] [cursor=pointer]:
+        - img [ref=e612]
+    - generic [ref=e614]:
+      - generic [ref=e615]:
+        - generic [ref=e616]: 筛选：
+        - combobox [ref=e617]:
+          - option "全部" [selected]
+          - option "Discord"
+          - option "Telegram"
+          - option "TruthSocial"
+        - button "+ 新建账号" [ref=e618] [cursor=pointer]
+      - generic [ref=e619]:
+        - button "▶ 启动选中" [ref=e620] [cursor=pointer]
+        - button "🔄 一键同步" [ref=e621] [cursor=pointer]
+        - generic [ref=e622]: 已选 0 个账号
+        - button "删除选中" [ref=e623] [cursor=pointer]
+        - button "清空选择" [ref=e624] [cursor=pointer]
+    - table [ref=e626]:
+      - rowgroup [ref=e627]:
+        - row "类型 备注 用户名 状态 同步数据 操作" [ref=e628]:
+          - columnheader [ref=e629]:
+            - checkbox [ref=e630]
+          - columnheader "类型" [ref=e631]
+          - columnheader "备注" [ref=e632]
+          - columnheader "用户名" [ref=e633]
+          - columnheader "状态" [ref=e634]
+          - columnheader "同步数据" [ref=e635]
+          - columnheader "操作" [ref=e636]
+      - rowgroup [ref=e637]:
+        - 'row "Discord yiluxiangbei6 连接中 正在登录 服务器 7 / 频道 643 上次: 2026/3/17 13:17:17 同步 连接 断开 编辑 删除" [ref=e638]':
+          - cell [ref=e639]:
+            - checkbox [ref=e640]
+          - cell "Discord" [ref=e641]
+          - cell [ref=e642]
+          - cell "yiluxiangbei6" [ref=e643]
+          - cell "连接中 正在登录" [ref=e644]:
+            - generic [ref=e645]:
+              - generic [ref=e646]: 连接中
+              - generic [ref=e647]: 正在登录
+          - 'cell "服务器 7 / 频道 643 上次: 2026/3/17 13:17:17" [ref=e648]':
+            - 'button "服务器 7 / 频道 643 上次: 2026/3/17 13:17:17" [ref=e649] [cursor=pointer]':
+              - generic [ref=e650]: 服务器 7 / 频道 643
+              - generic [ref=e651]: "上次: 2026/3/17 13:17:17"
+          - cell "同步 连接 断开 编辑 删除" [ref=e652]:
+            - button "同步" [ref=e653] [cursor=pointer]
+            - button "连接" [disabled] [ref=e654]
+            - button "断开" [ref=e655] [cursor=pointer]
+            - button "编辑" [ref=e656] [cursor=pointer]
+            - button "删除" [ref=e657] [cursor=pointer]
+        - 'row "Telegram 葡萄 @suoluosi668 已启动 已连接: @suoluosi668 对话 19 上次: 2026/3/12 17:49:10 同步 连接 断开 编辑 删除" [ref=e658]':
+          - cell [ref=e659]:
+            - checkbox [ref=e660]
+          - cell "Telegram" [ref=e661]
+          - cell "葡萄" [ref=e662]
+          - cell "@suoluosi668" [ref=e663]
+          - 'cell "已启动 已连接: @suoluosi668" [ref=e664]':
+            - generic [ref=e665]:
+              - generic [ref=e666]: 已启动
+              - generic [ref=e667]: "已连接: @suoluosi668"
+          - 'cell "对话 19 上次: 2026/3/12 17:49:10" [ref=e668]':
+            - 'button "对话 19 上次: 2026/3/12 17:49:10" [ref=e669] [cursor=pointer]':
+              - generic [ref=e670]: 对话 19
+              - generic [ref=e671]: "上次: 2026/3/12 17:49:10"
+          - cell "同步 连接 断开 编辑 删除" [ref=e672]:
+            - button "同步" [ref=e673] [cursor=pointer]
+            - button "连接" [disabled] [ref=e674]
+            - button "断开" [ref=e675] [cursor=pointer]
+            - button "编辑" [ref=e676] [cursor=pointer]
+            - button "删除" [ref=e677] [cursor=pointer]
+        - 'row "Telegram 柚子 @duobayou 已启动 已连接: @duobayou 对话 334 上次: 2026/3/12 17:49:10 同步 连接 断开 编辑 删除" [ref=e678]':
+          - cell [ref=e679]:
+            - checkbox [ref=e680]
+          - cell "Telegram" [ref=e681]
+          - cell "柚子" [ref=e682]
+          - cell "@duobayou" [ref=e683]
+          - 'cell "已启动 已连接: @duobayou" [ref=e684]':
+            - generic [ref=e685]:
+              - generic [ref=e686]: 已启动
+              - generic [ref=e687]: "已连接: @duobayou"
+          - 'cell "对话 334 上次: 2026/3/12 17:49:10" [ref=e688]':
+            - 'button "对话 334 上次: 2026/3/12 17:49:10" [ref=e689] [cursor=pointer]':
+              - generic [ref=e690]: 对话 334
+              - generic [ref=e691]: "上次: 2026/3/12 17:49:10"
+          - cell "同步 连接 断开 编辑 删除" [ref=e692]:
+            - button "同步" [ref=e693] [cursor=pointer]
+            - button "连接" [disabled] [ref=e694]
+            - button "断开" [ref=e695] [cursor=pointer]
+            - button "编辑" [ref=e696] [cursor=pointer]
+            - button "删除" [ref=e697] [cursor=pointer]

@@ -7,10 +7,11 @@
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
-const fs = require('fs');
+const { resolveBackendRuntimeConfig } = require('./backendRuntimeConfig');
 
 const processes = [];
 let isShuttingDown = false;
+const runtimeConfig = resolveBackendRuntimeConfig(process.env);
 
 // 颜色输出
 const colors = {
@@ -35,13 +36,17 @@ function gracefulShutdown(signal) {
 
   log('SHUTDOWN', `收到 ${signal} 信号，正在关闭所有服务...`, colors.yellow);
 
-  // 清理可能残留的 Python 进程
-  try {
-    log('SHUTDOWN', '正在清理 Python 僵尸进程...', colors.yellow);
-    execSync('pkill -f "python.*telegram_bridge" || true');
-    execSync('pkill -f "python.*discord_bridge" || true');
-  } catch (e) {
-    // 忽略错误
+  if (runtimeConfig.enableGlobalPythonCleanup) {
+    // 清理可能残留的 Python 进程
+    try {
+      log('SHUTDOWN', '正在清理 Python 僵尸进程...', colors.yellow);
+      execSync('pkill -f "python.*telegram_bridge" || true');
+      execSync('pkill -f "python.*discord_bridge" || true');
+    } catch (e) {
+      // 忽略错误
+    }
+  } else {
+    log('SHUTDOWN', '已跳过全局 Python 进程清理（BACKEND_GLOBAL_PYTHON_CLEANUP=false）', colors.yellow);
   }
 
   processes.forEach((proc, index) => {
@@ -86,6 +91,7 @@ function killProcessOnPort(port) {
 // 主启动函数
 async function startBackend() {
   log('STARTUP', '开始启动后端服务...', colors.bright + colors.cyan);
+  log('STARTUP', `运行配置：OCR端口=${runtimeConfig.ocrPort}，全局Python清理=${runtimeConfig.enableGlobalPythonCleanup ? '开启' : '关闭'}`, colors.cyan);
 
   // 步骤 1: 编译 Bot
   log('BUILD', '正在编译 Bot...', colors.blue);
@@ -100,12 +106,13 @@ async function startBackend() {
   // 步骤 2: 启动 OCR 服务器
   log('OCR', '正在启动 OCR 服务器...', colors.blue);
 
-  // 清理端口 9003
-  killProcessOnPort(9003);
+  // 清理 OCR 监听端口
+  killProcessOnPort(runtimeConfig.ocrPort);
 
   const ocrServer = spawn('node', ['paddle_ocr_server.js'], {
     cwd: path.resolve(__dirname, '..'),
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, BACKEND_OCR_PORT: String(runtimeConfig.ocrPort) },
   });
 
   processes.push(ocrServer);

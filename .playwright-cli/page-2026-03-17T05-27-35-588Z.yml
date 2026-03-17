@@ -1,0 +1,11 @@
+- generic [ref=e3]:
+  - heading "转发狗" [level=1] [ref=e4]
+  - paragraph [ref=e5]: 可视化配置生成器 · 轻松管理转发规则
+  - generic [ref=e6]:
+    - generic [ref=e7]:
+      - generic [ref=e8]: 用户名
+      - textbox "请输入用户名" [ref=e9]
+    - generic [ref=e10]:
+      - generic [ref=e11]: 密码
+      - textbox "请输入密码" [ref=e12]
+    - button "登录" [ref=e13] [cursor=pointer]

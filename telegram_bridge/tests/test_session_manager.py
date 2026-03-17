@@ -11,6 +11,15 @@ from pathlib import Path
 from telegram_bridge.session import SessionManager
 
 
+def test_default_session_dir_uses_env_override(monkeypatch, tmp_path):
+    """默认Session目录应允许通过环境变量覆写"""
+    monkeypatch.setenv("TELEGRAM_SESSIONS_DIR", str(tmp_path))
+
+    session_mgr = SessionManager()
+
+    assert session_mgr.sessions_dir == tmp_path
+
+
 @pytest.mark.asyncio
 class TestSessionManager:
     """Session管理器测试"""

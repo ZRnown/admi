@@ -45,3 +45,18 @@ test("extractWaveSpeedBalanceSummary falls back when no credit field exists", ()
     planName: undefined,
   });
 });
+
+test("extractWaveSpeedBalanceSummary reads official balance payload shape", () => {
+  const summary = extractWaveSpeedBalanceSummary({
+    code: 200,
+    message: "Success",
+    data: {
+      balance: 395.5,
+    },
+  });
+
+  assert.deepEqual(summary, {
+    remainingCredits: 395.5,
+    planName: undefined,
+  });
+});

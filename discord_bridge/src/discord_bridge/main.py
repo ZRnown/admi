@@ -34,10 +34,19 @@ class DiscordAccountSession:
         self.task: Optional[asyncio.Task] = None
         self.ready_event: asyncio.Event = asyncio.Event()
         self.user_payload: Optional[Dict[str, Any]] = None
+        self.last_status: Optional[Dict[str, Any]] = None
         self.login_timeout_seconds = int(os.getenv("DISCORD_LOGIN_TIMEOUT_SECONDS", "120"))
         # 共享此客户端的所有账号 ID 及其监听频道
         self.shared_accounts: Dict[str, Set[int]] = {account_id: set()}
         self._build_client()
+
+    def _remember_status(self, state: str, *, user: Optional[Dict[str, Any]] = None, error: Optional[str] = None) -> None:
+        payload: Dict[str, Any] = {"state": state}
+        if user is not None:
+            payload["user"] = user
+        if error:
+            payload["error"] = error
+        self.last_status = payload
 
     def _asset_to_string(self, value: Any) -> Optional[str]:
         if value is None:
@@ -174,6 +183,7 @@ class DiscordAccountSession:
                     "tag": getattr(user, "name", None) or getattr(user, "username", None),
                 }
                 self.user_payload = payload
+            self._remember_status("online", user=payload)
             # 为所有共享此客户端的账号发送状态通知
             for acc_id in self.shared_accounts.keys():
                 await self.ipc.send_notification(
@@ -203,6 +213,7 @@ class DiscordAccountSession:
 
         @self.client.event
         async def on_disconnect():
+            self._remember_status("disconnected")
             # 为所有共享此客户端的账号发送断开通知
             for acc_id in self.shared_accounts.keys():
                 await self.ipc.send_notification(
@@ -213,6 +224,7 @@ class DiscordAccountSession:
 
         @self.client.event
         async def on_resumed():
+            self._remember_status("online", user=self.user_payload)
             # 为所有共享此客户端的账号发送恢复通知
             for acc_id in self.shared_accounts.keys():
                 await self.ipc.send_notification(
@@ -325,6 +337,7 @@ class DiscordAccountSession:
 
         for attempt in range(max_retries):
             try:
+                self._remember_status("connecting")
                 # 为所有共享账号发送连接中状态
                 for acc_id in self.shared_accounts.keys():
                     await self.ipc.send_notification(
@@ -412,6 +425,7 @@ class DiscordAccountSession:
                     continue
 
                 # 不可重试或已达最大重试次数，发送错误状态
+                self._remember_status("error", error=error_str)
                 for acc_id in self.shared_accounts.keys():
                     await self.ipc.send_notification(
                         "discord_status",
@@ -426,6 +440,7 @@ class DiscordAccountSession:
 
         # 所有重试都失败
         if last_error:
+            self._remember_status("error", error=str(last_error))
             for acc_id in self.shared_accounts.keys():
                 await self.ipc.send_notification(
                     "discord_status",
@@ -466,8 +481,13 @@ class DiscordAccountSession:
         self.shared_accounts[account_id] = channel_set
         self._update_total_listen_channels()
         logger.info(f"Added shared account {account_id} to session {self.account_id}")
-        # 如果客户端已连接，为新加入的账号发送当前状态
-        if self.ready_event.is_set():
+        # 补发会话最近一次已知状态，避免共享账号卡在 connecting
+        if self.last_status:
+            payload = {"accountId": account_id, **self.last_status}
+            await self.ipc.send_notification("discord_status", payload)
+            if self.last_status.get("state") == "online" and self.ready_event.is_set():
+                await self.emit_cache_snapshot([account_id])
+        elif self.ready_event.is_set():
             await self.ipc.send_notification(
                 "discord_status",
                 {

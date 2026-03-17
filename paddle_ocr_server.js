@@ -10,8 +10,9 @@ const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { resolveBackendRuntimeConfig } = require('./scripts/backendRuntimeConfig');
 
-const PORT = 9003;
+const PORT = resolveBackendRuntimeConfig(process.env).ocrPort;
 
 /**
  * 调用 Python RapidOCR

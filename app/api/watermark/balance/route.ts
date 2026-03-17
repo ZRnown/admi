@@ -6,7 +6,7 @@ import { extractWaveSpeedBalanceSummary } from "@/src/wavespeedAccount";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const WAVESPEED_ACCOUNT_ENDPOINT = "https://api.wavespeed.ai/api/v3/account/me";
+const WAVESPEED_BALANCE_ENDPOINT = "https://api.wavespeed.ai/api/v3/balance";
 
 function getErrorMessage(payload: unknown): string | undefined {
   if (!payload || typeof payload !== "object") {
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "未配置 WaveSpeed API Key" }, { status: 400 });
     }
 
-    const upstream = await fetch(WAVESPEED_ACCOUNT_ENDPOINT, {
+    const upstream = await fetch(WAVESPEED_BALANCE_ENDPOINT, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${apiKey}`,

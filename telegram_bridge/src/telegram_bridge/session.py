@@ -18,8 +18,9 @@ import aiofiles
 class SessionManager:
     """Session管理器"""
 
-    def __init__(self, sessions_dir: str = "~/.telegram-sessions"):
-        self.sessions_dir = Path(sessions_dir).expanduser()
+    def __init__(self, sessions_dir: Optional[str] = None):
+        resolved_dir = sessions_dir or os.getenv("TELEGRAM_SESSIONS_DIR") or "~/.telegram-sessions"
+        self.sessions_dir = Path(resolved_dir).expanduser()
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self._cipher = None
 

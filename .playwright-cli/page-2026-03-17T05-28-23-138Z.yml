@@ -1,0 +1,16 @@
+- generic [ref=e14]:
+  - banner [ref=e15]:
+    - generic [ref=e16]:
+      - heading "转发狗" [level=1] [ref=e17]
+      - paragraph [ref=e18]: 可视化配置生成器 · 轻松管理转发规则
+    - generic [ref=e19]:
+      - button "🔐 修改账密" [ref=e20] [cursor=pointer]:
+        - generic [ref=e21]: 🔐
+        - text: 修改账密
+      - button "🚪 退出登录" [ref=e22] [cursor=pointer]:
+        - generic [ref=e23]: 🚪
+        - text: 退出登录
+      - generic [ref=e24]: 本地自动保存中
+  - contentinfo [ref=e26]:
+    - paragraph [ref=e27]: 转发狗管理
+    - paragraph [ref=e28]: "技术支持：Discord: zrnown | Telegram: @momoShuangXiangBot"

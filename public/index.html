@@ -7,6 +7,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Driver.js 新手教程 -->
   <script src="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"></script>
+  <script src="/js/http-response.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.css"/>
   <!-- 自定义样式 -->
   <link rel="stylesheet" href="/css/styles.css"/>
@@ -1332,7 +1333,8 @@
       return parts.filter(Boolean).join('<span class="text-slate-300"> / </span>');
     }
 
-    function buildAccountCardSummary(acc) {
+    function buildAccountCardSummary(acc, options = {}) {
+      const includeDetail = options.includeDetail !== false;
       const type = acc.forwardingType || 'discord-to-discord';
       if (type === 'x-to-discord' || type === 'truthsocial-to-discord') {
         const kind = type === 'x-to-discord' ? 'x' : 'truthsocial';
@@ -1352,7 +1354,7 @@
           badgeLabel: summary.badgeLabel,
           message,
           sub,
-          detailHtml: buildAccountDetailHtml(acc, type, summary)
+          detailHtml: includeDetail ? buildAccountDetailHtml(acc, type, summary) : ''
         };
       }
       if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
@@ -1374,7 +1376,7 @@
             badgeLabel: getStatusLabel(state),
             message,
             sub: subLabel,
-            detailHtml: buildAccountDetailHtml(acc, type)
+            detailHtml: includeDetail ? buildAccountDetailHtml(acc, type) : ''
           };
         }
         if (type === 'telegram-to-discord') {
@@ -1383,7 +1385,7 @@
             badgeLabel: getStatusLabel(state),
             message: acc.telegramClientMessage || '',
             sub: 'Telegram Client',
-            detailHtml: buildAccountDetailHtml(acc, type)
+            detailHtml: includeDetail ? buildAccountDetailHtml(acc, type) : ''
           };
         }
         const botState = acc.telegramBotState || 'idle';
@@ -1395,7 +1397,7 @@
           badgeLabel: getStatusLabel(state),
           message,
           sub: subLabel,
-          detailHtml: buildAccountDetailHtml(acc, type)
+          detailHtml: includeDetail ? buildAccountDetailHtml(acc, type) : ''
         };
       }
       const state = getInstanceState(acc);
@@ -1404,7 +1406,7 @@
         badgeLabel: getStatusLabel(state),
         message: acc.loginMessage || '',
         sub: '',
-        detailHtml: buildAccountDetailHtml(acc, type)
+        detailHtml: includeDetail ? buildAccountDetailHtml(acc, type) : ''
       };
     }
 
@@ -1536,6 +1538,9 @@
       }
     })();
     let saveTimer = null;
+    let saveIdleHandle = null;
+    let saveSequence = 0;
+    let lastPersistedStateJson = '';
     let isLoggedIn = false;
     let pagination = { discordPage: 1, feishuPage: 1, botRelayPage: 1, pageSize: 10 };
     let currentForwardingType = 'discord-to-discord'; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'telegram-to-telegram'
@@ -1543,6 +1548,11 @@
     let lastFormInteractionAt = 0;
     let isSaving = false;
     let suspendAutoSave = false;
+    const STATUS_POLL_VISIBLE_MS = 2000;
+    const STATUS_POLL_HIDDEN_MS = 10000;
+    let statusPollTimer = null;
+    let statusPollInFlight = false;
+    let statusPollVisibilityBound = false;
     const disconnectHold = new Map();
     const watermarkBalanceCache = new Map();
     const watermarkBalanceInflight = new Map();
@@ -1872,6 +1882,8 @@
           });
           if (cleaned) {
             saveConfig();
+          } else {
+            lastPersistedStateJson = JSON.stringify(buildPersistedState());
           }
         } else {
           console.warn('配置数据格式不正确:', data);
@@ -1886,11 +1898,8 @@
       if (suspendAutoSave) return;
       isSaving = true;
       try {
-        const res = await fetch('/api/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(state)
-        });
+        cancelPendingSaveWork();
+        const res = await persistStatePayload();
         if (res.status === 401) {
           handleUnauthorized();
           return;
@@ -1912,20 +1921,144 @@
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
         if (suspendAutoSave) return;
+        scheduleDeferredSave();
+      }, 800);
+    }
+
+    function scheduleIdleTask(callback, timeout = 1200) {
+      if (typeof window.requestIdleCallback === 'function') {
+        return window.requestIdleCallback(() => callback(), { timeout });
+      }
+      return window.setTimeout(callback, 16);
+    }
+
+    function cancelIdleTask(handle) {
+      if (!handle) return;
+      if (typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(handle);
+        return;
+      }
+      clearTimeout(handle);
+    }
+
+    function cancelPendingSaveWork() {
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      if (saveIdleHandle) {
+        cancelIdleTask(saveIdleHandle);
+        saveIdleHandle = null;
+      }
+    }
+
+    function buildPersistedBotRelay(relay) {
+      if (!relay || typeof relay !== 'object') return relay;
+      const { loginState, loginMessage, ...persisted } = relay;
+      return persisted;
+    }
+
+    function buildPersistedTelegramAccount(account) {
+      if (!account || typeof account !== 'object') return account;
+      const { loginState, loginMessage, userInfo, syncedUser, lastSyncTime, dialogsCount, ...persisted } = account;
+      return persisted;
+    }
+
+    function buildPersistedDiscordLibraryAccount(account) {
+      if (!account || typeof account !== 'object') return account;
+      const { loginState, loginMessage, syncedUser, lastSyncTime, guildsCount, channelsCount, ...persisted } = account;
+      return persisted;
+    }
+
+    function buildPersistedAccount(account) {
+      if (!account || typeof account !== 'object') return account;
+      const {
+        loginState,
+        loginMessage,
+        telegramBotState,
+        telegramBotMessage,
+        telegramClientState,
+        telegramClientMessage,
+        telegramAccountStates,
+        externalForwardStatus,
+        ...persisted
+      } = account;
+
+      if (Array.isArray(persisted.botRelays)) {
+        persisted.botRelays = persisted.botRelays.map(buildPersistedBotRelay);
+      }
+      if (persisted.telegramConfig && typeof persisted.telegramConfig === 'object') {
+        persisted.telegramConfig = { ...persisted.telegramConfig };
+        if (Array.isArray(persisted.telegramConfig.accounts)) {
+          persisted.telegramConfig.accounts = persisted.telegramConfig.accounts.map(buildPersistedTelegramAccount);
+        }
+      }
+      return persisted;
+    }
+
+    function buildPersistedState() {
+      return {
+        accounts: Array.isArray(state.accounts) ? state.accounts.map(buildPersistedAccount) : [],
+        activeId: state.activeId,
+        loginUser: state.loginUser,
+        loginPassword: state.loginPassword,
+        telegramAvatarBaseUrl: state.telegramAvatarBaseUrl,
+        enabledForwardingTypes: Array.isArray(state.enabledForwardingTypes)
+          ? state.enabledForwardingTypes.slice()
+          : state.enabledForwardingTypes,
+        discordAccounts: Array.isArray(state.discordAccounts)
+          ? state.discordAccounts.map(buildPersistedDiscordLibraryAccount)
+          : [],
+        telegramAccounts: Array.isArray(state.telegramAccounts)
+          ? state.telegramAccounts.map(buildPersistedTelegramAccount)
+          : [],
+        xAccounts: Array.isArray(state.xAccounts) ? state.xAccounts.slice() : [],
+        truthSocialAccounts: Array.isArray(state.truthSocialAccounts) ? state.truthSocialAccounts.slice() : [],
+      };
+    }
+
+    async function persistStatePayload() {
+      const payload = buildPersistedState();
+      const body = JSON.stringify(payload);
+      if (body === lastPersistedStateJson) {
+        return new Response(null, { status: 204 });
+      }
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+        if (res.ok) {
+          lastPersistedStateJson = body;
+        }
+        return res;
+      } catch (e) {
+        if (lastPersistedStateJson === body) {
+          lastPersistedStateJson = '';
+        }
+        throw e;
+      }
+    }
+
+    function scheduleDeferredSave() {
+      if (saveIdleHandle) {
+        cancelIdleTask(saveIdleHandle);
+      }
+      const nextSequence = ++saveSequence;
+      saveIdleHandle = scheduleIdleTask(async () => {
+        saveIdleHandle = null;
+        if (suspendAutoSave || nextSequence !== saveSequence) return;
         try {
-          await fetch('/api/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(state)
-          }).then((res) => {
-            if (res.status === 401) {
-              handleUnauthorized();
-            }
-          });
+          const res = await persistStatePayload();
+          if (res.status === 401) {
+            handleUnauthorized();
+          }
         } catch (e) {
           console.error('保存失败', e);
         }
-      }, 800);
+      });
     }
 
     async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
@@ -2154,8 +2287,11 @@
           searchInputEl.value = query;
         }
       }
-      if (optionsEl) {
-        optionsEl.innerHTML = buildDiscordSearchableOptionButtons(selectId);
+      if (optionsEl && open) {
+        const nextOptionsHtml = buildDiscordSearchableOptionButtons(selectId);
+        if (optionsEl.innerHTML !== nextOptionsHtml) {
+          optionsEl.innerHTML = nextOptionsHtml;
+        }
       }
     }
 
@@ -2301,12 +2437,9 @@
       cachedGuildsLoading = true;
       cachedGuildsAccountId = accountId;
       fetchDiscordGuilds(accountId)
-        .then(() => {
+        .finally(() => {
           cachedGuildsLoading = false;
-          render();
-        })
-        .catch(() => {
-          cachedGuildsLoading = false;
+          refreshCachedGuildSelects();
         });
     }
 
@@ -2390,6 +2523,43 @@
       syncDiscordSearchableSelect(selectId);
     }
 
+    function refreshDiscordSelectsBySource(searchSource, predicate) {
+      document.querySelectorAll(`select[data-search-source="${searchSource}"]`).forEach(select => {
+        if (!select.id) return;
+        if (typeof predicate === 'function' && !predicate(select)) return;
+        refreshDiscordSelectOptions(select.id);
+      });
+    }
+
+    function refreshCachedGuildSelects() {
+      refreshDiscordSelectsBySource('cachedGuilds');
+    }
+
+    function refreshCachedChannelSelects(accountId, guildId) {
+      const normalizedAccountId = String(accountId || '');
+      const normalizedGuildId = String(guildId || '');
+      refreshDiscordSelectsBySource('cachedChannels', (select) => (
+        String(select.dataset.accountId || '') === normalizedAccountId &&
+        String(select.dataset.guildId || '') === normalizedGuildId
+      ));
+    }
+
+    function refreshTelegramToDiscordGuildSelects(accountId) {
+      const normalizedAccountId = String(accountId || '');
+      refreshDiscordSelectsBySource('telegramToDiscordGuilds', (select) => (
+        String(select.dataset.accountId || '') === normalizedAccountId
+      ));
+    }
+
+    function refreshTelegramToDiscordChannelSelects(accountId, guildId) {
+      const normalizedAccountId = String(accountId || '');
+      const normalizedGuildId = String(guildId || '');
+      refreshDiscordSelectsBySource('telegramToDiscordChannels', (select) => (
+        String(select.dataset.accountId || '') === normalizedAccountId &&
+        String(select.dataset.guildId || '') === normalizedGuildId
+      ));
+    }
+
     function onDiscordSelectSearchInput(selectId, value) {
       setDiscordSelectSearchQuery(selectId, value);
       refreshDiscordSelectOptions(selectId);
@@ -2453,6 +2623,18 @@
         html += `<option value="${selectedId}" selected>未知对话 (${selectedId})</option>`;
       }
       return html;
+    }
+
+    function refreshTelegramDialogSelects(accountId) {
+      const normalizedAccountId = String(accountId || '');
+      if (!normalizedAccountId) return;
+      document.querySelectorAll('select[data-telegram-dialog-account-id]').forEach(select => {
+        if (String(select.dataset.telegramDialogAccountId || '') !== normalizedAccountId) return;
+        const selectedId = String(select.value || select.dataset.selectedId || '');
+        select.dataset.selectedId = selectedId;
+        select.innerHTML = getCachedTelegramDialogsOptions(normalizedAccountId, selectedId);
+        select.value = selectedId;
+      });
     }
 
     // 选择服务器后加载频道列表
@@ -2527,11 +2709,13 @@
       // Telegram 源选择模式
       if (isTelegramSource && mode === 'select' && telegramAccountId) {
         const savedChannelId = m.sourceChannelId || '';
+        const telegramSelectId = `telegram-source-dialog-select-${mappingKey}`;
         // 加载 Telegram 对话列表
         if (!cachedTelegramDialogs[telegramAccountId] && !cachedTelegramDialogsLoading[telegramAccountId]) {
-          fetchTelegramDialogsForRule(telegramAccountId).then(() => render());
+          fetchTelegramDialogsForRule(telegramAccountId).then(() => refreshTelegramDialogSelects(telegramAccountId));
         }
-        return `<select onchange="updateMapping(${idx}, 'sourceChannelId', this.value)"
+        return `<select id="${telegramSelectId}" data-telegram-dialog-account-id="${escapeHtml(telegramAccountId)}" data-selected-id="${escapeHtml(savedChannelId)}"
+          onchange="updateMapping(${idx}, 'sourceChannelId', this.value)"
           class="flex-1 min-w-[12rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
           ${getCachedTelegramDialogsOptions(telegramAccountId, savedChannelId)}
         </select>`;
@@ -2565,11 +2749,9 @@
           const cacheKey = `${discordAccountId}:${savedGuildId}`;
           if (!cachedChannels[cacheKey] && !window[`loadingChannels_${cacheKey}`]) {
             window[`loadingChannels_${cacheKey}`] = true;
-            fetchDiscordChannels(discordAccountId, savedGuildId).then(() => {
+            fetchDiscordChannels(discordAccountId, savedGuildId).finally(() => {
               delete window[`loadingChannels_${cacheKey}`];
-              render();
-            }).catch(() => {
-              delete window[`loadingChannels_${cacheKey}`];
+              refreshCachedChannelSelects(discordAccountId, savedGuildId);
             });
           }
         }
@@ -2627,6 +2809,7 @@
       const telegramSenderAccountId = acc.telegramSenderAccountId || '';
       const discordSenderAccountId = acc.discordSenderAccountId || '';
       const savedTargetId = m.targetChannelId || m.targetWebhookUrl || '';
+      const mappingKey = `${acc.id}:${forwardingType}:${idx}`;
 
       // Discord→Discord: 支持 Webhook 或账号发送
       if (forwardingType === 'discord-to-discord') {
@@ -2662,7 +2845,7 @@
           if (mode === 'select') {
             // 加载服务器列表（如果已选择账号）
             if (senderAccountId && !cachedTelegramToDiscordGuilds[senderAccountId] && !cachedTelegramToDiscordGuildsLoading[senderAccountId]) {
-              fetchTelegramToDiscordGuilds(senderAccountId).then(() => render());
+              fetchTelegramToDiscordGuilds(senderAccountId).then(() => refreshTelegramToDiscordGuildSelects(senderAccountId));
             }
             const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="telegramToDiscordGuilds"
               data-account-id="${escapeHtml(senderAccountId)}"
@@ -2685,9 +2868,9 @@
               const cacheKey = `${senderAccountId}:${targetGuildId}`;
               if (!Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey) && !window[`loadingD2DChannels_${cacheKey}`]) {
                 window[`loadingD2DChannels_${cacheKey}`] = true;
-                fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).then(() => {
+                fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).finally(() => {
                   delete window[`loadingD2DChannels_${cacheKey}`];
-                  render();
+                  refreshTelegramToDiscordChannelSelects(senderAccountId, targetGuildId);
                 });
               }
             }
@@ -2754,9 +2937,9 @@
             class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:border-indigo-500 focus:outline-none">`;
         } else {
           // 账号发送模式：显示账号选择和频道选择
-          const mappingKey = `t2d-target:${acc.id}:${idx}`;
-          const guildSelectId = `guild-select-${mappingKey}`;
-          const channelSelectId = `channel-select-${mappingKey}`;
+          const telegramToDiscordMappingKey = `t2d-target:${acc.id}:${idx}`;
+          const guildSelectId = `guild-select-${telegramToDiscordMappingKey}`;
+          const channelSelectId = `channel-select-${telegramToDiscordMappingKey}`;
           const discordAccounts = state.discordAccounts || [];
           html += `<select onchange="updateTelegramToDiscordAccount(${idx}, this.value, '${guildSelectId}', '${channelSelectId}')"
             class="flex-1 min-w-[12rem] px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
@@ -2767,7 +2950,7 @@
           if (senderAccountId && mode === 'select') {
             // 加载服务器和频道列表
             if (!cachedTelegramToDiscordGuilds[senderAccountId] && !cachedTelegramToDiscordGuildsLoading[senderAccountId]) {
-              fetchTelegramToDiscordGuilds(senderAccountId).then(() => render());
+              fetchTelegramToDiscordGuilds(senderAccountId).then(() => refreshTelegramToDiscordGuildSelects(senderAccountId));
             }
             const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="telegramToDiscordGuilds"
               data-account-id="${escapeHtml(senderAccountId)}"
@@ -2789,9 +2972,9 @@
               const cacheKey = `${senderAccountId}:${targetGuildId}`;
               if (!Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey) && !window[`loadingT2DChannels_${cacheKey}`]) {
                 window[`loadingT2DChannels_${cacheKey}`] = true;
-                fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).then(() => {
+                fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).finally(() => {
                   delete window[`loadingT2DChannels_${cacheKey}`];
-                  render();
+                  refreshTelegramToDiscordChannelSelects(senderAccountId, targetGuildId);
                 });
               }
               const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="telegramToDiscordChannels"
@@ -2826,9 +3009,10 @@
       if ((forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') && mode === 'select' && telegramSenderAccountId) {
         // 加载 Telegram 对话列表
         if (!cachedTelegramDialogs[telegramSenderAccountId] && !cachedTelegramDialogsLoading[telegramSenderAccountId]) {
-          fetchTelegramDialogsForRule(telegramSenderAccountId).then(() => render());
+          fetchTelegramDialogsForRule(telegramSenderAccountId).then(() => refreshTelegramDialogSelects(telegramSenderAccountId));
         }
-        return `<select onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
+        return `<select id="telegram-target-dialog-select-${mappingKey}" data-telegram-dialog-account-id="${escapeHtml(telegramSenderAccountId)}" data-selected-id="${escapeHtml(savedTargetId)}"
+          onchange="updateMapping(${idx}, 'targetChannelId', this.value)"
           class="flex-1 px-2 py-2 border border-slate-200 rounded-lg text-xs focus:border-indigo-500 focus:outline-none">
           ${getCachedTelegramDialogsOptions(telegramSenderAccountId, savedTargetId)}
         </select>`;
@@ -3261,20 +3445,28 @@
     }
 
     // 同步 Discord 账号数据（服务器和频道列表）
-    async function syncDiscordAccountData(accountId) {
+    async function syncDiscordAccountData(accountId, options = {}) {
+      const silent = options?.silent === true;
       if (isLibrarySyncing('discord', accountId)) return;
       setLibrarySyncing('discord', accountId, true);
-      showToast('正在同步 Discord 数据...', 'info');
+      if (!silent) {
+        showToast('正在同步 Discord 数据...', 'info');
+      }
       try {
         const result = await syncDiscordAccountDataOnly(accountId);
         if (!result.success) {
-          showToast(result.error || '同步失败', 'error');
-          return;
+          if (!silent) {
+            showToast(result.error || '同步失败', 'error');
+          }
+          return result;
         }
         await fetchDiscordGuildsForLibrary(accountId);
         const guilds = await fetchDiscordGuilds(accountId);
         await prewarmDiscordChannelsForAccount(accountId, guilds, { force: true, includeSourceCache: true });
-        showToast(`Discord 数据同步完成（${result.guildsCount || 0} 个服务器）`, 'success');
+        if (!silent) {
+          showToast(`Discord 数据同步完成（${result.guildsCount || 0} 个服务器）`, 'success');
+        }
+        return result;
       } finally {
         setLibrarySyncing('discord', accountId, false);
       }
@@ -3366,7 +3558,13 @@
             type: account.type || 'bot'
           })
         });
-        const data = await res.json();
+        const parsed = typeof window.readJsonResponse === 'function'
+          ? await window.readJsonResponse(res)
+          : (() => null)();
+        if (parsed && !parsed.ok) {
+          return { success: false, error: parsed.error || '同步失败' };
+        }
+        const data = parsed ? parsed.value : await res.json();
 
         if (data.error) {
           const detail = data.detail ? ` (${data.detail})` : '';
@@ -3655,7 +3853,7 @@
       let tabsHtml = state.accounts.map(acc => {
         const typeLabel = getForwardingTypeLabel(acc.forwardingType);
         const isActive = acc.id === state.activeId;
-        const summary = buildAccountCardSummary(acc);
+        const summary = buildAccountCardSummary(acc, { includeDetail: false });
         return `
           <button onclick="switchAccount('${acc.id}')"
             class="text-left rounded-lg border px-4 py-2 transition ${isActive ? 'border-indigo-500 bg-indigo-50/60 text-indigo-700' : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40'}">
@@ -3676,10 +3874,15 @@
           <div class="text-xs text-indigo-400 mt-1">创建新的转发账号</div>
         </button>
       `;
-      accountTabsEl.innerHTML = tabsHtml;
+      if (accountTabsEl.innerHTML !== tabsHtml) {
+        accountTabsEl.innerHTML = tabsHtml;
+      }
 
       // 渲染配置表单
-      configFormEl.innerHTML = renderAccountForm(activeAccount, currentForwardingType);
+      const nextFormHtml = renderAccountForm(activeAccount, currentForwardingType);
+      if (configFormEl.innerHTML !== nextFormHtml) {
+        configFormEl.innerHTML = nextFormHtml;
+      }
 
       renderAccountLibraryModal();
       renderAccountLibraryEditModal();
@@ -4805,8 +5008,13 @@
 
         await saveConfigImmediate();
 
+        let createSuccessMessage = '账号创建成功';
+
         if (kind === 'discord') {
-          await syncDiscordAccountData(newId);
+          const syncResult = await syncDiscordAccountData(newId, { silent: true });
+          if (syncResult && !syncResult.success) {
+            createSuccessMessage = `账号创建成功，但 Discord 数据自动同步失败：${syncResult.error || '请稍后手动同步'}`;
+          }
         } else if (kind === 'telegram') {
           if (telegramType === 'client' && telegramLoginMode === 'phone') {
             const codeValue = document.getElementById('createTelegramLoginCode')?.value?.trim() || '';
@@ -4853,7 +5061,7 @@
             await saveConfigImmediate();
           }
         }
-        showToast('账号创建成功', 'success');
+        showToast(createSuccessMessage, createSuccessMessage === '账号创建成功' ? 'success' : 'warning');
         shouldClearPending = true;
         if (kind === 'telegram') {
           createTelegramDraftId = '';
@@ -5268,11 +5476,17 @@
       );
     }
 
+    function isLibraryModalVisible() {
+      const modal = document.getElementById('accountLibraryModal');
+      return Boolean(modal && !modal.classList.contains('hidden'));
+    }
+
     function updateDiscordLibraryStatusElement(accountId) {
       const badgeEl = document.getElementById(`lib-discord-badge-${accountId}`);
       const msgEl = document.getElementById(`lib-discord-msg-${accountId}`);
       const btnConnect = document.getElementById(`lib-discord-connect-${accountId}`);
       const btnDisconnect = document.getElementById(`lib-discord-disconnect-${accountId}`);
+      if (!badgeEl && !msgEl && !btnConnect && !btnDisconnect) return;
 
       const status = getDiscordLibraryStatus(accountId);
       const normalizedState = status.state || 'idle';
@@ -5280,11 +5494,19 @@
       const badgeState = normalizedState === 'disconnecting' ? 'pending' : normalizedState;
 
       if (badgeEl) {
-        badgeEl.textContent = displayState;
-        badgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
+        const nextBadgeClassName = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
+        if (badgeEl.textContent !== displayState) {
+          badgeEl.textContent = displayState;
+        }
+        if (badgeEl.className !== nextBadgeClassName) {
+          badgeEl.className = nextBadgeClassName;
+        }
       }
       if (msgEl) {
-        msgEl.textContent = status.message || '';
+        const nextMessage = status.message || '';
+        if (msgEl.textContent !== nextMessage) {
+          msgEl.textContent = nextMessage;
+        }
       }
 
       const isPending = normalizedState === 'pending' || normalizedState === 'connecting' || normalizedState === 'disconnecting';
@@ -5293,12 +5515,24 @@
       const canDisconnect = status.loginEnabled !== false && normalizedState !== 'idle' && normalizedState !== 'disconnecting';
 
       if (btnConnect) {
-        btnConnect.disabled = !canConnect;
-        btnConnect.className = `ml-2 text-xs font-medium px-2.5 py-1 rounded-md ${!canConnect ? 'bg-indigo-300 text-white cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`;
+        const nextConnectDisabled = !canConnect;
+        const nextConnectClassName = `ml-2 text-xs font-medium px-2.5 py-1 rounded-md ${!canConnect ? 'bg-indigo-300 text-white cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`;
+        if (btnConnect.disabled !== nextConnectDisabled) {
+          btnConnect.disabled = nextConnectDisabled;
+        }
+        if (btnConnect.className !== nextConnectClassName) {
+          btnConnect.className = nextConnectClassName;
+        }
       }
       if (btnDisconnect) {
-        btnDisconnect.disabled = !canDisconnect;
-        btnDisconnect.className = `ml-2 text-xs font-medium px-2.5 py-1 rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'hover:bg-slate-100'}`;
+        const nextDisconnectDisabled = !canDisconnect;
+        const nextDisconnectClassName = `ml-2 text-xs font-medium px-2.5 py-1 rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'hover:bg-slate-100'}`;
+        if (btnDisconnect.disabled !== nextDisconnectDisabled) {
+          btnDisconnect.disabled = nextDisconnectDisabled;
+        }
+        if (btnDisconnect.className !== nextDisconnectClassName) {
+          btnDisconnect.className = nextDisconnectClassName;
+        }
       }
     }
 
@@ -5770,6 +6004,7 @@
     function renderAccountLibraryModal() {
       const modal = document.getElementById('accountLibraryModal');
       if (!modal) return;
+      if (modal.classList.contains('hidden')) return;
       const tbody = document.getElementById('accountLibraryTableBody');
       const selectAllEl = document.getElementById('accountLibrarySelectAll');
       const countEl = document.getElementById('accountLibrarySelectionCount');
@@ -5941,6 +6176,7 @@
     function renderAccountLibraryEditModal() {
       const modal = document.getElementById('accountLibraryEditModal');
       if (!modal) return;
+      if (modal.classList.contains('hidden')) return;
       const body = document.getElementById('accountLibraryEditBody');
       if (!body || !editingLibraryAccount) return;
       const items = getLibraryItems();
@@ -6287,6 +6523,8 @@
       `;
       };
       
+      const activeSummary = buildAccountCardSummary(acc);
+
       return `
         <!-- 实例控制栏 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-visible mb-4">
@@ -6296,7 +6534,7 @@
                 <h2 class="font-semibold text-slate-800">${acc.name || '未命名实例'}</h2>
                 <span id="instance-status-badge" class="px-2 py-0.5 rounded-full text-xs ${getInstanceStatusBadgeClass(acc)}">${getInstanceStatusLabel(acc)}</span>
               </div>
-              <div id="instance-account-detail" class="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">${buildAccountCardSummary(acc).detailHtml || ''}</div>
+              <div id="instance-account-detail" class="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">${activeSummary.detailHtml || ''}</div>
             </div>
             <div class="flex items-center gap-2">
               <button onclick="startInstance()" id="btn-start-instance"
@@ -7047,18 +7285,11 @@
         ? getTelegramLibraryAccountById(acc.telegramSenderAccountId)
         : null;
       const librarySenderLabel = librarySender ? getTelegramLibraryLabel(librarySender) : '';
-      console.log('[DEBUG] renderMappings - forwardingType:', forwardingType);
-      console.log('[DEBUG] renderMappings - mappings长度:', mappings.length);
-      console.log('[DEBUG] renderMappings - 当前页:', pagination.discordPage);
-      console.log('[DEBUG] renderMappings - 第一个mapping ID:', mappings[0]?.id);
-
       const { discordPage, pageSize } = pagination;
       const totalPages = Math.ceil(mappings.length / pageSize) || 1;
       const startIdx = (discordPage - 1) * pageSize;
       const endIdx = startIdx + pageSize;
       const currentPageMappings = mappings.slice(startIdx, endIdx);
-
-      console.log('[DEBUG] renderMappings - 当前页显示数量:', currentPageMappings.length);
 
       if (mappings.length === 0) {
         const typeName = forwardingType === 'discord-to-discord' ? 'Discord' :
@@ -7301,11 +7532,9 @@
             const cacheKey = `${discordAccountId}:${savedGuildId}`;
             if (!cachedChannels[cacheKey] && !window[`loadingChannels_${cacheKey}`]) {
               window[`loadingChannels_${cacheKey}`] = true;
-              fetchDiscordChannels(discordAccountId, savedGuildId).then(() => {
+              fetchDiscordChannels(discordAccountId, savedGuildId).finally(() => {
                 delete window[`loadingChannels_${cacheKey}`];
-                render();
-              }).catch(() => {
-                delete window[`loadingChannels_${cacheKey}`];
+                refreshCachedChannelSelects(discordAccountId, savedGuildId);
               });
             }
           }
@@ -7975,6 +8204,37 @@
       render();
     }
 
+    const nonRerenderAccountFields = new Set([
+      'feishuAppId',
+      'feishuAppSecret',
+      'showSourceIdentity',
+      'telegramBotToken',
+      'telegramApiId',
+      'telegramApiHash',
+      'telegramSessionString',
+      'translationApiKey',
+      'translationSecret',
+      'ignoreSelf',
+      'ignoreBot',
+      'ignoreImages',
+      'ignoreAudio',
+      'ignoreVideo',
+      'ignoreDocuments',
+      'stripEnglish',
+      'stripChinese',
+      'dedupeSequentialMessages',
+      'ignoreEnglish',
+      'ignoreEnglishThreshold',
+      'ignoreChinese',
+      'ignoreChineseThreshold',
+      'feishuStyle',
+      'watermarkEnabled'
+    ]);
+
+    function shouldRerenderAccountField(field) {
+      return !nonRerenderAccountFields.has(field);
+    }
+
     function updateField(field, value) {
       const acc = getActiveAccount();
       acc[field] = value;
@@ -7995,7 +8255,9 @@
       } else {
         saveConfig();
       }
-      render();
+      if (shouldRerenderAccountField(field)) {
+        render();
+      }
     }
 
     function updateXConfigField(field, value) {
@@ -8028,7 +8290,9 @@
         acc.xConfig[field] = value;
       }
       saveConfig();
-      render();
+      if (field === 'mode') {
+        render();
+      }
     }
 
     function updateXQuickMappingField(field, value) {
@@ -8099,7 +8363,9 @@
         entry[field] = value;
       }
       saveConfig();
-      render();
+      if (field === 'type' || field === 'name') {
+        render();
+      }
     }
 
     async function removeDiscordLibraryAccount(accountId) {
@@ -10031,11 +10297,9 @@
           const cacheKey = `${discordAccountId}:${savedGuildId}`;
           if (!cachedChannels[cacheKey] && !window[`loadingStandbyChannels_${cacheKey}`]) {
             window[`loadingStandbyChannels_${cacheKey}`] = true;
-            fetchDiscordChannels(discordAccountId, savedGuildId).then(() => {
+            fetchDiscordChannels(discordAccountId, savedGuildId).finally(() => {
               delete window[`loadingStandbyChannels_${cacheKey}`];
               renderRuleStandbyMainChannelInput(acc, forwardingType);
-            }).catch(() => {
-              delete window[`loadingStandbyChannels_${cacheKey}`];
             });
           }
         }
@@ -12529,11 +12793,19 @@
       const badgeState = normalizedState === 'disconnecting' ? 'pending' : normalizedState;
 
       if (badgeEl) {
-        badgeEl.textContent = displayState;
-        badgeEl.className = `px-2 py-0.5 rounded-full ${badgeState === 'online' ? 'bg-emerald-50 text-emerald-700' : badgeState === 'error' ? 'bg-red-50 text-red-700' : badgeState === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`;
+        const nextBadgeClassName = `px-2 py-0.5 rounded-full ${badgeState === 'online' ? 'bg-emerald-50 text-emerald-700' : badgeState === 'error' ? 'bg-red-50 text-red-700' : badgeState === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`;
+        if (badgeEl.textContent !== displayState) {
+          badgeEl.textContent = displayState;
+        }
+        if (badgeEl.className !== nextBadgeClassName) {
+          badgeEl.className = nextBadgeClassName;
+        }
       }
       if (msgEl) {
-        msgEl.textContent = message || '';
+        const nextMessage = message || '';
+        if (msgEl.textContent !== nextMessage) {
+          msgEl.textContent = nextMessage;
+        }
       }
 
       const isOnline = normalizedState === 'online';
@@ -12544,15 +12816,30 @@
       const baseClass = isClient ? 'flex-1 px-3 py-2 text-sm' : 'px-3 py-1.5 text-xs';
 
       if (btnConnect) {
-        btnConnect.disabled = isPending || isOnline;
-        btnConnect.className = `${baseClass} font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white`;
-        btnConnect.textContent = isPending ? (isDisconnecting ? '断开中...' : '连接中...') : isOnline ? '已启动' : '连接';
+        const nextConnectDisabled = isPending || isOnline;
+        const nextConnectClassName = `${baseClass} font-medium rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'} text-white`;
+        const nextConnectText = isPending ? (isDisconnecting ? '断开中...' : '连接中...') : isOnline ? '已启动' : '连接';
+        if (btnConnect.disabled !== nextConnectDisabled) {
+          btnConnect.disabled = nextConnectDisabled;
+        }
+        if (btnConnect.className !== nextConnectClassName) {
+          btnConnect.className = nextConnectClassName;
+        }
+        if (btnConnect.textContent !== nextConnectText) {
+          btnConnect.textContent = nextConnectText;
+        }
       }
 
       if (btnDisconnect) {
         const canDisconnect = normalizedState !== 'idle';
-        btnDisconnect.disabled = !canDisconnect;
-        btnDisconnect.className = `${baseClass} font-medium rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}`;
+        const nextDisconnectDisabled = !canDisconnect;
+        const nextDisconnectClassName = `${baseClass} font-medium rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'}`;
+        if (btnDisconnect.disabled !== nextDisconnectDisabled) {
+          btnDisconnect.disabled = nextDisconnectDisabled;
+        }
+        if (btnDisconnect.className !== nextDisconnectClassName) {
+          btnDisconnect.className = nextDisconnectClassName;
+        }
       }
     }
 
@@ -12563,6 +12850,7 @@
       const btnDisconnect = document.getElementById(`lib-tg-disconnect-${accountId}`);
       const inlineBadgeEl = document.getElementById(`lib-tg-inline-badge-${accountId}`);
       const inlineMsgEl = document.getElementById(`lib-tg-inline-msg-${accountId}`);
+      if (!badgeEl && !msgEl && !btnConnect && !btnDisconnect && !inlineBadgeEl && !inlineMsgEl) return;
 
       const normalizedState = state || 'idle';
       const displayLabels = {
@@ -12577,30 +12865,58 @@
       const badgeState = normalizedState === 'disconnecting' ? 'pending' : normalizedState;
 
       if (badgeEl) {
-        badgeEl.textContent = displayState;
-        badgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
+        const nextBadgeClassName = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
+        if (badgeEl.textContent !== displayState) {
+          badgeEl.textContent = displayState;
+        }
+        if (badgeEl.className !== nextBadgeClassName) {
+          badgeEl.className = nextBadgeClassName;
+        }
       }
       if (msgEl) {
-        msgEl.textContent = message || '';
+        const nextMessage = message || '';
+        if (msgEl.textContent !== nextMessage) {
+          msgEl.textContent = nextMessage;
+        }
       }
       if (inlineBadgeEl) {
-        inlineBadgeEl.textContent = displayState;
-        inlineBadgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
+        const nextInlineBadgeClassName = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(badgeState)}`;
+        if (inlineBadgeEl.textContent !== displayState) {
+          inlineBadgeEl.textContent = displayState;
+        }
+        if (inlineBadgeEl.className !== nextInlineBadgeClassName) {
+          inlineBadgeEl.className = nextInlineBadgeClassName;
+        }
       }
       if (inlineMsgEl) {
-        inlineMsgEl.textContent = message || '';
+        const nextInlineMessage = message || '';
+        if (inlineMsgEl.textContent !== nextInlineMessage) {
+          inlineMsgEl.textContent = nextInlineMessage;
+        }
       }
 
       if (btnConnect) {
         const isPending = normalizedState === 'pending' || normalizedState === 'connecting' || normalizedState === 'disconnecting';
         const isOnline = normalizedState === 'online';
-        btnConnect.disabled = isPending || isOnline;
-        btnConnect.className = `text-xs font-medium px-3 py-1.5 rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`;
+        const nextConnectDisabled = isPending || isOnline;
+        const nextConnectClassName = `text-xs font-medium px-3 py-1.5 rounded-md ${isPending || isOnline ? 'bg-indigo-300 cursor-not-allowed text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`;
+        if (btnConnect.disabled !== nextConnectDisabled) {
+          btnConnect.disabled = nextConnectDisabled;
+        }
+        if (btnConnect.className !== nextConnectClassName) {
+          btnConnect.className = nextConnectClassName;
+        }
       }
       if (btnDisconnect) {
         const canDisconnect = normalizedState !== 'idle';
-        btnDisconnect.disabled = !canDisconnect;
-        btnDisconnect.className = `text-xs font-medium px-3 py-1.5 rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'hover:bg-slate-100'}`;
+        const nextDisconnectDisabled = !canDisconnect;
+        const nextDisconnectClassName = `text-xs font-medium px-3 py-1.5 rounded-md border border-slate-200 ${!canDisconnect ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'hover:bg-slate-100'}`;
+        if (btnDisconnect.disabled !== nextDisconnectDisabled) {
+          btnDisconnect.disabled = nextDisconnectDisabled;
+        }
+        if (btnDisconnect.className !== nextDisconnectClassName) {
+          btnDisconnect.className = nextDisconnectClassName;
+        }
       }
     }
 
@@ -12610,40 +12926,65 @@
       const forwardEl = document.getElementById(`external-${kind}-forward`);
       const errorEl = document.getElementById(`external-${kind}-error`);
       if (badgeEl) {
-        badgeEl.textContent = summary.badgeLabel;
-        badgeEl.className = `px-2 py-0.5 rounded-full ${getBadgeClass(summary.state)}`;
+        const nextBadgeClassName = `px-2 py-0.5 rounded-full ${getBadgeClass(summary.state)}`;
+        if (badgeEl.textContent !== summary.badgeLabel) {
+          badgeEl.textContent = summary.badgeLabel;
+        }
+        if (badgeEl.className !== nextBadgeClassName) {
+          badgeEl.className = nextBadgeClassName;
+        }
       }
       if (pollEl) {
-        pollEl.textContent = `最近拉取: ${summary.lastPollLabel}`;
+        const nextPollText = `最近拉取: ${summary.lastPollLabel}`;
+        if (pollEl.textContent !== nextPollText) {
+          pollEl.textContent = nextPollText;
+        }
       }
       if (forwardEl) {
-        forwardEl.textContent = `最近转发: ${summary.lastForwardLabel}`;
+        const nextForwardText = `最近转发: ${summary.lastForwardLabel}`;
+        if (forwardEl.textContent !== nextForwardText) {
+          forwardEl.textContent = nextForwardText;
+        }
       }
       if (errorEl) {
-        if (summary.lastError) {
-          errorEl.textContent = `错误: ${summary.lastError}`;
-          errorEl.className = 'text-xs text-red-500 mt-2';
-        } else {
-          errorEl.textContent = '暂无错误';
-          errorEl.className = 'text-xs text-slate-400 mt-2';
+        const nextErrorText = summary.lastError ? `错误: ${summary.lastError}` : '暂无错误';
+        const nextErrorClassName = summary.lastError ? 'text-xs text-red-500 mt-2' : 'text-xs text-slate-400 mt-2';
+        if (errorEl.textContent !== nextErrorText) {
+          errorEl.textContent = nextErrorText;
+        }
+        if (errorEl.className !== nextErrorClassName) {
+          errorEl.className = nextErrorClassName;
         }
       }
     }
 
     function updateAccountCardStatus(acc) {
-      const summary = buildAccountCardSummary(acc);
+      const isActive = acc.id === state.activeId;
+      const summary = buildAccountCardSummary(acc, { includeDetail: isActive });
       const badgeEl = document.getElementById(`account-tab-status-${acc.id}`);
       const subEl = document.getElementById(`account-tab-sub-${acc.id}`);
-      const instanceDetailEl = document.getElementById('instance-account-detail');
+      const instanceDetailEl = isActive ? document.getElementById('instance-account-detail') : null;
       if (badgeEl) {
-        badgeEl.textContent = summary.badgeLabel;
-        badgeEl.className = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(summary.state)}`;
+        const nextBadgeLabel = summary.badgeLabel;
+        const nextBadgeClassName = `px-2 py-0.5 rounded-full text-xs ${getBadgeClass(summary.state)}`;
+        if (badgeEl.textContent !== nextBadgeLabel) {
+          badgeEl.textContent = nextBadgeLabel;
+        }
+        if (badgeEl.className !== nextBadgeClassName) {
+          badgeEl.className = nextBadgeClassName;
+        }
       }
       if (subEl) {
-        subEl.textContent = getForwardingTypeLabel(acc.forwardingType);
+        const nextTypeLabel = getForwardingTypeLabel(acc.forwardingType);
+        if (subEl.textContent !== nextTypeLabel) {
+          subEl.textContent = nextTypeLabel;
+        }
       }
-      if (instanceDetailEl && acc.id === state.activeId) {
-        instanceDetailEl.innerHTML = summary.detailHtml || '';
+      if (instanceDetailEl && isActive) {
+        const nextDetailHtml = summary.detailHtml || '';
+        if (instanceDetailEl.innerHTML !== nextDetailHtml) {
+          instanceDetailEl.innerHTML = nextDetailHtml;
+        }
       }
     }
 
@@ -12662,8 +13003,8 @@
       const loginBtn = document.getElementById(`relay-login-btn-${relayId}`);
 
       if (badgeEl) {
-        badgeEl.textContent = displayLabels[normalizedState] || normalizedState;
-        badgeEl.className = `px-2 py-0.5 rounded-full ${
+        const nextBadgeLabel = displayLabels[normalizedState] || normalizedState;
+        const nextBadgeClassName = `px-2 py-0.5 rounded-full ${
           normalizedState === 'online'
             ? 'bg-emerald-50 text-emerald-700'
             : normalizedState === 'error'
@@ -12672,17 +13013,32 @@
                 ? 'bg-amber-50 text-amber-700'
                 : 'bg-slate-100 text-slate-600'
         }`;
+        if (badgeEl.textContent !== nextBadgeLabel) {
+          badgeEl.textContent = nextBadgeLabel;
+        }
+        if (badgeEl.className !== nextBadgeClassName) {
+          badgeEl.className = nextBadgeClassName;
+        }
       }
       if (msgEl) {
-        msgEl.textContent = message || '';
+        const nextMessage = message || '';
+        if (msgEl.textContent !== nextMessage) {
+          msgEl.textContent = nextMessage;
+        }
       }
       if (loginBtn) {
         const isPending = normalizedState === 'pending';
         const isOnline = normalizedState === 'online';
-        loginBtn.disabled = isPending || isOnline;
-        loginBtn.className = `px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${
+        const nextLoginDisabled = isPending || isOnline;
+        const nextLoginClassName = `px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 ${
           isPending || isOnline ? 'cursor-not-allowed bg-slate-50' : 'hover:bg-slate-100'
         } text-slate-600`;
+        if (loginBtn.disabled !== nextLoginDisabled) {
+          loginBtn.disabled = nextLoginDisabled;
+        }
+        if (loginBtn.className !== nextLoginClassName) {
+          loginBtn.className = nextLoginClassName;
+        }
       }
     }
 
@@ -12699,324 +13055,364 @@
       return true;
     }
 
-    // 状态轮询
-    function startStatusPolling() {
-      setInterval(async () => {
-        try {
-          if (!document.getElementById('configForm')) return;
-          if (!isLoggedIn) return;
+    function getStatusPollIntervalMs() {
+      return document.hidden ? STATUS_POLL_HIDDEN_MS : STATUS_POLL_VISIBLE_MS;
+    }
 
-          const res = await fetch('/api/config');
-          if (res.status === 401) {
-            handleUnauthorized();
-            return;
+    function scheduleNextStatusPoll(delayMs = getStatusPollIntervalMs()) {
+      if (statusPollTimer) {
+        clearTimeout(statusPollTimer);
+      }
+      statusPollTimer = setTimeout(() => {
+        void runStatusPoll();
+      }, delayMs);
+    }
+
+    function handleStatusPollVisibilityChange() {
+      if (!isLoggedIn || statusPollInFlight) return;
+      scheduleNextStatusPoll(document.hidden ? STATUS_POLL_HIDDEN_MS : 250);
+    }
+
+    async function runStatusPoll() {
+      statusPollTimer = null;
+      if (!document.getElementById('configForm')) return;
+      if (!isLoggedIn) return;
+      if (statusPollInFlight) {
+        scheduleNextStatusPoll();
+        return;
+      }
+
+      statusPollInFlight = true;
+      try {
+        const res = await fetch('/api/config');
+        if (res.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const data = await res.json();
+        if (!Array.isArray(data?.accounts)) return;
+
+        let shouldRender = false;
+        const localAccountsById = new Map((state.accounts || []).map((acc) => [acc.id, acc]));
+
+        data.accounts.forEach(remoteAcc => {
+          const localAcc = localAccountsById.get(remoteAcc.id);
+          if (!localAcc) return;
+
+          const isActive = localAcc.id === state.activeId;
+
+          if (typeof remoteAcc.loginRequested === 'boolean' && localAcc.loginRequested !== remoteAcc.loginRequested) {
+            localAcc.loginRequested = remoteAcc.loginRequested;
           }
-          const data = await res.json();
-          if (!Array.isArray(data?.accounts)) return;
 
-          let shouldRender = false;
-
-          data.accounts.forEach(remoteAcc => {
-            const localAcc = state.accounts.find(acc => acc.id === remoteAcc.id);
-            if (!localAcc) return;
-
-            const isActive = localAcc.id === state.activeId;
-
-            if (typeof remoteAcc.loginRequested === 'boolean' && localAcc.loginRequested !== remoteAcc.loginRequested) {
-              localAcc.loginRequested = remoteAcc.loginRequested;
-            }
-
-            const loginHoldUntil = getDisconnectHold(`discord:${localAcc.id}`);
-            const connectHoldUntil = getConnectHold(`discord:${localAcc.id}`);
-            const remoteLoginState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
-            const remoteLoginMessage = remoteAcc.loginMessage || '';
-            const localLoginState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
-            const ignoreOnlineDuringStart =
-              (localLoginState === 'pending' || localLoginState === 'connecting') &&
-              remoteLoginState === 'online' &&
-              connectHoldUntil > Date.now();
-            const loginHold = (localLoginState === 'pending' || localLoginState === 'connecting')
-              ? connectHoldUntil
-              : loginHoldUntil;
-            if (!ignoreOnlineDuringStart && shouldApplyRemoteState(localLoginState, remoteLoginState, loginHold)) {
-              const loginChanged = remoteLoginState !== normalizeRuntimeStatus(localAcc.loginState || 'idle') || remoteLoginMessage !== localAcc.loginMessage;
-              if (loginChanged) {
-                localAcc.loginState = remoteLoginState;
-                localAcc.loginMessage = remoteLoginMessage;
-                if (isActive) {
-                  updateStatusElement('discord', remoteLoginState, remoteLoginMessage);
-                  shouldRender = true;
-                }
+          const loginHoldUntil = getDisconnectHold(`discord:${localAcc.id}`);
+          const connectHoldUntil = getConnectHold(`discord:${localAcc.id}`);
+          const remoteLoginState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
+          const remoteLoginMessage = remoteAcc.loginMessage || '';
+          const localLoginState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
+          const ignoreOnlineDuringStart =
+            (localLoginState === 'pending' || localLoginState === 'connecting') &&
+            remoteLoginState === 'online' &&
+            connectHoldUntil > Date.now();
+          const loginHold = (localLoginState === 'pending' || localLoginState === 'connecting')
+            ? connectHoldUntil
+            : loginHoldUntil;
+          if (!ignoreOnlineDuringStart && shouldApplyRemoteState(localLoginState, remoteLoginState, loginHold)) {
+            const loginChanged = remoteLoginState !== normalizeRuntimeStatus(localAcc.loginState || 'idle') || remoteLoginMessage !== localAcc.loginMessage;
+            if (loginChanged) {
+              localAcc.loginState = remoteLoginState;
+              localAcc.loginMessage = remoteLoginMessage;
+              if (isActive) {
+                updateStatusElement('discord', remoteLoginState, remoteLoginMessage);
               }
             }
-            if (remoteLoginState === 'idle' || remoteLoginState === 'error') {
-              clearDisconnectHold(`discord:${localAcc.id}`);
-            }
-            if (remoteLoginState !== 'idle') {
-              clearConnectHold(`discord:${localAcc.id}`);
-            }
+          }
+          if (remoteLoginState === 'idle' || remoteLoginState === 'error') {
+            clearDisconnectHold(`discord:${localAcc.id}`);
+          }
+          if (remoteLoginState !== 'idle') {
+            clearConnectHold(`discord:${localAcc.id}`);
+          }
 
-            const botHoldUntil = getDisconnectHold(`tg-bot:${localAcc.id}`);
-            const botConnectHoldUntil = getConnectHold(`tg-bot:${localAcc.id}`);
-            const remoteBotState = normalizeRuntimeStatus(remoteAcc.telegramBotState || 'idle');
-            const remoteBotMessage = remoteAcc.telegramBotMessage || '';
-            const localBotState = normalizeRuntimeStatus(localAcc.telegramBotState || 'idle');
-            const ignoreBotOnlineDuringStart =
-              (localBotState === 'pending' || localBotState === 'connecting') &&
-              remoteBotState === 'online' &&
-              botConnectHoldUntil > Date.now();
-            if (!ignoreBotOnlineDuringStart && shouldApplyRemoteState(localBotState, remoteBotState, botHoldUntil)) {
-              const botChanged = remoteBotState !== normalizeRuntimeStatus(localAcc.telegramBotState || 'idle') || remoteBotMessage !== localAcc.telegramBotMessage;
-              if (botChanged) {
-                localAcc.telegramBotState = remoteBotState;
-                localAcc.telegramBotMessage = remoteBotMessage;
-                if (isActive) {
-                  updateStatusElement('tg-bot', remoteBotState, remoteBotMessage);
-                  shouldRender = true;
-                }
+          const botHoldUntil = getDisconnectHold(`tg-bot:${localAcc.id}`);
+          const botConnectHoldUntil = getConnectHold(`tg-bot:${localAcc.id}`);
+          const remoteBotState = normalizeRuntimeStatus(remoteAcc.telegramBotState || 'idle');
+          const remoteBotMessage = remoteAcc.telegramBotMessage || '';
+          const localBotState = normalizeRuntimeStatus(localAcc.telegramBotState || 'idle');
+          const ignoreBotOnlineDuringStart =
+            (localBotState === 'pending' || localBotState === 'connecting') &&
+            remoteBotState === 'online' &&
+            botConnectHoldUntil > Date.now();
+          if (!ignoreBotOnlineDuringStart && shouldApplyRemoteState(localBotState, remoteBotState, botHoldUntil)) {
+            const botChanged = remoteBotState !== normalizeRuntimeStatus(localAcc.telegramBotState || 'idle') || remoteBotMessage !== localAcc.telegramBotMessage;
+            if (botChanged) {
+              localAcc.telegramBotState = remoteBotState;
+              localAcc.telegramBotMessage = remoteBotMessage;
+              if (isActive) {
+                updateStatusElement('tg-bot', remoteBotState, remoteBotMessage);
               }
             }
-            if (remoteBotState === 'idle' || remoteBotState === 'error') {
-              clearDisconnectHold(`tg-bot:${localAcc.id}`);
-            }
-            if (remoteBotState !== 'idle') {
-              clearConnectHold(`tg-bot:${localAcc.id}`);
-            }
+          }
+          if (remoteBotState === 'idle' || remoteBotState === 'error') {
+            clearDisconnectHold(`tg-bot:${localAcc.id}`);
+          }
+          if (remoteBotState !== 'idle') {
+            clearConnectHold(`tg-bot:${localAcc.id}`);
+          }
 
-            const clientHoldUntil = getDisconnectHold(`tg-client:${localAcc.id}`);
-            const clientConnectHoldUntil = getConnectHold(`tg-client:${localAcc.id}`);
-            const remoteClientState = normalizeRuntimeStatus(remoteAcc.telegramClientState || 'idle');
-            const remoteClientMessage = remoteAcc.telegramClientMessage || '';
-            const localClientState = normalizeRuntimeStatus(localAcc.telegramClientState || 'idle');
-            const ignoreClientOnlineDuringStart =
-              (localClientState === 'pending' || localClientState === 'connecting') &&
-              remoteClientState === 'online' &&
-              clientConnectHoldUntil > Date.now();
-            if (!ignoreClientOnlineDuringStart && shouldApplyRemoteState(localClientState, remoteClientState, clientHoldUntil)) {
-              const clientChanged = remoteClientState !== normalizeRuntimeStatus(localAcc.telegramClientState || 'idle') || remoteClientMessage !== localAcc.telegramClientMessage;
-              if (clientChanged) {
-                localAcc.telegramClientState = remoteClientState;
-                localAcc.telegramClientMessage = remoteClientMessage;
-                if (isActive) {
-                  updateStatusElement('tg-client', remoteClientState, remoteClientMessage);
-                  shouldRender = true;
-                }
+          const clientHoldUntil = getDisconnectHold(`tg-client:${localAcc.id}`);
+          const clientConnectHoldUntil = getConnectHold(`tg-client:${localAcc.id}`);
+          const remoteClientState = normalizeRuntimeStatus(remoteAcc.telegramClientState || 'idle');
+          const remoteClientMessage = remoteAcc.telegramClientMessage || '';
+          const localClientState = normalizeRuntimeStatus(localAcc.telegramClientState || 'idle');
+          const ignoreClientOnlineDuringStart =
+            (localClientState === 'pending' || localClientState === 'connecting') &&
+            remoteClientState === 'online' &&
+            clientConnectHoldUntil > Date.now();
+          if (!ignoreClientOnlineDuringStart && shouldApplyRemoteState(localClientState, remoteClientState, clientHoldUntil)) {
+            const clientChanged = remoteClientState !== normalizeRuntimeStatus(localAcc.telegramClientState || 'idle') || remoteClientMessage !== localAcc.telegramClientMessage;
+            if (clientChanged) {
+              localAcc.telegramClientState = remoteClientState;
+              localAcc.telegramClientMessage = remoteClientMessage;
+              if (isActive) {
+                updateStatusElement('tg-client', remoteClientState, remoteClientMessage);
               }
             }
-            if (remoteClientState === 'idle' || remoteClientState === 'error') {
-              clearDisconnectHold(`tg-client:${localAcc.id}`);
-            }
-            if (remoteClientState !== 'idle') {
-              clearConnectHold(`tg-client:${localAcc.id}`);
-            }
+          }
+          if (remoteClientState === 'idle' || remoteClientState === 'error') {
+            clearDisconnectHold(`tg-client:${localAcc.id}`);
+          }
+          if (remoteClientState !== 'idle') {
+            clearConnectHold(`tg-client:${localAcc.id}`);
+          }
 
-            const remoteTelegramAccounts = remoteAcc.telegramConfig?.accounts;
-            if (Array.isArray(remoteTelegramAccounts)) {
-              if (!localAcc.telegramConfig || typeof localAcc.telegramConfig !== 'object') {
-                const remoteForwarding = remoteAcc.telegramConfig?.enableTelegramForward;
-                localAcc.telegramConfig = {
-                  accounts: [],
-                  mappings: [],
-                  enableTelegramForward: typeof remoteForwarding === 'boolean' ? remoteForwarding : true
-                };
+          const remoteTelegramAccounts = remoteAcc.telegramConfig?.accounts;
+          if (Array.isArray(remoteTelegramAccounts)) {
+            if (!localAcc.telegramConfig || typeof localAcc.telegramConfig !== 'object') {
+              const remoteForwarding = remoteAcc.telegramConfig?.enableTelegramForward;
+              localAcc.telegramConfig = {
+                accounts: [],
+                mappings: [],
+                enableTelegramForward: typeof remoteForwarding === 'boolean' ? remoteForwarding : true
+              };
+            }
+            if (!Array.isArray(localAcc.telegramConfig.accounts)) {
+              localAcc.telegramConfig.accounts = [];
+            }
+            const localTelegramAccounts = localAcc.telegramConfig.accounts;
+            for (const remoteTg of remoteTelegramAccounts) {
+              if (!remoteTg || !remoteTg.id) continue;
+              const localTg = localTelegramAccounts.find((item) => item.id === remoteTg.id);
+              if (!localTg) {
+                localTelegramAccounts.push(remoteTg);
+                continue;
               }
-              if (!Array.isArray(localAcc.telegramConfig.accounts)) {
-                localAcc.telegramConfig.accounts = [];
-              }
-              const localTelegramAccounts = localAcc.telegramConfig.accounts;
-              for (const remoteTg of remoteTelegramAccounts) {
-                if (!remoteTg || !remoteTg.id) continue;
-                const localTg = localTelegramAccounts.find((item) => item.id === remoteTg.id);
-                if (!localTg) {
-                  localTelegramAccounts.push(remoteTg);
-                  continue;
-                }
-                if (remoteTg.enabled !== undefined && localTg.enabled !== remoteTg.enabled) {
-                  localTg.enabled = remoteTg.enabled;
-                }
+              if (remoteTg.enabled !== undefined && localTg.enabled !== remoteTg.enabled) {
+                localTg.enabled = remoteTg.enabled;
               }
             }
+          }
 
-            if (Array.isArray(remoteAcc.botRelays)) {
-              if (!Array.isArray(localAcc.botRelays) || remoteAcc.botRelays.length !== localAcc.botRelays.length) {
+          if (Array.isArray(remoteAcc.botRelays)) {
+            if (!Array.isArray(localAcc.botRelays) || remoteAcc.botRelays.length !== localAcc.botRelays.length) {
+              localAcc.botRelays = remoteAcc.botRelays;
+              if (isActive) {
+                shouldRender = true;
+              }
+            } else {
+              const isSameOrder = remoteAcc.botRelays.every(
+                (relay, idx) => relay?.id === localAcc.botRelays[idx]?.id
+              );
+              if (!isSameOrder) {
                 localAcc.botRelays = remoteAcc.botRelays;
                 if (isActive) {
                   shouldRender = true;
                 }
               } else {
-                const isSameOrder = remoteAcc.botRelays.every(
-                  (relay, idx) => relay?.id === localAcc.botRelays[idx]?.id
-                );
-                if (!isSameOrder) {
-                  localAcc.botRelays = remoteAcc.botRelays;
-                  if (isActive) {
-                    shouldRender = true;
+                remoteAcc.botRelays.forEach((relay, idx) => {
+                  const localRelay = localAcc.botRelays[idx];
+                  const remoteState = normalizeRuntimeStatus(relay?.loginState || 'idle');
+                  const localRelayState = normalizeRuntimeStatus(localRelay?.loginState || 'idle');
+                  const remoteMessage = relay?.loginMessage || '';
+                  if (!shouldApplyRemoteState(localRelayState, remoteState)) {
+                    return;
                   }
-                } else {
-                  remoteAcc.botRelays.forEach((relay, idx) => {
-                    const localRelay = localAcc.botRelays[idx];
-                    const remoteState = normalizeRuntimeStatus(relay?.loginState || 'idle');
-                    const localRelayState = normalizeRuntimeStatus(localRelay?.loginState || 'idle');
-                    const remoteMessage = relay?.loginMessage || '';
-                    if (!shouldApplyRemoteState(localRelayState, remoteState)) {
-                      return;
+                  const relayChanged =
+                    remoteState !== localRelayState || remoteMessage !== localRelay?.loginMessage;
+                  if (relayChanged) {
+                    localRelay.loginState = remoteState;
+                    localRelay.loginMessage = remoteMessage;
+                    if (isActive) {
+                      updateRelayStatusElement(relay.id, remoteState, remoteMessage);
                     }
-                    const relayChanged =
-                      remoteState !== localRelayState || remoteMessage !== localRelay?.loginMessage;
-                    if (relayChanged) {
-                      localRelay.loginState = remoteState;
-                      localRelay.loginMessage = remoteMessage;
-                      if (isActive) {
-                        updateRelayStatusElement(relay.id, remoteState, remoteMessage);
-                      }
-                    }
-                  });
-                }
-              }
-            }
-
-            if (remoteAcc.externalForwardStatus) {
-              localAcc.externalForwardStatus = remoteAcc.externalForwardStatus;
-            }
-
-            if (typeof remoteAcc.forwardingType === 'string' && localAcc.forwardingType !== remoteAcc.forwardingType) {
-              localAcc.forwardingType = remoteAcc.forwardingType;
-              if (isActive) {
-                shouldRender = true;
-              }
-            }
-
-            if (isActive) {
-              const externalKind =
-                localAcc.forwardingType === 'x-to-discord'
-                  ? 'x'
-                  : localAcc.forwardingType === 'truthsocial-to-discord'
-                    ? 'truthsocial'
-                    : null;
-              if (externalKind) {
-                const summary = buildExternalStatusSummary(localAcc, externalKind);
-                updateExternalStatusElement(externalKind, summary);
-              }
-            }
-
-            updateAccountCardStatus(localAcc);
-          });
-
-          if (Array.isArray(data.discordAccounts)) {
-            if (!Array.isArray(state.discordAccounts) || state.discordAccounts.length !== data.discordAccounts.length) {
-              state.discordAccounts = data.discordAccounts;
-              shouldRender = true;
-            } else {
-              data.discordAccounts.forEach((remoteAcc) => {
-                const localAcc = state.discordAccounts.find((acc) => acc.id === remoteAcc.id);
-                if (!localAcc) {
-                  state.discordAccounts.push(remoteAcc);
-                  shouldRender = true;
-                  return;
-                }
-                const remoteState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
-                const remoteMessage = remoteAcc.loginMessage || '';
-                const localState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
-                const wasOnline = localState === 'online';
-                const connectHoldUntil = getConnectHold(`discord-lib:${remoteAcc.id}`);
-                const disconnectHoldUntil = getDisconnectHold(`discord-lib:${remoteAcc.id}`);
-                const holdUntil = (localState === 'pending' || localState === 'connecting') ? connectHoldUntil : disconnectHoldUntil;
-                if (shouldApplyRemoteState(localState, remoteState, holdUntil)) {
-                  const stateChanged = remoteState !== localState || remoteMessage !== localAcc.loginMessage;
-                  if (stateChanged) {
-                    localAcc.loginState = remoteState;
-                    localAcc.loginMessage = remoteMessage;
                   }
-                }
-                if (remoteState === 'error' && isDiscordTokenInvalidMessage(remoteMessage)) {
-                  autoReloginDiscordLibraryAccount(remoteAcc.id, remoteMessage);
-                }
-                if (remoteState === 'idle' || remoteState === 'error') {
-                  clearDisconnectHold(`discord-lib:${remoteAcc.id}`);
-                  discordAutoSyncOnLogin.delete(remoteAcc.id);
-                }
-                if (remoteState !== 'idle') {
-                  clearConnectHold(`discord-lib:${remoteAcc.id}`);
-                }
-                if (typeof remoteAcc.loginEnabled === 'boolean' && localAcc.loginEnabled !== remoteAcc.loginEnabled) {
-                  localAcc.loginEnabled = remoteAcc.loginEnabled;
-                }
-                if (remoteAcc.syncedUser && localAcc.syncedUser !== remoteAcc.syncedUser) {
-                  localAcc.syncedUser = remoteAcc.syncedUser;
-                }
-                if (typeof remoteAcc.guildsCount === 'number') {
-                  localAcc.guildsCount = remoteAcc.guildsCount;
-                }
-                if (typeof remoteAcc.channelsCount === 'number') {
-                  localAcc.channelsCount = remoteAcc.channelsCount;
-                }
-                if (typeof remoteAcc.lastSyncTime === 'string') {
-                  localAcc.lastSyncTime = remoteAcc.lastSyncTime;
-                }
-                if (typeof remoteAcc.name === 'string') {
-                  localAcc.name = remoteAcc.name;
-                }
-                updateDiscordLibraryStatusElement(remoteAcc.id);
-                if (!wasOnline && remoteState === 'online' && !discordAutoSyncOnLogin.has(remoteAcc.id)) {
-                  discordAutoSyncOnLogin.add(remoteAcc.id);
-                  autoSyncDiscordAfterLogin(remoteAcc.id);
-                }
-              });
+                });
+              }
             }
           }
 
-          if (Array.isArray(data.telegramAccounts)) {
-            if (!Array.isArray(state.telegramAccounts) || state.telegramAccounts.length !== data.telegramAccounts.length) {
-              state.telegramAccounts = data.telegramAccounts;
+          if (remoteAcc.externalForwardStatus) {
+            localAcc.externalForwardStatus = remoteAcc.externalForwardStatus;
+          }
+
+          if (typeof remoteAcc.forwardingType === 'string' && localAcc.forwardingType !== remoteAcc.forwardingType) {
+            localAcc.forwardingType = remoteAcc.forwardingType;
+            if (isActive) {
               shouldRender = true;
-            } else {
-              data.telegramAccounts.forEach((remoteAcc) => {
-                const localAcc = state.telegramAccounts.find((acc) => acc.id === remoteAcc.id);
-                if (!localAcc) {
-                  state.telegramAccounts.push(remoteAcc);
-                  shouldRender = true;
-                  return;
-                }
-                const remoteState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
-                const remoteMessage = remoteAcc.loginMessage || '';
-                const localState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
-                const connectHoldUntil = getConnectHold(`tg-lib:${remoteAcc.id}`);
-                const disconnectHoldUntil = getDisconnectHold(`tg-lib:${remoteAcc.id}`);
-                const holdUntil = (localState === 'pending' || localState === 'connecting') ? connectHoldUntil : disconnectHoldUntil;
-                if (!shouldApplyRemoteState(localState, remoteState, holdUntil)) {
-                  return;
-                }
-                const stateChanged = remoteState !== localState || remoteMessage !== localAcc.loginMessage;
+            }
+          }
+
+          if (isActive) {
+            const externalKind =
+              localAcc.forwardingType === 'x-to-discord'
+                ? 'x'
+                : localAcc.forwardingType === 'truthsocial-to-discord'
+                  ? 'truthsocial'
+                  : null;
+            if (externalKind) {
+              const summary = buildExternalStatusSummary(localAcc, externalKind);
+              updateExternalStatusElement(externalKind, summary);
+            }
+          }
+
+          updateAccountCardStatus(localAcc);
+        });
+
+        if (Array.isArray(data.discordAccounts)) {
+          const localDiscordAccountsById = new Map((state.discordAccounts || []).map((acc) => [acc.id, acc]));
+          if (!Array.isArray(state.discordAccounts) || state.discordAccounts.length !== data.discordAccounts.length) {
+            state.discordAccounts = data.discordAccounts;
+            shouldRender = true;
+          } else {
+            data.discordAccounts.forEach((remoteAcc) => {
+              const localAcc = localDiscordAccountsById.get(remoteAcc.id);
+              if (!localAcc) {
+                state.discordAccounts.push(remoteAcc);
+                shouldRender = true;
+                return;
+              }
+              const remoteState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
+              const remoteMessage = remoteAcc.loginMessage || '';
+              const localState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
+              const wasOnline = localState === 'online';
+              let stateChanged = false;
+              const connectHoldUntil = getConnectHold(`discord-lib:${remoteAcc.id}`);
+              const disconnectHoldUntil = getDisconnectHold(`discord-lib:${remoteAcc.id}`);
+              const holdUntil = (localState === 'pending' || localState === 'connecting') ? connectHoldUntil : disconnectHoldUntil;
+              if (shouldApplyRemoteState(localState, remoteState, holdUntil)) {
+                stateChanged = remoteState !== localState || remoteMessage !== localAcc.loginMessage;
                 if (stateChanged) {
                   localAcc.loginState = remoteState;
                   localAcc.loginMessage = remoteMessage;
-                  localAcc.userInfo = remoteAcc.userInfo;
-                  updateTelegramLibraryStatusElement(remoteAcc.id, remoteState, remoteMessage);
                 }
-                if (remoteState === 'idle' || remoteState === 'error') {
-                  clearDisconnectHold(`tg-lib:${remoteAcc.id}`);
-                }
-                if (remoteState !== 'idle') {
-                  clearConnectHold(`tg-lib:${remoteAcc.id}`);
-                }
-                if (typeof remoteAcc.enabled === 'boolean' && localAcc.enabled !== remoteAcc.enabled) {
-                  localAcc.enabled = remoteAcc.enabled;
-                }
-              });
-            }
+              }
+              if (remoteState === 'error' && isDiscordTokenInvalidMessage(remoteMessage)) {
+                autoReloginDiscordLibraryAccount(remoteAcc.id, remoteMessage);
+              }
+              if (remoteState === 'idle' || remoteState === 'error') {
+                clearDisconnectHold(`discord-lib:${remoteAcc.id}`);
+                discordAutoSyncOnLogin.delete(remoteAcc.id);
+              }
+              if (remoteState !== 'idle') {
+                clearConnectHold(`discord-lib:${remoteAcc.id}`);
+              }
+              let metadataChanged = false;
+              if (typeof remoteAcc.loginEnabled === 'boolean' && localAcc.loginEnabled !== remoteAcc.loginEnabled) {
+                localAcc.loginEnabled = remoteAcc.loginEnabled;
+                metadataChanged = true;
+              }
+              if (remoteAcc.syncedUser && localAcc.syncedUser !== remoteAcc.syncedUser) {
+                localAcc.syncedUser = remoteAcc.syncedUser;
+              }
+              if (typeof remoteAcc.guildsCount === 'number') {
+                localAcc.guildsCount = remoteAcc.guildsCount;
+              }
+              if (typeof remoteAcc.channelsCount === 'number') {
+                localAcc.channelsCount = remoteAcc.channelsCount;
+              }
+              if (typeof remoteAcc.lastSyncTime === 'string') {
+                localAcc.lastSyncTime = remoteAcc.lastSyncTime;
+              }
+              if (typeof remoteAcc.name === 'string') {
+                localAcc.name = remoteAcc.name;
+              }
+              if (isLibraryModalVisible() && (stateChanged || metadataChanged)) {
+                updateDiscordLibraryStatusElement(remoteAcc.id);
+              }
+              if (!wasOnline && remoteState === 'online' && !discordAutoSyncOnLogin.has(remoteAcc.id)) {
+                discordAutoSyncOnLogin.add(remoteAcc.id);
+                autoSyncDiscordAfterLogin(remoteAcc.id);
+              }
+            });
           }
-
-          if (shouldRender) {
-            if (isFormElementActive()) {
-              pendingStatusRender = true;
-            } else {
-              render();
-            }
-          }
-        } catch (e) {
-          // 忽略轮询错误
         }
-      }, 2000);
+
+        if (Array.isArray(data.telegramAccounts)) {
+          const localTelegramAccountsById = new Map((state.telegramAccounts || []).map((acc) => [acc.id, acc]));
+          if (!Array.isArray(state.telegramAccounts) || state.telegramAccounts.length !== data.telegramAccounts.length) {
+            state.telegramAccounts = data.telegramAccounts;
+            shouldRender = true;
+          } else {
+            data.telegramAccounts.forEach((remoteAcc) => {
+              const localAcc = localTelegramAccountsById.get(remoteAcc.id);
+              if (!localAcc) {
+                state.telegramAccounts.push(remoteAcc);
+                shouldRender = true;
+                return;
+              }
+              const remoteState = normalizeRuntimeStatus(remoteAcc.loginState || 'idle');
+              const remoteMessage = remoteAcc.loginMessage || '';
+              const localState = normalizeRuntimeStatus(localAcc.loginState || 'idle');
+              const connectHoldUntil = getConnectHold(`tg-lib:${remoteAcc.id}`);
+              const disconnectHoldUntil = getDisconnectHold(`tg-lib:${remoteAcc.id}`);
+              const holdUntil = (localState === 'pending' || localState === 'connecting') ? connectHoldUntil : disconnectHoldUntil;
+              if (!shouldApplyRemoteState(localState, remoteState, holdUntil)) {
+                return;
+              }
+              const stateChanged = remoteState !== localState || remoteMessage !== localAcc.loginMessage;
+              if (stateChanged) {
+                localAcc.loginState = remoteState;
+                localAcc.loginMessage = remoteMessage;
+                localAcc.userInfo = remoteAcc.userInfo;
+                updateTelegramLibraryStatusElement(remoteAcc.id, remoteState, remoteMessage);
+              }
+              if (remoteState === 'idle' || remoteState === 'error') {
+                clearDisconnectHold(`tg-lib:${remoteAcc.id}`);
+              }
+              if (remoteState !== 'idle') {
+                clearConnectHold(`tg-lib:${remoteAcc.id}`);
+              }
+              if (typeof remoteAcc.enabled === 'boolean' && localAcc.enabled !== remoteAcc.enabled) {
+                localAcc.enabled = remoteAcc.enabled;
+              }
+            });
+          }
+        }
+
+        if (shouldRender) {
+          if (isFormElementActive()) {
+            pendingStatusRender = true;
+          } else {
+            render();
+          }
+        }
+      } catch (e) {
+        // 忽略轮询错误
+      } finally {
+        statusPollInFlight = false;
+        if (isLoggedIn && document.getElementById('configForm')) {
+          scheduleNextStatusPoll();
+        }
+      }
+    }
+
+    // 状态轮询
+    function startStatusPolling() {
+      if (!statusPollVisibilityBound) {
+        document.addEventListener('visibilitychange', handleStatusPollVisibilityChange);
+        statusPollVisibilityBound = true;
+      }
+      scheduleNextStatusPoll();
     }
 
     // 启动
