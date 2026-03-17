@@ -2411,6 +2411,22 @@ function setupDiscordMetadataBridgeClient() {
     try {
       const accountId = params?.accountId;
       if (!accountId) return;
+      const normalizedError = normalizeDiscordLoginError(params?.error);
+      const libraryState =
+        params?.state === "online"
+          ? { state: "online", message: buildDiscordLoginMessage(params?.user, "已连接") }
+          : params?.state === "connecting"
+            ? { state: "connecting", message: "正在登录..." }
+            : params?.state === "disconnected"
+              ? { state: "error", message: normalizedError || "连接已断开" }
+              : params?.state === "error"
+                ? { state: "error", message: normalizedError }
+                : params?.state === "idle"
+                  ? { state: "idle", message: "未登录" }
+                  : { state: undefined, message: undefined };
+      if (libraryState.state) {
+        await writeDiscordLibraryStatus(accountId, libraryState.state, libraryState.message);
+      }
       if (params?.state === "online" && discordMetadataBridgeClient) {
         const snapshot = await discordMetadataBridgeClient.getCacheSnapshot({ accountId });
         if (snapshot) {
