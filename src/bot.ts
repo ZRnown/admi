@@ -35,6 +35,7 @@ import {
 } from "./watermarkRemoval.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { shouldSkipMessageForIgnoredImages } from "./messageFilterDecisions.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -1289,9 +1290,14 @@ export class Bot {
 
       if (shouldIgnoreImages) {
         const hasImage = hasImageAttachment(message.attachments) || hasForwardedImage(message);
-        if (hasImage) {
-          this.logger.info(`${logPrefix} [SKIP] Ignoring image attachment (ignoreImages=true, rule=${ruleConfig.ignoreImages})`);
+        const hasTextContent = collectMessageTextPieces(message)
+          .some((piece) => String(piece || "").trim().length > 0);
+        if (shouldSkipMessageForIgnoredImages({ shouldIgnoreImages, hasImage, hasTextContent })) {
+          this.logger.info(`${logPrefix} [SKIP] Ignoring image-only message (ignoreImages=true, rule=${ruleConfig.ignoreImages})`);
           return;
+        }
+        if (hasImage) {
+          this.logger.info(`${logPrefix} [FILTER] Ignoring image attachments but preserving text content`);
         }
       }
 
