@@ -5,6 +5,7 @@ import {
   filterBlockedUploads,
   isBlockedImageUrl,
   markBlockedImageUrl,
+  stripAllEmbedImages,
   stripBlockedEmbedImages,
 } from "../src/ocrImageFilter.ts";
 
@@ -62,6 +63,75 @@ test("stripBlockedEmbedImages drops image-only embeds", () => {
     ],
     blockedUrls,
   );
+
+  assert.equal(filtered, undefined);
+});
+
+test("stripBlockedEmbedImages keeps non-blocked rich image-only embeds", () => {
+  const blockedUrls = new Set<string>();
+  markBlockedImageUrl(blockedUrls, "https://cdn.example.com/other-image.png");
+
+  const filtered = stripBlockedEmbedImages(
+    [
+      {
+        type: "rich",
+        image: { url: "https://cdn.example.com/only-image.png" },
+      },
+    ],
+    blockedUrls,
+  );
+
+  assert.deepEqual(filtered, [
+    {
+      type: "rich",
+      image: { url: "https://cdn.example.com/only-image.png" },
+    },
+  ]);
+});
+
+test("stripAllEmbedImages removes embed images but preserves textual fields", () => {
+  const filtered = stripAllEmbedImages([
+    {
+      type: "rich",
+      title: "鲸鱼提醒",
+      description: "只保留这段文字",
+      image: { url: "https://cdn.example.com/embed-image.png" },
+      thumbnail: { url: "https://cdn.example.com/thumb.png" },
+      fields: [{ name: "金额", value: "$1.2M" }],
+    },
+  ]);
+
+  assert.deepEqual(filtered, [
+    {
+      type: "rich",
+      title: "鲸鱼提醒",
+      description: "只保留这段文字",
+      fields: [{ name: "金额", value: "$1.2M" }],
+    },
+  ]);
+});
+
+test("stripAllEmbedImages drops embeds that only contain images", () => {
+  const filtered = stripAllEmbedImages([
+    {
+      type: "image",
+      url: "https://cdn.example.com/only-image.png",
+      image: { url: "https://cdn.example.com/only-image.png" },
+      thumbnail: { url: "https://cdn.example.com/only-image-thumb.png" },
+    },
+  ]);
+
+  assert.equal(filtered, undefined);
+});
+
+test("stripAllEmbedImages drops rich embeds that only contain images", () => {
+  const filtered = stripAllEmbedImages([
+    {
+      type: "rich",
+      image: { url: "https://cdn.example.com/only-image.png" },
+      thumbnail: { url: "https://cdn.example.com/only-image-thumb.png" },
+    },
+  ]);
 
   assert.equal(filtered, undefined);
 });

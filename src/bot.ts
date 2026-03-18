@@ -20,6 +20,7 @@ import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter
 import {
   filterBlockedUploads,
   markBlockedImageUrl,
+  stripAllEmbedImages,
   stripBlockedEmbedImages,
 } from "./ocrImageFilter.js";
 import { resolveWatermarkList } from "./watermark.js";
@@ -2068,7 +2069,7 @@ export class Bot {
           if (normalizedSource) seenUploads.add(normalizedSource);
         }
       }
-      if (extraImages.length > 0) {
+      if (!skipImages && extraImages.length > 0) {
         for (const asset of extraImages) {
           if (!asset.url) continue;
           const normalized = normalizeImageUrl(asset.url);
@@ -2121,6 +2122,9 @@ export class Bot {
       : (channelTranslateMap[message.channelId] !== undefined
           ? channelTranslateMap[message.channelId]
           : this.config.enableTranslation === true);
+    const shouldStripEmbedImages = ruleConfig.ignoreImages !== undefined
+      ? ruleConfig.ignoreImages
+      : this.config.ignoreImages;
 
     // 构建 extraEmbeds：样式2下回复消息时，添加回复信息的embed；样式1或普通消息时，传递原消息的embeds
     let extraEmbeds: any[] | undefined = undefined;
@@ -2142,7 +2146,9 @@ export class Bot {
       extraEmbeds = stripEmbedTitles(extraEmbeds);
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
-    extraEmbeds = stripBlockedEmbedImages(extraEmbeds, ocrBlockedImageUrls);
+    extraEmbeds = shouldStripEmbedImages
+      ? stripAllEmbedImages(extraEmbeds)
+      : stripBlockedEmbedImages(extraEmbeds, ocrBlockedImageUrls);
     const finalUploads = filterBlockedUploads(uploads, ocrBlockedImageUrls);
     const finalImageUrlToFilename = new Map<string, string>();
     for (const item of finalUploads) {
@@ -2268,10 +2274,12 @@ export class Bot {
           ),
           stripOptions,
         );
-        const feishuEmbeds = stripBlockedEmbedImages(
-          stripEmbedText(message.embeds, stripOptions),
-          ocrBlockedImageUrls,
-        );
+        const feishuEmbeds = shouldStripEmbedImages
+          ? stripAllEmbedImages(stripEmbedText(message.embeds, stripOptions))
+          : stripBlockedEmbedImages(
+              stripEmbedText(message.embeds, stripOptions),
+              ocrBlockedImageUrls,
+            );
         await feishuSenderForThis.send({
           content: feishuContent,
           username: username,
@@ -2316,10 +2324,12 @@ export class Bot {
         ),
         stripOptions,
       );
-      const dingtalkEmbeds = stripBlockedEmbedImages(
-        stripEmbedText(message.embeds, stripOptions),
-        ocrBlockedImageUrls,
-      );
+      const dingtalkEmbeds = shouldStripEmbedImages
+        ? stripAllEmbedImages(stripEmbedText(message.embeds, stripOptions))
+        : stripBlockedEmbedImages(
+            stripEmbedText(message.embeds, stripOptions),
+            ocrBlockedImageUrls,
+          );
       for (let senderIndex = 0; senderIndex < dingtalkSendersForThis.length; senderIndex++) {
         const sender = dingtalkSendersForThis[senderIndex];
         try {
@@ -2378,10 +2388,12 @@ export class Bot {
             );
             contentForTelegram = stripLanguages(contentForTelegram, stripOptions);
             const contentPreview = formatLogPreview(contentForTelegram);
-            const telegramEmbeds = stripBlockedEmbedImages(
-              stripEmbedText(message.embeds, stripOptions),
-              ocrBlockedImageUrls,
-            );
+            const telegramEmbeds = shouldStripEmbedImages
+              ? stripAllEmbedImages(stripEmbedText(message.embeds, stripOptions))
+              : stripBlockedEmbedImages(
+                  stripEmbedText(message.embeds, stripOptions),
+                  ocrBlockedImageUrls,
+                );
 
             // 准备消息数据
             const messageData = {

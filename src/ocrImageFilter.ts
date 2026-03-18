@@ -31,6 +31,24 @@ export function filterBlockedUploads<T extends { url: string }>(
   return uploads.filter((item) => !isBlockedImageUrl(blockedUrls, item.url));
 }
 
+function hasVisualEmbedContent(embed: any): boolean {
+  return (
+    Boolean(embed?.image?.url) ||
+    Boolean(embed?.thumbnail?.url) ||
+    (typeof embed?.url === "string" && embed.url.trim().length > 0 && embed.type === "image")
+  );
+}
+
+function hasTextualEmbedContent(embed: any): boolean {
+  return (
+    Boolean(embed?.title) ||
+    Boolean(embed?.description) ||
+    (Array.isArray(embed?.fields) && embed.fields.length > 0) ||
+    Boolean(embed?.author?.name) ||
+    Boolean(embed?.footer?.text)
+  );
+}
+
 export function stripBlockedEmbedImages(
   embeds: any[] | undefined,
   blockedUrls: Set<string>,
@@ -51,6 +69,7 @@ export function stripBlockedEmbedImages(
       }
       if (!raw || typeof raw !== "object") return raw;
 
+      const hadVisual = hasVisualEmbedContent(raw);
       const next: any = { ...raw };
       const imageUrl = typeof next.image?.url === "string" ? next.image.url : undefined;
       const thumbnailUrl = typeof next.thumbnail?.url === "string" ? next.thumbnail.url : undefined;
@@ -69,18 +88,49 @@ export function stripBlockedEmbedImages(
         delete next.url;
       }
 
-      const hasVisual =
-        Boolean(next.image?.url) ||
-        Boolean(next.thumbnail?.url) ||
-        (typeof next.url === "string" && next.url.trim().length > 0 && next.type === "image");
-      const hasTextual =
-        Boolean(next.title) ||
-        Boolean(next.description) ||
-        (Array.isArray(next.fields) && next.fields.length > 0) ||
-        Boolean(next.author?.name) ||
-        Boolean(next.footer?.text);
+      const hasVisual = hasVisualEmbedContent(next);
+      const hasTextual = hasTextualEmbedContent(next);
 
-      if (!hasVisual && !hasTextual && next.type === "image") {
+      if (hadVisual && !hasVisual && !hasTextual) {
+        return null;
+      }
+      return next;
+    })
+    .filter((item) => item !== null);
+
+  return result.length > 0 ? result : undefined;
+}
+
+export function stripAllEmbedImages(
+  embeds: any[] | undefined,
+): any[] | undefined {
+  if (!embeds || embeds.length === 0) return embeds;
+
+  const result = embeds
+    .map((embed) => {
+      if (!embed || typeof embed !== "object") return embed;
+
+      let raw: any = embed;
+      if (typeof (embed as any).toJSON === "function") {
+        try {
+          raw = (embed as any).toJSON();
+        } catch {}
+      } else if ("data" in embed && (embed as any).data) {
+        raw = (embed as any).data;
+      }
+      if (!raw || typeof raw !== "object") return raw;
+
+      const hadVisual = hasVisualEmbedContent(raw);
+      const next: any = { ...raw };
+      delete next.image;
+      delete next.thumbnail;
+      if (next.type === "image") {
+        delete next.url;
+      }
+
+      const hasTextual = hasTextualEmbedContent(next);
+
+      if (hadVisual && !hasTextual) {
         return null;
       }
       return next;
