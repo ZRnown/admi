@@ -36,6 +36,12 @@ import { reconcileExternalForwarders, shutdownExternalForwarders } from "./exter
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.js";
+import {
+  getDiscordDisconnectMessage,
+  getDiscordErrorMessage,
+  normalizeDiscordLoginErrorMessage,
+  shouldPreserveLibraryOnlineStatus,
+} from "./discordStatusDecisions.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -1062,19 +1068,31 @@ function normalizeDiscordToken(raw?: string): string {
   return trimmed;
 }
 
-function normalizeDiscordLoginError(error?: string): string {
-  const msg = typeof error === "string" ? error : "";
-  if (!msg) return "连接失败";
-  if (msg.includes("Improper token")) {
-    return "Token 无效或被风控（异地/IP），请重新登录或使用代理";
+function normalizeDiscordRuntimeState(state?: string): string {
+  const value = String(state || "").toLowerCase();
+  if (!value || value === "stopped") return "idle";
+  if (value === "connecting") return "pending";
+  return value;
+}
+
+function getDependentInstanceDiscordState(libraryAccountId: string): string {
+  const accounts = currentConfig?.accounts || [];
+  let hasPending = false;
+  for (const account of accounts) {
+    if (account.discordAccountId !== libraryAccountId) continue;
+    const runtimeState = normalizeDiscordRuntimeState(
+      typeof statusCache?.[account.id]?.loginState === "string"
+        ? statusCache?.[account.id]?.loginState
+        : account.loginState,
+    );
+    if (runtimeState === "online") {
+      return "online";
+    }
+    if (runtimeState === "pending" || runtimeState === "connecting") {
+      hasPending = true;
+    }
   }
-  if (msg.includes("DISCORD_LOGIN_TIMEOUT")) {
-    return "登录超时，可能被风控或网络受限";
-  }
-  if (msg.includes("Request to use mfa")) {
-    return "账号开启 MFA，请填写谷歌验证密钥";
-  }
-  return msg;
+  return hasPending ? "pending" : "idle";
 }
 
 function getSharedClientByAccountId(accountId: string) {
@@ -2321,7 +2339,7 @@ function setupDiscordBridgeClient() {
         running.bot.setSelfUser(user);
       }
 
-      const normalizedError = normalizeDiscordLoginError(params?.error);
+      const normalizedError = normalizeDiscordLoginErrorMessage(params?.error);
       const instanceState =
         state === "online"
           ? { state: "online", message: buildDiscordLoginMessage(user, "登录成功") }
@@ -2330,7 +2348,7 @@ function setupDiscordBridgeClient() {
             : state === "disconnected"
               ? { state: "error", message: "连接已断开" }
             : state === "error"
-                ? { state: "error", message: normalizedError }
+                ? { state: "error", message: getDiscordErrorMessage(params?.error) }
                 : { state: undefined, message: undefined };
 
       const libraryState =
@@ -2341,7 +2359,7 @@ function setupDiscordBridgeClient() {
             : state === "disconnected"
               ? { state: "error", message: "连接已断开" }
             : state === "error"
-                ? { state: "error", message: normalizedError }
+                ? { state: "error", message: getDiscordErrorMessage(params?.error) }
                 : { state: undefined, message: undefined };
 
       if (isInstanceAccount && instanceState.state) {
@@ -2411,16 +2429,22 @@ function setupDiscordMetadataBridgeClient() {
     try {
       const accountId = params?.accountId;
       if (!accountId) return;
-      const normalizedError = normalizeDiscordLoginError(params?.error);
+      const dependentInstanceState = getDependentInstanceDiscordState(accountId);
+      if (shouldPreserveLibraryOnlineStatus({
+        metadataState: params?.state,
+        dependentInstanceState,
+      })) {
+        return;
+      }
       const libraryState =
         params?.state === "online"
           ? { state: "online", message: buildDiscordLoginMessage(params?.user, "已连接") }
           : params?.state === "connecting"
             ? { state: "connecting", message: "正在登录..." }
             : params?.state === "disconnected"
-              ? { state: "error", message: normalizedError || "连接已断开" }
+              ? { state: "error", message: getDiscordDisconnectMessage(params?.error) }
               : params?.state === "error"
-                ? { state: "error", message: normalizedError }
+                ? { state: "error", message: getDiscordErrorMessage(params?.error) }
                 : params?.state === "idle"
                   ? { state: "idle", message: "未登录" }
                   : { state: undefined, message: undefined };
