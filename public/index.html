@@ -8868,25 +8868,32 @@
       const acc = state.accounts.find((item) => item.id === accountId);
       const apiKey = String(acc?.watermarkRemoval?.apiKey || '').trim();
       if (!apiKey) {
-        return `<span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">未配置余额查询</span>`;
+        return `<span id="watermark-balance-badge-${accountId}" class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">未配置余额查询</span>`;
       }
 
       const entry = watermarkBalanceCache.get(accountId);
       if (!entry || entry.status === 'loading') {
-        return `<span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700">余额读取中...</span>`;
+        return `<span id="watermark-balance-badge-${accountId}" class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700">余额读取中...</span>`;
       }
 
       if (entry.status === 'error') {
         const title = escapeHtml(entry.message || '余额读取失败');
-        return `<span title="${title}" class="inline-flex items-center rounded-full bg-rose-50 px-3 py-1 text-xs text-rose-700">余额读取失败</span>`;
+        return `<span id="watermark-balance-badge-${accountId}" title="${title}" class="inline-flex items-center rounded-full bg-rose-50 px-3 py-1 text-xs text-rose-700">余额读取失败</span>`;
       }
 
       const planLabel = entry.planName ? ` · ${escapeHtml(entry.planName)}` : '';
       if (typeof entry.remainingCredits === 'number' && Number.isFinite(entry.remainingCredits)) {
-        return `<span class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700">余额 ${escapeHtml(formatWatermarkBalanceValue(entry.remainingCredits))} credits${planLabel}</span>`;
+        return `<span id="watermark-balance-badge-${accountId}" class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700">余额 ${escapeHtml(formatWatermarkBalanceValue(entry.remainingCredits))} credits${planLabel}</span>`;
       }
 
-      return `<span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">已连接${planLabel || ''}</span>`;
+      return `<span id="watermark-balance-badge-${accountId}" class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">已连接${planLabel || ''}</span>`;
+    }
+
+    function updateWatermarkBalanceBadgeElement(accountId) {
+      if (!accountId) return;
+      const badgeEl = document.getElementById(`watermark-balance-badge-${accountId}`);
+      if (!badgeEl) return;
+      badgeEl.outerHTML = renderWatermarkBalanceBadge(accountId);
     }
 
     async function refreshWatermarkBalance(accountId, options) {
@@ -8922,9 +8929,7 @@
         apiKey,
         fetchedAt: Date.now()
       });
-      if (accountId === state.activeId) {
-        render();
-      }
+      updateWatermarkBalanceBadgeElement(accountId);
 
       const request = (async () => {
         try {
@@ -8954,9 +8959,7 @@
           return entry;
         } finally {
           watermarkBalanceInflight.delete(accountId);
-          if (accountId === state.activeId) {
-            render();
-          }
+          updateWatermarkBalanceBadgeElement(accountId);
         }
       })();
 

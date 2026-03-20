@@ -117,3 +117,17 @@ test("active status panels avoid redundant DOM writes during polling", () => {
     /if \(badgeEl\) {\s*const nextBadgeLabel = displayLabels\[normalizedState\] \|\| normalizedState;\s*const nextBadgeClassName = `px-2 py-0\.5 rounded-full \$\{[\s\S]*?\}`;\s*if \(badgeEl\.textContent !== nextBadgeLabel\) {\s*badgeEl\.textContent = nextBadgeLabel;\s*}\s*if \(badgeEl\.className !== nextBadgeClassName\) {\s*badgeEl\.className = nextBadgeClassName;\s*}\s*}/,
   );
 });
+
+test("watermark balance refresh updates its badge without recursively rerendering the whole page", () => {
+  const watermarkSectionStart = html.indexOf("function renderWatermarkBalanceBadge(accountId)");
+  const watermarkSectionEnd = html.indexOf("function ensureWatermarkBalanceFetch(accountId)");
+  assert.notEqual(watermarkSectionStart, -1);
+  assert.notEqual(watermarkSectionEnd, -1);
+  const watermarkSection = html.slice(watermarkSectionStart, watermarkSectionEnd);
+
+  assert.match(watermarkSection, /id="watermark-balance-badge-\$\{accountId\}"/);
+  assert.match(watermarkSection, /function updateWatermarkBalanceBadgeElement\(accountId\)/);
+  assert.match(watermarkSection, /watermarkBalanceCache\.set\(accountId, {\s*status: 'loading'[\s\S]*?updateWatermarkBalanceBadgeElement\(accountId\);/);
+  assert.match(watermarkSection, /finally {\s*watermarkBalanceInflight\.delete\(accountId\);\s*updateWatermarkBalanceBadgeElement\(accountId\);/);
+  assert.doesNotMatch(watermarkSection, /\brender\(\);/);
+});
