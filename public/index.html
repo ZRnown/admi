@@ -13155,7 +13155,7 @@
 
       statusPollInFlight = true;
       try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/api/config/status');
         if (res.status === 401) {
           handleUnauthorized();
           return;

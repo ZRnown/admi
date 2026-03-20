@@ -11,6 +11,17 @@ test("status polling uses visibility-aware scheduling instead of fixed interval 
   assert.doesNotMatch(html, /function startStatusPolling\(\)\s*{\s*setInterval\(/);
 });
 
+test("status polling fetches the lightweight status endpoint instead of the full config payload", () => {
+  assert.match(
+    html,
+    /async function runStatusPoll\(\)[\s\S]*?const res = await fetch\('\/api\/config\/status'\);/,
+  );
+  assert.doesNotMatch(
+    html,
+    /async function runStatusPoll\(\)[\s\S]*?const res = await fetch\('\/api\/config'\);/,
+  );
+});
+
 test("discord searchable selects only rebuild options while open", () => {
   assert.match(
     html,
