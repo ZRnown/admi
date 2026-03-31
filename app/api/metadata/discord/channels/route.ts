@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { resolveDiscordChannelsFromCache } from "@/src/discordMetadataHelpers";
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,11 +21,18 @@ export async function POST(request: NextRequest) {
 
     // 读取缓存的频道列表（由 bot 进程写入）
     const cacheFile = path.join(process.cwd(), ".data", "discord_channels_cache.json");
+    const configFile = path.join(process.cwd(), "config.json");
     try {
       const data = await fs.readFile(cacheFile, "utf-8");
       const cache = JSON.parse(data);
-      const key = `${accountId}:${guildId}`;
-      const channels = cache[key] || [];
+      let config: any = null;
+      try {
+        const raw = await fs.readFile(configFile, "utf-8");
+        config = JSON.parse(raw);
+      } catch {
+        config = null;
+      }
+      const channels = resolveDiscordChannelsFromCache(cache, String(accountId), String(guildId), config);
       return NextResponse.json({ channels });
     } catch {
       return NextResponse.json({ channels: [], message: "请先启动实例以获取频道列表" });

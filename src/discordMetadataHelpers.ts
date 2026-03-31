@@ -75,6 +75,59 @@ export function getDiscordChannelEmptyMessage(hasCacheEntry: boolean, guildId: s
   return hasCacheEntry ? "暂无可用频道" : "暂无频道（请先同步）";
 }
 
+type DiscordMetadataConfigLike = {
+  accounts?: Array<{ id?: string | null; discordAccountId?: string | null }>;
+};
+
+export function buildDiscordChannelCacheKeys(
+  accountId: string,
+  guildId: string,
+  config?: DiscordMetadataConfigLike | null,
+): string[] {
+  const normalizedGuildId = String(guildId || "").trim();
+  const ids = new Set<string>();
+  const add = (value?: string | null) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || !normalizedGuildId) return;
+    ids.add(`${normalized}:${normalizedGuildId}`);
+  };
+
+  add(accountId);
+
+  for (const account of config?.accounts || []) {
+    const instanceId = String(account?.id || "").trim();
+    const libraryId = String(account?.discordAccountId || "").trim();
+    if (accountId === instanceId || accountId === libraryId) {
+      add(instanceId);
+      add(libraryId);
+    }
+  }
+
+  return Array.from(ids);
+}
+
+export function resolveDiscordChannelsFromCache<T>(
+  cache: Record<string, T[] | undefined>,
+  accountId: string,
+  guildId: string,
+  config?: DiscordMetadataConfigLike | null,
+): T[] {
+  const keys = buildDiscordChannelCacheKeys(accountId, guildId, config);
+  for (const key of keys) {
+    const channels = cache[key];
+    if (Array.isArray(channels) && channels.length > 0) {
+      return channels;
+    }
+  }
+  for (const key of keys) {
+    const channels = cache[key];
+    if (Array.isArray(channels)) {
+      return channels;
+    }
+  }
+  return [];
+}
+
 export function preserveDiscordChannelsOnFetchFailure<T>(existing: T[] | undefined, fetched: T[], hadFetchError: boolean): T[] {
   if (hadFetchError && Array.isArray(existing) && existing.length > 0) {
     return existing;

@@ -6,6 +6,7 @@ import {
   filterDiscordNamedItems,
   getDiscordChannelEmptyMessage,
   getDiscordMetadataAccountId,
+  resolveDiscordChannelsFromCache,
   preserveDiscordChannelsOnFetchFailure,
   shouldReuseDiscordChannelsCache,
 } from "../src/discordMetadataHelpers.ts";
@@ -98,4 +99,25 @@ test("buildDiscordSearchableDropdownModel shows empty label when query has no ma
   assert.equal(model.triggerLabel, "选择服务器");
   assert.equal(model.emptyLabel, "无匹配服务器");
   assert.deepEqual(model.visibleItems, []);
+});
+
+test("resolveDiscordChannelsFromCache falls back from library account id to instance account cache key", () => {
+  const channels = resolveDiscordChannelsFromCache(
+    {
+      "instance-1:guild-1": [
+        { id: "channel-1", name: "crypto-signals", type: 0 },
+      ],
+    },
+    "library-1",
+    "guild-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.deepEqual(channels, [
+    { id: "channel-1", name: "crypto-signals", type: 0 },
+  ]);
 });
