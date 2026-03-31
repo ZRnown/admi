@@ -2417,10 +2417,12 @@
     function getDiscordGuildOptionsHtml(guilds, selectedId, selectedLabel, query, options = {}) {
       if (options.lightweight) {
         return buildLightweightDiscordSelectOptions({
+          items: guilds,
           selectedId,
           selectedLabel,
           placeholderLabel: '选择服务器',
           unknownPrefix: '服务器',
+          renderItemLabel: (guild) => guild?.name || guild?.id || '',
         });
       }
       return buildFullDiscordSelectOptions({
@@ -2438,10 +2440,15 @@
     function getDiscordSourceChannelOptionsHtml(channels, selectedId, selectedLabel, query, options = {}) {
       if (options.lightweight) {
         return buildLightweightDiscordSelectOptions({
+          items: channels,
           selectedId,
           selectedLabel,
           placeholderLabel: '选择频道',
           unknownPrefix: '频道',
+          renderItemLabel: (channel) => {
+            const icon = channel?.type === 0 ? '#' : channel?.type === 2 ? '🔊' : '•';
+            return `${icon} ${channel?.name || channel?.id || ''}`;
+          },
         });
       }
       return buildFullDiscordSelectOptions({
@@ -2462,10 +2469,12 @@
     function getDiscordTargetChannelOptionsHtml(channels, selectedId, selectedLabel, query, options = {}) {
       if (options.lightweight) {
         return buildLightweightDiscordSelectOptions({
+          items: channels,
           selectedId,
           selectedLabel,
           placeholderLabel: '选择频道',
           unknownPrefix: '频道',
+          renderItemLabel: (channel) => `# ${channel?.name || channel?.id || ''}`,
         });
       }
       return buildFullDiscordSelectOptions({
@@ -11530,6 +11539,22 @@
       // 如果是更新 sourceChannelId，同时保存服务器ID
       if (field === 'sourceChannelId' && guildId) {
         updateMapping(idx, 'sourceGuildId', guildId);
+        const acc = getActiveAccount();
+        const forwardingType = acc.forwardingType || currentForwardingType;
+        const mappings = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram'
+          ? (acc.telegramConfig?.mappings || [])
+          : (acc.mappings || []);
+        const mapping = mappings[idx];
+        if (mapping) {
+          const guild = cachedGuilds.find(item => String(item?.id || '') === String(guildId));
+          if (guild) {
+            updateMapping(idx, 'sourceGuildName', guild.name || '');
+          }
+          const cacheKey = `${getDiscordMetadataAccountId(acc)}:${guildId}`;
+          const channels = cachedChannels[cacheKey] || [];
+          const channel = channels.find(item => String(item?.id || '') === String(value || ''));
+          updateMapping(idx, 'sourceChannelName', channel?.name || '');
+        }
       }
     }
 

@@ -29,15 +29,32 @@
     return unknownPrefix ? `${unknownPrefix} (${selectedId})` : String(selectedId);
   }
 
+  function resolveSelectedLabelFromItems(items, selectedId, renderItemLabel) {
+    if (!selectedId || !Array.isArray(items) || items.length === 0) {
+      return "";
+    }
+    const matched = items.find((item) => String(item?.id || "") === String(selectedId));
+    if (!matched) {
+      return "";
+    }
+    if (typeof renderItemLabel === "function") {
+      return String(renderItemLabel(matched) || "").trim();
+    }
+    return String(matched?.name || matched?.title || matched?.label || matched?.id || "").trim();
+  }
+
   function buildLightweightSelectOptions(options = {}) {
     const selectedId = String(options.selectedId || "");
     const placeholderLabel = String(options.placeholderLabel || "请选择");
     if (!selectedId) {
       return `<option value="">${escapeHtml(placeholderLabel)}</option>`;
     }
+    const selectedLabel =
+      String(options.selectedLabel || "").trim() ||
+      resolveSelectedLabelFromItems(options.items, selectedId, options.renderItemLabel);
     const label = resolveSelectedLabel(
       selectedId,
-      options.selectedLabel,
+      selectedLabel,
       placeholderLabel,
       options.unknownPrefix || "",
     );

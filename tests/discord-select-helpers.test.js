@@ -30,6 +30,24 @@ test("buildLightweightSelectOptions falls back to the placeholder when nothing i
   assert.equal(html, "<option value=\"\">选择服务器</option>");
 });
 
+test("buildLightweightSelectOptions resolves the label from cached items when selectedLabel is missing", () => {
+  const html = buildLightweightSelectOptions({
+    items: [
+      { id: "1204215926334165002", name: "Tradesetter 社区" },
+      { id: "1220705338278543450", name: "crypto-signals", type: 0 },
+    ],
+    selectedId: "1220705338278543450",
+    selectedLabel: "",
+    placeholderLabel: "选择频道",
+    unknownPrefix: "频道",
+    renderItemLabel: (item) => `# ${item.name}`,
+  });
+
+  assert.equal((html.match(/<option\b/g) || []).length, 1);
+  assert.match(html, /# crypto-signals/);
+  assert.doesNotMatch(html, /频道 \(1220705338278543450\)/);
+});
+
 test("buildFullSelectOptions renders the full filtered list when the dropdown is open", () => {
   const html = buildFullSelectOptions({
     items: [
