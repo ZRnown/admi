@@ -35,6 +35,7 @@ import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
 import { reconcileExternalForwarders, shutdownExternalForwarders } from "./externalForwarder.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { stripUploadedEmbedImages } from "./ocrImageFilter.js";
 import { preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.js";
 import {
   getDiscordDisconnectMessage,
@@ -2095,6 +2096,7 @@ function setupTelegramBridgeClient() {
               (isImage ? "photo.jpg" : isVideo ? "video.mp4" : "file");
             pushUpload({ localPath, url, filename, isImage, isVideo });
           }
+          extraEmbeds = stripUploadedEmbedImages(extraEmbeds, uploads);
 
           let contentPreview = formatLogPreview(contentForRule);
           const senderLabel = senderDisplayName || "Telegram User";

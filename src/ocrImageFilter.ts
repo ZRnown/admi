@@ -31,6 +31,25 @@ export function filterBlockedUploads<T extends { url: string }>(
   return uploads.filter((item) => !isBlockedImageUrl(blockedUrls, item.url));
 }
 
+export function stripUploadedEmbedImages<
+  T extends { url?: string; sourceUrl?: string; isImage?: boolean }
+>(
+  embeds: any[] | undefined,
+  uploads: T[] | undefined,
+): any[] | undefined {
+  if (!embeds || embeds.length === 0 || !uploads || uploads.length === 0) return embeds;
+
+  const uploadedImageUrls = new Set<string>();
+  for (const upload of uploads) {
+    if (!upload?.isImage) continue;
+    markBlockedImageUrl(uploadedImageUrls, upload.url);
+    markBlockedImageUrl(uploadedImageUrls, upload.sourceUrl);
+  }
+
+  if (uploadedImageUrls.size === 0) return embeds;
+  return stripBlockedEmbedImages(embeds, uploadedImageUrls);
+}
+
 function hasVisualEmbedContent(embed: any): boolean {
   return (
     Boolean(embed?.image?.url) ||

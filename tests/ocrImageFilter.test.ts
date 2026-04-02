@@ -7,6 +7,7 @@ import {
   markBlockedImageUrl,
   stripAllEmbedImages,
   stripBlockedEmbedImages,
+  stripUploadedEmbedImages,
 } from "../src/ocrImageFilter.ts";
 
 test("filterBlockedUploads removes blocked image urls but keeps other uploads", () => {
@@ -142,4 +143,53 @@ test("isBlockedImageUrl matches normalized urls", () => {
 
   assert.equal(isBlockedImageUrl(blockedUrls, "https://cdn.example.com/a.png"), true);
   assert.equal(isBlockedImageUrl(blockedUrls, "https://cdn.example.com/b.png"), false);
+});
+
+test("stripUploadedEmbedImages removes embed image when the same image is uploaded as attachment", () => {
+  const filtered = stripUploadedEmbedImages(
+    [
+      {
+        type: "rich",
+        title: "信号说明",
+        description: "保留这段文字",
+        image: { url: "https://cdn.example.com/card.png?size=large" },
+      },
+    ],
+    [
+      {
+        url: "https://cdn.example.com/card.png",
+        filename: "card.png",
+        isImage: true,
+      },
+    ],
+  );
+
+  assert.deepEqual(filtered, [
+    {
+      type: "rich",
+      title: "信号说明",
+      description: "保留这段文字",
+    },
+  ]);
+});
+
+test("stripUploadedEmbedImages drops image-only embed when the uploaded attachment already carries the image", () => {
+  const filtered = stripUploadedEmbedImages(
+    [
+      {
+        type: "image",
+        url: "https://cdn.example.com/only-image.png?x=1",
+        image: { url: "https://cdn.example.com/only-image.png?x=1" },
+      },
+    ],
+    [
+      {
+        url: "https://cdn.example.com/only-image.png",
+        filename: "only-image.png",
+        isImage: true,
+      },
+    ],
+  );
+
+  assert.equal(filtered, undefined);
 });

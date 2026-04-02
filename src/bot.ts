@@ -22,6 +22,7 @@ import {
   markBlockedImageUrl,
   stripAllEmbedImages,
   stripBlockedEmbedImages,
+  stripUploadedEmbedImages,
 } from "./ocrImageFilter.js";
 import { resolveWatermarkList } from "./watermark.js";
 import {
@@ -2150,6 +2151,7 @@ export class Bot {
       ? stripAllEmbedImages(extraEmbeds)
       : stripBlockedEmbedImages(extraEmbeds, ocrBlockedImageUrls);
     const finalUploads = filterBlockedUploads(uploads, ocrBlockedImageUrls);
+    extraEmbeds = stripUploadedEmbedImages(extraEmbeds, finalUploads);
     const finalImageUrlToFilename = new Map<string, string>();
     for (const item of finalUploads) {
       if (!item.isImage) continue;
@@ -2280,6 +2282,7 @@ export class Bot {
               stripEmbedText(message.embeds, stripOptions),
               ocrBlockedImageUrls,
             );
+        const finalFeishuEmbeds = stripUploadedEmbedImages(feishuEmbeds, finalUploads);
         await feishuSenderForThis.send({
           content: feishuContent,
           username: username,
@@ -2291,7 +2294,7 @@ export class Bot {
             watermarkRemoval: u.watermarkRemoval,
             watermarkRemovalState: u.watermarkRemovalState,
           })),
-          embeds: feishuEmbeds && feishuEmbeds.length > 0 ? feishuEmbeds : undefined,
+          embeds: finalFeishuEmbeds && finalFeishuEmbeds.length > 0 ? finalFeishuEmbeds : undefined,
           watermark: effectiveWatermarks[0],
           watermarkSecondary: effectiveWatermarks[1],
           watermarks: effectiveWatermarks,
@@ -2330,6 +2333,7 @@ export class Bot {
             stripEmbedText(message.embeds, stripOptions),
             ocrBlockedImageUrls,
           );
+      const finalDingtalkEmbeds = stripUploadedEmbedImages(dingtalkEmbeds, finalUploads);
       for (let senderIndex = 0; senderIndex < dingtalkSendersForThis.length; senderIndex++) {
         const sender = dingtalkSendersForThis[senderIndex];
         try {
@@ -2342,7 +2346,7 @@ export class Bot {
               isImage: u.isImage,
               isVideo: u.isVideo,
             })),
-            embeds: dingtalkEmbeds && dingtalkEmbeds.length > 0 ? dingtalkEmbeds : undefined,
+            embeds: finalDingtalkEmbeds && finalDingtalkEmbeds.length > 0 ? finalDingtalkEmbeds : undefined,
           });
           const preview = formatLogPreview(dingtalkContent);
           this.logger.info(
@@ -2394,6 +2398,7 @@ export class Bot {
                   stripEmbedText(message.embeds, stripOptions),
                   ocrBlockedImageUrls,
                 );
+            const finalTelegramEmbeds = stripUploadedEmbedImages(telegramEmbeds, finalUploads);
 
             // 准备消息数据
             const messageData = {
@@ -2415,7 +2420,7 @@ export class Bot {
                   watermarkRemoval: u.watermarkRemoval,
                   watermarkRemovalState: u.watermarkRemovalState,
                 })),
-                embeds: telegramEmbeds && telegramEmbeds.length > 0 ? telegramEmbeds : undefined,
+                embeds: finalTelegramEmbeds && finalTelegramEmbeds.length > 0 ? finalTelegramEmbeds : undefined,
                 watermark: effectiveWatermarks[0],
                 watermarkSecondary: effectiveWatermarks[1],
                 watermarks: effectiveWatermarks,
