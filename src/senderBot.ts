@@ -6,6 +6,7 @@ import { ChannelId, WatermarkConfig } from "./config.js";
 import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark.js";
 import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
+import { normalizeUploadFileDescriptor } from "./uploadMediaMetadata.js";
 
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30000;
@@ -101,7 +102,11 @@ export class SenderBot {
     this.watermarkEnabled = options.watermarkEnabled;
   }
 
-  private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
+  private async postMultipart(
+    body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }>,
+    wait = false,
+  ): Promise<any> {
     const url = new URL(this.webhookUrl);
     if (wait) url.searchParams.set("wait", "true");
 
@@ -121,7 +126,7 @@ export class SenderBot {
     files.forEach((f, idx) => {
       push(`--${boundary}\r\n`);
       push(`Content-Disposition: form-data; name="files[${idx}]"; filename="${f.filename}"\r\n`);
-      push(`Content-Type: application/octet-stream\r\n\r\n`);
+      push(`Content-Type: ${f.contentType || "application/octet-stream"}\r\n\r\n`);
       push(f.buffer);
       push(`\r\n`);
     });
@@ -172,8 +177,8 @@ export class SenderBot {
     watermark?: WatermarkConfig,
     watermarkSecondary?: WatermarkConfig,
     watermarks?: WatermarkConfig[],
-  ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
-    const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
+  ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean; contentType?: string }>> {
+    const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean; contentType?: string }> = [];
     const effectiveWatermarks = this.watermarkEnabled === false
       ? []
       : resolveWatermarkList(
@@ -197,7 +202,8 @@ export class SenderBot {
       } else {
         continue;
       }
-      const shouldWatermark = effectiveWatermarks.length > 0 && (u.isImage || looksLikeImage(buf));
+      const isImageLike = Boolean(u.isImage || looksLikeImage(buf));
+      const shouldWatermark = effectiveWatermarks.length > 0 && isImageLike;
       let finalBuffer = buf;
       if (shouldWatermark) {
         finalBuffer = await applyWatermarksToBuffer(buf, effectiveWatermarks);
@@ -209,7 +215,13 @@ export class SenderBot {
           console.log(`[水印] 图片未发生变化: ${u.filename}`);
         }
       }
-      results.push({ filename: u.filename, buffer: finalBuffer, isImage: u.isImage || shouldWatermark });
+      const normalizedFile = normalizeUploadFileDescriptor(u.filename, finalBuffer);
+      results.push({
+        filename: normalizedFile.filename,
+        buffer: finalBuffer,
+        isImage: isImageLike,
+        contentType: normalizedFile.contentType,
+      });
     }
     return results;
   }
@@ -1068,7 +1080,11 @@ export class SenderBot {
   /**
    * 通过Discord Bot API发送消息（机器人中转模式）
    */
-  private async postViaBotAPI(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, channelId: string): Promise<any> {
+  private async postViaBotAPI(
+    body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }>,
+    channelId: string,
+  ): Promise<any> {
     if (!this.botRelayToken) {
       throw new Error("Bot relay token is not configured");
     }
@@ -1092,7 +1108,7 @@ export class SenderBot {
       files.forEach((f, idx) => {
         push(`--${boundary}\r\n`);
         push(`Content-Disposition: form-data; name="files[${idx}]"; filename="${f.filename}"\r\n`);
-        push(`Content-Type: application/octet-stream\r\n\r\n`);
+        push(`Content-Type: ${f.contentType || "application/octet-stream"}\r\n\r\n`);
         push(f.buffer);
         push(`\r\n`);
       });
