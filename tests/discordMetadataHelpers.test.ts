@@ -6,7 +6,9 @@ import {
   filterDiscordNamedItems,
   getDiscordChannelEmptyMessage,
   getDiscordMetadataAccountId,
+  resolveDiscordChannelNameFromCache,
   resolveDiscordChannelsFromCache,
+  resolveDiscordGuildNameFromCache,
   preserveDiscordChannelsOnFetchFailure,
   shouldReuseDiscordChannelsCache,
 } from "../src/discordMetadataHelpers.ts";
@@ -120,4 +122,45 @@ test("resolveDiscordChannelsFromCache falls back from library account id to inst
   assert.deepEqual(channels, [
     { id: "channel-1", name: "crypto-signals", type: 0 },
   ]);
+});
+
+test("resolveDiscordGuildNameFromCache falls back from library account id to instance guild cache", () => {
+  const guildName = resolveDiscordGuildNameFromCache(
+    {
+      "instance-1": {
+        guilds: [
+          { id: "guild-1", name: "Alpha Guild" },
+        ],
+      },
+    },
+    "library-1",
+    "guild-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.equal(guildName, "Alpha Guild");
+});
+
+test("resolveDiscordChannelNameFromCache falls back from library account id to instance channel cache", () => {
+  const channelName = resolveDiscordChannelNameFromCache(
+    {
+      "instance-1:guild-1": [
+        { id: "channel-1", name: "crypto-signals", type: 0 },
+      ],
+    },
+    "library-1",
+    "guild-1",
+    "channel-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.equal(channelName, "crypto-signals");
 });

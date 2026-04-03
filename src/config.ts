@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "crypto";
 import { getEnv } from "./env";
 import { clearDiscordLibraryReferences } from "./discordLibraryCleanup";
+import { normalizeDiscordMappingRule, normalizeTelegramMapping } from "./mappingNormalization";
 
 export type ChannelId = number | string;
 export type ChatId = ChannelId;
@@ -113,6 +114,8 @@ export interface TelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;     // 源频道ID
   sourceGuildId?: string;      // Discord来源服务器ID（用于discord-to-telegram）
+  sourceGuildName?: string;
+  sourceChannelName?: string;
   targetChannelId: string;     // 目标频道ID
   type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
   inputMode?: "manual" | "select";
@@ -120,6 +123,9 @@ export interface TelegramMapping extends RuleLevelConfig {
   translate?: boolean;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
   senderAccountType?: 'bot' | 'client';
+  discordSenderType?: "account" | "webhook";
+  discordSenderAccountId?: string;
+  targetGuildId?: string;
   longMessage?: {
     enabled: boolean;
     threshold?: number;
@@ -151,6 +157,8 @@ export interface FrontendTelegramMapping extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;
   sourceGuildId?: string;
+  sourceGuildName?: string;
+  sourceChannelName?: string;
   targetChannelId: string;
   type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
   inputMode?: "manual" | "select";
@@ -158,6 +166,9 @@ export interface FrontendTelegramMapping extends RuleLevelConfig {
   translate?: boolean;
   translateDirection?: 'off' | 'auto' | 'zh-en' | 'en-zh';
   senderAccountType?: 'bot' | 'client';
+  discordSenderType?: "account" | "webhook";
+  discordSenderAccountId?: string;
+  targetGuildId?: string;
 }
 
 export interface FrontendTelegramConfig {
@@ -290,7 +301,13 @@ export interface DiscordMappingRule extends RuleLevelConfig {
   id: string;
   sourceChannelId: string;
   sourceGuildId?: string;
+  sourceGuildName?: string;
+  sourceChannelName?: string;
   targetWebhookUrl: string;
+  targetChannelId?: string;
+  targetGuildId?: string;
+  discordSenderType?: "account" | "webhook";
+  discordSenderAccountId?: string;
   dingtalkSecret?: string;
   inputMode?: "manual" | "select";
   note?: string;
@@ -1394,24 +1411,13 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   // 处理 Discord->Discord mappings（保留规则级别配置）
   const mappings: DiscordMappingRule[] = Array.isArray(input?.mappings)
     ? input.mappings.map((m: any) => {
+        const normalizedRule = normalizeDiscordMappingRule(m);
         const watermark = normalizeWatermarkConfig(m.watermark);
         const watermarkSecondary = normalizeWatermarkConfig(m.watermarkSecondary);
         const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(m.watermarks), watermark, watermarkSecondary);
         const watermarkRemoval = normalizeWatermarkRemovalConfig(m.watermarkRemoval);
         return {
-          id: typeof m.id === "string" ? m.id : randomUUID(),
-          sourceChannelId: typeof m.sourceChannelId === "string" ? m.sourceChannelId : "",
-          sourceGuildId: typeof m.sourceGuildId === "string" ? m.sourceGuildId : undefined,
-          targetWebhookUrl: typeof m.targetWebhookUrl === "string" ? m.targetWebhookUrl : "",
-          dingtalkSecret:
-            typeof m.dingtalkSecret === "string" && m.dingtalkSecret.trim()
-              ? m.dingtalkSecret.trim()
-              : undefined,
-          inputMode: m.inputMode === "manual" ? "manual" : m.inputMode === "select" ? "select" : undefined,
-          note: typeof m.note === "string" ? m.note : undefined,
-          targetWebhookName: typeof m.targetWebhookName === "string" && m.targetWebhookName.trim() ? m.targetWebhookName.trim() : undefined,
-          targetWebhookAvatarUrl: typeof m.targetWebhookAvatarUrl === "string" && m.targetWebhookAvatarUrl.trim() ? m.targetWebhookAvatarUrl.trim() : undefined,
-          translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(m.translateDirection) ? m.translateDirection : undefined,
+          ...normalizedRule,
           // RuleLevelConfig 规则级别过滤配置
           allowedUsersIds: Array.isArray(m.allowedUsersIds) ? m.allowedUsersIds : [],
           mutedUsersIds: Array.isArray(m.mutedUsersIds) ? m.mutedUsersIds : [],
@@ -1467,17 +1473,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     accounts: normalizeTelegramAccountList(input.telegramConfig.accounts),
     mappings: Array.isArray(input.telegramConfig.mappings)
       ? input.telegramConfig.mappings.map((mapping: any) => {
-          const rawTarget = typeof mapping.targetChannelId === "string" ? mapping.targetChannelId.trim() : "";
-          const targetIsWebhook = /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(rawTarget);
-          const rawType = typeof mapping.type === "string" ? mapping.type : "";
-          let normalizedType: "telegram-to-discord" | "discord-to-telegram" | "telegram-to-telegram" = "telegram-to-discord";
-          if (rawType === "discord-to-telegram" || rawType === "telegram-to-discord" || rawType === "telegram-to-telegram") {
-            normalizedType = rawType;
-          }
-          if (targetIsWebhook && normalizedType !== "telegram-to-telegram") {
-            normalizedType = "telegram-to-discord";
-          }
-
+          const normalizedMapping = normalizeTelegramMapping(mapping);
           const watermark = normalizeWatermarkConfig(mapping.watermark);
           const watermarkSecondary = normalizeWatermarkConfig(mapping.watermarkSecondary);
           const watermarks = mergeLegacyWatermarks(
@@ -1488,16 +1484,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           const watermarkRemoval = normalizeWatermarkRemovalConfig(mapping.watermarkRemoval);
           const scheduledBroadcast = normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast);
           return {
-            id: typeof mapping.id === "string" ? mapping.id : randomUUID(),
-            sourceChannelId: typeof mapping.sourceChannelId === "string" ? mapping.sourceChannelId : "",
-            sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
-            targetChannelId: rawTarget,
-            type: normalizedType,
-            inputMode: mapping.inputMode === "manual" ? "manual" : mapping.inputMode === "select" ? "select" : undefined,
-            note: typeof mapping.note === "string" ? mapping.note : undefined,
-            translate: mapping.translate === true,
-            translateDirection: ["off", "auto", "zh-en", "en-zh"].includes(mapping.translateDirection) ? mapping.translateDirection : "auto",
-            senderAccountType: mapping.senderAccountType === "bot" ? "bot" : mapping.senderAccountType === "client" ? "client" : undefined,
+            ...normalizedMapping,
             // Telegram特有的超长消息处理（规则级别）
             longMessage: mapping.longMessage && typeof mapping.longMessage === "object" ? {
               enabled: mapping.longMessage.enabled === true,

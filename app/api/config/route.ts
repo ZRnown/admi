@@ -22,6 +22,11 @@ import {
   type ScheduledBroadcastConfig,
   type ScheduledContentItem,
 } from "@/src/config";
+import {
+  getDiscordMetadataAccountId,
+  resolveDiscordChannelNameFromCache,
+  resolveDiscordGuildNameFromCache,
+} from "@/src/discordMetadataHelpers";
 import { readDiscordLibraryStatus, readStatus, triggerFile } from "../_lib/common";
 import { requireAuth } from "@/app/api/_lib/auth";
 
@@ -31,6 +36,8 @@ export const dynamic = "force-dynamic";
 const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
 const externalStatusFile = path.resolve(process.cwd(), ".data", "external_forward_status.json");
 const forwardStatsFile = path.resolve(process.cwd(), ".data", "forward_stats.json");
+const discordGuildsCacheFile = path.resolve(process.cwd(), ".data", "discord_guilds_cache.json");
+const discordChannelsCacheFile = path.resolve(process.cwd(), ".data", "discord_channels_cache.json");
 
 const MASKED_SECRET = "********";
 
@@ -93,6 +100,15 @@ async function readExternalForwardStatus(): Promise<ExternalForwardStatusMap> {
     return JSON.parse(content);
   } catch {
     return {};
+  }
+}
+
+async function readJsonFileOr<T>(filePath: string, fallback: T): Promise<T> {
+  try {
+    const content = await fs.readFile(filePath, "utf-8");
+    return JSON.parse(content) as T;
+  } catch {
+    return fallback;
   }
 }
 
@@ -239,7 +255,13 @@ interface FrontendMapping {
   id: string;
   sourceChannelId: string;
   sourceGuildId?: string;
+  sourceGuildName?: string;
+  sourceChannelName?: string;
   targetWebhookUrl: string;
+  targetChannelId?: string;
+  targetGuildId?: string;
+  discordSenderType?: "account" | "webhook";
+  discordSenderAccountId?: string;
   dingtalkSecret?: string;
   inputMode?: "manual" | "select";
   note?: string;
@@ -815,10 +837,20 @@ function mergeTelegramConfig(
   };
 }
 
-function accountToFrontend(account: AccountConfig): FrontendAccount {
+function accountToFrontend(
+  account: AccountConfig,
+  options?: {
+    discordGuildsCache?: Record<string, any>;
+    discordChannelsCache?: Record<string, any>;
+    config?: MultiConfig;
+  },
+): FrontendAccount {
   const mappings: FrontendMapping[] = [];
   const channelTranslate: Record<string, boolean> = (account as any).channelTranslate || {};
   const channelTranslateDirection: Record<string, string> = (account as any).channelTranslateDirection || {};
+  const metadataAccountId = getDiscordMetadataAccountId(account);
+  const discordGuildsCache = options?.discordGuildsCache || {};
+  const discordChannelsCache = options?.discordChannelsCache || {};
 
   // 获取后端保存的详细映射规则列表
   const savedMappings = (account as any).mappings || [];
@@ -826,8 +858,26 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
   // 优先使用 savedMappings 数组（支持相同源ID的多个规则）
   if (savedMappings.length > 0) {
     for (const savedRule of savedMappings) {
-      if (!savedRule?.sourceChannelId || !savedRule?.targetWebhookUrl) continue;
+      if (!savedRule?.sourceChannelId || (!savedRule?.targetWebhookUrl && !(savedRule as any)?.targetChannelId)) continue;
       const channelId = String(savedRule.sourceChannelId);
+      const sourceGuildId =
+        typeof savedRule.sourceGuildId === "string" && savedRule.sourceGuildId.trim()
+          ? savedRule.sourceGuildId.trim()
+          : undefined;
+      const sourceGuildName =
+        typeof savedRule.sourceGuildName === "string" && savedRule.sourceGuildName.trim()
+          ? savedRule.sourceGuildName.trim()
+          : resolveDiscordGuildNameFromCache(discordGuildsCache, metadataAccountId, sourceGuildId || "", options?.config);
+      const sourceChannelName =
+        typeof savedRule.sourceChannelName === "string" && savedRule.sourceChannelName.trim()
+          ? savedRule.sourceChannelName.trim()
+          : resolveDiscordChannelNameFromCache(
+              discordChannelsCache,
+              metadataAccountId,
+              sourceGuildId || "",
+              channelId,
+              options?.config,
+            );
       const resolvedWatermarks = resolveFrontendWatermarks(
         savedRule.watermarks,
         savedRule.watermark,
@@ -836,8 +886,29 @@ function accountToFrontend(account: AccountConfig): FrontendAccount {
       mappings.push({
         id: savedRule.id || channelId,
         sourceChannelId: channelId,
-        sourceGuildId: typeof savedRule.sourceGuildId === "string" ? savedRule.sourceGuildId : undefined,
-        targetWebhookUrl: String(savedRule.targetWebhookUrl),
+        sourceGuildId,
+        sourceGuildName: sourceGuildName || undefined,
+        sourceChannelName: sourceChannelName || undefined,
+        targetWebhookUrl: String(savedRule.targetWebhookUrl || ""),
+        targetChannelId:
+          typeof (savedRule as any).targetChannelId === "string" && (savedRule as any).targetChannelId.trim()
+            ? (savedRule as any).targetChannelId.trim()
+            : undefined,
+        targetGuildId:
+          typeof (savedRule as any).targetGuildId === "string" && (savedRule as any).targetGuildId.trim()
+            ? (savedRule as any).targetGuildId.trim()
+            : undefined,
+        discordSenderType:
+          (savedRule as any).discordSenderType === "account"
+            ? "account"
+            : (savedRule as any).discordSenderType === "webhook"
+              ? "webhook"
+              : undefined,
+        discordSenderAccountId:
+          typeof (savedRule as any).discordSenderAccountId === "string" &&
+          (savedRule as any).discordSenderAccountId.trim()
+            ? (savedRule as any).discordSenderAccountId.trim()
+            : undefined,
         dingtalkSecret:
           typeof (savedRule as any).dingtalkSecret === "string" ? (savedRule as any).dingtalkSecret : undefined,
         inputMode:
@@ -1321,9 +1392,13 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
 
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
-      if (mapping?.sourceChannelId && mapping?.targetWebhookUrl) {
-        const key = String(mapping.sourceChannelId);
-        channelWebhooks[key] = String(mapping.targetWebhookUrl);
+      const key = String(mapping?.sourceChannelId || "").trim();
+      const targetWebhookUrl = String(mapping?.targetWebhookUrl || "").trim();
+      const targetChannelId = String((mapping as any)?.targetChannelId || "").trim();
+      if (key && (targetWebhookUrl || targetChannelId)) {
+        if (targetWebhookUrl) {
+          channelWebhooks[key] = targetWebhookUrl;
+        }
         if (typeof mapping.note === "string" && mapping.note.trim()) {
           channelNotes[key] = mapping.note.trim();
         }
@@ -1357,13 +1432,36 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           (typeof mapping.id === "string" && mapping.id
             ? baseDingTalkSecretById.get(mapping.id)
             : undefined) ||
-          baseDingTalkSecretByKey.get(`${key}::${String(mapping.targetWebhookUrl)}`);
+          (targetWebhookUrl ? baseDingTalkSecretByKey.get(`${key}::${targetWebhookUrl}`) : undefined);
         const resolvedDingTalkSecret = resolveSecretValue(mapping.dingtalkSecret, fallbackDingTalkSecret);
         savedMappings.push({
           id: mapping.id || randomUUID(),
           sourceChannelId: key,
           sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
-          targetWebhookUrl: String(mapping.targetWebhookUrl),
+          sourceGuildName:
+            typeof mapping.sourceGuildName === "string" && mapping.sourceGuildName.trim()
+              ? mapping.sourceGuildName.trim()
+              : undefined,
+          sourceChannelName:
+            typeof mapping.sourceChannelName === "string" && mapping.sourceChannelName.trim()
+              ? mapping.sourceChannelName.trim()
+              : undefined,
+          targetWebhookUrl,
+          targetChannelId: targetChannelId || undefined,
+          targetGuildId:
+            typeof mapping.targetGuildId === "string" && mapping.targetGuildId.trim()
+              ? mapping.targetGuildId.trim()
+              : undefined,
+          discordSenderType:
+            mapping.discordSenderType === "account"
+              ? "account"
+              : mapping.discordSenderType === "webhook"
+                ? "webhook"
+                : undefined,
+          discordSenderAccountId:
+            typeof mapping.discordSenderAccountId === "string" && mapping.discordSenderAccountId.trim()
+              ? mapping.discordSenderAccountId.trim()
+              : undefined,
           dingtalkSecret:
             typeof resolvedDingTalkSecret === "string" && resolvedDingTalkSecret.trim()
               ? resolvedDingTalkSecret.trim()
@@ -1682,6 +1780,8 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get("includeSecrets") === "1" ||
       req.nextUrl.searchParams.get("export") === "1";
     const multi = await getMultiConfig();
+    const discordGuildsCache = await readJsonFileOr<Record<string, any>>(discordGuildsCacheFile, {});
+    const discordChannelsCache = await readJsonFileOr<Record<string, any>>(discordChannelsCacheFile, {});
     const status = await readStatus();
     const discordLibraryStatus = await readDiscordLibraryStatus();
     const telegramStatus = await readTelegramStatus();
@@ -1713,7 +1813,11 @@ export async function GET(req: NextRequest) {
     const truthSocialAccounts = Array.isArray(multi.truthSocialAccounts) ? multi.truthSocialAccounts : [];
     const payload: FrontendPayload = {
       accounts: multi.accounts.map((acc) => {
-        const frontendBase = accountToFrontend(acc);
+        const frontendBase = accountToFrontend(acc, {
+          discordGuildsCache,
+          discordChannelsCache,
+          config: multi,
+        });
         const runtimeStatus = status[acc.id] || {};
         const normalizedLoginState = normalizeDiscordState(
           typeof runtimeStatus.loginState === "string" ? runtimeStatus.loginState : frontendBase.loginState,
