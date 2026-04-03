@@ -37,6 +37,7 @@ import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { stripUploadedEmbedImages } from "./ocrImageFilter.js";
 import { preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.js";
+import { filenameSuggestsImage, filenameSuggestsVideo } from "./uploadMediaMetadata.js";
 import {
   getDiscordDisconnectMessage,
   getDiscordErrorMessage,
@@ -2088,12 +2089,14 @@ function setupTelegramBridgeClient() {
             const url = typeof media.url === "string" ? media.url : undefined;
             if (!localPath && !url) continue;
             const mimeType = typeof media.mimeType === "string" ? media.mimeType : "";
-            const isImage = media.type === "photo" || mimeType.startsWith("image/");
-            const isVideo = media.type === "video" || mimeType.startsWith("video/");
             const filename =
               (typeof media.fileName === "string" && media.fileName.trim()) ||
               (typeof media.filename === "string" && media.filename.trim()) ||
-              (isImage ? "photo.jpg" : isVideo ? "video.mp4" : "file");
+              "file";
+            const isImage =
+              media.type === "photo" || mimeType.startsWith("image/") || filenameSuggestsImage(filename);
+            const isVideo =
+              media.type === "video" || mimeType.startsWith("video/") || filenameSuggestsVideo(filename);
             pushUpload({ localPath, url, filename, isImage, isVideo });
           }
           extraEmbeds = stripUploadedEmbedImages(extraEmbeds, uploads);
