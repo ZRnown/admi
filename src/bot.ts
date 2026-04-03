@@ -2015,10 +2015,10 @@ export class Bot {
       extraEmbeds = stripEmbedTitles(extraEmbeds);
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
+    extraEmbeds = stripUploadedEmbedImages(extraEmbeds, uploads);
     if (effectiveWatermarks.length > 0) {
       extraEmbeds = replaceEmbedImageUrls(extraEmbeds, imageUrlToFilename);
     }
-    extraEmbeds = stripUploadedEmbedImages(extraEmbeds, uploads);
     const toSend = [{
       content: `${discordContent}`.trim(),
       sourceMessageId: message.id,
