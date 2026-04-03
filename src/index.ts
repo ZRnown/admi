@@ -33,7 +33,7 @@ import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter
 import { preloadWatermarkFonts, resolveWatermarkList } from "./watermark.js";
 import { reconcileExternalForwarders, shutdownExternalForwarders } from "./externalForwarder.js";
 import { recordForwardStat } from "./forwardStats.js";
-import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { stripEmbedText, stripEmbedTitles, stripUploadedEmbedImages } from "./embedUtils.js";
 
 // 全局 Telegram Bridge 客户端
 let telegramBridgeClient: TelegramBridgeClient | null = null;
@@ -2079,6 +2079,7 @@ function setupTelegramBridgeClient() {
               (isImage ? "photo.jpg" : isVideo ? "video.mp4" : "file");
             pushUpload({ localPath, url, filename, isImage, isVideo });
           }
+          extraEmbeds = stripUploadedEmbedImages(extraEmbeds, uploads);
 
           let contentPreview = formatLogPreview(contentForRule);
           const senderLabel = senderDisplayName || "Telegram User";

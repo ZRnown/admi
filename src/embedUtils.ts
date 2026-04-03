@@ -1,5 +1,45 @@
 import { stripLanguages } from "./languageFilter";
 
+function normalizeImageUrl(url?: string): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split(/[?#]/)[0] || url;
+  }
+}
+
+function hasVisualEmbedContent(embed: any): boolean {
+  return (
+    Boolean(embed?.image?.url) ||
+    Boolean(embed?.thumbnail?.url) ||
+    (typeof embed?.url === "string" && embed.url.trim().length > 0 && embed.type === "image")
+  );
+}
+
+function hasTextualEmbedContent(embed: any): boolean {
+  return (
+    Boolean(embed?.title) ||
+    Boolean(embed?.description) ||
+    (Array.isArray(embed?.fields) && embed.fields.length > 0) ||
+    Boolean(embed?.author?.name) ||
+    Boolean(embed?.footer?.text)
+  );
+}
+
+function readEmbedRaw(embed: any): any {
+  if (!embed || typeof embed !== "object") return embed;
+  if (typeof embed.toJSON === "function") {
+    try {
+      return embed.toJSON();
+    } catch {}
+  } else if ("data" in embed && embed.data) {
+    return embed.data;
+  }
+  return embed;
+}
+
 export function stripEmbedText(
   embeds: any[] | undefined,
   options: { stripEnglish?: boolean; stripChinese?: boolean },
@@ -10,14 +50,7 @@ export function stripEmbedText(
     typeof value === "string" ? stripLanguages(value, options) : value;
   return embeds.map((embed) => {
     if (!embed || typeof embed !== "object") return embed;
-    let raw: any = embed;
-    if (typeof (embed as any).toJSON === "function") {
-      try {
-        raw = (embed as any).toJSON();
-      } catch {}
-    } else if ("data" in embed && (embed as any).data) {
-      raw = (embed as any).data;
-    }
+    const raw: any = readEmbedRaw(embed);
     if (!raw || typeof raw !== "object") return raw;
     const next: any = { ...raw };
     if (typeof next.title === "string") next.title = sanitizeText(next.title);
@@ -47,14 +80,7 @@ export function stripEmbedTitles(embeds: any[] | undefined): any[] | undefined {
   if (!embeds || embeds.length === 0) return embeds;
   return embeds.map((embed) => {
     if (!embed || typeof embed !== "object") return embed;
-    let raw: any = embed;
-    if (typeof (embed as any).toJSON === "function") {
-      try {
-        raw = (embed as any).toJSON();
-      } catch {}
-    } else if ("data" in embed && (embed as any).data) {
-      raw = (embed as any).data;
-    }
+    const raw: any = readEmbedRaw(embed);
     if (!raw || typeof raw !== "object") return raw;
     const next: any = { ...raw };
     if ("title" in next) {
@@ -65,4 +91,67 @@ export function stripEmbedTitles(embeds: any[] | undefined): any[] | undefined {
     }
     return next;
   });
+}
+
+export function stripUploadedEmbedImages<
+  T extends { url?: string; sourceUrl?: string; isImage?: boolean }
+>(
+  embeds: any[] | undefined,
+  uploads: T[] | undefined,
+): any[] | undefined {
+  if (!embeds || embeds.length === 0 || !uploads || uploads.length === 0) return embeds;
+
+  const uploadedUrls = new Set<string>();
+  const markUrl = (url?: string) => {
+    if (!url) return;
+    uploadedUrls.add(url);
+    const normalized = normalizeImageUrl(url);
+    if (normalized) uploadedUrls.add(normalized);
+  };
+
+  for (const upload of uploads) {
+    if (!upload?.isImage) continue;
+    markUrl(upload.url);
+    markUrl(upload.sourceUrl);
+  }
+
+  if (uploadedUrls.size === 0) return embeds;
+
+  const filtered = embeds
+    .map((embed) => {
+      const raw = readEmbedRaw(embed);
+      if (!raw || typeof raw !== "object") return raw;
+
+      const hadVisual = hasVisualEmbedContent(raw);
+      const next: any = { ...raw };
+      const imageUrl = typeof next.image?.url === "string" ? next.image.url : undefined;
+      const thumbnailUrl = typeof next.thumbnail?.url === "string" ? next.thumbnail.url : undefined;
+      const rawUrl = typeof next.url === "string" ? next.url : undefined;
+
+      const isUploaded = (url?: string) => {
+        if (!url) return false;
+        const normalized = normalizeImageUrl(url);
+        return uploadedUrls.has(url) || (normalized ? uploadedUrls.has(normalized) : false);
+      };
+
+      if (isUploaded(imageUrl)) {
+        delete next.image;
+      }
+      if (isUploaded(thumbnailUrl)) {
+        delete next.thumbnail;
+      }
+      if ((next.type === "image" || imageUrl || thumbnailUrl) && isUploaded(rawUrl)) {
+        delete next.url;
+      }
+
+      const hasVisual = hasVisualEmbedContent(next);
+      const hasTextual = hasTextualEmbedContent(next);
+      if (hadVisual && !hasVisual && !hasTextual) {
+        return null;
+      }
+      return next;
+    })
+    .filter((item) => item !== null);
+
+  return filtered.length > 0 ? filtered : undefined;
 }

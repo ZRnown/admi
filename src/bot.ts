@@ -18,7 +18,7 @@ import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } fro
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { resolveWatermarkList } from "./watermark.js";
 import { recordForwardStat } from "./forwardStats.js";
-import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { stripEmbedText, stripEmbedTitles, stripUploadedEmbedImages } from "./embedUtils.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -2018,6 +2018,7 @@ export class Bot {
     if (effectiveWatermarks.length > 0) {
       extraEmbeds = replaceEmbedImageUrls(extraEmbeds, imageUrlToFilename);
     }
+    extraEmbeds = stripUploadedEmbedImages(extraEmbeds, uploads);
     const toSend = [{
       content: `${discordContent}`.trim(),
       sourceMessageId: message.id,
@@ -2186,7 +2187,10 @@ export class Bot {
           ),
           stripOptions,
         );
-        const feishuEmbeds = stripEmbedText(message.embeds, stripOptions);
+        const feishuEmbeds = stripUploadedEmbedImages(
+          stripEmbedText(message.embeds, stripOptions),
+          uploads,
+        );
         await feishuSenderForThis.send({
           content: feishuContent,
           username: username,
@@ -2248,7 +2252,10 @@ export class Bot {
             );
             contentForTelegram = stripLanguages(contentForTelegram, stripOptions);
             const contentPreview = formatLogPreview(contentForTelegram);
-            const telegramEmbeds = stripEmbedText(message.embeds, stripOptions);
+            const telegramEmbeds = stripUploadedEmbedImages(
+              stripEmbedText(message.embeds, stripOptions),
+              uploads,
+            );
 
             // 准备消息数据
             const messageData = {
