@@ -1,5 +1,8 @@
 import { stripLanguages } from "./languageFilter";
 
+const NATIVE_PREVIEW_LINK_RE =
+  /^<?https?:\/\/(?:(?:x|twitter)\.com|tenor\.com|giphy\.com)\/\S+>?$/i;
+
 function normalizeImageUrl(url?: string): string {
   if (!url) return "";
   try {
@@ -38,6 +41,33 @@ function readEmbedRaw(embed: any): any {
     return embed.data;
   }
   return embed;
+}
+
+export function isNativePreviewLink(rawContent?: string): boolean {
+  return NATIVE_PREVIEW_LINK_RE.test(String(rawContent || "").trim());
+}
+
+export function applyNativePreviewLinkMediaPolicy<T>(
+  input: {
+    rawContent?: string;
+    uploads?: T[];
+    extraEmbeds?: any[] | undefined;
+  },
+): {
+  uploads: T[];
+  extraEmbeds: any[] | undefined;
+} {
+  if (!isNativePreviewLink(input.rawContent)) {
+    return {
+      uploads: input.uploads || [],
+      extraEmbeds: input.extraEmbeds,
+    };
+  }
+
+  return {
+    uploads: [],
+    extraEmbeds: undefined,
+  };
 }
 
 export function stripEmbedText(

@@ -18,7 +18,13 @@ import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } fro
 import { clampPercent, getLanguageRatio, stripLanguages } from "./languageFilter.js";
 import { resolveWatermarkList } from "./watermark.js";
 import { recordForwardStat } from "./forwardStats.js";
-import { stripEmbedText, stripEmbedTitles, stripUploadedEmbedImages } from "./embedUtils.js";
+import {
+  applyNativePreviewLinkMediaPolicy,
+  isNativePreviewLink,
+  stripEmbedText,
+  stripEmbedTitles,
+  stripUploadedEmbedImages,
+} from "./embedUtils.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -591,10 +597,6 @@ export class Bot {
   private processExitHandlers: Array<() => void> = [];
   // OCR客户端
   private ocrClient?: OCRClient;
-  
-  // 预编译正则
-  private readonly RE_TWITTER = /^<?https?:\/\/(?:x\.com|twitter\.com)\/\S+>?$/i;
-  private readonly RE_GIF = /^<?https?:\/\/(?:tenor\.com|giphy\.com)\/\S+>?$/i;
   
   constructor(
     client: Client,
@@ -1482,6 +1484,7 @@ export class Bot {
     const hasText = rawContent !== "";
     let originalContent = (renderOutput.content || "").trim();
     let useEmbed = true; // 默认使用嵌入形式展示消息
+    const shouldUseNativePreview = isNativePreviewLink(rawContent);
 
     // 若整条仅为 :alias: 表情（允许多个），在顶层直接跳过翻译与嵌入
     try {
@@ -1501,13 +1504,10 @@ export class Bot {
 
     // end of special handling removed
 
-    // Twitter/X 单链接：以纯文本发送，触发 Discord 原生预览
-    if (this.RE_TWITTER.test(rawContent)) {
-        originalContent = rawContent.replace(/[<>]/g, "");
-        useEmbed = false;
-      }
-
-    // GIF 链接的处理移动到附件收集之后
+    if (shouldUseNativePreview) {
+      originalContent = rawContent.replace(/[<>]/g, "");
+      useEmbed = false;
+    }
 
     // 路由：仅当该源频道在映射中时才转发；未映射则跳过（discordRoutes 已在前面检查过）
     if (discordRoutes.length > 0) {
@@ -1785,6 +1785,10 @@ export class Bot {
         // 样式3：主内容使用 embed
         useEmbed = true;
       }
+
+      if (shouldUseNativePreview) {
+        useEmbed = false;
+      }
       
       if (isReplyMessage && replyUserNameForStyle2) {
         // 回复消息：生成一个蓝色嵌入块，包含粗体"💬 回复 用户名"、被回复内容和底部小时间
@@ -1874,7 +1878,7 @@ export class Bot {
 
     // 收集需要上传的附件：首张图片将内嵌到同一个 Embed，视频/其他作为同条消息的附件（可直接播放）
     // 根据忽略设置过滤附件
-    const uploads: Array<{ url: string; filename: string; isImage?: boolean; isVideo?: boolean }> = [];
+    let uploads: Array<{ url: string; filename: string; isImage?: boolean; isVideo?: boolean }> = [];
     let hasCurrentImage = false;
     const imageUrlToFilename = new Map<string, string>();
     let imageIndex = 0;
@@ -1974,10 +1978,9 @@ export class Bot {
       }
     } catch {}
 
-    // Tenor/Giphy：恢复为仅发送链接文本以触发 Discord 原生展开（不做直链抓取、不发送附件）
-    if (this.RE_GIF.test(rawContent)) {
+    if (shouldUseNativePreview) {
       originalContent = rawContent.replace(/[<>]/g, "");
-        useEmbed = false;
+      useEmbed = false;
     }
 
     // 不借用被回复消息的图片：仅转发当前消息自身的附件到同一 Embed
@@ -2016,6 +2019,11 @@ export class Bot {
     }
     extraEmbeds = stripEmbedText(extraEmbeds, stripOptions);
     extraEmbeds = stripUploadedEmbedImages(extraEmbeds, uploads);
+    ({ uploads, extraEmbeds } = applyNativePreviewLinkMediaPolicy({
+      rawContent,
+      uploads,
+      extraEmbeds,
+    }));
     if (effectiveWatermarks.length > 0) {
       extraEmbeds = replaceEmbedImageUrls(extraEmbeds, imageUrlToFilename);
     }
