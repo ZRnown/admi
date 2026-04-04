@@ -77,6 +77,33 @@ function maskSecret(value?: string): string {
   return MASKED_SECRET;
 }
 
+function alignDiscordLinkedAccountTypes(config: MultiConfig): MultiConfig {
+  const discordById = new Map((config.discordAccounts || []).map((account) => [account.id, account]));
+  let changed = false;
+  const accounts = (config.accounts || []).map((account) => {
+    const discordAccountId =
+      typeof (account as any).discordAccountId === "string" ? (account as any).discordAccountId.trim() : "";
+    if (!discordAccountId) {
+      return account;
+    }
+    const linked = discordById.get(discordAccountId);
+    if (!linked) {
+      return account;
+    }
+    const linkedType: "bot" | "selfbot" = linked.type === "bot" ? "bot" : "selfbot";
+    if (account.type === linkedType) {
+      return account;
+    }
+    changed = true;
+    return {
+      ...account,
+      type: linkedType,
+    };
+  });
+
+  return changed ? { ...config, accounts } : config;
+}
+
 async function readTelegramStatus(): Promise<Record<string, TelegramStatusEntry>> {
   try {
     const content = await fs.readFile(telegramStatusFile, "utf-8");
@@ -1607,7 +1634,7 @@ export async function GET(req: NextRequest) {
     const includeSecrets =
       req.nextUrl.searchParams.get("includeSecrets") === "1" ||
       req.nextUrl.searchParams.get("export") === "1";
-    const multi = await getMultiConfig();
+    const multi = alignDiscordLinkedAccountTypes(await getMultiConfig());
     const status = await readStatus();
     const discordLibraryStatus = await readDiscordLibraryStatus();
     const telegramStatus = await readTelegramStatus();
@@ -1723,7 +1750,7 @@ export async function POST(req: NextRequest) {
           )
         : current.truthSocialAccounts || [];
 
-      next = {
+      next = alignDiscordLinkedAccountTypes({
         accounts,
         activeId,
         loginUser: typeof body.loginUser === "string" ? body.loginUser : current.loginUser,
@@ -1737,7 +1764,7 @@ export async function POST(req: NextRequest) {
         xAccounts,
         truthSocialAccounts,
         version: current.version || CONFIG_VERSION,
-      };
+      });
     } else {
       // 兼容旧版请求
       const id = randomUUID();
@@ -1770,7 +1797,7 @@ export async function POST(req: NextRequest) {
         showSourceIdentity: body?.showSourceIdentity === true,
         historyScan: { enabled: true },
       };
-      next = { accounts: [account], activeId: id };
+      next = alignDiscordLinkedAccountTypes({ accounts: [account], activeId: id });
       next.version = CONFIG_VERSION;
     }
 
@@ -1807,7 +1834,7 @@ export async function PUT(req: NextRequest) {
     const activeId = typeof body.activeId === "string" ? body.activeId : accounts[0]?.id;
     const resolvedLoginPassword = resolveSecretValue(body.loginPassword, current.loginPassword);
 
-    const next: MultiConfig = {
+    const next = alignDiscordLinkedAccountTypes({
       accounts,
       activeId,
       loginUser: typeof body.loginUser === "string" ? body.loginUser : current.loginUser,
@@ -1821,7 +1848,7 @@ export async function PUT(req: NextRequest) {
       xAccounts: current.xAccounts,
       truthSocialAccounts: current.truthSocialAccounts,
       version: current.version || CONFIG_VERSION,
-    };
+    });
 
     await saveMultiConfig(next);
 
