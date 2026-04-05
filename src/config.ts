@@ -1047,6 +1047,39 @@ function normalizeTelegramAccountList(raw: any): TelegramAccountConfig[] {
     .filter((acc) => !isTelegramAutoPlaceholderAccount(acc));
 }
 
+function hasLegacyTelegramBotConfig(account: AccountConfig): boolean {
+  return typeof account.telegramBotToken === "string" && account.telegramBotToken.trim().length > 0;
+}
+
+function hasLegacyTelegramClientConfig(account: AccountConfig): boolean {
+  return Boolean(
+    (account.telegramSessionPath || account.telegramSessionString) &&
+      account.telegramApiId &&
+      account.telegramApiHash,
+  );
+}
+
+function collectConfiguredTelegramIds(
+  accounts: AccountConfig[],
+  telegramAccounts: TelegramAccountConfig[],
+): Set<string> {
+  const configuredIds = new Set(telegramAccounts.map((acc) => acc.id));
+
+  for (const account of accounts) {
+    for (const tgAccount of normalizeTelegramAccountList(account.telegramConfig?.accounts)) {
+      configuredIds.add(tgAccount.id);
+    }
+    if (hasLegacyTelegramBotConfig(account)) {
+      configuredIds.add(`${account.id}_bot`);
+    }
+    if (hasLegacyTelegramClientConfig(account)) {
+      configuredIds.add(account.id);
+    }
+  }
+
+  return configuredIds;
+}
+
 function normalizeDiscordAccountLibrary(raw: any): DiscordAccountLibrary[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -1714,7 +1747,87 @@ function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; cha
     changed = true;
   }
 
-  // Telegram 账号库不再自动创建，完全由用户手动维护。
+  if (telegramAccounts.length === 0) {
+    for (const account of config.accounts) {
+      const sourceAccounts = normalizeTelegramAccountList(account.telegramConfig?.accounts);
+      for (const tgAccount of sourceAccounts) {
+        if (!tgAccount?.id || telegramIdSet.has(tgAccount.id)) continue;
+        telegramAccounts.push({ ...tgAccount });
+        telegramIdSet.add(tgAccount.id);
+        changed = true;
+      }
+
+      const hasLegacyBot = hasLegacyTelegramBotConfig(account);
+      if (hasLegacyBot && !telegramIdSet.has(`${account.id}_bot`)) {
+        const botEntry: TelegramAccountConfig = {
+          id: `${account.id}_bot`,
+          name: `${account.name || "Telegram"} Bot`,
+          type: "bot",
+          token: account.telegramBotToken || "",
+          apiId: account.telegramApiId,
+          apiHash: account.telegramApiHash,
+          sessionType: account.sessionType,
+          enabled: false,
+        };
+        telegramAccounts.push(botEntry);
+        telegramIdSet.add(botEntry.id);
+        changed = true;
+      }
+
+      const hasLegacyClient = hasLegacyTelegramClientConfig(account);
+      if (hasLegacyClient && !telegramIdSet.has(account.id)) {
+        const clientEntry: TelegramAccountConfig = {
+          id: account.id,
+          name: account.name || "Telegram Client",
+          type: "client",
+          token: account.telegramApiHash || "",
+          sessionPath: account.telegramSessionPath,
+          sessionString: account.telegramSessionString,
+          apiId: account.telegramApiId,
+          apiHash: account.telegramApiHash,
+          sessionType: account.sessionType,
+          enabled: false,
+        };
+        telegramAccounts.push(clientEntry);
+        telegramIdSet.add(clientEntry.id);
+        changed = true;
+      }
+
+      if (!account.telegramListenerAccountId) {
+        const listener =
+          sourceAccounts.find((item) => item?.role === "listener") ||
+          sourceAccounts.find((item) => item?.type === "client") ||
+          sourceAccounts[0];
+        if (listener?.id) {
+          account.telegramListenerAccountId = listener.id;
+          changed = true;
+        } else if (hasLegacyClient) {
+          account.telegramListenerAccountId = account.id;
+          changed = true;
+        } else if (hasLegacyBot) {
+          account.telegramListenerAccountId = `${account.id}_bot`;
+          changed = true;
+        }
+      }
+
+      if (!account.telegramSenderAccountId) {
+        const sender =
+          sourceAccounts.find((item) => item?.role === "sender") ||
+          sourceAccounts.find((item) => item?.type === "bot") ||
+          sourceAccounts[0];
+        if (sender?.id) {
+          account.telegramSenderAccountId = sender.id;
+          changed = true;
+        } else if (hasLegacyBot) {
+          account.telegramSenderAccountId = `${account.id}_bot`;
+          changed = true;
+        } else if (hasLegacyClient) {
+          account.telegramSenderAccountId = account.id;
+          changed = true;
+        }
+      }
+    }
+  }
 
   if (xAccounts.length === 0) {
     for (const account of config.accounts) {
@@ -1822,18 +1935,6 @@ export async function getMultiConfig(): Promise<MultiConfig> {
 
     // 迁移配置到最新版本
     const migratedAccounts = migrateAccountsToLatest(accounts, version);
-    const telegramIdSet = new Set(telegramAccounts.map((acc) => acc.id));
-    let clearedTelegramRefs = false;
-    migratedAccounts.forEach((account) => {
-      if (account.telegramListenerAccountId && !telegramIdSet.has(account.telegramListenerAccountId)) {
-        account.telegramListenerAccountId = "";
-        clearedTelegramRefs = true;
-      }
-      if (account.telegramSenderAccountId && !telegramIdSet.has(account.telegramSenderAccountId)) {
-        account.telegramSenderAccountId = "";
-        clearedTelegramRefs = true;
-      }
-    });
     const config = {
       accounts: migratedAccounts,
       activeId: active,
@@ -1849,6 +1950,21 @@ export async function getMultiConfig(): Promise<MultiConfig> {
     };
 
     const libraryResult = ensureAccountLibraries(config);
+    const configuredTelegramIds = collectConfiguredTelegramIds(
+      libraryResult.config.accounts,
+      libraryResult.config.telegramAccounts || [],
+    );
+    let clearedTelegramRefs = false;
+    libraryResult.config.accounts.forEach((account) => {
+      if (account.telegramListenerAccountId && !configuredTelegramIds.has(account.telegramListenerAccountId)) {
+        account.telegramListenerAccountId = "";
+        clearedTelegramRefs = true;
+      }
+      if (account.telegramSenderAccountId && !configuredTelegramIds.has(account.telegramSenderAccountId)) {
+        account.telegramSenderAccountId = "";
+        clearedTelegramRefs = true;
+      }
+    });
     const shouldSave =
       version !== CONFIG_VERSION ||
       libraryResult.changed ||

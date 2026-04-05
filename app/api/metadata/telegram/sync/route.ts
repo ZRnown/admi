@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
+import { getMultiConfig } from "@/src/config";
 
 const telegramSyncRequestDir = path.resolve(process.cwd(), ".data", "telegram_sync_requests");
 const telegramSyncResponseDir = path.resolve(process.cwd(), ".data", "telegram_sync_responses");
@@ -52,6 +53,37 @@ async function readCachedDialogs(accountId: string): Promise<any[]> {
   return [];
 }
 
+async function resolveConfiguredTelegramAccountIds(): Promise<Set<string>> {
+  const config = await getMultiConfig();
+  const accountIds = new Set<string>();
+
+  for (const account of config.telegramAccounts || []) {
+    if (account?.id) {
+      accountIds.add(account.id);
+    }
+  }
+
+  for (const instance of config.accounts || []) {
+    for (const account of instance.telegramConfig?.accounts || []) {
+      if (account?.id) {
+        accountIds.add(account.id);
+      }
+    }
+    if (typeof instance.telegramBotToken === "string" && instance.telegramBotToken.trim()) {
+      accountIds.add(`${instance.id}_bot`);
+    }
+    if (
+      (instance.telegramSessionPath || instance.telegramSessionString) &&
+      instance.telegramApiId &&
+      instance.telegramApiHash
+    ) {
+      accountIds.add(instance.id);
+    }
+  }
+
+  return accountIds;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -68,6 +100,14 @@ export async function POST(request: NextRequest) {
 
     if (!accountId) {
       return NextResponse.json({ error: "缺少 accountId 参数" }, { status: 400 });
+    }
+
+    const configuredAccountIds = await resolveConfiguredTelegramAccountIds();
+    if (configuredAccountIds.size === 0) {
+      return NextResponse.json({ error: "当前服务器未配置 Telegram 账号" }, { status: 400 });
+    }
+    if (!configuredAccountIds.has(accountId)) {
+      return NextResponse.json({ error: `未找到 Telegram 账号: ${accountId}` }, { status: 404 });
     }
 
     const requestId = randomUUID();
