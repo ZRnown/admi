@@ -36,7 +36,7 @@ import { reconcileExternalForwarders, shutdownExternalForwarders } from "./exter
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { stripUploadedEmbedImages } from "./ocrImageFilter.js";
-import { preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.js";
+import { normalizeDiscordSourceReference, preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.js";
 import { filenameSuggestsImage, filenameSuggestsVideo } from "./uploadMediaMetadata.js";
 import {
   getDiscordDisconnectMessage,
@@ -1328,15 +1328,17 @@ function collectDiscordListenChannels(account: AccountConfig): Set<string> {
   const feishuWebhooks = account.channelFeishuWebhooks || {};
   const mappings = (account as any).mappings || [];
   for (const channelId of Object.keys(webhooks)) {
-    if (channelId) listenChannels.add(channelId);
+    const normalized = normalizeDiscordSourceReference(channelId);
+    if (normalized.channelId) listenChannels.add(normalized.channelId);
   }
   for (const [channelId, rawTarget] of Object.entries(feishuWebhooks)) {
-    if (!channelId) continue;
+    const normalized = normalizeDiscordSourceReference(channelId);
+    if (!normalized.channelId) continue;
     if (!parseFeishuTarget(rawTarget)) continue;
-    listenChannels.add(channelId);
+    listenChannels.add(normalized.channelId);
   }
   for (const mapping of mappings) {
-    const sourceChannelId = String(mapping?.sourceChannelId || "").trim();
+    const sourceChannelId = normalizeDiscordSourceReference(String(mapping?.sourceChannelId || "").trim()).channelId;
     const targetWebhookUrl = String(mapping?.targetWebhookUrl || "").trim();
     if (!sourceChannelId || !targetWebhookUrl) continue;
     listenChannels.add(sourceChannelId);
@@ -1344,7 +1346,7 @@ function collectDiscordListenChannels(account: AccountConfig): Set<string> {
   const telegramMappings = account.telegramConfig?.mappings || [];
   for (const mapping of telegramMappings) {
     if (mapping?.type !== "discord-to-telegram") continue;
-    const sourceChannelId = String(mapping?.sourceChannelId || "").trim();
+    const sourceChannelId = normalizeDiscordSourceReference(String(mapping?.sourceChannelId || "").trim()).channelId;
     const targetChannelId = String(mapping?.targetChannelId || "").trim();
     if (!sourceChannelId || !targetChannelId) continue;
     listenChannels.add(sourceChannelId);
