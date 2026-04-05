@@ -39,6 +39,7 @@ class TelegramBotManager:
         self._shared_primary: Dict[str, str] = {}
         self._shared_user_info: Dict[str, dict] = {}
         self._event_handlers: Dict[str, Any] = {}
+        self._chat_action_handlers: Dict[str, Any] = {}
         base_dir = Path(__file__).resolve().parents[3]
         avatar_root = os.getenv("TELEGRAM_AVATAR_DIR") or str(base_dir / ".data" / "telegram_avatars")
         media_root = os.getenv("TELEGRAM_MEDIA_DIR") or str(base_dir / ".data" / "telegram_media")
@@ -137,6 +138,28 @@ class TelegramBotManager:
             "member_count": None,
         }
 
+    def _resolve_chat_type(self, chat: Any, fallback: Optional[str] = None) -> str:
+        if fallback:
+            return fallback
+        raw_type = getattr(chat, "type", None)
+        if isinstance(raw_type, str) and raw_type:
+            return raw_type
+        if isinstance(chat, Channel):
+            if getattr(chat, "megagroup", False):
+                return "supergroup"
+            if getattr(chat, "gigagroup", False):
+                return "group"
+            return "channel"
+        if isinstance(chat, Chat):
+            return "group"
+        if isinstance(chat, User):
+            return "private"
+        if getattr(chat, "megagroup", False):
+            return "supergroup"
+        if getattr(chat, "gigagroup", False):
+            return "group"
+        return "unknown"
+
     def _load_dialogs_cache(self) -> Dict[str, Any]:
         try:
             if self.dialogs_cache_file.exists():
@@ -181,6 +204,37 @@ class TelegramBotManager:
             seen.add(entry["id"])
         except Exception:
             pass
+
+    def _extract_bot_api_chat(self, update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        for field in (
+            "message",
+            "channel_post",
+            "edited_message",
+            "edited_channel_post",
+            "my_chat_member",
+            "chat_member",
+            "business_message",
+            "edited_business_message",
+        ):
+            payload = update.get(field)
+            if isinstance(payload, dict) and isinstance(payload.get("chat"), dict):
+                return payload["chat"]
+        return None
+
+    def _ensure_event_handlers(self, account_id: str, client: TelegramClient):
+        if account_id not in self._event_handlers:
+            async def message_handler(event, acc_id=account_id):
+                asyncio.create_task(self._handle_message(event, acc_id))
+
+            client.add_event_handler(message_handler, events.NewMessage)
+            self._event_handlers[account_id] = message_handler
+
+        if account_id not in self._chat_action_handlers:
+            async def chat_action_handler(event, acc_id=account_id):
+                asyncio.create_task(self._handle_chat_action(event, acc_id))
+
+            client.add_event_handler(chat_action_handler, events.ChatAction)
+            self._chat_action_handlers[account_id] = chat_action_handler
 
     def update_watched_chats(self, account_id: str, chat_ids: list):
         """更新监听的频道列表"""
@@ -251,11 +305,7 @@ class TelegramBotManager:
         self._shared_by_account[account_id] = shared_key
         self._shared_account_ids.setdefault(shared_key, set()).add(account_id)
 
-        if account_id not in self._event_handlers:
-            async def message_handler(event, acc_id=account_id):
-                asyncio.create_task(self._handle_message(event, acc_id))
-            client.add_event_handler(message_handler, events.NewMessage)
-            self._event_handlers[account_id] = message_handler
+        self._ensure_event_handlers(account_id, client)
 
         if shared_key not in self._shared_primary:
             self._shared_primary[shared_key] = account_id
@@ -509,13 +559,7 @@ class TelegramBotManager:
                         user_info=user_info
                     )
 
-                    # 设置消息处理器 - 使用闭包捕获account_id
-                    if account_id not in self._event_handlers:
-                        async def message_handler(event, acc_id=account_id):
-                            asyncio.create_task(self._handle_message(event, acc_id))
-
-                        client.add_event_handler(message_handler, events.NewMessage)
-                        self._event_handlers[account_id] = message_handler
+                    self._ensure_event_handlers(account_id, client)
 
                     result = {
                         "success": True,
@@ -588,6 +632,12 @@ class TelegramBotManager:
             if handler and bot:
                 try:
                     bot.remove_event_handler(handler, events.NewMessage)
+                except Exception:
+                    pass
+            chat_action_handler = self._chat_action_handlers.pop(account_id, None)
+            if chat_action_handler and bot:
+                try:
+                    bot.remove_event_handler(chat_action_handler, events.ChatAction)
                 except Exception:
                     pass
 
@@ -805,21 +855,21 @@ class TelegramBotManager:
                         data = await resp.json()
                         if data.get("ok"):
                             for update in data.get("result", []):
-                                message = update.get("message") or update.get("channel_post")
-                                if message and message.get("chat"):
-                                    chat = message["chat"]
-                                    chat_id = chat.get("id")
-                                    if chat_id and chat_id not in seen_chat_ids:
-                                        seen_chat_ids.add(chat_id)
-                                        chat_type = chat.get("type", "private")
-                                        channel = TelegramChannel(
-                                            id=str(chat_id),
-                                            title=chat.get("title") or chat.get("first_name") or "Unknown",
-                                            type=chat_type,
-                                            username=chat.get("username"),
-                                            member_count=None
-                                        )
-                                        channels.append(channel.dict())
+                                chat = self._extract_bot_api_chat(update)
+                                if not chat:
+                                    continue
+                                chat_id = chat.get("id")
+                                if chat_id and chat_id not in seen_chat_ids:
+                                    seen_chat_ids.add(chat_id)
+                                    chat_type = chat.get("type", "private")
+                                    channel = TelegramChannel(
+                                        id=str(chat_id),
+                                        title=chat.get("title") or chat.get("first_name") or "Unknown",
+                                        type=chat_type,
+                                        username=chat.get("username"),
+                                        member_count=None
+                                    )
+                                    channels.append(channel.dict())
                         else:
                             error_msg = data.get("description", "Unknown error")
                             logger.warning(f"Bot API getUpdates error: {error_msg}")
@@ -839,6 +889,20 @@ class TelegramBotManager:
                         webhook_url = info.get("url")
                         if webhook_url:
                             note_parts.append("检测到该机器人已配置 Webhook，部分功能可能受限。")
+            except Exception:
+                pass
+
+            try:
+                url = f"https://api.telegram.org/bot{token}/getMe"
+                session = self._get_http_session()
+                async with session.get(url) as resp:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        info = data.get("result", {}) or {}
+                        if info.get("can_read_all_group_messages") is False:
+                            note_parts.append(
+                                "该机器人当前仍处于隐私模式，群内普通消息不会全部可见；如需完整监听，请在 BotFather 关闭 Group Privacy 或改用客户端账号。"
+                            )
             except Exception:
                 pass
 
@@ -1184,6 +1248,26 @@ class TelegramBotManager:
 
         except Exception as e:
             logger.error(f"Failed to handle message for bot {account_id}: {e}")
+
+    async def _handle_chat_action(self, event, account_id: str):
+        """记录机器人可见的群动作，避免新加群时同步列表为空"""
+        try:
+            chat = getattr(event, "chat", None)
+            chat_id = getattr(event, "chat_id", None)
+            if chat_id is None and chat is not None:
+                chat_id = getattr(chat, "id", None)
+            if chat_id is None:
+                return
+
+            chat_username = getattr(chat, "username", None) if chat is not None else None
+            chat_title = getattr(chat, "title", None) if chat is not None else None
+            if not chat_title and isinstance(chat, User):
+                full_name = " ".join(filter(None, [chat.first_name, chat.last_name])).strip()
+                chat_title = full_name or (f"@{chat.username}" if getattr(chat, "username", None) else None)
+            chat_type = self._resolve_chat_type(chat)
+            self._record_dialog(account_id, chat_id, chat_title, chat_username, chat_type)
+        except Exception as e:
+            logger.debug(f"Failed to record chat action for account {account_id}: {e}")
 
     def _parse_user(self, user) -> Optional[Dict[str, Any]]:
         """解析用户信息"""
