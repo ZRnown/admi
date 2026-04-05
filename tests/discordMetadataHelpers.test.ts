@@ -6,6 +6,8 @@ import {
   filterDiscordNamedItems,
   getDiscordChannelEmptyMessage,
   getDiscordMetadataAccountId,
+  normalizeDiscordSourceReference,
+  resolveDiscordChannelMetadataFromCache,
   resolveDiscordChannelNameFromCache,
   resolveDiscordChannelsFromCache,
   resolveDiscordGuildNameFromCache,
@@ -163,4 +165,48 @@ test("resolveDiscordChannelNameFromCache falls back from library account id to i
   );
 
   assert.equal(channelName, "crypto-signals");
+});
+
+test("normalizeDiscordSourceReference extracts guild and channel ids from Discord links", () => {
+  assert.deepEqual(
+    normalizeDiscordSourceReference(
+      "https://discord.com/channels/422500326654869505/1391569590969958542/1490340117020413962",
+      undefined,
+    ),
+    {
+      channelId: "1391569590969958542",
+      guildId: "422500326654869505",
+      messageId: "1490340117020413962",
+    },
+  );
+});
+
+test("resolveDiscordChannelMetadataFromCache finds channel metadata without saved guild id", () => {
+  const metadata = resolveDiscordChannelMetadataFromCache(
+    {
+      "instance-1:guild-1": [
+        { id: "channel-1", name: "crypto-signals", type: 0 },
+      ],
+    },
+    {
+      "instance-1": {
+        guilds: [
+          { id: "guild-1", name: "Alpha Guild" },
+        ],
+      },
+    },
+    "library-1",
+    "channel-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.deepEqual(metadata, {
+    guildId: "guild-1",
+    guildName: "Alpha Guild",
+    channelName: "crypto-signals",
+  });
 });

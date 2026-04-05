@@ -1,5 +1,8 @@
 import { randomUUID } from "crypto";
 
+const DISCORD_CHANNEL_URL_RE =
+  /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/channels\/([^/]+)\/([^/]+)(?:\/([^/]+))?\/?$/i;
+
 function normalizeOptionalTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -21,11 +24,35 @@ function normalizeOptionalDiscordSenderType(value: unknown): "account" | "webhoo
   return value === "account" || value === "webhook" ? value : undefined;
 }
 
+function normalizeDiscordSourceReference(
+  sourceChannelId?: string | null,
+  sourceGuildId?: string | null,
+): { channelId: string; guildId?: string } {
+  const channelValue = typeof sourceChannelId === "string" ? sourceChannelId.trim() : "";
+  const guildValue = typeof sourceGuildId === "string" ? sourceGuildId.trim() : "";
+  if (!channelValue) {
+    return { channelId: "", guildId: guildValue || undefined };
+  }
+
+  const match = channelValue.match(DISCORD_CHANNEL_URL_RE);
+  if (!match) {
+    return { channelId: channelValue, guildId: guildValue || undefined };
+  }
+
+  const [, parsedGuildId, parsedChannelId] = match;
+  const guildId = guildValue || (parsedGuildId !== "@me" ? parsedGuildId : "");
+  return {
+    channelId: parsedChannelId,
+    guildId: guildId || undefined,
+  };
+}
+
 export function normalizeDiscordMappingRule(input: any) {
+  const sourceRef = normalizeDiscordSourceReference(input?.sourceChannelId, input?.sourceGuildId);
   return {
     id: typeof input?.id === "string" ? input.id : randomUUID(),
-    sourceChannelId: typeof input?.sourceChannelId === "string" ? input.sourceChannelId : "",
-    sourceGuildId: normalizeOptionalTrimmedString(input?.sourceGuildId),
+    sourceChannelId: sourceRef.channelId,
+    sourceGuildId: sourceRef.guildId,
     sourceGuildName: normalizeOptionalTrimmedString(input?.sourceGuildName),
     sourceChannelName: normalizeOptionalTrimmedString(input?.sourceChannelName),
     targetWebhookUrl: typeof input?.targetWebhookUrl === "string" ? input.targetWebhookUrl : "",
@@ -43,6 +70,7 @@ export function normalizeDiscordMappingRule(input: any) {
 }
 
 export function normalizeTelegramMapping(input: any) {
+  const sourceRef = normalizeDiscordSourceReference(input?.sourceChannelId, input?.sourceGuildId);
   const rawTarget = typeof input?.targetChannelId === "string" ? input.targetChannelId.trim() : "";
   const targetIsWebhook = /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(rawTarget);
   const rawType = typeof input?.type === "string" ? input.type : "";
@@ -56,8 +84,8 @@ export function normalizeTelegramMapping(input: any) {
 
   return {
     id: typeof input?.id === "string" ? input.id : randomUUID(),
-    sourceChannelId: typeof input?.sourceChannelId === "string" ? input.sourceChannelId : "",
-    sourceGuildId: normalizeOptionalTrimmedString(input?.sourceGuildId),
+    sourceChannelId: sourceRef.channelId,
+    sourceGuildId: sourceRef.guildId,
     sourceGuildName: normalizeOptionalTrimmedString(input?.sourceGuildName),
     sourceChannelName: normalizeOptionalTrimmedString(input?.sourceChannelName),
     targetChannelId: rawTarget,

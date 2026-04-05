@@ -2,6 +2,33 @@ export function getDiscordMetadataAccountId(account?: { discordAccountId?: strin
   return String(account?.discordAccountId || account?.id || "").trim();
 }
 
+const DISCORD_CHANNEL_URL_RE =
+  /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/channels\/([^/]+)\/([^/]+)(?:\/([^/]+))?\/?$/i;
+
+export function normalizeDiscordSourceReference(
+  sourceChannelId?: string | null,
+  sourceGuildId?: string | null,
+): { channelId: string; guildId?: string; messageId?: string } {
+  const channelValue = String(sourceChannelId || "").trim();
+  const guildValue = String(sourceGuildId || "").trim();
+  if (!channelValue) {
+    return { channelId: "", guildId: guildValue || undefined };
+  }
+
+  const match = channelValue.match(DISCORD_CHANNEL_URL_RE);
+  if (!match) {
+    return { channelId: channelValue, guildId: guildValue || undefined };
+  }
+
+  const [, parsedGuildId, parsedChannelId, parsedMessageId] = match;
+  const guildId = guildValue || (parsedGuildId !== "@me" ? parsedGuildId : "");
+  return {
+    channelId: parsedChannelId,
+    guildId: guildId || undefined,
+    messageId: parsedMessageId || undefined,
+  };
+}
+
 function buildDiscordMetadataAccountIds(
   accountId: string,
   config?: DiscordMetadataConfigLike | null,
@@ -199,6 +226,73 @@ export function resolveDiscordChannelNameFromCache<T extends { id?: string | nul
   const channels = resolveDiscordChannelsFromCache(cache, accountId, guildId, config);
   const match = channels.find((channel) => String(channel?.id || "") === normalizedChannelId);
   return String(match?.name || "").trim();
+}
+
+export function resolveDiscordChannelMetadataFromCache<T extends { id?: string | null; name?: string | null }>(
+  channelsCache: Record<string, T[] | undefined>,
+  guildsCache: Record<string, DiscordGuildCacheEntry>,
+  accountId: string,
+  channelId: string,
+  config?: DiscordMetadataConfigLike | null,
+  guildId?: string,
+): {
+  guildId?: string;
+  guildName?: string;
+  channelName?: string;
+} {
+  const normalizedChannelId = String(channelId || "").trim();
+  const normalizedGuildId = String(guildId || "").trim();
+  if (!normalizedChannelId) {
+    return {
+      guildId: normalizedGuildId || undefined,
+    };
+  }
+
+  let resolvedGuildId = normalizedGuildId || undefined;
+  let guildName = normalizedGuildId
+    ? resolveDiscordGuildNameFromCache(guildsCache, accountId, normalizedGuildId, config)
+    : "";
+  let channelName = normalizedGuildId
+    ? resolveDiscordChannelNameFromCache(channelsCache, accountId, normalizedGuildId, normalizedChannelId, config)
+    : "";
+
+  if (channelName && (resolvedGuildId || guildName)) {
+    return {
+      guildId: resolvedGuildId,
+      guildName: guildName || undefined,
+      channelName,
+    };
+  }
+
+  const accountPrefixes = buildDiscordMetadataAccountIds(accountId, config).map((id) => `${id}:`);
+  for (const [cacheKey, channels] of Object.entries(channelsCache || {})) {
+    if (!accountPrefixes.some((prefix) => cacheKey.startsWith(prefix))) continue;
+    if (!Array.isArray(channels)) continue;
+    const match = channels.find((channel) => String(channel?.id || "") === normalizedChannelId);
+    if (!match) continue;
+
+    const separatorIndex = cacheKey.indexOf(":");
+    const matchedGuildId = separatorIndex >= 0 ? cacheKey.slice(separatorIndex + 1) : "";
+    if (!resolvedGuildId && matchedGuildId) {
+      resolvedGuildId = matchedGuildId;
+    }
+    if (!channelName) {
+      channelName = String(match?.name || "").trim();
+    }
+    if (!guildName && matchedGuildId) {
+      guildName = resolveDiscordGuildNameFromCache(guildsCache, accountId, matchedGuildId, config);
+    }
+
+    if (channelName && (resolvedGuildId || guildName)) {
+      break;
+    }
+  }
+
+  return {
+    guildId: resolvedGuildId,
+    guildName: guildName || undefined,
+    channelName: channelName || undefined,
+  };
 }
 
 export function preserveDiscordChannelsOnFetchFailure<T>(existing: T[] | undefined, fetched: T[], hadFetchError: boolean): T[] {

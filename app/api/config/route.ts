@@ -24,6 +24,8 @@ import {
 } from "@/src/config";
 import {
   getDiscordMetadataAccountId,
+  normalizeDiscordSourceReference,
+  resolveDiscordChannelMetadataFromCache,
   resolveDiscordChannelNameFromCache,
   resolveDiscordGuildNameFromCache,
 } from "@/src/discordMetadataHelpers";
@@ -83,6 +85,33 @@ function resolveSecretValue(value: unknown, fallback?: string): string | undefin
 function maskSecret(value?: string): string {
   if (!value || !value.trim()) return "";
   return MASKED_SECRET;
+}
+
+function alignDiscordLinkedAccountTypes(config: MultiConfig): MultiConfig {
+  const discordById = new Map((config.discordAccounts || []).map((account) => [account.id, account]));
+  let changed = false;
+  const accounts = (config.accounts || []).map((account) => {
+    const discordAccountId =
+      typeof (account as any).discordAccountId === "string" ? (account as any).discordAccountId.trim() : "";
+    if (!discordAccountId) {
+      return account;
+    }
+    const linked = discordById.get(discordAccountId);
+    if (!linked) {
+      return account;
+    }
+    const linkedType: "bot" | "selfbot" = linked.type === "bot" ? "bot" : "selfbot";
+    if (account.type === linkedType) {
+      return account;
+    }
+    changed = true;
+    return {
+      ...account,
+      type: linkedType,
+    };
+  });
+
+  return changed ? { ...config, accounts } : config;
 }
 
 async function readTelegramStatus(): Promise<Record<string, TelegramStatusEntry>> {
@@ -859,25 +888,39 @@ function accountToFrontend(
   if (savedMappings.length > 0) {
     for (const savedRule of savedMappings) {
       if (!savedRule?.sourceChannelId || (!savedRule?.targetWebhookUrl && !(savedRule as any)?.targetChannelId)) continue;
-      const channelId = String(savedRule.sourceChannelId);
-      const sourceGuildId =
-        typeof savedRule.sourceGuildId === "string" && savedRule.sourceGuildId.trim()
-          ? savedRule.sourceGuildId.trim()
-          : undefined;
+      const sourceRef = normalizeDiscordSourceReference(
+        String(savedRule.sourceChannelId),
+        typeof savedRule.sourceGuildId === "string" ? savedRule.sourceGuildId : undefined,
+      );
+      const channelId = sourceRef.channelId;
+      const resolvedFromCache = resolveDiscordChannelMetadataFromCache(
+        discordChannelsCache,
+        discordGuildsCache,
+        metadataAccountId,
+        channelId,
+        options?.config,
+        sourceRef.guildId,
+      );
+      const sourceGuildId = sourceRef.guildId || resolvedFromCache.guildId;
       const sourceGuildName =
         typeof savedRule.sourceGuildName === "string" && savedRule.sourceGuildName.trim()
           ? savedRule.sourceGuildName.trim()
-          : resolveDiscordGuildNameFromCache(discordGuildsCache, metadataAccountId, sourceGuildId || "", options?.config);
-      const sourceChannelName =
+          : resolvedFromCache.guildName ||
+            resolveDiscordGuildNameFromCache(discordGuildsCache, metadataAccountId, sourceGuildId || "", options?.config);
+      const sourceChannelNameBase =
         typeof savedRule.sourceChannelName === "string" && savedRule.sourceChannelName.trim()
           ? savedRule.sourceChannelName.trim()
-          : resolveDiscordChannelNameFromCache(
+          : resolvedFromCache.channelName ||
+            resolveDiscordChannelNameFromCache(
               discordChannelsCache,
               metadataAccountId,
               sourceGuildId || "",
               channelId,
               options?.config,
             );
+      const sourceChannelName =
+        sourceChannelNameBase ||
+        (typeof savedRule.note === "string" && savedRule.note.trim() ? savedRule.note.trim() : undefined);
       const resolvedWatermarks = resolveFrontendWatermarks(
         savedRule.watermarks,
         savedRule.watermark,
@@ -1392,7 +1435,11 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
 
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
-      const key = String(mapping?.sourceChannelId || "").trim();
+      const sourceRef = normalizeDiscordSourceReference(
+        typeof mapping?.sourceChannelId === "string" ? mapping.sourceChannelId : "",
+        typeof mapping?.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
+      );
+      const key = sourceRef.channelId;
       const targetWebhookUrl = String(mapping?.targetWebhookUrl || "").trim();
       const targetChannelId = String((mapping as any)?.targetChannelId || "").trim();
       if (key && (targetWebhookUrl || targetChannelId)) {
@@ -1437,7 +1484,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         savedMappings.push({
           id: mapping.id || randomUUID(),
           sourceChannelId: key,
-          sourceGuildId: typeof mapping.sourceGuildId === "string" ? mapping.sourceGuildId : undefined,
+          sourceGuildId: sourceRef.guildId,
           sourceGuildName:
             typeof mapping.sourceGuildName === "string" && mapping.sourceGuildName.trim()
               ? mapping.sourceGuildName.trim()
@@ -1779,7 +1826,7 @@ export async function GET(req: NextRequest) {
     const includeSecrets =
       req.nextUrl.searchParams.get("includeSecrets") === "1" ||
       req.nextUrl.searchParams.get("export") === "1";
-    const multi = await getMultiConfig();
+    const multi = alignDiscordLinkedAccountTypes(await getMultiConfig());
     const discordGuildsCache = await readJsonFileOr<Record<string, any>>(discordGuildsCacheFile, {});
     const discordChannelsCache = await readJsonFileOr<Record<string, any>>(discordChannelsCacheFile, {});
     const status = await readStatus();
@@ -1908,7 +1955,7 @@ export async function POST(req: NextRequest) {
           )
         : current.truthSocialAccounts || [];
 
-      next = {
+      next = alignDiscordLinkedAccountTypes({
         accounts,
         activeId,
         loginUser: typeof body.loginUser === "string" ? body.loginUser : current.loginUser,
@@ -1921,7 +1968,7 @@ export async function POST(req: NextRequest) {
         telegramAccounts,
         xAccounts,
         truthSocialAccounts,
-      };
+      });
     } else {
       // 兼容旧版请求
       const id = randomUUID();
@@ -1954,7 +2001,7 @@ export async function POST(req: NextRequest) {
         showSourceIdentity: body?.showSourceIdentity === true,
         historyScan: { enabled: true },
       };
-      next = { accounts: [account], activeId: id };
+      next = alignDiscordLinkedAccountTypes({ accounts: [account], activeId: id });
     }
 
     await saveMultiConfig(next);
@@ -1990,7 +2037,7 @@ export async function PUT(req: NextRequest) {
     const activeId = typeof body.activeId === "string" ? body.activeId : accounts[0]?.id;
     const resolvedLoginPassword = resolveSecretValue(body.loginPassword, current.loginPassword);
 
-    const next: MultiConfig = {
+    const next = alignDiscordLinkedAccountTypes({
       accounts,
       activeId,
       loginUser: typeof body.loginUser === "string" ? body.loginUser : current.loginUser,
@@ -2003,7 +2050,7 @@ export async function PUT(req: NextRequest) {
       telegramAccounts: current.telegramAccounts,
       xAccounts: current.xAccounts,
       truthSocialAccounts: current.truthSocialAccounts,
-    };
+    });
 
     await saveMultiConfig(next);
 

@@ -48,3 +48,24 @@ test("normalizeTelegramMapping preserves Discord display metadata and sender fie
   assert.equal(rule.discordSenderAccountId, "library-1");
   assert.equal(rule.targetGuildId, "target-guild-1");
 });
+
+test("normalizeDiscordMappingRule parses Discord channel links into channel and guild ids", () => {
+  const rule = normalizeDiscordMappingRule({
+    sourceChannelId: "https://discord.com/channels/422500326654869505/1391569590969958542/1490340117020413962",
+    targetWebhookUrl: "https://discord.com/api/webhooks/demo",
+  });
+
+  assert.equal(rule.sourceChannelId, "1391569590969958542");
+  assert.equal(rule.sourceGuildId, "422500326654869505");
+});
+
+test("normalizeTelegramMapping parses Discord channel links into channel and guild ids", () => {
+  const rule = normalizeTelegramMapping({
+    sourceChannelId: "https://discord.com/channels/422500326654869505/1391569590969958542",
+    targetChannelId: "123456",
+    type: "discord-to-telegram",
+  });
+
+  assert.equal(rule.sourceChannelId, "1391569590969958542");
+  assert.equal(rule.sourceGuildId, "422500326654869505");
+});
