@@ -9,6 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"></script>
   <script src="/js/http-response.js"></script>
   <script src="/js/discord-select-helpers.js"></script>
+  <script src="/js/ui-resilience.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.css"/>
   <!-- 自定义样式 -->
   <link rel="stylesheet" href="/css/styles.css"/>
@@ -666,6 +667,18 @@
     }
 
     let openModalCount = 0;
+
+    function recoverTransientUiState() {
+      if (!window.UiResilience || typeof window.UiResilience.resetTransientUiState !== 'function') {
+        openModalCount = 0;
+        document.body.style.overflow = '';
+        return { closedModals: 0, removedOverlays: 0, clearedClassCount: 0 };
+      }
+
+      const result = window.UiResilience.resetTransientUiState({ document, body: document.body });
+      openModalCount = 0;
+      return result;
+    }
 
     function lockBodyScroll() {
       if (openModalCount === 0) {
@@ -1644,6 +1657,7 @@
     }
 
     function showLoginPage(message) {
+      recoverTransientUiState();
       document.getElementById('loginPage').style.display = 'block';
       document.getElementById('mainPage').style.display = 'none';
       document.getElementById('app').style.display = 'none';
@@ -1663,6 +1677,7 @@
 
     // 初始化
     async function init() {
+      recoverTransientUiState();
       const authed = await checkLoginStatus();
       if (!authed) {
         showLoginPage();
@@ -13513,6 +13528,10 @@
       }
       scheduleNextStatusPoll();
     }
+
+    window.addEventListener('pageshow', () => {
+      recoverTransientUiState();
+    });
 
     // 启动
     init();
