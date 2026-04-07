@@ -768,7 +768,7 @@
     }
 
     function getForwardingTypeLabel(type) {
-      const value = type || 'discord-to-discord';
+      const value = type || getDefaultForwardingType();
       switch (value) {
         case 'discord-to-discord': return 'Discord → Discord';
         case 'discord-to-telegram': return 'Discord → Telegram';
@@ -780,6 +780,22 @@
         case 'truthsocial-to-discord': return 'TruthSocial → Discord';
         default: return value;
       }
+    }
+
+    function getEnabledForwardingTypes() {
+      if (Array.isArray(state?.enabledForwardingTypes) && state.enabledForwardingTypes.length > 0) {
+        return Array.from(new Set(state.enabledForwardingTypes));
+      }
+      return ['telegram-to-telegram'];
+    }
+
+    function getSingleEnabledForwardingType() {
+      const enabledTypes = getEnabledForwardingTypes();
+      return enabledTypes.length === 1 ? enabledTypes[0] : null;
+    }
+
+    function getDefaultForwardingType() {
+      return getEnabledForwardingTypes()[0] || 'telegram-to-telegram';
     }
 
     function formatTime(value) {
@@ -869,7 +885,7 @@
     }
 
     function getInstanceState(acc) {
-      const type = acc?.forwardingType || 'discord-to-discord';
+      const type = acc?.forwardingType || getDefaultForwardingType();
       if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
         return resolveTelegramInstanceState(acc, type);
       }
@@ -1058,7 +1074,7 @@
       if (currentState === 'online' || currentState === 'pending' || currentState === 'connecting') {
         return;
       }
-      const type = acc.forwardingType || 'discord-to-discord';
+      const type = acc.forwardingType || getDefaultForwardingType();
       const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
       const usingLibrary = hasTelegramLibrarySelection(acc);
       const discordLibraryId = acc.discordAccountId || acc.discordSenderAccountId;
@@ -1172,7 +1188,7 @@
       if (currentState === 'idle') {
         return;
       }
-      const type = acc.forwardingType || 'discord-to-discord';
+      const type = acc.forwardingType || getDefaultForwardingType();
       const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
       const usingLibrary = hasTelegramLibrarySelection(acc);
       const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu' || type === 'discord-to-dingtalk';
@@ -1349,7 +1365,7 @@
 
     function buildAccountCardSummary(acc, options = {}) {
       const includeDetail = options.includeDetail !== false;
-      const type = acc.forwardingType || 'discord-to-discord';
+      const type = acc.forwardingType || getDefaultForwardingType();
       if (type === 'x-to-discord' || type === 'truthsocial-to-discord') {
         const kind = type === 'x-to-discord' ? 'x' : 'truthsocial';
         const summary = buildExternalStatusSummary(acc, kind);
@@ -1533,7 +1549,7 @@
       activeId: "",
       loginUser: "",
       loginPassword: "",
-      enabledForwardingTypes: null,
+      enabledForwardingTypes: ['telegram-to-telegram'],
       discordAccounts: [],
       telegramAccounts: [],
       xAccounts: [],
@@ -1557,7 +1573,7 @@
     let lastPersistedStateJson = '';
     let isLoggedIn = false;
     let pagination = { discordPage: 1, feishuPage: 1, botRelayPage: 1, pageSize: 10 };
-    let currentForwardingType = 'discord-to-discord'; // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'telegram-to-telegram'
+    let currentForwardingType = getDefaultForwardingType(); // 'discord-to-discord' | 'discord-to-telegram' | 'telegram-to-discord' | 'telegram-to-telegram'
     let pendingStatusRender = false;
     let lastFormInteractionAt = 0;
     let isSaving = false;
@@ -1697,7 +1713,7 @@
         // 初始化 currentForwardingType
         const activeAccount = state.accounts.find(a => a.id === state.activeId) || state.accounts[0];
         if (activeAccount) {
-          currentForwardingType = activeAccount.forwardingType || 'discord-to-discord';
+          currentForwardingType = activeAccount.forwardingType || getDefaultForwardingType();
         }
       } catch (e) {
         console.error('初始化失败', e);
@@ -1876,13 +1892,17 @@
         }
         const data = await res.json();
         if (Array.isArray(data?.accounts)) {
+          const enabledForwardingTypes =
+            Array.isArray(data.enabledForwardingTypes) && data.enabledForwardingTypes.length > 0
+              ? data.enabledForwardingTypes
+              : ['telegram-to-telegram'];
           state = {
             accounts: data.accounts,
             activeId: data.activeId || data.accounts[0]?.id || "",
             loginUser: data.loginUser || "",
             loginPassword: data.loginPassword || "",
             telegramAvatarBaseUrl: data.telegramAvatarBaseUrl || "",
-            enabledForwardingTypes: data.enabledForwardingTypes || null,
+            enabledForwardingTypes,
             discordAccounts: Array.isArray(data.discordAccounts) ? data.discordAccounts : [],
             telegramAccounts: Array.isArray(data.telegramAccounts) ? data.telegramAccounts : [],
             xAccounts: Array.isArray(data.xAccounts) ? data.xAccounts : [],
@@ -3987,13 +4007,13 @@
       const activeAccount = state.accounts.find(a => a.id === state.activeId) || state.accounts[0];
       if (activeAccount) {
         if (!activeAccount.forwardingType) {
-          activeAccount.forwardingType = currentForwardingType || 'discord-to-discord';
+          activeAccount.forwardingType = currentForwardingType || getDefaultForwardingType();
         }
         if (currentForwardingType !== activeAccount.forwardingType) {
           currentForwardingType = activeAccount.forwardingType;
         }
       }
-      const resolvedForwardingType = activeAccount.forwardingType || currentForwardingType || 'discord-to-discord';
+      const resolvedForwardingType = activeAccount.forwardingType || currentForwardingType || getDefaultForwardingType();
       
       // 渲染账号标签
       // 渲染账号标签
@@ -4412,7 +4432,7 @@
 
     function getAllowedLibraryKinds() {
       if (!Array.isArray(state.enabledForwardingTypes) || state.enabledForwardingTypes.length === 0) {
-        return ['discord', 'telegram', 'truthsocial'];
+        return ['telegram'];
       }
       const allowed = new Set();
       state.enabledForwardingTypes.forEach((type) => {
@@ -4426,14 +4446,13 @@
           allowed.add('discord');
         } else if (type === 'telegram-to-telegram') {
           allowed.add('telegram');
-          allowed.add('discord');
         } else if (type === 'truthsocial-to-discord') {
           allowed.add('truthsocial');
           allowed.add('discord');
         }
       });
       if (allowed.size === 0) {
-        return ['discord', 'telegram', 'truthsocial'];
+        return ['telegram'];
       }
       return Array.from(allowed);
     }
@@ -6341,15 +6360,15 @@
         return;
       }
       const account = current.account;
+      const allowedKinds = getAllowedLibraryKinds();
+      const typeOptions = allowedKinds.map((kind) => `<option value="${kind}" ${current.kind === kind ? 'selected' : ''}>${getLibraryKindLabel(kind)}</option>`).join('');
       body.innerHTML = `
         <div class="grid gap-3 md:grid-cols-2">
           <div>
             <label class="block text-xs text-slate-600 mb-1">账号类型</label>
             <select onchange="changeLibraryAccountType('${current.kind}', '${current.id}', this.value)"
               class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-              <option value="discord" ${current.kind === 'discord' ? 'selected' : ''}>Discord</option>
-              <option value="telegram" ${current.kind === 'telegram' ? 'selected' : ''}>Telegram</option>
-              <option value="truthsocial" ${current.kind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>
+              ${typeOptions}
             </select>
           </div>
           <div>
@@ -6442,6 +6461,22 @@
       const watermarkRemoval = ensureWatermarkRemovalConfig(acc);
       const supportsWatermarkRemoval = ['discord-to-discord', 'discord-to-telegram', 'discord-to-feishu'].includes(forwardingType);
       const showScheduledLibrary = true;
+      const enabledForwardingTypes = getEnabledForwardingTypes();
+      const singleEnabledForwardingType = getSingleEnabledForwardingType();
+      const forwardingTypeOptions = enabledForwardingTypes.map((type) => `
+                <option value="${type}" ${acc.forwardingType === type || (!acc.forwardingType && type === getDefaultForwardingType()) ? 'selected' : ''}>${getForwardingTypeLabel(type)}</option>
+              `).join('');
+      const forwardingTypeField = singleEnabledForwardingType ? `
+              <input type="text"
+                value="${singleEnabledForwardingType === 'telegram-to-telegram' ? 'Telegram → Telegram' : escapeHtml(getForwardingTypeLabel(singleEnabledForwardingType))}"
+                disabled
+                class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 cursor-not-allowed">
+            ` : `
+              <select onchange="updateField('forwardingType', this.value); updateForwardingUI()"
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                ${forwardingTypeOptions}
+              </select>
+            `;
 
       const renderExternalStatusSection = (kind) => {
         const summary = buildExternalStatusSummary(acc, kind);
@@ -6721,17 +6756,7 @@
             </div>
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">转发类型</label>
-              <select onchange="updateField('forwardingType', this.value); updateForwardingUI()"
-                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-discord')) ? `<option value="discord-to-discord" ${acc.forwardingType === 'discord-to-discord' || !acc.forwardingType ? 'selected' : ''}>Discord → Discord</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-telegram')) ? `<option value="discord-to-telegram" ${acc.forwardingType === 'discord-to-telegram' ? 'selected' : ''}>Discord → Telegram</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-discord')) ? `<option value="telegram-to-discord" ${acc.forwardingType === 'telegram-to-discord' ? 'selected' : ''}>Telegram → Discord</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-telegram')) ? `<option value="telegram-to-telegram" ${acc.forwardingType === 'telegram-to-telegram' ? 'selected' : ''}>Telegram → Telegram</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-feishu')) ? `<option value="discord-to-feishu" ${acc.forwardingType === 'discord-to-feishu' ? 'selected' : ''}>Discord → 飞书</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-dingtalk')) ? `<option value="discord-to-dingtalk" ${acc.forwardingType === 'discord-to-dingtalk' ? 'selected' : ''}>Discord → 钉钉</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('x-to-discord')) ? `<option value="x-to-discord" ${acc.forwardingType === 'x-to-discord' ? 'selected' : ''}>X → Discord</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('truthsocial-to-discord')) ? `<option value="truthsocial-to-discord" ${acc.forwardingType === 'truthsocial-to-discord' ? 'selected' : ''}>TruthSocial → Discord</option>` : ''}
-              </select>
+              ${forwardingTypeField}
             </div>
             </div>
 
@@ -11096,7 +11121,7 @@
 
     function updateForwardingUI() {
       const acc = getActiveAccount();
-      const forwardingType = acc.forwardingType || 'discord-to-discord';
+      const forwardingType = acc.forwardingType || getDefaultForwardingType();
       const previousType = currentForwardingType;
       currentForwardingType = forwardingType; // 更新全局变量
 
@@ -11231,7 +11256,7 @@
       // 更新当前转发类型为新账号的类型
       const activeAccount = state.accounts.find(a => a.id === id);
       if (activeAccount) {
-        currentForwardingType = activeAccount.forwardingType || 'discord-to-discord';
+        currentForwardingType = activeAccount.forwardingType || getDefaultForwardingType();
       }
       render();
     }
@@ -11264,7 +11289,7 @@
         telegramSenderAccountId: '',
         truthSocialAccountId: '',
         showSourceIdentity: false,
-        forwardingType: 'discord-to-discord', // 添加默认转发类型
+        forwardingType: getDefaultForwardingType(),
         mappings: [],
         blockedKeywords: [],
         excludeKeywords: [],
@@ -11309,7 +11334,7 @@
        };
       state.accounts.push(newAcc);
       state.activeId = newAcc.id;
-      currentForwardingType = 'discord-to-discord'; // 更新当前转发类型
+      currentForwardingType = getDefaultForwardingType();
       saveConfig();
       render();
     }

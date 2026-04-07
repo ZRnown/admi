@@ -27,6 +27,18 @@ const FORWARDING_TYPES = [
 ] as const;
 
 type ForwardingType = (typeof FORWARDING_TYPES)[number];
+const BRANCH_ENABLED_FORWARDING_TYPES: ForwardingType[] = ["telegram-to-telegram"];
+const DEFAULT_FORWARDING_TYPE: ForwardingType = BRANCH_ENABLED_FORWARDING_TYPES[0];
+
+export function normalizeBranchForwardingType(input?: unknown): ForwardingType {
+  if (
+    typeof input === "string" &&
+    BRANCH_ENABLED_FORWARDING_TYPES.includes(input as ForwardingType)
+  ) {
+    return input as ForwardingType;
+  }
+  return DEFAULT_FORWARDING_TYPE;
+}
 
 function resolveConfigPath(): string {
   if (process.env.CONFIG_PATH) {
@@ -1302,7 +1314,7 @@ function applyForwardingTypeRestrictions(
   if (!allowedTypes || allowedTypes.length === 0) return accounts;
   return accounts.map((account) => {
     const current = account.forwardingType;
-    if (current && FORWARDING_TYPES.includes(current as ForwardingType)) {
+    if (current && allowedTypes.includes(current as ForwardingType)) {
       return account;
     }
     return { ...account, forwardingType: allowedTypes[0] };
@@ -1698,9 +1710,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     xConfig,
     truthSocialConfig,
     telegramConfig,
-    forwardingType: FORWARDING_TYPES.includes(input?.forwardingType as ForwardingType)
-      ? (input.forwardingType as ForwardingType)
-      : "discord-to-discord",
+    forwardingType: normalizeBranchForwardingType(input?.forwardingType),
   };
 }
 
@@ -1899,8 +1909,7 @@ function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; cha
 
 export async function getMultiConfig(): Promise<MultiConfig> {
   const raw = await readRawConfig();
-  const envForwardingTypes = parseEnvForwardingTypes(getEnv().ENABLED_FORWARDING_TYPES);
-  const effectiveForwardingTypes = envForwardingTypes;
+  const effectiveForwardingTypes = BRANCH_ENABLED_FORWARDING_TYPES;
   if (Array.isArray(raw?.accounts)) {
     const rawTelegramAccounts = Array.isArray(raw.telegramAccounts) ? raw.telegramAccounts : [];
     const hadTelegramLibraryPlaceholders = rawTelegramAccounts.some(
@@ -1946,7 +1955,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
       xAccounts,
       truthSocialAccounts,
       version: CONFIG_VERSION,
-      enabledForwardingTypes: envForwardingTypes,
+      enabledForwardingTypes: BRANCH_ENABLED_FORWARDING_TYPES,
     };
 
     const libraryResult = ensureAccountLibraries(config);
@@ -1983,7 +1992,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
     return {
       ...libraryResult.config,
       accounts: restrictedAccounts,
-      enabledForwardingTypes: envForwardingTypes,
+      enabledForwardingTypes: BRANCH_ENABLED_FORWARDING_TYPES,
     };
   }
   const legacyConfig = migrateLegacyToMulti(raw);
@@ -1995,7 +2004,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
   return {
     ...legacyLibraryResult.config,
     accounts: legacyRestrictedAccounts,
-    enabledForwardingTypes: envForwardingTypes,
+    enabledForwardingTypes: BRANCH_ENABLED_FORWARDING_TYPES,
   };
 }
 
