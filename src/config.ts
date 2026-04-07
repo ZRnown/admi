@@ -16,28 +16,26 @@ export function getConfigPath(): string {
 }
 
 const FORWARDING_TYPES = [
-  "discord-to-discord",
-  "discord-to-telegram",
-  "telegram-to-discord",
   "telegram-to-telegram",
-  "discord-to-feishu",
-  "discord-to-dingtalk",
-  "x-to-discord",
-  "truthsocial-to-discord",
 ] as const;
 
-type ForwardingType = (typeof FORWARDING_TYPES)[number];
+type ForwardingType =
+  | "discord-to-discord"
+  | "discord-to-telegram"
+  | "telegram-to-discord"
+  | "telegram-to-telegram"
+  | "discord-to-feishu"
+  | "discord-to-dingtalk"
+  | "x-to-discord"
+  | "truthsocial-to-discord";
 const BRANCH_ENABLED_FORWARDING_TYPES: ForwardingType[] = ["telegram-to-telegram"];
 const DEFAULT_FORWARDING_TYPE: ForwardingType = BRANCH_ENABLED_FORWARDING_TYPES[0];
 
-export function normalizeBranchForwardingType(input?: unknown): ForwardingType {
-  if (
-    typeof input === "string" &&
-    BRANCH_ENABLED_FORWARDING_TYPES.includes(input as ForwardingType)
-  ) {
-    return input as ForwardingType;
+export function normalizeBranchForwardingType(input?: unknown): "telegram-to-telegram" {
+  if (input === "telegram-to-telegram") {
+    return "telegram-to-telegram";
   }
-  return DEFAULT_FORWARDING_TYPE;
+  return "telegram-to-telegram";
 }
 
 function resolveConfigPath(): string {
@@ -1277,9 +1275,7 @@ function normalizeTruthSocialConfig(raw: any): TruthSocialConfig | undefined {
 
 function normalizeForwardingTypes(input?: any): ForwardingType[] | undefined {
   if (!Array.isArray(input)) return undefined;
-  const filtered = input.filter((value): value is ForwardingType =>
-    FORWARDING_TYPES.includes(value as ForwardingType),
-  );
+  const filtered = input.filter((value): value is ForwardingType => value === "telegram-to-telegram");
   const unique = Array.from(new Set(filtered));
   return unique.length > 0 ? unique : undefined;
 }

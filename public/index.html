@@ -185,7 +185,7 @@
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 class="font-medium text-slate-800">Webhook 目标身份</h3>
-              <p class="text-xs text-slate-500 mt-1">仅对 Discord → Discord 的 Webhook 发送模式生效，可单独覆盖目标显示名称和头像。</p>
+              <p class="text-xs text-slate-500 mt-1">仅对当前 Telegram 转发模式生效，可单独覆盖目标显示名称和头像。</p>
             </div>
             <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-600">规则级覆盖</span>
           </div>
@@ -296,7 +296,7 @@
               </select>
             </div>
           </div>
-          <p class="text-xs text-slate-500 mt-2">仅对 Discord → Telegram 转发生效。</p>
+          <p class="text-xs text-slate-500 mt-2">仅对当前 Telegram 转发生效。</p>
         </div>
 
 
@@ -768,18 +768,8 @@
     }
 
     function getForwardingTypeLabel(type) {
-      const value = type || getDefaultForwardingType();
-      switch (value) {
-        case 'discord-to-discord': return 'Discord → Discord';
-        case 'discord-to-telegram': return 'Discord → Telegram';
-        case 'telegram-to-discord': return 'Telegram → Discord';
-        case 'telegram-to-telegram': return 'Telegram → Telegram';
-        case 'discord-to-feishu': return 'Discord → 飞书';
-        case 'discord-to-dingtalk': return 'Discord → 钉钉';
-        case 'x-to-discord': return 'X → Discord';
-        case 'truthsocial-to-discord': return 'TruthSocial → Discord';
-        default: return value;
-      }
+      void type;
+      return 'Telegram → Telegram';
     }
 
     function getEnabledForwardingTypes() {
@@ -1421,7 +1411,7 @@
         const botState = acc.telegramBotState || 'idle';
         const clientState = acc.telegramClientState || 'idle';
         const message = `Bot:${getStatusLabel(botState)} / Client:${getStatusLabel(clientState)}`;
-        const subLabel = type === 'discord-to-telegram' ? 'Discord → Telegram' : 'Telegram 监听/发送';
+        const subLabel = 'Telegram 监听/发送';
         return {
           state,
           badgeLabel: getStatusLabel(state),
@@ -6931,13 +6921,13 @@
               <div>
                 <h2 class="font-semibold text-slate-800">
                   ${forwardingType === 'discord-to-discord' ? 'Discord 转发规则' :
-                    forwardingType === 'discord-to-telegram' ? 'Discord → Telegram 转发规则' :
-                    forwardingType === 'telegram-to-discord' ? 'Telegram → Discord 转发规则' :
+                    forwardingType === 'discord-to-telegram' ? 'Telegram 转发规则' :
+                    forwardingType === 'telegram-to-discord' ? 'Telegram 转发规则' :
                     forwardingType === 'telegram-to-telegram' ? 'Telegram → Telegram 转发规则' :
-                    forwardingType === 'discord-to-feishu' ? 'Discord → 飞书 转发规则' :
-                    forwardingType === 'discord-to-dingtalk' ? 'Discord → 钉钉 转发规则' :
-                    forwardingType === 'x-to-discord' ? 'X → Discord 转发规则' :
-                    'TruthSocial → Discord 转发规则'}
+                    forwardingType === 'discord-to-feishu' ? '已停用转发规则' :
+                    forwardingType === 'discord-to-dingtalk' ? '已停用转发规则' :
+                    forwardingType === 'x-to-discord' ? '已停用转发规则' :
+                    '已停用转发规则'}
                 </h2>
                 <p class="text-xs text-slate-500 mt-1">
                   ${forwardingType === 'discord-to-discord' ? '配置Discord频道之间的转发映射关系' :
@@ -6977,7 +6967,7 @@
             <div class="w-full space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span class="text-sm text-slate-800 font-medium">Discord → Telegram 转发规则</span>
+                  <span class="text-sm text-slate-800 font-medium">Telegram 转发规则</span>
                 </div>
                 <button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
               </div>
@@ -6997,7 +6987,7 @@
             <div class="w-full space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span class="text-sm text-slate-800 font-medium">Telegram → Discord 转发规则</span>
+                  <span class="text-sm text-slate-800 font-medium">Telegram 转发规则</span>
                 </div>
                 <button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
               </div>
@@ -7019,7 +7009,7 @@
             <div class="w-full space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span class="text-sm text-slate-800 font-medium">X → Discord 转发规则</span>
+                  <span class="text-sm text-slate-800 font-medium">外部平台转发规则</span>
                   <span class="text-xs text-slate-500">共 ${acc.xConfig?.mappings?.length || 0} 条</span>
                 </div>
                 <button onclick="addExternalMapping('x')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
@@ -7035,7 +7025,7 @@
             <div class="w-full space-y-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span class="text-sm text-slate-800 font-medium">TruthSocial → Discord 转发规则</span>
+                  <span class="text-sm text-slate-800 font-medium">外部平台转发规则</span>
                   <span class="text-xs text-slate-500">共 ${acc.truthSocialConfig?.mappings?.length || 0} 条</span>
                 </div>
                 <button onclick="addExternalMapping('truthsocial')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>

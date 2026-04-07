@@ -72,15 +72,7 @@ export function normalizeDiscordMappingRule(input: any) {
 export function normalizeTelegramMapping(input: any) {
   const sourceRef = normalizeDiscordSourceReference(input?.sourceChannelId, input?.sourceGuildId);
   const rawTarget = typeof input?.targetChannelId === "string" ? input.targetChannelId.trim() : "";
-  const targetIsWebhook = /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(rawTarget);
-  const rawType = typeof input?.type === "string" ? input.type : "";
-  let normalizedType: "telegram-to-discord" | "discord-to-telegram" | "telegram-to-telegram" = "telegram-to-discord";
-  if (rawType === "discord-to-telegram" || rawType === "telegram-to-discord" || rawType === "telegram-to-telegram") {
-    normalizedType = rawType;
-  }
-  if (targetIsWebhook && normalizedType !== "telegram-to-telegram") {
-    normalizedType = "telegram-to-discord";
-  }
+  let normalizedType: "telegram-to-telegram" = "telegram-to-telegram";
 
   return {
     id: typeof input?.id === "string" ? input.id : randomUUID(),

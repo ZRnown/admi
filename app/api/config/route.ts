@@ -341,15 +341,7 @@ interface FrontendAccount {
   id: string;
   name: string;
   type: "bot" | "selfbot";
-  forwardingType?:
-    | "discord-to-discord"
-    | "discord-to-telegram"
-    | "telegram-to-discord"
-    | "telegram-to-telegram"
-    | "discord-to-feishu"
-    | "discord-to-dingtalk"
-    | "x-to-discord"
-    | "truthsocial-to-discord";
+  forwardingType?: "telegram-to-telegram";
   token: string;
   proxyUrl: string;
   loginRequested: boolean;
@@ -478,16 +470,7 @@ interface FrontendPayload {
   loginPassword?: string;
   telegramAvatarBaseUrl?: string;
   forwardStats?: ForwardStatsSnapshot;
-  enabledForwardingTypes?: Array<
-    | "discord-to-discord"
-    | "discord-to-telegram"
-    | "telegram-to-discord"
-    | "telegram-to-telegram"
-    | "discord-to-feishu"
-    | "discord-to-dingtalk"
-    | "x-to-discord"
-    | "truthsocial-to-discord"
-  >;
+  enabledForwardingTypes?: Array<"telegram-to-telegram">;
 }
 
 function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
@@ -1906,7 +1889,7 @@ export async function GET(req: NextRequest) {
       loginPassword: includeSecrets ? multi.loginPassword || "" : maskSecret(multi.loginPassword),
       telegramAvatarBaseUrl: multi.telegramAvatarBaseUrl || "",
       forwardStats,
-      enabledForwardingTypes: multi.enabledForwardingTypes,
+      enabledForwardingTypes: ["telegram-to-telegram"],
     };
     return NextResponse.json(payload);
   } catch (e: any) {

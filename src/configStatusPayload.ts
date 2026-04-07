@@ -215,7 +215,7 @@ export function buildConfigStatusPayload({
 
       return {
         id: account.id,
-        forwardingType: account.forwardingType || "discord-to-discord",
+        forwardingType: account.forwardingType || "telegram-to-telegram",
         loginRequested:
           typeof runtimeStatus.loginRequested === "boolean"
             ? runtimeStatus.loginRequested
