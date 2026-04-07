@@ -2677,10 +2677,78 @@
       }
     }
 
+    function getTelegramDialogOptionLabel(dialog) {
+      const id = String(dialog?.id || '').trim();
+      const rawTitle = String(dialog?.name || dialog?.title || '').trim();
+      const rawUsername = String(dialog?.username || '').trim().replace(/^@+/, '');
+      const usernameLabel = rawUsername ? `@${rawUsername}` : '';
+      const titleLooksLikeFallback =
+        !rawTitle ||
+        rawTitle === id ||
+        rawTitle === 'Unknown' ||
+        rawTitle === '未知';
+      if (titleLooksLikeFallback && usernameLabel) {
+        return usernameLabel;
+      }
+      return rawTitle || usernameLabel || '未知';
+    }
+
+    function getTelegramRuleDialogAccountId(acc, role) {
+      if (!acc) return '';
+      const directId =
+        role === 'listener'
+          ? String(acc.telegramListenerAccountId || '').trim()
+          : String(acc.telegramSenderAccountId || '').trim();
+      if (directId) return directId;
+
+      const configuredAccounts = Array.isArray(acc.telegramConfig?.accounts)
+        ? acc.telegramConfig.accounts.filter((item) => item && item.enabled !== false && item.id)
+        : [];
+
+      const roleMatch = configuredAccounts.find((item) => item.role === role);
+      if (roleMatch?.id) return String(roleMatch.id).trim();
+
+      const preferredType =
+        role === 'listener'
+          ? (acc.telegramConfig?.listenerAccountType === 'bot' || acc.telegramConfig?.listenerAccountType === 'client'
+              ? acc.telegramConfig.listenerAccountType
+              : 'client')
+          : getEffectiveTelegramSenderType(acc, 'telegram-to-telegram');
+
+      const typeMatch =
+        configuredAccounts.find((item) => item.type === preferredType) ||
+        (role === 'listener'
+          ? configuredAccounts.find((item) => item.type === 'client')
+          : configuredAccounts.find((item) => item.type === 'bot')) ||
+        configuredAccounts[0];
+      if (typeMatch?.id) return String(typeMatch.id).trim();
+
+      const hasBotToken = typeof acc.telegramBotToken === 'string' && acc.telegramBotToken.trim().length > 0;
+      const hasClientSession = Boolean((acc.telegramSessionPath || acc.telegramSessionString) && acc.telegramApiId && acc.telegramApiHash);
+      if (!acc.id) return '';
+      if (role === 'listener') {
+        if (hasClientSession) return acc.id;
+        if (hasBotToken) return `${acc.id}_bot`;
+        return '';
+      }
+      if (hasBotToken) return `${acc.id}_bot`;
+      if (hasClientSession) return acc.id;
+      return '';
+    }
+
+    function renderUnavailableTelegramDialogSelect(message, extraClass = '') {
+      return `<select disabled class="${extraClass || 'flex-1'} px-2 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 text-slate-400 cursor-not-allowed">
+        <option value="">${escapeHtml(message)}</option>
+      </select>`;
+    }
+
     // 获取缓存的 Telegram 对话选项HTML
     function getCachedTelegramDialogsOptions(accountId, selectedId) {
       const dialogs = cachedTelegramDialogs[accountId] || [];
       if (dialogs.length === 0) {
+        if (cachedTelegramDialogsLoading[accountId]) {
+          return '<option value="">加载对话中...</option>';
+        }
         if (selectedId) {
           return `<option value="${selectedId}" selected>加载对话中... (${selectedId})</option>`;
         }
@@ -2689,7 +2757,7 @@
       let html = '<option value="">选择对话</option>';
       dialogs.forEach(d => {
         const icon = d.type === 'channel' ? '📢' : d.type === 'supergroup' ? '👥' : d.type === 'group' ? '👥' : d.type === 'private' ? '👤' : '💬';
-        const name = d.name || d.title || '未知';
+        const name = getTelegramDialogOptionLabel(d);
         const selected = String(d.id) === String(selectedId) ? 'selected' : '';
         html += `<option value="${d.id}" ${selected}>${icon} ${escapeHtml(name)}</option>`;
       });
@@ -2776,12 +2844,15 @@
       const mappingKey = `${acc.id}:${forwardingType}:${idx}`;
       const mode = getRuleInputMode(m);
       const discordAccountId = getDiscordMetadataAccountId(acc);
-      const telegramAccountId = acc.telegramListenerAccountId || '';
+      const telegramAccountId = getTelegramRuleDialogAccountId(acc, 'listener');
       const isDiscordSource = forwardingType.startsWith('discord-');
       const isTelegramSource = forwardingType.startsWith('telegram-');
 
       // Telegram 源选择模式
-      if (isTelegramSource && mode === 'select' && telegramAccountId) {
+      if (isTelegramSource && mode === 'select') {
+        if (!telegramAccountId) {
+          return renderUnavailableTelegramDialogSelect('请先选择 Telegram 监听账号', 'flex-1 min-w-[12rem]');
+        }
         const savedChannelId = m.sourceChannelId || '';
         const telegramSelectId = `telegram-source-dialog-select-${mappingKey}`;
         // 加载 Telegram 对话列表
@@ -2887,7 +2958,7 @@
     // 生成目标频道输入UI（支持手动和选择两种模式）
     function renderTargetChannelInput(acc, m, idx, forwardingType, placeholder) {
       const mode = getRuleInputMode(m);
-      const telegramSenderAccountId = acc.telegramSenderAccountId || '';
+      const telegramSenderAccountId = getTelegramRuleDialogAccountId(acc, 'sender');
       const discordSenderAccountId = acc.discordSenderAccountId || '';
       const savedTargetId = m.targetChannelId || m.targetWebhookUrl || '';
       const mappingKey = `${acc.id}:${forwardingType}:${idx}`;
@@ -3087,7 +3158,10 @@
       }
 
       // Discord→Telegram 或 Telegram→Telegram: 目标是 Telegram 对话
-      if ((forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') && mode === 'select' && telegramSenderAccountId) {
+      if ((forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram') && mode === 'select') {
+        if (!telegramSenderAccountId) {
+          return renderUnavailableTelegramDialogSelect('请先选择 Telegram 发送账号');
+        }
         // 加载 Telegram 对话列表
         if (!cachedTelegramDialogs[telegramSenderAccountId] && !cachedTelegramDialogsLoading[telegramSenderAccountId]) {
           fetchTelegramDialogsForRule(telegramSenderAccountId).then(() => refreshTelegramDialogSelects(telegramSenderAccountId));
