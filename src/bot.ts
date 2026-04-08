@@ -36,7 +36,7 @@ import {
   type WatermarkRemovalRuntimeState,
 } from "./watermarkRemoval.js";
 import { recordForwardStat } from "./forwardStats.js";
-import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { applyReplacementDictionaryToEmbeds, stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { shouldSkipMessageForIgnoredImages } from "./messageFilterDecisions.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -2386,16 +2386,23 @@ export class Bot {
           try {
             // 准备消息内容 - 对于Telegram使用原始内容,让Python端处理翻译
             let contentForTelegram = message.content || '';
+            const globalReplacementDictionary = this.config.replacementsDictionary || {};
+            const ruleReplacementDictionary =
+              (mapping as any).replacementsDictionary || ruleConfig.replacementsDictionary || {};
             contentForTelegram = applyReplacementDictionary(
-              applyReplacementDictionary(contentForTelegram, this.config.replacementsDictionary || {}),
-              (mapping as any).replacementsDictionary || ruleConfig.replacementsDictionary || {},
+              applyReplacementDictionary(contentForTelegram, globalReplacementDictionary),
+              ruleReplacementDictionary,
             );
             contentForTelegram = stripLanguages(contentForTelegram, stripOptions);
             const contentPreview = formatLogPreview(contentForTelegram);
+            const replacedTelegramEmbeds = applyReplacementDictionaryToEmbeds(
+              applyReplacementDictionaryToEmbeds(message.embeds, globalReplacementDictionary),
+              ruleReplacementDictionary,
+            );
             const telegramEmbeds = shouldStripEmbedImages
-              ? stripAllEmbedImages(stripEmbedText(message.embeds, stripOptions))
+              ? stripAllEmbedImages(stripEmbedText(replacedTelegramEmbeds, stripOptions))
               : stripBlockedEmbedImages(
-                  stripEmbedText(message.embeds, stripOptions),
+                  stripEmbedText(replacedTelegramEmbeds, stripOptions),
                   ocrBlockedImageUrls,
                 );
             const finalTelegramEmbeds = stripUploadedEmbedImages(telegramEmbeds, finalUploads);

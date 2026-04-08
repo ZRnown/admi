@@ -9,16 +9,31 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawnSync } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
-import { preserveDiscordChannelsOnFetchFailure } from "@/src/discordMetadataHelpers";
+import {
+  DISCORD_PRIVATE_SCOPE_ID,
+  preserveDiscordChannelsOnFetchFailure,
+} from "@/src/discordMetadataHelpers";
 import { resolvePythonBin } from "@/src/pythonRuntime";
 
-function hydrateDiscordChannelsViaSelfbot(token: string, type: string | undefined, guildIds: string[]): Record<string, any[]> {
-  if (!token || guildIds.length === 0) return {};
+function hydrateDiscordChannelsViaSelfbot(
+  token: string,
+  type: string | undefined,
+  guildIds: string[],
+  options?: { includePrivateChannels?: boolean },
+): { channelsByGuild: Record<string, any[]>; privateChannels: any[] } {
+  if (!token || (guildIds.length === 0 && !options?.includePrivateChannels)) {
+    return { channelsByGuild: {}, privateChannels: [] };
+  }
   const bridgeRoot = path.join(process.cwd(), "discord_bridge");
   const pythonBin = resolvePythonBin({ cwd: process.cwd(), extraRoots: [bridgeRoot] });
-  if (!pythonBin) return {};
+  if (!pythonBin) return { channelsByGuild: {}, privateChannels: [] };
   const bridgeSrc = path.join(bridgeRoot, "src");
-  const input = JSON.stringify({ token, type, guildIds });
+  const input = JSON.stringify({
+    token,
+    type,
+    guildIds,
+    includePrivateChannels: options?.includePrivateChannels === true,
+  });
   const result = spawnSync(
     pythonBin,
     ["-B", "-m", "discord_metadata_bridge.fetch_channels_once"],
@@ -32,17 +47,21 @@ function hydrateDiscordChannelsViaSelfbot(token: string, type: string | undefine
   );
   if (result.error || result.status !== 0) {
     console.error("discord.py-self fallback failed:", result.error || result.stderr || result.stdout);
-    return {};
+    return { channelsByGuild: {}, privateChannels: [] };
   }
   try {
     const payload = JSON.parse(result.stdout || "{}");
-    if (payload?.success && payload.channelsByGuild && typeof payload.channelsByGuild === "object") {
-      return payload.channelsByGuild;
+    if (payload?.success) {
+      return {
+        channelsByGuild:
+          payload.channelsByGuild && typeof payload.channelsByGuild === "object" ? payload.channelsByGuild : {},
+        privateChannels: Array.isArray(payload.privateChannels) ? payload.privateChannels : [],
+      };
     }
   } catch (error) {
     console.error("discord.py-self fallback parse failed:", error);
   }
-  return {};
+  return { channelsByGuild: {}, privateChannels: [] };
 }
 
 // Discord API 基础 URL
@@ -116,6 +135,37 @@ async function getGuilds(token: string) {
 // 获取服务器的频道列表
 async function getGuildChannels(token: string, guildId: string) {
   return discordFetch(`/guilds/${guildId}/channels`, token);
+}
+
+async function getPrivateChannels(token: string) {
+  return discordFetch("/users/@me/channels", token);
+}
+
+function resolvePrivateChannelName(channel: any): string {
+  const explicitName = typeof channel?.name === "string" ? channel.name.trim() : "";
+  if (explicitName) return explicitName;
+  const recipients = Array.isArray(channel?.recipients) ? channel.recipients : [];
+  const recipientNames = recipients
+    .map((recipient: any) => {
+      const globalName =
+        typeof recipient?.global_name === "string" && recipient.global_name.trim() ? recipient.global_name.trim() : "";
+      const username =
+        typeof recipient?.username === "string" && recipient.username.trim() ? recipient.username.trim() : "";
+      return globalName || username;
+    })
+    .filter(Boolean);
+  if (recipientNames.length > 0) return recipientNames.join(", ");
+  return String(channel?.id || "").trim();
+}
+
+function normalizePrivateChannel(channel: any) {
+  const recipients = Array.isArray(channel?.recipients) ? channel.recipients : [];
+  return {
+    id: String(channel?.id || ""),
+    name: resolvePrivateChannelName(channel),
+    type: channel?.type,
+    recipientCount: recipients.length,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -201,6 +251,7 @@ export async function POST(request: NextRequest) {
     // 获取每个服务器的频道列表
     const channelsData: Record<string, any[]> = {};
     const failedGuildIds: string[] = [];
+    let privateChannels: any[] = [];
     for (const guild of guilds) {
       const cacheKey = `${accountId}:${guild.id}`;
       const existingChannels = Array.isArray(channelsCache[cacheKey]) ? channelsCache[cacheKey] : undefined;
@@ -219,13 +270,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (failedGuildIds.length > 0) {
-      const fallbackChannels = hydrateDiscordChannelsViaSelfbot(stripBotPrefix(String(token)), type, failedGuildIds);
+    try {
+      const privateResponse = await getPrivateChannels(authToken);
+      privateChannels = Array.isArray(privateResponse) ? privateResponse.map(normalizePrivateChannel) : [];
+    } catch (error) {
+      privateChannels = [];
+    }
+
+    if (failedGuildIds.length > 0 || privateChannels.length === 0) {
+      const fallbackPayload = hydrateDiscordChannelsViaSelfbot(
+        stripBotPrefix(String(token)),
+        type,
+        failedGuildIds,
+        { includePrivateChannels: privateChannels.length === 0 },
+      );
       for (const guildId of failedGuildIds) {
-        const hydrated = Array.isArray(fallbackChannels[guildId]) ? fallbackChannels[guildId] : [];
+        const hydrated = Array.isArray(fallbackPayload.channelsByGuild[guildId]) ? fallbackPayload.channelsByGuild[guildId] : [];
         if (hydrated.length > 0) {
           channelsData[guildId] = hydrated;
         }
+      }
+      if (privateChannels.length === 0 && fallbackPayload.privateChannels.length > 0) {
+        privateChannels = fallbackPayload.privateChannels;
       }
     }
 
@@ -240,6 +306,7 @@ export async function POST(request: NextRequest) {
         tag: user.discriminator === "0" ? user.username : `${user.username}#${user.discriminator}`,
       },
       guilds: formattedGuilds,
+      privateChannels,
       updatedAt: new Date().toISOString(),
     };
 
@@ -248,6 +315,7 @@ export async function POST(request: NextRequest) {
       const cacheKey = `${accountId}:${guildId}`;
       channelsCache[cacheKey] = channels;
     }
+    channelsCache[`${accountId}:${DISCORD_PRIVATE_SCOPE_ID}`] = privateChannels;
 
     // 写入缓存文件
     await fs.writeFile(GUILDS_CACHE_FILE, JSON.stringify(guildsCache, null, 2));
@@ -257,7 +325,8 @@ export async function POST(request: NextRequest) {
       success: true,
       user: guildsCache[accountId].user,
       guildsCount: formattedGuilds.length,
-      channelsCount: Object.values(channelsData).reduce((sum, arr) => sum + arr.length, 0),
+      privateChannelsCount: privateChannels.length,
+      channelsCount: Object.values(channelsData).reduce((sum, arr) => sum + arr.length, 0) + privateChannels.length,
     });
   } catch (error: any) {
     console.error("Discord sync error:", error);

@@ -2088,8 +2088,11 @@
     }
 
     // 缓存服务器和频道列表
+    const DISCORD_PRIVATE_SCOPE_ID = '@private';
+    const DISCORD_PRIVATE_SCOPE_LABEL = '私聊';
     let cachedGuilds = [];
     let cachedChannels = {};
+    let cachedDiscordPrivateChannels = {};
     let cachedGuildsAccountId = '';
     let cachedGuildsLoading = false;
     let cachedGuildsFetchedAt = 0;
@@ -2149,8 +2152,16 @@
       return String(acc?.discordAccountId || acc?.id || '').trim();
     }
 
+    function isDiscordPrivateScope(guildId) {
+      return String(guildId || '').trim() === DISCORD_PRIVATE_SCOPE_ID;
+    }
+
     function getDiscordChannelEmptyMessage(hasCacheEntry, guildId, selectedId) {
-      if (!guildId) return '请先选择服务器';
+      if (!guildId) return '请先选择服务器或私聊';
+      if (isDiscordPrivateScope(guildId)) {
+        if (selectedId) return '加载私聊中...';
+        return hasCacheEntry ? '暂无可用私聊' : '暂无私聊（请先同步）';
+      }
       if (selectedId) return '加载频道中...';
       return hasCacheEntry ? '暂无可用频道' : '暂无频道（请先同步）';
     }
@@ -2453,6 +2464,19 @@
     }
 
     function getDiscordSourceChannelOptionsHtml(channels, selectedId, selectedLabel, query, options = {}) {
+      const renderItemLabel = (channel) => {
+        const icon =
+          channel?.type === 0
+            ? '#'
+            : channel?.type === 2
+              ? '🔊'
+              : channel?.type === 1
+                ? '👤'
+                : channel?.type === 3
+                  ? '👥'
+                  : '•';
+        return `${icon} ${channel?.name || channel?.id || ''}`;
+      };
       if (options.lightweight) {
         return buildLightweightDiscordSelectOptions({
           items: channels,
@@ -2460,10 +2484,7 @@
           selectedLabel,
           placeholderLabel: '选择频道',
           unknownPrefix: '频道',
-          renderItemLabel: (channel) => {
-            const icon = channel?.type === 0 ? '#' : channel?.type === 2 ? '🔊' : '•';
-            return `${icon} ${channel?.name || channel?.id || ''}`;
-          },
+          renderItemLabel,
         });
       }
       return buildFullDiscordSelectOptions({
@@ -2474,14 +2495,15 @@
         placeholderLabel: '选择频道',
         emptyResultsLabel: '无匹配频道',
         unknownPrefix: '频道',
-        renderItemLabel: (channel) => {
-          const icon = channel?.type === 0 ? '#' : channel?.type === 2 ? '🔊' : '•';
-          return `${icon} ${channel?.name || channel?.id || ''}`;
-        },
+        renderItemLabel,
       });
     }
 
     function getDiscordTargetChannelOptionsHtml(channels, selectedId, selectedLabel, query, options = {}) {
+      const renderItemLabel = (channel) => {
+        const icon = channel?.type === 1 ? '👤' : channel?.type === 3 ? '👥' : '#';
+        return `${icon} ${channel?.name || channel?.id || ''}`;
+      };
       if (options.lightweight) {
         return buildLightweightDiscordSelectOptions({
           items: channels,
@@ -2489,7 +2511,7 @@
           selectedLabel,
           placeholderLabel: '选择频道',
           unknownPrefix: '频道',
-          renderItemLabel: (channel) => `# ${channel?.name || channel?.id || ''}`,
+          renderItemLabel,
         });
       }
       return buildFullDiscordSelectOptions({
@@ -2500,7 +2522,7 @@
         placeholderLabel: '选择频道',
         emptyResultsLabel: '无匹配频道',
         unknownPrefix: '频道',
-        renderItemLabel: (channel) => `# ${channel?.name || channel?.id || ''}`,
+        renderItemLabel,
       });
     }
 
@@ -2516,18 +2538,22 @@
     }
 
     // 获取缓存的服务器选项HTML
-    function getCachedGuildsOptions(selectedId, selectedLabel, query = '', options = {}) {
-      return getDiscordGuildOptionsHtml(cachedGuilds || [], selectedId, selectedLabel, query, options);
+    function getCachedGuildsOptions(accountId, selectedId, selectedLabel, query = '', options = {}) {
+      return getDiscordGuildOptionsHtml(getDiscordGuildSelectionItems(accountId, selectedId), selectedId, selectedLabel, query, options);
     }
 
     // 获取缓存的频道选项HTML
     function getCachedChannelsOptions(accountId, guildId, selectedId, selectedLabel, query = '', options = {}) {
-      const cacheKey = `${accountId}:${guildId}`;
-      const hasCacheEntry = Object.prototype.hasOwnProperty.call(cachedChannels, cacheKey);
-      const channels = (cachedChannels[cacheKey] || []).filter(ch => ch.type !== 4 && ch.type !== 2 && ch.type !== 13);
+      const cacheKey = isDiscordPrivateScope(guildId) ? accountId : `${accountId}:${guildId}`;
+      const hasCacheEntry = isDiscordPrivateScope(guildId)
+        ? Object.prototype.hasOwnProperty.call(cachedDiscordPrivateChannels, accountId)
+        : Object.prototype.hasOwnProperty.call(cachedChannels, cacheKey);
+      const channels = getDiscordChannelsForScope(accountId, guildId, 'source');
       if (channels.length === 0) {
         if (selectedId) {
-          const label = selectedLabel ? escapeHtml(selectedLabel) : `加载频道中... (${selectedId})`;
+          const label = selectedLabel
+            ? escapeHtml(selectedLabel)
+            : `${isDiscordPrivateScope(guildId) ? '加载私聊中...' : '加载频道中...'} (${selectedId})`;
           return `<option value="${selectedId}" selected>${label}</option>`;
         }
         return `<option value="">${getDiscordChannelEmptyMessage(hasCacheEntry, guildId, selectedId)}</option>`;
@@ -2536,17 +2562,28 @@
     }
 
     function getTelegramToDiscordGuildOptions(accountId, selectedId, selectedLabel, query = '', options = {}) {
-      const guilds = accountId ? (cachedTelegramToDiscordGuilds[accountId] || []) : [];
-      return getDiscordGuildOptionsHtml(guilds, selectedId, selectedLabel, query, options);
+      return getDiscordGuildOptionsHtml(
+        getTelegramToDiscordGuildSelectionItems(accountId, selectedId),
+        selectedId,
+        selectedLabel,
+        query,
+        options,
+      );
     }
 
     function getTelegramToDiscordChannelsOptions(accountId, guildId, selectedId, selectedLabel, query = '', options = {}) {
-      const cacheKey = `${accountId}:${guildId}`;
-      const hasCacheEntry = Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey);
-      const channels = (cachedTelegramToDiscordChannels[cacheKey] || []).filter(ch => ch.type === 0 || ch.type === 5);
+      const cacheKey = isDiscordPrivateScope(guildId) ? accountId : `${accountId}:${guildId}`;
+      const hasCacheEntry = isDiscordPrivateScope(guildId)
+        ? Object.prototype.hasOwnProperty.call(cachedDiscordPrivateChannels, accountId)
+        : Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey);
+      const channels = isDiscordPrivateScope(guildId)
+        ? getDiscordChannelsForScope(accountId, guildId, 'target')
+        : ((cachedTelegramToDiscordChannels[cacheKey] || []).filter(ch => ch.type === 0 || ch.type === 5));
       if (channels.length === 0) {
         if (selectedId) {
-          const label = selectedLabel ? escapeHtml(selectedLabel) : `加载频道中... (${selectedId})`;
+          const label = selectedLabel
+            ? escapeHtml(selectedLabel)
+            : `${isDiscordPrivateScope(guildId) ? '加载私聊中...' : '加载频道中...'} (${selectedId})`;
           return `<option value="${selectedId}" selected>${label}</option>`;
         }
         return `<option value="">${getDiscordChannelEmptyMessage(hasCacheEntry, guildId, selectedId)}</option>`;
@@ -2571,7 +2608,7 @@
 
       let html = '';
       if (searchSource === 'cachedGuilds') {
-        html = getCachedGuildsOptions(selectedId, selectedLabel, query, renderOptions);
+        html = getCachedGuildsOptions(accountId, selectedId, selectedLabel, query, renderOptions);
       } else if (searchSource === 'cachedChannels') {
         html = getCachedChannelsOptions(accountId, guildId, selectedId, selectedLabel, query, renderOptions);
       } else if (searchSource === 'telegramToDiscordGuilds') {
@@ -2810,15 +2847,24 @@
       }
 
       if (!guildId) {
-        channelSelect.innerHTML = '<option value="">请先选择服务器</option>';
+        channelSelect.innerHTML = '<option value="">请先选择服务器或私聊</option>';
         channelSelect.value = '';
         syncDiscordSearchableSelect(channelSelectId);
         return;
       }
 
-      channelSelect.innerHTML = '<option value="">加载中...</option>';
+      channelSelect.innerHTML = `<option value="">${isDiscordPrivateScope(guildId) ? '加载私聊中...' : '加载中...'}</option>`;
       channelSelect.value = '';
       syncDiscordSearchableSelect(channelSelectId);
+      if (isDiscordPrivateScope(guildId)) {
+        const latestSelect = document.getElementById(channelSelectId);
+        if (latestSelect) {
+          latestSelect.dataset.guildId = guildId || '';
+          latestSelect.dataset.selectedId = '';
+          refreshDiscordSelectOptions(channelSelectId, '');
+        }
+        return;
+      }
       await fetchDiscordChannels(accountId, guildId);
 
       const cacheKey = `${accountId}:${guildId}`;
@@ -2890,7 +2936,7 @@
         }
 
         // 如果有已保存的服务器ID，自动加载频道列表
-        if (savedGuildId && discordAccountId) {
+        if (savedGuildId && discordAccountId && !isDiscordPrivateScope(savedGuildId)) {
           const cacheKey = `${discordAccountId}:${savedGuildId}`;
           if (!cachedChannels[cacheKey] && !window[`loadingChannels_${cacheKey}`]) {
             window[`loadingChannels_${cacheKey}`] = true;
@@ -2914,16 +2960,17 @@
             { lightweight: true },
           );
         } else if (savedChannelId) {
-          channelOptions = `<option value="${savedChannelId}" selected>频道 (${savedChannelId}) - 请选择服务器</option>`;
+          channelOptions = `<option value="${savedChannelId}" selected>频道 (${savedChannelId}) - 请选择服务器或私聊</option>`;
         } else {
-          channelOptions = '<option value="">请先选择服务器</option>';
+          channelOptions = '<option value="">请先选择服务器或私聊</option>';
         }
 
         const guildSelectId = `guild-select-${mappingKey}`;
         const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="cachedGuilds" data-selected-label="${escapeHtml(savedGuildName)}" data-placeholder-label="选择服务器"
+            data-account-id="${escapeHtml(discordAccountId)}"
             onchange="onGuildSelectForRule('${discordAccountId}', this.value, '${channelSelectId}', ${idx})"
             class="hidden">
-            ${getCachedGuildsOptions(savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId), { lightweight: true })}
+            ${getCachedGuildsOptions(discordAccountId, savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId), { lightweight: true })}
           </select>`;
         const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="cachedChannels"
             data-account-id="${escapeHtml(discordAccountId)}"
@@ -3016,7 +3063,7 @@
             );
 
             // 加载频道列表（如果已选择服务器）
-            if (senderAccountId && targetGuildId) {
+            if (senderAccountId && targetGuildId && !isDiscordPrivateScope(targetGuildId)) {
               const cacheKey = `${senderAccountId}:${targetGuildId}`;
               if (!Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey) && !window[`loadingD2DChannels_${cacheKey}`]) {
                 window[`loadingD2DChannels_${cacheKey}`] = true;
@@ -3122,7 +3169,7 @@
 
             if (targetGuildId) {
               const cacheKey = `${senderAccountId}:${targetGuildId}`;
-              if (!Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey) && !window[`loadingT2DChannels_${cacheKey}`]) {
+              if (!isDiscordPrivateScope(targetGuildId) && !Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey) && !window[`loadingT2DChannels_${cacheKey}`]) {
                 window[`loadingT2DChannels_${cacheKey}`] = true;
                 fetchTelegramToDiscordChannels(senderAccountId, targetGuildId).finally(() => {
                   delete window[`loadingT2DChannels_${cacheKey}`];
@@ -3195,6 +3242,7 @@
         }
         const data = await res.json();
         cachedGuilds = data.guilds || [];
+        cachedDiscordPrivateChannels[accountId] = data.privateChannels || [];
         cachedGuildsAccountId = accountId;
         cachedGuildsFetchedAt = Date.now();
         return cachedGuilds;
@@ -3208,6 +3256,9 @@
     // 获取 Discord 频道列表
     async function fetchDiscordChannels(accountId, guildId, options = {}) {
       if (!accountId || !guildId) return [];
+      if (isDiscordPrivateScope(guildId)) {
+        return getDiscordPrivateChannels(accountId);
+      }
       const cacheKey = `${accountId}:${guildId}`;
       const force = options.force === true;
       if (!force && Object.prototype.hasOwnProperty.call(cachedChannels, cacheKey)) return cachedChannels[cacheKey];
@@ -3244,6 +3295,7 @@
         if (!res.ok) return [];
         const data = await res.json();
         cachedTelegramToDiscordGuilds[accountId] = data.guilds || [];
+        cachedDiscordPrivateChannels[accountId] = data.privateChannels || [];
         void prewarmDiscordChannelsForAccount(accountId, cachedTelegramToDiscordGuilds[accountId], { force: false, includeSourceCache: false });
         return cachedTelegramToDiscordGuilds[accountId];
       } catch (e) {
@@ -3257,6 +3309,9 @@
     // Telegram→Discord: 获取频道列表
     async function fetchTelegramToDiscordChannels(accountId, guildId, options = {}) {
       if (!accountId || !guildId) return [];
+      if (isDiscordPrivateScope(guildId)) {
+        return getDiscordPrivateChannels(accountId);
+      }
       const cacheKey = `${accountId}:${guildId}`;
       const force = options.force === true;
       if (!force && Object.prototype.hasOwnProperty.call(cachedTelegramToDiscordChannels, cacheKey)) {
@@ -3335,7 +3390,7 @@
       acc.telegramConfig.mappings[idx].targetGuildId = guildId;
       acc.telegramConfig.mappings[idx].targetChannelId = '';
       clearDiscordSelectSearchQuery(channelSelectId);
-      if (senderAccountId && guildId) {
+      if (senderAccountId && guildId && !isDiscordPrivateScope(guildId)) {
         const cacheKey = `${senderAccountId}:${guildId}`;
         delete cachedTelegramToDiscordChannels[cacheKey];
       }
@@ -3343,7 +3398,9 @@
       if (senderAccountId && guildId) {
         await fetchTelegramToDiscordChannels(senderAccountId, guildId, { force: true });
         const cacheKey = `${senderAccountId}:${guildId}`;
-        const channels = cachedTelegramToDiscordChannels[cacheKey] || [];
+        const channels = isDiscordPrivateScope(guildId)
+          ? getDiscordPrivateChannels(senderAccountId)
+          : (cachedTelegramToDiscordChannels[cacheKey] || []);
         if (channels.length === 0) {
           const syncResult = await syncDiscordAccountDataOnly(senderAccountId);
           if (syncResult?.success) {
@@ -3391,7 +3448,7 @@
       acc.mappings[idx].targetGuildId = guildId;
       acc.mappings[idx].targetChannelId = '';
       clearDiscordSelectSearchQuery(channelSelectId);
-      if (senderAccountId && guildId) {
+      if (senderAccountId && guildId && !isDiscordPrivateScope(guildId)) {
         const cacheKey = `${senderAccountId}:${guildId}`;
         delete cachedTelegramToDiscordChannels[cacheKey];
       }
@@ -3399,7 +3456,9 @@
       if (senderAccountId && guildId) {
         await fetchTelegramToDiscordChannels(senderAccountId, guildId, { force: true });
         const cacheKey = `${senderAccountId}:${guildId}`;
-        const channels = cachedTelegramToDiscordChannels[cacheKey] || [];
+        const channels = isDiscordPrivateScope(guildId)
+          ? getDiscordPrivateChannels(senderAccountId)
+          : (cachedTelegramToDiscordChannels[cacheKey] || []);
         if (channels.length === 0) {
           const syncResult = await syncDiscordAccountDataOnly(senderAccountId);
           if (syncResult?.success) {
@@ -3410,12 +3469,77 @@
       render();
     }
 
+    function buildDiscordLibraryPrivateChannelsHtml(privateChannels) {
+      if (!privateChannels || privateChannels.length === 0) {
+        return '<div class="text-slate-400 text-sm">未找到私聊，请先同步数据</div>';
+      }
+
+      return `
+        <div class="space-y-1">
+          ${privateChannels.map((channel) => `
+            <div class="flex items-center justify-between py-1 border-b border-slate-100 last:border-b-0">
+              <span class="text-slate-600">${channel.type === 3 ? '👥' : '👤'} ${escapeHtml(channel.name || channel.id || '未知私聊')}</span>
+              <span class="text-slate-400 font-mono cursor-pointer hover:text-indigo-500 transition" onclick="copyToClipboard('${channel.id}', '私聊ID')" title="点击复制">${channel.id}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function buildDiscordLibraryGuildsHtml(accountId, guilds) {
+      if (!guilds || guilds.length === 0) {
+        return '<div class="text-slate-400 text-sm">未找到服务器，请确保账号已登录并完成同步</div>';
+      }
+
+      return `
+        <div class="space-y-2">
+          ${guilds.map((guild) => `
+            <div class="border border-slate-200 rounded p-2">
+              <div class="flex items-center justify-between">
+                <span class="font-medium text-slate-700">${escapeHtml(guild.name)}</span>
+                <span class="text-slate-400 font-mono cursor-pointer hover:text-indigo-500 transition" onclick="copyToClipboard('${guild.id}', '服务器ID')" title="点击复制">${guild.id}</span>
+              </div>
+              <button onclick="fetchDiscordChannelsForLibrary('${accountId}', '${guild.id}', this)"
+                class="mt-1 text-xs text-indigo-600 hover:text-indigo-800">展开频道列表</button>
+              <div id="discord-channels-${accountId}-${guild.id}" class="mt-2 hidden"></div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function buildTelegramLibraryDialogsHtml(dialogs) {
+      if (!dialogs || dialogs.length === 0) {
+        return '';
+      }
+
+      return `
+        <div class="space-y-1">
+          ${dialogs.map((dialog) => {
+            const typeIcon = dialog.type === 'channel' ? '📢' : dialog.type === 'group' ? '👥' : dialog.type === 'user' ? '👤' : '💬';
+            return `
+              <div class="flex items-center justify-between py-1 border-b border-slate-100 last:border-b-0">
+                <span class="text-slate-600">${typeIcon} ${escapeHtml(dialog.name || dialog.title || '未知')}</span>
+                <span class="text-slate-400 font-mono cursor-pointer hover:text-indigo-500 transition" onclick="copyToClipboard('${dialog.id}', '对话ID')" title="点击复制">${dialog.id}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
     // 获取 Discord 服务器/频道列表（账号库用）
     async function fetchDiscordGuildsForLibrary(accountId) {
       const container = document.getElementById(`discord-guilds-${accountId}`);
-      if (!container) return;
+      const privateContainer = document.getElementById(`discord-private-channels-${accountId}`);
+      if (!container && !privateContainer) return;
 
-      container.innerHTML = '<div class="text-slate-400">正在获取服务器列表...</div>';
+      if (container) {
+        container.innerHTML = '<div class="text-slate-400">正在获取服务器列表...</div>';
+      }
+      if (privateContainer) {
+        privateContainer.innerHTML = '<div class="text-slate-400">正在获取私聊列表...</div>';
+      }
 
       try {
         const res = await fetch('/api/metadata/discord/guilds', {
@@ -3426,35 +3550,36 @@
         const data = await res.json();
 
         if (data.error) {
-          container.innerHTML = `<div class="text-red-500">${escapeHtml(data.error)}</div>`;
+          if (container) {
+            container.innerHTML = `<div class="text-red-500">${escapeHtml(data.error)}</div>`;
+          }
+          if (privateContainer) {
+            privateContainer.innerHTML = `<div class="text-red-500">${escapeHtml(data.error)}</div>`;
+          }
           return;
         }
 
         const guilds = data.guilds || [];
-        if (guilds.length === 0) {
-          container.innerHTML = '<div class="text-slate-400">未找到服务器，请确保账号已登录并完成同步</div>';
-          return;
-        }
+        const privateChannels = data.privateChannels || [];
 
-        // 渲染服务器列表
-        let html = '<div class="space-y-2">';
-        for (const guild of guilds) {
-          html += `
-            <div class="border border-slate-200 rounded p-2">
-              <div class="flex items-center justify-between">
-                <span class="font-medium text-slate-700">${escapeHtml(guild.name)}</span>
-                <span class="text-slate-400 font-mono">${guild.id}</span>
-              </div>
-              <button onclick="fetchDiscordChannelsForLibrary('${accountId}', '${guild.id}', this)"
-                class="mt-1 text-xs text-indigo-600 hover:text-indigo-800">展开频道列表</button>
-              <div id="discord-channels-${accountId}-${guild.id}" class="mt-2 hidden"></div>
-            </div>
-          `;
+        cachedGuilds = guilds;
+        cachedGuildsAccountId = accountId;
+        cachedGuildsFetchedAt = Date.now();
+        cachedDiscordPrivateChannels[accountId] = privateChannels;
+
+        if (privateContainer) {
+          privateContainer.innerHTML = buildDiscordLibraryPrivateChannelsHtml(privateChannels);
         }
-        html += '</div>';
-        container.innerHTML = html;
+        if (container) {
+          container.innerHTML = buildDiscordLibraryGuildsHtml(accountId, guilds);
+        }
       } catch (e) {
-        container.innerHTML = `<div class="text-red-500">获取失败: ${escapeHtml(e.message)}</div>`;
+        if (container) {
+          container.innerHTML = `<div class="text-red-500">获取失败: ${escapeHtml(e.message)}</div>`;
+        }
+        if (privateContainer) {
+          privateContainer.innerHTML = `<div class="text-red-500">获取失败: ${escapeHtml(e.message)}</div>`;
+        }
       }
     }
 
@@ -3532,6 +3657,7 @@
         }
 
         const dialogs = data.dialogs || [];
+        cachedTelegramDialogs[accountId] = dialogs;
         if (dialogs.length === 0) {
           const account = (state.telegramAccounts || []).find((item) => item.id === accountId);
           const emptyHint = account?.type === 'bot'
@@ -3541,18 +3667,7 @@
           return;
         }
 
-        let html = '<div class="space-y-1">';
-        for (const d of dialogs) {
-          const typeIcon = d.type === 'channel' ? '📢' : d.type === 'group' ? '👥' : d.type === 'user' ? '👤' : '💬';
-          html += `
-            <div class="flex items-center justify-between py-1 border-b border-slate-100">
-              <span class="text-slate-600">${typeIcon} ${escapeHtml(d.name || d.title || '未知')}</span>
-              <span class="text-slate-400 font-mono">${d.id}</span>
-            </div>
-          `;
-        }
-        html += '</div>';
-        container.innerHTML = html;
+        container.innerHTML = buildTelegramLibraryDialogsHtml(dialogs);
       } catch (e) {
         container.innerHTML = `<div class="text-red-500">获取失败: ${escapeHtml(e.message)}</div>`;
       }
@@ -3733,6 +3848,7 @@
             delete cachedChannels[key];
           }
         });
+        delete cachedDiscordPrivateChannels[accountId];
 
         // 更新账号信息
         if (account) {
@@ -5316,6 +5432,46 @@
       };
     }
 
+    function getDiscordPrivateChannels(accountId) {
+      return accountId ? (cachedDiscordPrivateChannels[accountId] || []) : [];
+    }
+
+    function getDiscordGuildSelectionItems(accountId, selectedId) {
+      const guildItems = cachedGuildsAccountId === accountId ? (cachedGuilds || []) : [];
+      const items = guildItems.slice();
+      if (getDiscordPrivateChannels(accountId).length > 0 || selectedId === DISCORD_PRIVATE_SCOPE_ID) {
+        items.push({
+          id: DISCORD_PRIVATE_SCOPE_ID,
+          name: DISCORD_PRIVATE_SCOPE_LABEL,
+        });
+      }
+      return items;
+    }
+
+    function getTelegramToDiscordGuildSelectionItems(accountId, selectedId) {
+      const items = accountId ? (cachedTelegramToDiscordGuilds[accountId] || []).slice() : [];
+      if (getDiscordPrivateChannels(accountId).length > 0 || selectedId === DISCORD_PRIVATE_SCOPE_ID) {
+        items.push({
+          id: DISCORD_PRIVATE_SCOPE_ID,
+          name: DISCORD_PRIVATE_SCOPE_LABEL,
+        });
+      }
+      return items;
+    }
+
+    function getDiscordChannelsForScope(accountId, guildId, kind = 'source') {
+      if (!accountId || !guildId) return [];
+      if (isDiscordPrivateScope(guildId)) {
+        return getDiscordPrivateChannels(accountId).filter(ch => ch.type === 1 || ch.type === 3);
+      }
+      const cacheKey = `${accountId}:${guildId}`;
+      const channels = cachedChannels[cacheKey] || [];
+      if (kind === 'target') {
+        return channels.filter(ch => ch.type === 0 || ch.type === 5);
+      }
+      return channels.filter(ch => ch.type !== 4 && ch.type !== 2 && ch.type !== 13);
+    }
+
     // 执行实际的删除操作
     function doRemoveLibraryAccount(kind, id) {
       if (kind === 'discord') {
@@ -5910,8 +6066,17 @@
                 <div class="text-xs text-slate-500 mt-1">${summary} · 上次同步：${lastSyncLabel}</div>
               </div>
             </div>
+            <div>
+              <div class="text-xs font-medium text-slate-500 mb-2">私聊</div>
+              <div id="syncInfoPrivateChannelsList" class="space-y-2">
+                <div class="text-slate-400 text-center py-4">正在加载私聊列表...</div>
+              </div>
+            </div>
+            <div>
+              <div class="text-xs font-medium text-slate-500 mb-2">服务器</div>
             <div id="syncInfoGuildsList" class="space-y-2">
               <div class="text-slate-400 text-center py-4">正在加载服务器列表...</div>
+            </div>
             </div>
           </div>
         `;
@@ -5942,6 +6107,7 @@
 
     async function loadDiscordGuildsForSyncInfo(accountId) {
       const container = document.getElementById('syncInfoGuildsList');
+      const privateContainer = document.getElementById('syncInfoPrivateChannelsList');
       if (!container) return;
 
       try {
@@ -5954,10 +6120,32 @@
 
         if (data.error) {
           container.innerHTML = `<div class="text-red-500 text-center py-4">${escapeHtml(data.error)}</div>`;
+          if (privateContainer) {
+            privateContainer.innerHTML = `<div class="text-red-500 text-center py-4">${escapeHtml(data.error)}</div>`;
+          }
           return;
         }
 
         const guilds = data.guilds || [];
+        const privateChannels = data.privateChannels || [];
+        if (privateContainer) {
+          if (privateChannels.length === 0) {
+            privateContainer.innerHTML = '<div class="text-slate-400 text-center py-4">未找到私聊，请先同步数据</div>';
+          } else {
+            privateContainer.innerHTML = `
+              <div class="border border-slate-200 rounded-lg">
+                <div class="p-2 space-y-1 max-h-60 overflow-y-auto">
+                  ${privateChannels.map(channel => `
+                    <div class="flex items-center justify-between px-2 py-1 hover:bg-slate-50 rounded text-xs">
+                      <span class="text-slate-600">${escapeHtml(channel.type === 3 ? '👥 ' : '👤 ')}${escapeHtml(channel.name || channel.id || '未知私聊')}</span>
+                      <span class="text-slate-400 font-mono cursor-pointer hover:text-indigo-500 transition" onclick="copyToClipboard('${channel.id}', '私聊ID')" title="点击复制">${channel.id}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+          }
+        }
         if (guilds.length === 0) {
           container.innerHTML = '<div class="text-slate-400 text-center py-4">未找到服务器，请先同步数据</div>';
           return;
@@ -5980,6 +6168,9 @@
         `).join('');
       } catch (e) {
         container.innerHTML = `<div class="text-red-500 text-center py-4">加载失败: ${escapeHtml(e.message)}</div>`;
+        if (privateContainer) {
+          privateContainer.innerHTML = `<div class="text-red-500 text-center py-4">加载失败: ${escapeHtml(e.message)}</div>`;
+        }
       }
     }
 
@@ -6328,6 +6519,75 @@
       }).join('');
     }
 
+    function renderLibrarySyncedDataSection(kind, id, account) {
+      const lastSyncLabel = account?.lastSyncTime ? formatTime(account.lastSyncTime) : '未同步';
+
+      if (kind === 'discord') {
+        const guildsCount = Number.isFinite(account?.guildsCount) ? account.guildsCount : null;
+        const channelsCount = Number.isFinite(account?.channelsCount) ? account.channelsCount : null;
+        const guilds = cachedGuildsAccountId === id ? cachedGuilds : [];
+        const privateChannels = getDiscordPrivateChannels(id);
+        const summary = guildsCount === null && channelsCount === null
+          ? '未同步'
+          : `服务器 ${guildsCount ?? 0} / 频道 ${channelsCount ?? 0}`;
+        return `
+          <div class="mt-6 border-t border-slate-200 pt-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 class="text-sm font-medium text-slate-800">已同步数据</h3>
+                <p class="text-xs text-slate-500 mt-1">${summary} · 上次同步：${lastSyncLabel}</p>
+              </div>
+              <button onclick="syncDiscordAccountData('${id}')"
+                class="text-xs bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-md hover:bg-emerald-100">重新同步</button>
+            </div>
+            <div class="grid gap-4 xl:grid-cols-2">
+              <div class="rounded-lg border border-slate-200 p-3">
+                <div class="text-xs font-medium text-slate-500 mb-2">私聊</div>
+                <div id="discord-private-channels-${id}" class="space-y-2">
+                  ${buildDiscordLibraryPrivateChannelsHtml(privateChannels)}
+                </div>
+              </div>
+              <div class="rounded-lg border border-slate-200 p-3">
+                <div class="text-xs font-medium text-slate-500 mb-2">服务器</div>
+                <div id="discord-guilds-${id}" class="space-y-2">
+                  ${buildDiscordLibraryGuildsHtml(id, guilds)}
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (kind === 'telegram') {
+        const dialogsCount = Number.isFinite(account?.dialogsCount) ? account.dialogsCount : null;
+        const dialogs = cachedTelegramDialogs[id] || [];
+        const summary = dialogsCount === null ? '未同步' : `对话 ${dialogsCount}`;
+        const emptyHint = account?.type === 'bot'
+          ? '机器人只能看到已加入的群组/频道，请先把机器人加入目标群组'
+          : '未找到群组/频道，请确保账号已登录';
+        return `
+          <div class="mt-6 border-t border-slate-200 pt-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 class="text-sm font-medium text-slate-800">已同步数据</h3>
+                <p class="text-xs text-slate-500 mt-1">${summary} · 上次同步：${lastSyncLabel}</p>
+              </div>
+              <button onclick="syncTelegramAccountData('${id}')"
+                class="text-xs bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-md hover:bg-emerald-100">重新同步</button>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3">
+              <div class="text-xs font-medium text-slate-500 mb-2">对话</div>
+              <div id="telegram-dialogs-${id}" class="space-y-2">
+                ${dialogs.length > 0 ? buildTelegramLibraryDialogsHtml(dialogs) : `<div class="text-slate-400 text-sm">${emptyHint}</div>`}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      return '';
+    }
+
     function renderAccountLibraryEditModal() {
       const modal = document.getElementById('accountLibraryEditModal');
       if (!modal) return;
@@ -6361,7 +6621,7 @@
         <div class="mt-4">
           ${renderLibraryAccountFields(current.kind, account)}
         </div>
-
+        ${renderLibrarySyncedDataSection(current.kind, current.id, account)}
       `;
     }
 
@@ -7683,7 +7943,7 @@
           }
 
           // 加载频道列表
-          if (savedGuildId && discordAccountId) {
+          if (savedGuildId && discordAccountId && !isDiscordPrivateScope(savedGuildId)) {
             const cacheKey = `${discordAccountId}:${savedGuildId}`;
             if (!cachedChannels[cacheKey] && !window[`loadingChannels_${cacheKey}`]) {
               window[`loadingChannels_${cacheKey}`] = true;
@@ -7709,17 +7969,18 @@
           } else if (savedChannelId && !savedChannelId.startsWith('new_')) {
             // 有频道ID但没有服务器ID，显示频道ID并提示
             const label = m.sourceChannelName ? escapeHtml(m.sourceChannelName) : `频道 (${savedChannelId})`;
-            channelOptions = `<option value="${savedChannelId}" selected>${label} - 请选择服务器</option>`;
+            channelOptions = `<option value="${savedChannelId}" selected>${label} - 请选择服务器或私聊</option>`;
           } else {
-            channelOptions = '<option value="">请先选择服务器</option>';
+            channelOptions = '<option value="">请先选择服务器或私聊</option>';
           }
 
           const guildSelectId = `feishu-guild-select-${mappingKey}`;
           const savedGuildName = m.sourceGuildName || '';
           const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="cachedGuilds" data-selected-label="${escapeHtml(savedGuildName)}" data-placeholder-label="选择服务器"
+              data-account-id="${escapeHtml(discordAccountId)}"
               onchange="onFeishuGuildSelect('${discordAccountId}', this.value, '${channelSelectId}', ${originalIndex})"
               class="hidden">
-              ${getCachedGuildsOptions(savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId), { lightweight: true })}
+              ${getCachedGuildsOptions(discordAccountId, savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId), { lightweight: true })}
             </select>`;
           const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="cachedChannels"
               data-account-id="${escapeHtml(discordAccountId)}"
@@ -10403,8 +10664,12 @@
     async function onStandbyGuildSelect(accountId, guildId, channelSelectId) {
       if (!ruleConfigData.standbyMode) return;
       ruleConfigData.standbyMode.mainGuildId = guildId || '';
-      const guild = cachedGuilds.find(g => g.id === guildId);
-      ruleConfigData.standbyMode.mainGuildName = guild ? guild.name : '';
+      if (isDiscordPrivateScope(guildId)) {
+        ruleConfigData.standbyMode.mainGuildName = DISCORD_PRIVATE_SCOPE_LABEL;
+      } else {
+        const guild = cachedGuilds.find(g => g.id === guildId);
+        ruleConfigData.standbyMode.mainGuildName = guild ? guild.name : '';
+      }
       ruleConfigData.standbyMode.mainChannelId = '';
       const channelSelect = document.getElementById(channelSelectId);
       if (!channelSelect) return;
@@ -10412,15 +10677,17 @@
       channelSelect.dataset.guildId = guildId || '';
       channelSelect.dataset.selectedId = '';
       if (!guildId) {
-        channelSelect.innerHTML = '<option value="">请先选择服务器</option>';
+        channelSelect.innerHTML = '<option value="">请先选择服务器或私聊</option>';
         channelSelect.value = '';
         syncDiscordSearchableSelect(channelSelectId);
         return;
       }
-      channelSelect.innerHTML = '<option value="">加载中...</option>';
+      channelSelect.innerHTML = `<option value="">${isDiscordPrivateScope(guildId) ? '加载私聊中...' : '加载中...'}</option>`;
       channelSelect.value = '';
       syncDiscordSearchableSelect(channelSelectId);
-      await fetchDiscordChannels(accountId, guildId);
+      if (!isDiscordPrivateScope(guildId)) {
+        await fetchDiscordChannels(accountId, guildId);
+      }
       const latestSelect = document.getElementById(channelSelectId);
       if (latestSelect) {
         latestSelect.dataset.guildId = guildId || '';
@@ -10458,7 +10725,7 @@
         if (discordAccountId) {
           requestDiscordGuilds(discordAccountId);
         }
-        if (savedGuildId && discordAccountId) {
+        if (savedGuildId && discordAccountId && !isDiscordPrivateScope(savedGuildId)) {
           const cacheKey = `${discordAccountId}:${savedGuildId}`;
           if (!cachedChannels[cacheKey] && !window[`loadingStandbyChannels_${cacheKey}`]) {
             window[`loadingStandbyChannels_${cacheKey}`] = true;
@@ -10481,15 +10748,16 @@
             { lightweight: true },
           );
         } else if (mainId) {
-          channelOptions = `<option value="${mainId}" selected>频道 (${mainId}) - 请选择服务器</option>`;
+          channelOptions = `<option value="${mainId}" selected>频道 (${mainId}) - 请选择服务器或私聊</option>`;
         } else {
-          channelOptions = '<option value="">请先选择服务器</option>';
+          channelOptions = '<option value="">请先选择服务器或私聊</option>';
         }
         const guildSelectId = `rule-standby-guild-${selectKey}`;
         const guildSelectHtml = `<select id="${guildSelectId}" data-search-source="cachedGuilds" data-selected-label="${escapeHtml(savedGuildName)}" data-placeholder-label="选择服务器"
+            data-account-id="${escapeHtml(discordAccountId)}"
             onchange="onStandbyGuildSelect('${discordAccountId}', this.value, '${channelSelectId}')"
             class="hidden">
-            ${getCachedGuildsOptions(savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId), { lightweight: true })}
+            ${getCachedGuildsOptions(discordAccountId, savedGuildId, savedGuildName, getDiscordSelectSearchQuery(guildSelectId), { lightweight: true })}
           </select>`;
         const channelSelectHtml = `<select id="${channelSelectId}" data-search-source="cachedChannels"
             data-account-id="${escapeHtml(discordAccountId)}"
@@ -11635,12 +11903,15 @@
           : (acc.mappings || []);
         const mapping = mappings[idx];
         if (mapping) {
-          const guild = cachedGuilds.find(item => String(item?.id || '') === String(guildId));
-          if (guild) {
-            updateMapping(idx, 'sourceGuildName', guild.name || '');
+          if (isDiscordPrivateScope(guildId)) {
+            updateMapping(idx, 'sourceGuildName', DISCORD_PRIVATE_SCOPE_LABEL);
+          } else {
+            const guild = cachedGuilds.find(item => String(item?.id || '') === String(guildId));
+            if (guild) {
+              updateMapping(idx, 'sourceGuildName', guild.name || '');
+            }
           }
-          const cacheKey = `${getDiscordMetadataAccountId(acc)}:${guildId}`;
-          const channels = cachedChannels[cacheKey] || [];
+          const channels = getDiscordChannelsForScope(getDiscordMetadataAccountId(acc), guildId, 'source');
           const channel = channels.find(item => String(item?.id || '') === String(value || ''));
           updateMapping(idx, 'sourceChannelName', channel?.name || '');
         }
@@ -11780,8 +12051,12 @@
         // 保存服务器名称
         if (!acc.feishuSourceGuildNameMap) acc.feishuSourceGuildNameMap = {};
         if (guildId) {
-          const guild = cachedGuilds.find(g => g.id === guildId);
-          acc.feishuSourceGuildNameMap[sourceChannelId] = guild ? guild.name : '';
+          if (isDiscordPrivateScope(guildId)) {
+            acc.feishuSourceGuildNameMap[sourceChannelId] = DISCORD_PRIVATE_SCOPE_LABEL;
+          } else {
+            const guild = cachedGuilds.find(g => g.id === guildId);
+            acc.feishuSourceGuildNameMap[sourceChannelId] = guild ? guild.name : '';
+          }
         } else {
           delete acc.feishuSourceGuildNameMap[sourceChannelId];
         }
@@ -11789,16 +12064,18 @@
       }
 
       if (!guildId) {
-        channelSelect.innerHTML = '<option value="">请先选择服务器</option>';
+        channelSelect.innerHTML = '<option value="">请先选择服务器或私聊</option>';
         channelSelect.value = '';
         syncDiscordSearchableSelect(channelSelectId);
         return;
       }
 
-      channelSelect.innerHTML = '<option value="">加载中...</option>';
+      channelSelect.innerHTML = `<option value="">${isDiscordPrivateScope(guildId) ? '加载私聊中...' : '加载中...'}</option>`;
       channelSelect.value = '';
       syncDiscordSearchableSelect(channelSelectId);
-      await fetchDiscordChannels(accountId, guildId);
+      if (!isDiscordPrivateScope(guildId)) {
+        await fetchDiscordChannels(accountId, guildId);
+      }
       channelSelect.dataset.guildId = guildId || '';
       channelSelect.dataset.selectedId = '';
       refreshDiscordSelectOptions(channelSelectId, '');

@@ -2,8 +2,15 @@ export function getDiscordMetadataAccountId(account?: { discordAccountId?: strin
   return String(account?.discordAccountId || account?.id || "").trim();
 }
 
+export const DISCORD_PRIVATE_SCOPE_ID = "@private";
+export const DISCORD_PRIVATE_SCOPE_LABEL = "私聊";
+
 const DISCORD_CHANNEL_URL_RE =
   /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/channels\/([^/]+)\/([^/]+)(?:\/([^/]+))?\/?$/i;
+
+export function isDiscordPrivateScope(guildId?: string | null): boolean {
+  return String(guildId || "").trim() === DISCORD_PRIVATE_SCOPE_ID;
+}
 
 export function normalizeDiscordSourceReference(
   sourceChannelId?: string | null,
@@ -123,7 +130,11 @@ export function shouldReuseDiscordChannelsCache(
 }
 
 export function getDiscordChannelEmptyMessage(hasCacheEntry: boolean, guildId: string, selectedId?: string): string {
-  if (!guildId) return "请先选择服务器";
+  if (!guildId) return "请先选择服务器或私聊";
+  if (isDiscordPrivateScope(guildId)) {
+    if (selectedId) return "加载私聊中...";
+    return hasCacheEntry ? "暂无可用私聊" : "暂无私聊（请先同步）";
+  }
   if (selectedId) return "加载频道中...";
   return hasCacheEntry ? "暂无可用频道" : "暂无频道（请先同步）";
 }
@@ -141,13 +152,27 @@ type DiscordGuildCacheEntry =
   | DiscordGuildLike[]
   | {
       guilds?: DiscordGuildLike[];
+      privateChannels?: DiscordChannelLike[];
     }
   | undefined;
+
+type DiscordChannelLike = {
+  id?: string | null;
+  name?: string | null;
+  type?: number | null;
+};
 
 function readGuildListFromCacheEntry(entry: DiscordGuildCacheEntry): DiscordGuildLike[] {
   if (Array.isArray(entry)) return entry;
   if (entry && typeof entry === "object" && Array.isArray(entry.guilds)) {
     return entry.guilds;
+  }
+  return [];
+}
+
+function readPrivateChannelListFromCacheEntry(entry: DiscordGuildCacheEntry): DiscordChannelLike[] {
+  if (entry && !Array.isArray(entry) && typeof entry === "object" && Array.isArray(entry.privateChannels)) {
+    return entry.privateChannels;
   }
   return [];
 }
@@ -197,6 +222,23 @@ export function resolveDiscordGuildsFromCache(
   for (const key of keys) {
     const guilds = readGuildListFromCacheEntry(cache[key]);
     if (Array.isArray(guilds)) return guilds;
+  }
+  return [];
+}
+
+export function resolveDiscordPrivateChannelsFromCache<T extends DiscordChannelLike>(
+  cache: Record<string, DiscordGuildCacheEntry>,
+  accountId: string,
+  config?: DiscordMetadataConfigLike | null,
+): T[] {
+  const keys = buildDiscordMetadataAccountIds(accountId, config);
+  for (const key of keys) {
+    const channels = readPrivateChannelListFromCacheEntry(cache[key]);
+    if (channels.length > 0) return channels as T[];
+  }
+  for (const key of keys) {
+    const channels = readPrivateChannelListFromCacheEntry(cache[key]);
+    if (Array.isArray(channels)) return channels as T[];
   }
   return [];
 }

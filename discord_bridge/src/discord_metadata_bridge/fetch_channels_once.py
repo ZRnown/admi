@@ -23,11 +23,40 @@ def _normalize_channel(channel: Any) -> Dict[str, Any]:
     }
 
 
+def _resolve_private_channel_name(channel: Any) -> str:
+    explicit_name = str(getattr(channel, "name", "") or "").strip()
+    if explicit_name:
+        return explicit_name
+    recipients = list(getattr(channel, "recipients", []) or [])
+    recipient_names = []
+    for recipient in recipients:
+        global_name = str(getattr(recipient, "global_name", "") or "").strip()
+        username = str(getattr(recipient, "name", None) or getattr(recipient, "username", "") or "").strip()
+        if global_name:
+            recipient_names.append(global_name)
+        elif username:
+            recipient_names.append(username)
+    if recipient_names:
+        return ", ".join(recipient_names)
+    return str(getattr(channel, "id", "") or "").strip()
+
+
+def _normalize_private_channel(channel: Any) -> Dict[str, Any]:
+    recipients = list(getattr(channel, "recipients", []) or [])
+    return {
+        "id": str(getattr(channel, "id", "") or ""),
+        "name": _resolve_private_channel_name(channel),
+        "type": _normalize_channel(channel).get("type"),
+        "recipientCount": len(recipients),
+    }
+
+
 async def _run(payload: Dict[str, Any]) -> Dict[str, Any]:
     token = str(payload.get("token") or "").strip()
     guild_ids = [str(item) for item in (payload.get("guildIds") or []) if str(item).strip()]
+    include_private_channels = payload.get("includePrivateChannels") is True
     client_type = payload.get("type") or "selfbot"
-    if not token or not guild_ids:
+    if not token or (not guild_ids and not include_private_channels):
         return {"success": False, "error": "missing token or guildIds"}
 
     if hasattr(discord, "Intents"):
@@ -44,6 +73,7 @@ async def _run(payload: Dict[str, Any]) -> Dict[str, Any]:
     @client.event
     async def on_ready():
         channels_by_guild: Dict[str, List[Dict[str, Any]]] = {}
+        private_channels: List[Dict[str, Any]] = []
         try:
             for guild_id in guild_ids:
                 guild = client.get_guild(int(guild_id)) if hasattr(client, "get_guild") else None
@@ -54,7 +84,18 @@ async def _run(payload: Dict[str, Any]) -> Dict[str, Any]:
                     except Exception:
                         channels = []
                 channels_by_guild[guild_id] = [_normalize_channel(ch) for ch in channels]
-            future.set_result({"success": True, "channelsByGuild": channels_by_guild})
+            if include_private_channels:
+                private_channels = [
+                    _normalize_private_channel(ch)
+                    for ch in list(getattr(client, "private_channels", []) or [])
+                ]
+            future.set_result(
+                {
+                    "success": True,
+                    "channelsByGuild": channels_by_guild,
+                    "privateChannels": private_channels,
+                }
+            )
         except Exception as exc:
             future.set_result({"success": False, "error": str(exc)})
         finally:

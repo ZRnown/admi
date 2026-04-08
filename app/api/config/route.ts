@@ -291,6 +291,7 @@ interface FrontendMapping {
   targetGuildId?: string;
   discordSenderType?: "account" | "webhook";
   discordSenderAccountId?: string;
+  showSourceIdentity?: boolean;
   dingtalkSecret?: string;
   inputMode?: "manual" | "select";
   note?: string;
@@ -974,6 +975,7 @@ function accountToFrontend(
         ocrBlockedKeywords: savedRule.ocrBlockedKeywords || [],
         ocrTriggerKeywords: savedRule.ocrTriggerKeywords || [],
         replacementsDictionary: savedRule.replacementsDictionary || {},
+        showSourceIdentity: savedRule.showSourceIdentity,
         // 规则级别的忽略配置
         ignoreSelf: savedRule.ignoreSelf,
         ignoreBot: savedRule.ignoreBot,
@@ -1537,6 +1539,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           ocrBlockedKeywords: mapping.ocrBlockedKeywords || [],
           ocrTriggerKeywords: mapping.ocrTriggerKeywords || [],
           replacementsDictionary: mapping.replacementsDictionary || {},
+          showSourceIdentity: mapping.showSourceIdentity,
           // 规则级别的忽略配置
           ignoreSelf: mapping.ignoreSelf,
           ignoreBot: mapping.ignoreBot,

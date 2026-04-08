@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           user: accountData.user || null,
           guilds: accountData.guilds || [],
+          privateChannels: accountData.privateChannels || [],
           channelsCount,
           updatedAt,
         });
@@ -71,12 +72,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           user: null,
           guilds: accountData || [],
+          privateChannels: [],
           channelsCount,
           updatedAt,
         });
       }
     } catch {
-      return NextResponse.json({ user: null, guilds: [], message: "请先启动实例以获取服务器列表" });
+      return NextResponse.json({ user: null, guilds: [], privateChannels: [], message: "请先启动实例以获取服务器列表" });
     }
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

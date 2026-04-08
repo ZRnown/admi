@@ -76,9 +76,15 @@ class DiscordAccountSession:
     def build_cache_snapshot(self) -> Dict[str, Any]:
         guilds_payload = []
         channels_by_guild: Dict[str, list] = {}
+        private_channels_payload = []
         client = self.client
-        if not client or not getattr(client, "guilds", None):
-            return {"user": self.user_payload, "guilds": guilds_payload, "channelsByGuild": channels_by_guild}
+        if not client:
+            return {
+                "user": self.user_payload,
+                "guilds": guilds_payload,
+                "channelsByGuild": channels_by_guild,
+                "privateChannels": private_channels_payload,
+            }
 
         for guild in getattr(client, "guilds", []) or []:
             guild_id = str(getattr(guild, "id", "") or "")
@@ -100,10 +106,33 @@ class DiscordAccountSession:
                 })
             channels_by_guild[guild_id] = channels
 
+        for channel in list(getattr(client, "private_channels", []) or []):
+            explicit_name = str(getattr(channel, "name", "") or "").strip()
+            if explicit_name:
+                channel_name = explicit_name
+            else:
+                recipients = list(getattr(channel, "recipients", []) or [])
+                recipient_names = []
+                for recipient in recipients:
+                    global_name = str(getattr(recipient, "global_name", "") or "").strip()
+                    username = str(getattr(recipient, "name", None) or getattr(recipient, "username", "") or "").strip()
+                    if global_name:
+                        recipient_names.append(global_name)
+                    elif username:
+                        recipient_names.append(username)
+                channel_name = ", ".join(recipient_names) if recipient_names else str(getattr(channel, "id", "") or "")
+            private_channels_payload.append({
+                "id": str(getattr(channel, "id", "") or ""),
+                "name": channel_name,
+                "type": self._channel_type_value(channel),
+                "recipientCount": len(list(getattr(channel, "recipients", []) or [])),
+            })
+
         return {
             "user": self.user_payload,
             "guilds": guilds_payload,
             "channelsByGuild": channels_by_guild,
+            "privateChannels": private_channels_payload,
         }
 
     async def hydrate_empty_guild_channels(self) -> int:

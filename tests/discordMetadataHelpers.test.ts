@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  DISCORD_PRIVATE_SCOPE_ID,
   buildDiscordSearchableDropdownModel,
   filterDiscordNamedItems,
   getDiscordChannelEmptyMessage,
@@ -11,6 +12,7 @@ import {
   resolveDiscordChannelNameFromCache,
   resolveDiscordChannelsFromCache,
   resolveDiscordGuildNameFromCache,
+  resolveDiscordPrivateChannelsFromCache,
   preserveDiscordChannelsOnFetchFailure,
   shouldReuseDiscordChannelsCache,
 } from "../src/discordMetadataHelpers.ts";
@@ -32,7 +34,9 @@ test("shouldReuseDiscordChannelsCache allows force refresh even when empty cache
 test("getDiscordChannelEmptyMessage distinguishes unsynced from synced-empty states", () => {
   assert.equal(getDiscordChannelEmptyMessage(false, 'guild-1', ''), '暂无频道（请先同步）');
   assert.equal(getDiscordChannelEmptyMessage(true, 'guild-1', ''), '暂无可用频道');
-  assert.equal(getDiscordChannelEmptyMessage(false, '', ''), '请先选择服务器');
+  assert.equal(getDiscordChannelEmptyMessage(false, '', ''), '请先选择服务器或私聊');
+  assert.equal(getDiscordChannelEmptyMessage(false, DISCORD_PRIVATE_SCOPE_ID, ''), '暂无私聊（请先同步）');
+  assert.equal(getDiscordChannelEmptyMessage(true, DISCORD_PRIVATE_SCOPE_ID, ''), '暂无可用私聊');
 });
 
 
@@ -147,6 +151,29 @@ test("resolveDiscordGuildNameFromCache falls back from library account id to ins
   assert.equal(guildName, "Alpha Guild");
 });
 
+test("resolveDiscordPrivateChannelsFromCache falls back from library account id to instance private cache", () => {
+  const channels = resolveDiscordPrivateChannelsFromCache(
+    {
+      "instance-1": {
+        guilds: [],
+        privateChannels: [
+          { id: "dm-1", name: "Alice", type: 1 },
+        ],
+      },
+    },
+    "library-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.deepEqual(channels, [
+    { id: "dm-1", name: "Alice", type: 1 },
+  ]);
+});
+
 test("resolveDiscordChannelNameFromCache falls back from library account id to instance channel cache", () => {
   const channelName = resolveDiscordChannelNameFromCache(
     {
@@ -208,5 +235,33 @@ test("resolveDiscordChannelMetadataFromCache finds channel metadata without save
     guildId: "guild-1",
     guildName: "Alpha Guild",
     channelName: "crypto-signals",
+  });
+});
+
+test("resolveDiscordChannelMetadataFromCache resolves private channels from the private scope cache key", () => {
+  const metadata = resolveDiscordChannelMetadataFromCache(
+    {
+      [`instance-1:${DISCORD_PRIVATE_SCOPE_ID}`]: [
+        { id: "dm-1", name: "Alice", type: 1 },
+      ],
+    },
+    {
+      "instance-1": {
+        guilds: [],
+      },
+    },
+    "library-1",
+    "dm-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.deepEqual(metadata, {
+    guildId: DISCORD_PRIVATE_SCOPE_ID,
+    guildName: undefined,
+    channelName: "Alice",
   });
 });

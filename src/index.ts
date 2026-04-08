@@ -21,6 +21,7 @@ import {
 } from "./config.js";
 import { getEnv } from "./env.js";
 import { SenderBot } from "./senderBot.js";
+import { resolveDiscordSendAccountRef } from "./discordAccountResolver.js";
 import { FeishuSender } from "./feishuSender.js";
 import { DingTalkSender } from "./dingtalkSender.js";
 import { ProxyAgent } from "proxy-agent";
@@ -1248,10 +1249,14 @@ async function writeDiscordChannelsCache(accountId: string, client: any) {
 }
 
 
-async function writeDiscordGuildsCacheSnapshot(accountId: string, snapshot: { user?: any; guilds?: any[]; channelsByGuild?: Record<string, any[]> }) {
+async function writeDiscordGuildsCacheSnapshot(
+  accountId: string,
+  snapshot: { user?: any; guilds?: any[]; channelsByGuild?: Record<string, any[]>; privateChannels?: any[] },
+) {
   try {
     const guilds = Array.isArray(snapshot.guilds) ? snapshot.guilds : [];
     const channelsByGuild = snapshot.channelsByGuild && typeof snapshot.channelsByGuild === "object" ? snapshot.channelsByGuild : {};
+    const privateChannels = Array.isArray(snapshot.privateChannels) ? snapshot.privateChannels : [];
 
     let guildCache: Record<string, any> = {};
     let channelCache: Record<string, any[]> = {};
@@ -1265,6 +1270,7 @@ async function writeDiscordGuildsCacheSnapshot(accountId: string, snapshot: { us
     guildCache[accountId] = {
       user: snapshot.user || null,
       guilds,
+      privateChannels,
       updatedAt: new Date().toISOString(),
     };
     for (const guild of guilds) {
@@ -1273,6 +1279,7 @@ async function writeDiscordGuildsCacheSnapshot(accountId: string, snapshot: { us
       const key = `${accountId}:${guildId}`;
       channelCache[key] = Array.isArray(channelsByGuild[guildId]) ? channelsByGuild[guildId] : [];
     }
+    channelCache[`${accountId}:@private`] = privateChannels;
     await fs.writeFile(discordGuildsCacheFile, JSON.stringify(guildCache, null, 2));
     await fs.writeFile(discordChannelsCacheFile, JSON.stringify(channelCache, null, 2));
   } catch (e) {
@@ -1394,15 +1401,33 @@ async function buildSenderBots(account: AccountConfig, logger: FileLogger) {
     if (mappings.length > 0) {
       // 使用 mappings 数组构建（支持相同源ID多个webhook）
       for (const mapping of mappings) {
-        if (!mapping?.sourceChannelId || !mapping?.targetWebhookUrl) continue;
+        if (!mapping?.sourceChannelId) continue;
         const channelId = String(mapping.sourceChannelId);
-        const webhookUrl = String(mapping.targetWebhookUrl);
+        const webhookUrl = String(mapping.targetWebhookUrl || "");
+        const targetChannelId = String(mapping.targetChannelId || "").trim();
+        const useAccountSend =
+          mapping.discordSenderType === "account" &&
+          !!mapping.discordSenderAccountId &&
+          !!targetChannelId;
+        if (!webhookUrl && !useAccountSend) continue;
         const relayId = account.channelRelayMap?.[channelId];
         const relayToken = relayId ? relayById.get(relayId)?.token?.trim() : undefined;
-        const useRelay = enableBotRelay && !!relayToken;
+        const useRelay = !useAccountSend && enableBotRelay && !!relayToken;
+        const senderAccount = useAccountSend
+          ? resolveDiscordSendAccountRef(currentConfig, account, mapping.discordSenderAccountId)
+          : null;
+        if (useAccountSend && !senderAccount) {
+          console.warn(
+            `[Config] Skip discord account-send mapping ${mapping.id || channelId}: sender account ${mapping.discordSenderAccountId} unavailable`,
+          );
+          continue;
+        }
         const sb = new SenderBot({
           replacementsDictionary: replacements,
-          webhookUrl,
+          webhookUrl: webhookUrl || "http://localhost",
+          targetChannelId: useAccountSend ? targetChannelId : undefined,
+          authToken: senderAccount?.token,
+          authType: senderAccount?.type,
           httpAgent,
           enableTranslation,
           deepseekApiKey,
@@ -2226,8 +2251,26 @@ function setupTelegramBridgeClient() {
               telegramForwardLogger.error(errorMsg);
             }
           } else {
+            const discordSendAccount =
+              rule.discordSenderType === "account"
+                ? resolveDiscordSendAccountRef(currentConfig, account, rule.discordSenderAccountId)
+                : null;
+            if (rule.discordSenderType === "account" && !discordSendAccount) {
+              logSkip("未找到可用 Discord 发送账号", `目标: ${rule.targetChannelId || "空"}`);
+              continue;
+            }
             const tempSender = new SenderBot({
-              webhookUrl: rule.targetChannelId,
+              webhookUrl:
+                rule.discordSenderType === "account"
+                  ? "http://localhost"
+                  : rule.targetChannelId,
+              replacementsDictionary: account.replacementsDictionary || {},
+              targetChannelId:
+                rule.discordSenderType === "account"
+                  ? rule.targetChannelId
+                  : undefined,
+              authToken: discordSendAccount?.token,
+              authType: discordSendAccount?.type,
               watermark: account.watermark,
               watermarkSecondary: account.watermarkSecondary,
               watermarks: account.watermarks,
@@ -2241,6 +2284,7 @@ function setupTelegramBridgeClient() {
               uploads: uploads.length > 0 ? uploads : undefined,
               useEmbed,
               extraEmbeds,
+              ruleReplacementsDictionary: rule.replacementsDictionary,
               stripEnglish,
               stripChinese,
               watermark: rule.watermark,

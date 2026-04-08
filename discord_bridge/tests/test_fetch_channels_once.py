@@ -54,3 +54,22 @@ def test_run_cancels_runner_without_name_error(monkeypatch):
                 }
             )
         )
+
+
+def test_normalize_private_channel_prefers_recipient_names():
+    channel = SimpleNamespace(
+        id=456,
+        name=None,
+        type=SimpleNamespace(value=1),
+        recipients=[
+            SimpleNamespace(global_name="Alice", name="alice"),
+            SimpleNamespace(global_name="", name="bob"),
+        ],
+    )
+
+    assert fetch_channels_once._normalize_private_channel(channel) == {
+        "id": "456",
+        "name": "Alice, bob",
+        "type": 1,
+        "recipientCount": 2,
+    }
