@@ -2007,7 +2007,8 @@ function setupTelegramBridgeClient() {
               : rule.longMessage;
           contentForRule = applyLongMessageConfig(contentForRule, resolvedLongMessage);
 
-          const showSourceIdentity = account.showSourceIdentity === true;
+          const showSourceIdentity =
+            rule.showSourceIdentity === true ? true : account.showSourceIdentity === true;
           const replyInfo = params.reply_to || params.reply_to_message;
 
           if (isTelegramToTelegram && showSourceIdentity && senderDisplayName) {
@@ -4220,12 +4221,20 @@ async function syncConfigToTelegramBridge(config: MultiConfig) {
         });
       }
 
-      // 添加Telegram映射，并附带 Discord 账号的 showSourceIdentity 设置
+      // 添加 Telegram 映射，并携带规则级别的来源身份与替换配置
       if (account.telegramConfig.mappings && telegramForwardEnabled) {
         for (const mapping of account.telegramConfig.mappings) {
+          const effectiveShowSourceIdentity =
+            mapping.showSourceIdentity === true ? true : account.showSourceIdentity === true;
+          const effectiveReplacementsDictionary = {
+            ...(account.replacementsDictionary || {}),
+            ...(mapping.replacementsDictionary || {}),
+          };
           telegramMappings.push({
             ...mapping,
-            showSourceIdentity: account.showSourceIdentity === true,
+            accountId: account.id,
+            showSourceIdentity: effectiveShowSourceIdentity,
+            effectiveReplacementsDictionary,
             senderAccountId: account.telegramSenderAccountId || undefined,
           });
         }

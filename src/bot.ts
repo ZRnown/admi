@@ -908,6 +908,7 @@ export class Bot {
       appendMessage?: string;
     };
     replacementsDictionary: Record<string, string>;
+    showSourceIdentity?: boolean;
     ignoreSelf?: boolean;
     ignoreBot?: boolean;
     ignoreImages?: boolean;
@@ -956,6 +957,7 @@ export class Bot {
         ocrTriggerKeywords: [],
         longMessage: undefined,
         replacementsDictionary: {},
+        showSourceIdentity: undefined,
         ignoreSelf: undefined,
         ignoreBot: undefined,
         ignoreImages: undefined,
@@ -992,6 +994,7 @@ export class Bot {
             }
           : undefined,
       replacementsDictionary: rule.replacementsDictionary || {},
+      showSourceIdentity: rule.showSourceIdentity,
       ignoreSelf: rule.ignoreSelf,
       ignoreBot: rule.ignoreBot,
       ignoreImages: rule.ignoreImages,
@@ -1778,6 +1781,8 @@ export class Bot {
     } catch (e: any) {
       this.logger.error(`${logPrefix} [ERROR] Exclude keyword filter failed: ${String(e?.message || e)}`);
     }
+    const showSourceIdentity =
+      ruleConfig.showSourceIdentity === true ? true : this.config.showSourceIdentity === true;
     let replyToTarget: { channelId: string; messageId: string } | undefined;
     // 给样式2使用的回复元信息（仅用于格式化文本）
     let replyUserNameForStyle2: string | undefined;
@@ -1813,7 +1818,7 @@ export class Bot {
           if (firstSender?.webhookGuildId) {
             const link = `https://discord.com/channels/${firstSender.webhookGuildId}/${mapped.channelId}/${mapped.messageId}`;
             let display: string;
-            if (this.config.showSourceIdentity) {
+            if (showSourceIdentity) {
               // 显示源用户名称
               display = (ref.member as any)?.displayName || ref.author?.username || ref.author?.tag || "用户";
             } else {
@@ -1930,7 +1935,7 @@ export class Bot {
     let username: string | undefined = undefined;
     let avatarUrl: string | undefined = undefined;
     
-    if (this.config.showSourceIdentity) {
+    if (showSourceIdentity) {
       try {
         if (isWebhook) {
           // Webhook 消息：使用之前获取的webhookName（避免重复获取）

@@ -156,7 +156,11 @@ class MessageConverter:
             if message.media:
                 for media in message.media:
                     if media.get("caption"):
-                        text += f"\n{media['caption']}"
+                        caption = str(media["caption"])
+                        if self.config.replacements:
+                            for old_text, new_text in self.config.replacements.items():
+                                caption = caption.replace(old_text, new_text)
+                        text += f"\n{caption}"
 
             content_parts.append(text)
 

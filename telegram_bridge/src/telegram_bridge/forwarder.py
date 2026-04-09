@@ -26,25 +26,8 @@ class DiscordForwarder:
     def update_config(self, accounts: List[Dict[str, Any]]):
         """更新配置"""
         try:
-            # 为每个账号创建转换器
-            # 注意：accounts 列表包含 TelegramAccount 对象
-            from .message_converter import ConversionConfig, TelegramToDiscordConverter
-
-            for account in accounts:
-                # 兼容处理：如果是对象则获取id，如果是字典则get id
-                account_id = getattr(account, "id", None) or (account.get("id") if isinstance(account, dict) else None)
-
-                if account_id:
-                    # 使用默认配置，因为目前没有传递 Discord 侧的过滤规则
-                    converter_config = ConversionConfig(
-                        enable_translation=False,
-                        show_source_identity=True
-                    )
-
-                    converter = TelegramToDiscordConverter(converter_config)
-                    self.converters[account_id] = converter
-
-            logger.info(f"Updated Discord forwarder config for {len(self.converters)} Telegram accounts")
+            self.converters.clear()
+            logger.info(f"Updated Discord forwarder config for {len(accounts)} Telegram accounts")
 
         except Exception as e:
             logger.error(f"Failed to update Discord forwarder config: {e}")
@@ -77,13 +60,6 @@ class DiscordForwarder:
                 "details": []
             }
 
-            # 获取对应的转换器
-            converter = self.converters.get(telegram_account_id)
-            if not converter:
-                logger.warning(f"No converter found for Telegram account {telegram_account_id}")
-                results["failed_forwards"] = len(mappings)
-                return results
-
             # 处理每个映射
             for mapping in mappings:
                 try:
@@ -96,11 +72,25 @@ class DiscordForwarder:
                     if mapping.source_channel_id != source_channel_id:
                         continue
 
+                    effective_replacements = (
+                        getattr(mapping, "effective_replacements_dictionary", None)
+                        or getattr(mapping, "replacements_dictionary", None)
+                        or None
+                    )
+                    converter = TelegramToDiscordConverter(
+                        ConversionConfig(
+                            enable_translation=False,
+                            show_source_identity=getattr(mapping, "show_source_identity", False),
+                            replacements=effective_replacements,
+                        )
+                    )
+                    current_filter_rules = filter_rules.get(mapping.id, {}) if isinstance(filter_rules, dict) else None
+
                     # 转换消息
                     discord_message = await converter.convert_and_filter(
                         telegram_message,
                         mapping,
-                        filter_rules
+                        current_filter_rules
                     )
 
                     if discord_message is None:
@@ -117,7 +107,7 @@ class DiscordForwarder:
                     # 发送到Discord
                     send_result = await self._send_to_discord(
                         discord_message,
-                        mapping.targetChannelId,
+                        mapping.target_channel_id,
                         telegram_message
                     )
 
@@ -131,12 +121,12 @@ class DiscordForwarder:
                         })
                     else:
                         results["failed_forwards"] += 1
-                    results["details"].append({
-                        "mapping_id": mapping.id,
-                        "target_channel": mapping.target_channel_id,
-                        "status": "failed",
-                        "error": send_result.get("error")
-                    })
+                        results["details"].append({
+                            "mapping_id": mapping.id,
+                            "target_channel": mapping.target_channel_id,
+                            "status": "failed",
+                            "error": send_result.get("error")
+                        })
 
                 except Exception as e:
                     logger.error(f"Failed to forward message via mapping {mapping.id}: {e}")

@@ -1468,6 +1468,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
                 }
               : undefined,
           replacementsDictionary: typeof m.replacementsDictionary === 'object' && m.replacementsDictionary ? m.replacementsDictionary : {},
+          showSourceIdentity: m.showSourceIdentity === true ? true : undefined,
           // 规则级别忽略配置
           ignoreSelf: m.ignoreSelf === true ? true : undefined,
           ignoreBot: m.ignoreBot === true ? true : undefined,
@@ -1532,6 +1533,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             ocrBlockedKeywords: Array.isArray(mapping.ocrBlockedKeywords) ? mapping.ocrBlockedKeywords : [],
             ocrTriggerKeywords: Array.isArray(mapping.ocrTriggerKeywords) ? mapping.ocrTriggerKeywords : [],
             replacementsDictionary: typeof mapping.replacementsDictionary === 'object' && mapping.replacementsDictionary ? mapping.replacementsDictionary : {},
+            showSourceIdentity: mapping.showSourceIdentity === true ? true : undefined,
             ignoreSelf: mapping.ignoreSelf === true ? true : undefined,
             ignoreBot: mapping.ignoreBot === true ? true : undefined,
             ignoreImages: mapping.ignoreImages === true ? true : undefined,

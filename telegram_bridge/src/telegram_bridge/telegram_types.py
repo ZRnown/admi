@@ -54,9 +54,10 @@ class TelegramAccount(BaseModel):
 
 class TelegramMapping(BaseModel):
     """Telegram映射配置"""
-    model_config = {"populate_by_name": True}
+    model_config = {"populate_by_name": True, "extra": "allow"}
 
     id: str
+    account_id: Optional[str] = Field(default=None, alias="accountId")
     source_channel_id: str = Field(alias="sourceChannelId")
     target_channel_id: str = Field(alias="targetChannelId")
     type: str  # 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram'
@@ -66,7 +67,12 @@ class TelegramMapping(BaseModel):
     sender_account_type: Optional[str] = Field(default=None, alias="senderAccountType")
     sender_account_id: Optional[str] = Field(default=None, alias="senderAccountId")
     # Discord 账号的 showSourceIdentity 设置
-    show_source_identity: bool = Field(default=True, alias="showSourceIdentity")
+    show_source_identity: bool = Field(default=False, alias="showSourceIdentity")
+    replacements_dictionary: Optional[Dict[str, str]] = Field(default=None, alias="replacementsDictionary")
+    effective_replacements_dictionary: Optional[Dict[str, str]] = Field(
+        default=None,
+        alias="effectiveReplacementsDictionary",
+    )
     # Telegram特有的超长消息处理
     longMessage: Optional[Dict[str, Any]] = None
     watermark: Optional[Any] = None
