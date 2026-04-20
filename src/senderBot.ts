@@ -15,6 +15,7 @@ import { stripLanguages } from "./languageFilter.js";
 import { normalizeUploadFileDescriptor } from "./uploadMediaMetadata.js";
 import { resolveWebhookIdentity } from "./webhookIdentity.js";
 import { applyReplacementDictionaryToEmbeds } from "./embedUtils.js";
+import { applyReplacementDictionary } from "./replacementDictionary.js";
 
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30000;
@@ -953,17 +954,8 @@ export class SenderBot {
     // 注意：分片消息的分片之间仍需保持顺序，但不同消息可以并行
     const processedMessages = await Promise.all(
       messagesToSend.map(async (item) => {
-      let text = item.content || "";
-      // 全局替换字典
-      for (const [a, b] of Object.entries(this.replacementsDictionary)) {
-        text = text.replaceAll(a, b);
-      }
-      // 规则级别替换字典（优先级低于全局，但会追加替换）
-      if (item.ruleReplacementsDictionary) {
-        for (const [a, b] of Object.entries(item.ruleReplacementsDictionary)) {
-          text = text.replaceAll(a, b);
-        }
-      }
+      let text = String(applyReplacementDictionary(item.content || "", this.replacementsDictionary));
+      text = String(applyReplacementDictionary(text, item.ruleReplacementsDictionary));
       const replacedExtraEmbeds = applyReplacementDictionaryToEmbeds(
         applyReplacementDictionaryToEmbeds(item.extraEmbeds, this.replacementsDictionary),
         item.ruleReplacementsDictionary,
@@ -1261,15 +1253,8 @@ export class SenderBot {
     stripEnglish?: boolean;
     stripChinese?: boolean;
   }) {
-    let text = params.content || "";
-    for (const [a, b] of Object.entries(this.replacementsDictionary)) {
-      text = text.replaceAll(a, b);
-    }
-    if (params.ruleReplacementsDictionary) {
-      for (const [a, b] of Object.entries(params.ruleReplacementsDictionary)) {
-        text = text.replaceAll(a, b);
-      }
-    }
+    let text = String(applyReplacementDictionary(params.content || "", this.replacementsDictionary));
+    text = String(applyReplacementDictionary(text, params.ruleReplacementsDictionary));
     const replacedExtraEmbeds = applyReplacementDictionaryToEmbeds(
       applyReplacementDictionaryToEmbeds(params.extraEmbeds, this.replacementsDictionary),
       params.ruleReplacementsDictionary,

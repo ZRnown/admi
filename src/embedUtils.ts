@@ -1,16 +1,5 @@
 import { stripLanguages } from "./languageFilter.js";
-
-function applyReplacementDictionary(value: unknown, dictionary?: Record<string, string>): unknown {
-  if (typeof value !== "string" || !dictionary || Object.keys(dictionary).length === 0) {
-    return value;
-  }
-  let next = value;
-  for (const [from, to] of Object.entries(dictionary)) {
-    if (!from) continue;
-    next = next.replaceAll(from, String(to ?? ""));
-  }
-  return next;
-}
+import { applyReplacementDictionary } from "./replacementDictionary.js";
 
 export function applyReplacementDictionaryToEmbeds(
   embeds: any[] | undefined,

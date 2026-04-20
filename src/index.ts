@@ -39,6 +39,7 @@ import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { stripUploadedEmbedImages } from "./ocrImageFilter.js";
 import { normalizeDiscordSourceReference, preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.js";
 import { filenameSuggestsImage, filenameSuggestsVideo } from "./uploadMediaMetadata.js";
+import { applyReplacementDictionary } from "./replacementDictionary.js";
 import {
   getDiscordDisconnectMessage,
   getDiscordErrorMessage,
@@ -784,16 +785,13 @@ async function dispatchScheduledToTelegram(
   }
   const sendChatId = normalizeTelegramChatId(target.chatId);
   const uploads = buildScheduledUploads(item);
-  let content = typeof item.text === "string" ? item.text : "";
-  const replacements = account.replacementsDictionary || {};
-  for (const [a, b] of Object.entries(replacements)) {
-    content = content.replaceAll(a, b);
-  }
-  if (target.rule?.replacementsDictionary) {
-    for (const [a, b] of Object.entries(target.rule.replacementsDictionary)) {
-      content = content.replaceAll(a, b);
-    }
-  }
+  let content = String(
+    applyReplacementDictionary(
+      typeof item.text === "string" ? item.text : "",
+      account.replacementsDictionary || {},
+    ),
+  );
+  content = String(applyReplacementDictionary(content, target.rule?.replacementsDictionary));
   const effectiveWatermarks = account.watermarkEnabled === false
     ? []
     : resolveWatermarkList(
@@ -1991,14 +1989,10 @@ function setupTelegramBridgeClient() {
 
           let contentForRule = content;
           if (globalReplacements && Object.keys(globalReplacements).length > 0) {
-            for (const [from, to] of Object.entries(globalReplacements)) {
-              contentForRule = contentForRule.replaceAll(from, String(to ?? ""));
-            }
+            contentForRule = String(applyReplacementDictionary(contentForRule, globalReplacements));
           }
           if (rule.replacementsDictionary && typeof rule.replacementsDictionary === "object") {
-            for (const [from, to] of Object.entries(rule.replacementsDictionary)) {
-              contentForRule = contentForRule.replaceAll(from, String(to ?? ""));
-            }
+            contentForRule = String(applyReplacementDictionary(contentForRule, rule.replacementsDictionary));
           }
           const isTelegramToTelegram = rule.type === "telegram-to-telegram";
           const resolvedLongMessage =

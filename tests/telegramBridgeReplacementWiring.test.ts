@@ -38,6 +38,14 @@ test("telegram bridge forwarder uses effective replacements per mapping", () => 
 test("telegram message converter also applies replacements to media captions", () => {
   assert.match(
     converterSource,
-    /caption = str\(media\["caption"\]\)[\s\S]*caption = caption\.replace\(old_text, new_text\)[\s\S]*text \+= f"\\n\{caption\}"/,
+    /from \.replacements import apply_replacements/,
+  );
+  assert.match(
+    converterSource,
+    /text = apply_replacements\(text, self\.config\.replacements\) or ""/,
+  );
+  assert.match(
+    converterSource,
+    /caption = str\(media\["caption"\]\)[\s\S]*caption = apply_replacements\(caption, self\.config\.replacements\) or ""[\s\S]*text \+= f"\\n\{caption\}"/,
   );
 });

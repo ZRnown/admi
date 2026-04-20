@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from loguru import logger
 from .telegram_types import TelegramMessage, TelegramMapping
+from .replacements import apply_replacements
 
 
 @dataclass
@@ -149,8 +150,7 @@ class MessageConverter:
 
             # 应用替换规则
             if self.config.replacements:
-                for old_text, new_text in self.config.replacements.items():
-                    text = text.replace(old_text, new_text)
+                text = apply_replacements(text, self.config.replacements) or ""
 
             # 处理媒体描述
             if message.media:
@@ -158,8 +158,7 @@ class MessageConverter:
                     if media.get("caption"):
                         caption = str(media["caption"])
                         if self.config.replacements:
-                            for old_text, new_text in self.config.replacements.items():
-                                caption = caption.replace(old_text, new_text)
+                            caption = apply_replacements(caption, self.config.replacements) or ""
                         text += f"\n{caption}"
 
             content_parts.append(text)
@@ -372,8 +371,7 @@ class DiscordToTelegramConverter(MessageConverter):
 
             # 应用替换规则
             if self.config.replacements:
-                for old_text, new_text in self.config.replacements.items():
-                    text = text.replace(old_text, new_text)
+                text = apply_replacements(text, self.config.replacements) or ""
 
             # 处理embed内容（简化为文本）
             embeds = discord_message.get("embeds", [])

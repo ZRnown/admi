@@ -38,6 +38,7 @@ import {
 import { recordForwardStat } from "./forwardStats.js";
 import { applyReplacementDictionaryToEmbeds, stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { shouldSkipMessageForIgnoredImages } from "./messageFilterDecisions.js";
+import { applyReplacementDictionary } from "./replacementDictionary.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -1618,14 +1619,6 @@ export class Bot {
       this.logger.info(`${logPrefix} [ROUTE] Found ${dingtalkSendersForThis.length} DingTalk mapping(s) for channel ${message.channelId}`);
     }
 
-    const applyReplacementDictionary = (input: string, dict: Record<string, string>) => {
-      let next = input;
-      for (const [from, to] of Object.entries(dict || {})) {
-        next = next.replaceAll(from, String(to ?? ""));
-      }
-      return next;
-    };
-
     // 用户过滤：全局白名单/黑名单 + 规则级别白名单/黑名单
     // 优先级：全局设置 > 规则级别设置
     // 注意：webhook 消息的 author 可能为 null，需要特殊处理
@@ -2275,9 +2268,11 @@ export class Bot {
     if (shouldSendFeishu) {
       try {
         const feishuContent = stripLanguages(
-          applyReplacementDictionary(
-            applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {}),
-            ruleConfig.replacementsDictionary || {},
+          String(
+            applyReplacementDictionary(
+              String(applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {})),
+              ruleConfig.replacementsDictionary || {},
+            ),
           ),
           stripOptions,
         );
@@ -2326,9 +2321,11 @@ export class Bot {
 
     if (dingtalkSendersForThis.length > 0) {
       const dingtalkContent = stripLanguages(
-        applyReplacementDictionary(
-          applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {}),
-          ruleConfig.replacementsDictionary || {},
+        String(
+          applyReplacementDictionary(
+            String(applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {})),
+            ruleConfig.replacementsDictionary || {},
+          ),
         ),
         stripOptions,
       );
@@ -2394,9 +2391,11 @@ export class Bot {
             const globalReplacementDictionary = this.config.replacementsDictionary || {};
             const ruleReplacementDictionary =
               (mapping as any).replacementsDictionary || ruleConfig.replacementsDictionary || {};
-            contentForTelegram = applyReplacementDictionary(
-              applyReplacementDictionary(contentForTelegram, globalReplacementDictionary),
-              ruleReplacementDictionary,
+            contentForTelegram = String(
+              applyReplacementDictionary(
+                String(applyReplacementDictionary(contentForTelegram, globalReplacementDictionary)),
+                ruleReplacementDictionary,
+              ),
             );
             contentForTelegram = stripLanguages(contentForTelegram, stripOptions);
             const contentPreview = formatLogPreview(contentForTelegram);
