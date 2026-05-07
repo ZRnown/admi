@@ -86,6 +86,69 @@ test("detectTextWatermarkFromOCR ignores centered body text", () => {
   assert.equal(result.matched, false);
 });
 
+test("detectTextWatermarkFromOCR ignores repeated numeric edge prices", () => {
+  const result = detectTextWatermarkFromOCR({
+    code: 0,
+    msg: "success",
+    data: [
+      {
+        box: [
+          [31, 223],
+          [267, 218],
+          [269, 276],
+          [33, 281],
+        ],
+        score: 0.99,
+        text: "2,390.92",
+      },
+      {
+        box: [
+          [810, 639],
+          [881, 639],
+          [881, 667],
+          [810, 667],
+        ],
+        score: 0.99,
+        text: "2,390.92",
+      },
+    ],
+  });
+
+  assert.equal(result.matched, false);
+});
+
+test("detectTextWatermarkFromOCR matches account watermark text with 账号", () => {
+  const result = detectTextWatermarkFromOCR({
+    code: 0,
+    msg: "success",
+    data: [
+      {
+        box: [
+          [37, 15],
+          [606, 7],
+          [606, 41],
+          [37, 49],
+        ],
+        score: 0.89,
+        text: "ETHUSDT永续Discord账号：btcVvbtc",
+      },
+      {
+        box: [
+          [53, 1247],
+          [157, 1247],
+          [157, 1271],
+          [53, 1271],
+        ],
+        score: 0.98,
+        text: "05-0604:00",
+      },
+    ],
+  });
+
+  assert.equal(result.matched, true);
+  assert.match(result.reason || "", /hint/i);
+});
+
 test("detectTextWatermarkFromOCR prefers watermark hints over generic edge titles", () => {
   const result = detectTextWatermarkFromOCR({
     code: 0,

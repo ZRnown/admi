@@ -111,7 +111,7 @@ const IOPAINT_TEXT_REPAIR_CJK_FONT_CANDIDATES = [
 ];
 const URL_RE = /^https?:\/\//i;
 const WATERMARK_HINT_RE =
-  /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|vx|wx|ins|instagram|telegram|tg|discord|店铺|社区|网站|同款|关注|原创|搬运|出处)/i;
+  /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|账号|discord|tg|telegram|ins|instagram|vx|wx|店铺|社区|网站|同款|关注|原创|搬运|出处)/i;
 let waveSpeedQueue: Promise<void> = Promise.resolve();
 let nextWaveSpeedStartAt = 0;
 let waveSpeedRecentStarts: number[] = [];
@@ -360,6 +360,7 @@ export function detectTextWatermarkFromOCR(result: OcrLikeResult | null | undefi
     const rawText = String(item.block.text || "").trim();
     const normalized = rawText.replace(/\s+/g, "").trim().toLowerCase();
     if (!normalized) continue;
+    if (/^[\d.,%+−\-→><￥¥$]+$/u.test(normalized)) continue;
     const box = item.metrics!;
     const shortText = normalized.length <= 22;
     const repeated = (counts.get(normalized) || 0) >= 2;
@@ -369,7 +370,7 @@ export function detectTextWatermarkFromOCR(result: OcrLikeResult | null | undefi
       box.centerX >= imageWidth * 0.78 ||
       box.centerY <= imageHeight * 0.22 ||
       box.centerY >= imageHeight * 0.78;
-    const compactBox = box.width <= imageWidth * 0.45 && box.height <= imageHeight * 0.18;
+    const compactBox = hintMatched ? box.height <= imageHeight * 0.18 : box.width <= imageWidth * 0.45 && box.height <= imageHeight * 0.18;
     const confident = typeof item.block.score !== "number" || item.block.score >= 0.45;
 
     const eligible = compactBox && confident && (hintMatched || (nearEdge && (shortText || repeated)));
