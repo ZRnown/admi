@@ -319,6 +319,11 @@ function extractBoxMetrics(block: OcrTextBlock) {
   };
 }
 
+function horizontalOverlapRatio(a: { minX: number; maxX: number }, b: { minX: number; maxX: number }): number {
+  const overlap = Math.max(0, Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX));
+  return overlap / Math.max(1, Math.min(a.maxX - a.minX, b.maxX - b.minX));
+}
+
 export function detectTextWatermarkFromOCR(result: OcrLikeResult | null | undefined): WatermarkDetectionResult {
   const blocks = Array.isArray(result?.data) ? result.data : [];
   if (blocks.length === 0) {
@@ -383,10 +388,35 @@ export function detectTextWatermarkFromOCR(result: OcrLikeResult | null | undefi
   candidates.sort((a, b) => b.priority - a.priority);
   const best = candidates[0];
   if (best) {
-    const selected =
+    let selected =
       best.reason.includes("hint")
         ? candidates.filter((candidate) => candidate.reason.includes("hint") && candidate.priority >= best.priority - 30)
         : [best];
+    if (best.reason.includes("hint")) {
+      const selectedSet = new Set(selected.map((candidate) => candidate.item.block));
+      const selectedBoxes = selected.map((candidate) => candidate.item.metrics);
+      const nearbyCandidates = metrics.filter((item) => {
+        if (selectedSet.has(item.block) || !item.metrics) return false;
+        const text = String(item.block.text || "").trim();
+        const score = typeof item.block.score === "number" ? item.block.score : 1;
+        if (!text || text.length > 24 || score < 0.35) return false;
+        return selectedBoxes.some((selectedBox) => {
+          const closeY = Math.abs(item.metrics!.centerY - selectedBox.centerY) <= imageHeight * 0.2;
+          const closeX = horizontalOverlapRatio(item.metrics!, selectedBox) >= 0.45;
+          return closeY && closeX;
+        });
+      });
+      if (nearbyCandidates.length > 0) {
+        selected = [
+          ...nearbyCandidates.map((item) => ({
+            item: item as WatermarkDetectionCandidate["item"],
+            reason: "nearby-hint",
+            priority: best.priority - 20,
+          })),
+          ...selected,
+        ];
+      }
+    }
     return {
       matched: true,
       reason: best.reason,
