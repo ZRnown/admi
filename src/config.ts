@@ -213,6 +213,14 @@ export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
 export type IOPaintMaskMode = "protect-text" | "box";
 
+export interface WatermarkRemovalManualRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label?: string;
+}
+
 export interface WatermarkRemovalConfig {
   enabled?: boolean;
   mode?: WatermarkRemovalMode;
@@ -223,6 +231,7 @@ export interface WatermarkRemovalConfig {
   iopaintStrategy?: IOPaintStrategy;
   iopaintMaskMode?: IOPaintMaskMode;
   iopaintMaskPadding?: number;
+  manualRegions?: WatermarkRemovalManualRegion[];
 }
 
 export type ScheduledMediaType = "image" | "video";
@@ -810,6 +819,25 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
   const iopaintMaskPadding = Number.isFinite(parsedMaskPadding) && parsedMaskPadding >= 0
     ? Math.floor(parsedMaskPadding)
     : undefined;
+  const manualRegions = Array.isArray(raw.manualRegions)
+    ? raw.manualRegions
+        .map((item: any) => {
+          if (!item || typeof item !== "object") return undefined;
+          const x = Number(item.x);
+          const y = Number(item.y);
+          const width = Number(item.width);
+          const height = Number(item.height);
+          if (![x, y, width, height].every(Number.isFinite)) return undefined;
+          const clampedX = Math.max(0, Math.min(1, x));
+          const clampedY = Math.max(0, Math.min(1, y));
+          const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
+          const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
+          if (clampedWidth <= 0 || clampedHeight <= 0) return undefined;
+          const label = typeof item.label === "string" && item.label.trim() ? item.label.trim() : undefined;
+          return { x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight, label };
+        })
+        .filter((item: any): item is WatermarkRemovalManualRegion => Boolean(item))
+    : undefined;
   const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey || provider === "iopaint");
   if (
     !enabled &&
@@ -820,7 +848,8 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
     raw.iopaintModel === undefined &&
     raw.iopaintStrategy === undefined &&
     raw.iopaintMaskMode === undefined &&
-    raw.iopaintMaskPadding === undefined
+    raw.iopaintMaskPadding === undefined &&
+    raw.manualRegions === undefined
   ) {
     return undefined;
   }
@@ -834,6 +863,7 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
     iopaintStrategy: provider === "iopaint" ? iopaintStrategy : undefined,
     iopaintMaskMode: provider === "iopaint" ? iopaintMaskMode : undefined,
     iopaintMaskPadding: provider === "iopaint" ? iopaintMaskPadding : undefined,
+    manualRegions: provider === "iopaint" && manualRegions && manualRegions.length > 0 ? manualRegions : undefined,
   };
 }
 

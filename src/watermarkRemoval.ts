@@ -11,6 +11,14 @@ export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
 export type IOPaintMaskMode = "protect-text" | "box";
 
+export interface WatermarkRemovalManualRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label?: string;
+}
+
 export interface WatermarkRemovalConfig {
   enabled?: boolean;
   mode?: WatermarkRemovalMode;
@@ -21,6 +29,7 @@ export interface WatermarkRemovalConfig {
   iopaintStrategy?: IOPaintStrategy;
   iopaintMaskMode?: IOPaintMaskMode;
   iopaintMaskPadding?: number;
+  manualRegions?: WatermarkRemovalManualRegion[];
 }
 
 export interface OcrTextBlock {
@@ -165,6 +174,35 @@ function normalizeOptionalNonNegativeInt(input: unknown): number | undefined {
   return Math.floor(value);
 }
 
+function normalizeManualRegions(input: unknown): WatermarkRemovalManualRegion[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const regions = input
+    .map((item) => {
+      if (!item || typeof item !== "object") return undefined;
+      const source = item as Record<string, unknown>;
+      const x = Number(source.x);
+      const y = Number(source.y);
+      const width = Number(source.width);
+      const height = Number(source.height);
+      if (![x, y, width, height].every(Number.isFinite)) return undefined;
+      const clampedX = Math.max(0, Math.min(1, x));
+      const clampedY = Math.max(0, Math.min(1, y));
+      const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
+      const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
+      if (clampedWidth <= 0 || clampedHeight <= 0) return undefined;
+      const label = typeof source.label === "string" && source.label.trim() ? source.label.trim() : undefined;
+      return {
+        x: clampedX,
+        y: clampedY,
+        width: clampedWidth,
+        height: clampedHeight,
+        ...(label ? { label } : {}),
+      };
+    })
+    .filter((item): item is WatermarkRemovalManualRegion => Boolean(item));
+  return regions.length > 0 ? regions : undefined;
+}
+
 function normalizeMatchText(value: string, caseInsensitive: boolean): string {
   let output = String(value ?? "");
   try {
@@ -235,6 +273,7 @@ export function resolveWatermarkRemovalConfig(
     if (maskPadding !== undefined) {
       resolved.iopaintMaskPadding = maskPadding;
     }
+    resolved.manualRegions = normalizeManualRegions(merged.manualRegions);
   }
   return resolved;
 }
@@ -255,6 +294,7 @@ export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalCon
   if (config.iopaintStrategy === "crop" || config.iopaintStrategy === "resize" || config.iopaintStrategy === "original") return true;
   if (config.iopaintMaskMode === "protect-text" || config.iopaintMaskMode === "box") return true;
   if (typeof config.iopaintMaskPadding === "number" && Number.isFinite(config.iopaintMaskPadding)) return true;
+  if (Array.isArray(config.manualRegions) && config.manualRegions.length > 0) return true;
   return false;
 }
 
@@ -545,6 +585,31 @@ function extractMaskBoxes(blocks?: OcrTextBlock[]): IOPaintMaskBox[] {
     }));
 }
 
+export function resolveIOPaintManualMaskBlocks(
+  regions: WatermarkRemovalManualRegion[] | undefined,
+  imageWidth: number,
+  imageHeight: number,
+): OcrTextBlock[] {
+  const normalized = normalizeManualRegions(regions);
+  if (!normalized || imageWidth <= 0 || imageHeight <= 0) return [];
+  return normalized.map((region) => {
+    const minX = Math.max(0, Math.min(imageWidth, Math.round(region.x * imageWidth)));
+    const minY = Math.max(0, Math.min(imageHeight, Math.round(region.y * imageHeight)));
+    const maxX = Math.max(minX, Math.min(imageWidth, Math.round((region.x + region.width) * imageWidth)));
+    const maxY = Math.max(minY, Math.min(imageHeight, Math.round((region.y + region.height) * imageHeight)));
+    return {
+      text: region.label || "manual-region",
+      maskRole: "watermark",
+      box: [
+        [minX, minY],
+        [maxX, minY],
+        [maxX, maxY],
+        [minX, maxY],
+      ],
+    };
+  });
+}
+
 function expandMaskBox(box: IOPaintMaskBox, padding: number, imageWidth: number, imageHeight: number): IOPaintMaskBox {
   return {
     minX: Math.max(0, Math.floor(box.minX - padding)),
@@ -752,10 +817,13 @@ async function createMaskForImage(
   blocks: OcrTextBlock[] | undefined,
   padding: number,
   maskMode: IOPaintMaskMode,
+  manualRegions?: WatermarkRemovalManualRegion[],
 ): Promise<void> {
   const image = await Jimp.read(imagePath);
   const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
-  const regions = resolveIOPaintMaskRegions(blocks, padding, image.bitmap.width, image.bitmap.height);
+  const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, image.bitmap.width, image.bitmap.height);
+  const mergedBlocks = [...manualBlocks, ...(Array.isArray(blocks) ? blocks : [])];
+  const regions = resolveIOPaintMaskRegions(mergedBlocks, padding, image.bitmap.width, image.bitmap.height);
   const boxes = regions.watermarkBoxes;
 
   if (boxes.length === 0) {
@@ -860,7 +928,14 @@ async function removeWatermarkWithIOPaint(
       : await downloadBufferFromUrl(imageUrl);
     await fs.writeFile(inputPath, buffer);
     const padding = effective.iopaintMaskPadding ?? IOPAINT_MASK_PADDING;
-    await createMaskForImage(inputPath, maskPath, maskBlocks, padding, effective.iopaintMaskMode || "protect-text");
+    await createMaskForImage(
+      inputPath,
+      maskPath,
+      maskBlocks,
+      padding,
+      effective.iopaintMaskMode || "protect-text",
+      effective.manualRegions,
+    );
     await fs.writeFile(
       configPath,
       JSON.stringify(

@@ -8,6 +8,7 @@ import {
   getIOPaintTextRepairBlocks,
   matchWatermarkRemovalTriggerKeywords,
   prepareImageForOcrAndForward,
+  resolveIOPaintManualMaskBlocks,
   resolveIOPaintMaskRegions,
   resolveIOPaintTextRepairFontConfig,
   resolveWatermarkRemovalConfig,
@@ -343,6 +344,10 @@ test("resolveWatermarkRemovalConfig enables IOPaint without Wavespeed key", () =
     iopaintModel: "migan",
     iopaintStrategy: "crop",
     iopaintMaskMode: "protect-text",
+    manualRegions: [
+      { x: 0.1, y: 0.2, width: 0.3, height: 0.4, label: "center" },
+      { x: -1, y: 2, width: 0, height: Number.NaN },
+    ],
   });
 
   assert.deepEqual(resolved, {
@@ -352,9 +357,45 @@ test("resolveWatermarkRemovalConfig enables IOPaint without Wavespeed key", () =
     iopaintModel: "migan",
     iopaintStrategy: "crop",
     iopaintMaskMode: "protect-text",
+    manualRegions: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4, label: "center" }],
     apiKey: undefined,
     triggerKeywords: undefined,
   });
+});
+
+test("resolveIOPaintManualMaskBlocks converts percent regions to watermark boxes", () => {
+  assert.deepEqual(
+    resolveIOPaintManualMaskBlocks(
+      [
+        { x: 0.1, y: 0.2, width: 0.3, height: 0.4, label: "middle" },
+        { x: 0.95, y: 0.9, width: 0.2, height: 0.2 },
+      ],
+      1000,
+      500,
+    ),
+    [
+      {
+        text: "middle",
+        maskRole: "watermark",
+        box: [
+          [100, 100],
+          [400, 100],
+          [400, 300],
+          [100, 300],
+        ],
+      },
+      {
+        text: "manual-region",
+        maskRole: "watermark",
+        box: [
+          [950, 450],
+          [1000, 450],
+          [1000, 500],
+          [950, 500],
+        ],
+      },
+    ],
+  );
 });
 
 test("resolveWatermarkRemovalConfig keeps Wavespeed compatible when api key exists", () => {

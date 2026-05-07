@@ -666,7 +666,14 @@
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
+    function formatPercentValue(value) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return '0.0';
+      return (num * 100).toFixed(1);
+    }
+
     let openModalCount = 0;
+    const manualRegionPreviewState = new Map();
 
     function recoverTransientUiState() {
       if (!window.UiResilience || typeof window.UiResilience.resetTransientUiState !== 'function') {
@@ -4228,6 +4235,9 @@
       renderAccountLibraryModal();
       renderAccountLibraryEditModal();
       syncAllDiscordSearchableSelects();
+      if (activeAccount) {
+        renderManualRegionPreview(activeAccount.id);
+      }
       if (activeAccount && String(activeAccount.watermarkRemoval?.apiKey || '').trim()) {
         ensureWatermarkBalanceFetch(activeAccount.id);
       }
@@ -7752,6 +7762,29 @@
                 <div><span class="font-medium text-slate-800">OCR 框整块</span>：遮得更狠，文字和水印重合时容易误伤正常内容。</div>
               </div>
             </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h3 class="text-sm font-semibold text-slate-800">手动水印区域</h3>
+                  <p class="mt-1 text-xs text-slate-500">上传一张参考图，在图上拖拽水印位置；保存的是百分比区域，可适配不同图片尺寸。</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <label class="inline-flex cursor-pointer items-center rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">
+                    选择参考图
+                    <input type="file" accept="image/*" class="hidden" onchange="handleManualRegionImage('${acc.id}', this)">
+                  </label>
+                  <button onclick="clearManualRegions('${acc.id}')"
+                    class="rounded border border-rose-100 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50">清空区域</button>
+                </div>
+              </div>
+              <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div id="manualRegionPreview-${acc.id}"></div>
+                <div>
+                  <div class="mb-2 text-xs font-medium text-slate-600">已保存区域</div>
+                  <div id="manualRegionRows-${acc.id}" class="space-y-2">${renderManualRegionRows(acc.id)}</div>
+                </div>
+              </div>
+            </div>
             ` : `
             <div class="grid gap-4 md:grid-cols-3">
               <div class="md:col-span-1">
@@ -9338,7 +9371,8 @@
           iopaintModel: 'lama',
           iopaintStrategy: 'crop',
           iopaintMaskMode: 'protect-text',
-          iopaintMaskPadding: 8
+          iopaintMaskPadding: 8,
+          manualRegions: []
         };
       }
       if (acc.watermarkRemoval.mode !== 'always' && acc.watermarkRemoval.mode !== 'ocr') {
@@ -9361,6 +9395,9 @@
       }
       if (!['protect-text', 'box'].includes(acc.watermarkRemoval.iopaintMaskMode)) {
         acc.watermarkRemoval.iopaintMaskMode = 'protect-text';
+      }
+      if (!Array.isArray(acc.watermarkRemoval.manualRegions)) {
+        acc.watermarkRemoval.manualRegions = [];
       }
       return acc.watermarkRemoval;
     }
@@ -9515,6 +9552,200 @@
       config.triggerKeywords.splice(idx, 1);
       saveConfig();
       render();
+    }
+
+    function normalizeManualRegion(region) {
+      if (!region || typeof region !== 'object') return null;
+      const x = Number(region.x);
+      const y = Number(region.y);
+      const width = Number(region.width);
+      const height = Number(region.height);
+      if (![x, y, width, height].every(Number.isFinite)) return null;
+      const clampedX = Math.max(0, Math.min(1, x));
+      const clampedY = Math.max(0, Math.min(1, y));
+      const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
+      const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
+      if (clampedWidth <= 0 || clampedHeight <= 0) return null;
+      const label = typeof region.label === 'string' && region.label.trim() ? region.label.trim() : undefined;
+      return { x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight, label };
+    }
+
+    function renderManualRegionRows(accountId) {
+      const acc = state.accounts.find((item) => item.id === accountId) || getActiveAccount();
+      const config = ensureWatermarkRemovalConfig(acc);
+      const regions = Array.isArray(config.manualRegions) ? config.manualRegions : [];
+      if (regions.length === 0) {
+        return '<div class="text-xs text-slate-400 py-2">还没有手动区域。上传参考图后，在图上拖拽水印区域。</div>';
+      }
+      return regions.map((region, idx) => `
+        <div class="grid grid-cols-[1fr_auto] gap-2 rounded border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+          <div class="min-w-0">
+            <input value="${escapeHtml(region.label || `区域 ${idx + 1}`)}"
+              onchange="updateManualRegionLabel('${accountId}', ${idx}, this.value)"
+              class="mb-1 w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
+            <div class="font-mono text-slate-500">
+              x ${formatPercentValue(region.x)}% · y ${formatPercentValue(region.y)}% · w ${formatPercentValue(region.width)}% · h ${formatPercentValue(region.height)}%
+            </div>
+          </div>
+          <button onclick="removeManualRegion('${accountId}', ${idx})"
+            class="self-start rounded border border-rose-100 px-2 py-1 text-rose-600 hover:bg-rose-50">删除</button>
+        </div>
+      `).join('');
+    }
+
+    function refreshManualRegionPanel(accountId) {
+      const rows = document.getElementById(`manualRegionRows-${accountId}`);
+      if (rows) rows.innerHTML = renderManualRegionRows(accountId);
+      renderManualRegionPreview(accountId);
+    }
+
+    function updateManualRegionLabel(accountId, idx, value) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkRemovalConfig(acc);
+      if (!Array.isArray(config.manualRegions) || !config.manualRegions[idx]) return;
+      config.manualRegions[idx].label = String(value || '').trim() || `区域 ${idx + 1}`;
+      saveConfig();
+      refreshManualRegionPanel(accountId);
+    }
+
+    function removeManualRegion(accountId, idx) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkRemovalConfig(acc);
+      if (!Array.isArray(config.manualRegions) || idx < 0 || idx >= config.manualRegions.length) return;
+      config.manualRegions.splice(idx, 1);
+      saveConfig();
+      refreshManualRegionPanel(accountId);
+    }
+
+    function clearManualRegions(accountId) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkRemovalConfig(acc);
+      config.manualRegions = [];
+      saveConfig();
+      refreshManualRegionPanel(accountId);
+    }
+
+    function addManualRegion(accountId, region) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const normalized = normalizeManualRegion(region);
+      if (!normalized) return;
+      const config = ensureWatermarkRemovalConfig(acc);
+      if (!Array.isArray(config.manualRegions)) config.manualRegions = [];
+      config.manualRegions.push({
+        ...normalized,
+        label: normalized.label || `区域 ${config.manualRegions.length + 1}`
+      });
+      saveConfig();
+      refreshManualRegionPanel(accountId);
+    }
+
+    function handleManualRegionImage(accountId, input) {
+      const file = input?.files?.[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      const previous = manualRegionPreviewState.get(accountId);
+      if (previous?.url) URL.revokeObjectURL(previous.url);
+      manualRegionPreviewState.set(accountId, { url, drawing: null });
+      renderManualRegionPreview(accountId);
+    }
+
+    function getManualRegionImagePoint(accountId, event) {
+      const img = document.getElementById(`manualRegionImage-${accountId}`);
+      if (!img) return null;
+      const rect = img.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+      return { x, y };
+    }
+
+    function beginManualRegionDraw(accountId, event) {
+      const point = getManualRegionImagePoint(accountId, event);
+      if (!point) return;
+      event.preventDefault();
+      if (typeof event.currentTarget?.setPointerCapture === 'function' && typeof event.pointerId === 'number') {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      const stateEntry = manualRegionPreviewState.get(accountId) || {};
+      stateEntry.drawing = { startX: point.x, startY: point.y, endX: point.x, endY: point.y };
+      manualRegionPreviewState.set(accountId, stateEntry);
+      renderManualRegionPreview(accountId);
+    }
+
+    function moveManualRegionDraw(accountId, event) {
+      const stateEntry = manualRegionPreviewState.get(accountId);
+      if (!stateEntry?.drawing) return;
+      const point = getManualRegionImagePoint(accountId, event);
+      if (!point) return;
+      stateEntry.drawing.endX = point.x;
+      stateEntry.drawing.endY = point.y;
+      renderManualRegionPreview(accountId);
+    }
+
+    function finishManualRegionDraw(accountId, event) {
+      const stateEntry = manualRegionPreviewState.get(accountId);
+      if (!stateEntry?.drawing) return;
+      const point = getManualRegionImagePoint(accountId, event);
+      if (point) {
+        stateEntry.drawing.endX = point.x;
+        stateEntry.drawing.endY = point.y;
+      }
+      const d = stateEntry.drawing;
+      stateEntry.drawing = null;
+      manualRegionPreviewState.set(accountId, stateEntry);
+      const x = Math.min(d.startX, d.endX);
+      const y = Math.min(d.startY, d.endY);
+      const width = Math.abs(d.endX - d.startX);
+      const height = Math.abs(d.endY - d.startY);
+      if (width >= 0.01 && height >= 0.01) {
+        addManualRegion(accountId, { x, y, width, height });
+      } else {
+        renderManualRegionPreview(accountId);
+      }
+    }
+
+    function renderManualRegionPreview(accountId) {
+      const wrap = document.getElementById(`manualRegionPreview-${accountId}`);
+      if (!wrap) return;
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkRemovalConfig(acc);
+      const preview = manualRegionPreviewState.get(accountId);
+      const regions = Array.isArray(config.manualRegions) ? config.manualRegions : [];
+      const drawing = preview?.drawing;
+      const drawingBox = drawing
+        ? {
+            x: Math.min(drawing.startX, drawing.endX),
+            y: Math.min(drawing.startY, drawing.endY),
+            width: Math.abs(drawing.endX - drawing.startX),
+            height: Math.abs(drawing.endY - drawing.startY),
+            label: '新区域'
+          }
+        : null;
+      if (!preview?.url) {
+        wrap.innerHTML = '<div class="flex min-h-[180px] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400">选择一张参考图后，在这里拖拽水印区域</div>';
+        return;
+      }
+      const boxes = [...regions, ...(drawingBox ? [drawingBox] : [])].map((region, idx) => `
+        <div class="absolute border-2 ${idx >= regions.length ? 'border-amber-400 bg-amber-300/20' : 'border-indigo-500 bg-indigo-500/15'}"
+          style="left:${region.x * 100}%;top:${region.y * 100}%;width:${region.width * 100}%;height:${region.height * 100}%">
+          <span class="absolute left-0 top-0 -translate-y-full rounded-t bg-slate-900 px-1.5 py-0.5 text-[10px] text-white">${escapeHtml(region.label || `区域 ${idx + 1}`)}</span>
+        </div>
+      `).join('');
+      wrap.innerHTML = `
+        <div class="relative inline-block max-w-full select-none overflow-hidden rounded-lg border border-slate-200 bg-slate-950"
+          onpointerdown="beginManualRegionDraw('${accountId}', event)"
+          onpointermove="moveManualRegionDraw('${accountId}', event)"
+          onpointerup="finishManualRegionDraw('${accountId}', event)"
+          onpointercancel="finishManualRegionDraw('${accountId}', event)">
+          <img id="manualRegionImage-${accountId}" src="${escapeHtml(preview.url)}" draggable="false" class="block max-h-[360px] max-w-full object-contain">
+          ${boxes}
+        </div>
+      `;
     }
 
     function updateWatermarkRemovalField(field, value) {
@@ -11753,7 +11984,8 @@
           iopaintModel: 'lama',
           iopaintStrategy: 'crop',
           iopaintMaskMode: 'protect-text',
-          iopaintMaskPadding: 8
+          iopaintMaskPadding: 8,
+          manualRegions: []
         },
         scheduledContents: [],
         scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },
