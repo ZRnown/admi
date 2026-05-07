@@ -9,6 +9,7 @@ export type WatermarkRemovalMode = "ocr" | "always";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
+export type IOPaintMaskMode = "protect-text" | "box";
 
 export interface WatermarkRemovalConfig {
   enabled?: boolean;
@@ -18,6 +19,7 @@ export interface WatermarkRemovalConfig {
   triggerKeywords?: string[];
   iopaintModel?: IOPaintModel;
   iopaintStrategy?: IOPaintStrategy;
+  iopaintMaskMode?: IOPaintMaskMode;
   iopaintMaskPadding?: number;
 }
 
@@ -80,7 +82,7 @@ const IOPAINT_BIN = process.env.IOPAINT_BIN || "/root/iopaint-test/bin/iopaint";
 const IOPAINT_DEVICE = process.env.IOPAINT_DEVICE || "cpu";
 const IOPAINT_MODEL_DIR = process.env.IOPAINT_MODEL_DIR || "/root/iopaint-model-cache";
 const IOPAINT_TIMEOUT_MS = parseNonNegativeInt(process.env.IOPAINT_TIMEOUT_MS, 120_000);
-const IOPAINT_MASK_PADDING = parseNonNegativeInt(process.env.IOPAINT_MASK_PADDING, 18);
+const IOPAINT_MASK_PADDING = parseNonNegativeInt(process.env.IOPAINT_MASK_PADDING, 8);
 const IOPAINT_WORK_DIR = process.env.IOPAINT_WORK_DIR || path.join(process.cwd(), ".data", "iopaint_jobs");
 const IOPAINT_OUTPUT_DIR = process.env.IOPAINT_OUTPUT_DIR || path.join(process.cwd(), ".data", "watermark_removed");
 const URL_RE = /^https?:\/\//i;
@@ -126,6 +128,11 @@ function normalizeIOPaintModel(input: unknown): IOPaintModel {
 function normalizeIOPaintStrategy(input: unknown): IOPaintStrategy {
   if (input === "resize" || input === "original") return input;
   return "crop";
+}
+
+function normalizeIOPaintMaskMode(input: unknown): IOPaintMaskMode {
+  if (input === "box") return "box";
+  return "protect-text";
 }
 
 function normalizeOptionalNonNegativeInt(input: unknown): number | undefined {
@@ -199,6 +206,7 @@ export function resolveWatermarkRemovalConfig(
   if (provider === "iopaint") {
     resolved.iopaintModel = normalizeIOPaintModel(merged.iopaintModel);
     resolved.iopaintStrategy = normalizeIOPaintStrategy(merged.iopaintStrategy);
+    resolved.iopaintMaskMode = normalizeIOPaintMaskMode(merged.iopaintMaskMode);
     const maskPadding = normalizeOptionalNonNegativeInt(merged.iopaintMaskPadding);
     if (maskPadding !== undefined) {
       resolved.iopaintMaskPadding = maskPadding;
@@ -221,6 +229,7 @@ export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalCon
   if (Array.isArray(config.triggerKeywords) && config.triggerKeywords.length > 0) return true;
   if (config.iopaintModel === "lama" || config.iopaintModel === "migan" || config.iopaintModel === "mat") return true;
   if (config.iopaintStrategy === "crop" || config.iopaintStrategy === "resize" || config.iopaintStrategy === "original") return true;
+  if (config.iopaintMaskMode === "protect-text" || config.iopaintMaskMode === "box") return true;
   if (typeof config.iopaintMaskPadding === "number" && Number.isFinite(config.iopaintMaskPadding)) return true;
   return false;
 }
@@ -446,7 +455,37 @@ function extractMaskBoxes(blocks?: OcrTextBlock[]): Array<{ minX: number; minY: 
     }));
 }
 
-async function createMaskForImage(imagePath: string, maskPath: string, blocks: OcrTextBlock[] | undefined, padding: number): Promise<void> {
+export function shouldMaskIOPaintPixel(
+  pixel: { r: number; g: number; b: number },
+  mode: IOPaintMaskMode = "protect-text",
+): boolean {
+  if (mode === "box") return true;
+
+  const r = Number(pixel.r);
+  const g = Number(pixel.g);
+  const b = Number(pixel.b);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return false;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const spread = max - min;
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const brightForeground = luminance >= 118 && spread <= 95;
+  if (brightForeground) return false;
+
+  const redWatermark = r >= 100 && r > g * 1.25 && r > b * 1.25 && g <= 145 && b <= 145;
+  const grayWatermark = max >= 34 && max <= 135 && spread <= 38;
+  const pinkWatermark = r >= 120 && g >= 45 && b >= 45 && r > g * 1.12 && r > b * 1.12 && max <= 210;
+  return redWatermark || grayWatermark || pinkWatermark;
+}
+
+async function createMaskForImage(
+  imagePath: string,
+  maskPath: string,
+  blocks: OcrTextBlock[] | undefined,
+  padding: number,
+  maskMode: IOPaintMaskMode,
+): Promise<void> {
   const image = await Jimp.read(imagePath);
   const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
   const boxes = extractMaskBoxes(blocks);
@@ -456,7 +495,13 @@ async function createMaskForImage(imagePath: string, maskPath: string, blocks: O
     const height = Math.max(1, Math.round(image.bitmap.height * 0.22));
     const x = Math.max(0, image.bitmap.width - width);
     const y = Math.max(0, image.bitmap.height - height);
-    mask.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
+    image.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
+      if (!shouldMaskIOPaintPixel(
+        { r: image.bitmap.data[idx], g: image.bitmap.data[idx + 1], b: image.bitmap.data[idx + 2] },
+        maskMode,
+      )) {
+        return;
+      }
       mask.bitmap.data[idx] = 255;
       mask.bitmap.data[idx + 1] = 255;
       mask.bitmap.data[idx + 2] = 255;
@@ -473,7 +518,13 @@ async function createMaskForImage(imagePath: string, maskPath: string, blocks: O
     const bottom = Math.min(image.bitmap.height, Math.ceil(box.maxY + padding));
     const width = Math.max(1, right - x);
     const height = Math.max(1, bottom - y);
-    mask.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
+    image.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
+      if (!shouldMaskIOPaintPixel(
+        { r: image.bitmap.data[idx], g: image.bitmap.data[idx + 1], b: image.bitmap.data[idx + 2] },
+        maskMode,
+      )) {
+        return;
+      }
       mask.bitmap.data[idx] = 255;
       mask.bitmap.data[idx + 1] = 255;
       mask.bitmap.data[idx + 2] = 255;
@@ -550,7 +601,7 @@ async function removeWatermarkWithIOPaint(
       : await downloadBufferFromUrl(imageUrl);
     await fs.writeFile(inputPath, buffer);
     const padding = effective.iopaintMaskPadding ?? IOPAINT_MASK_PADDING;
-    await createMaskForImage(inputPath, maskPath, maskBlocks, padding);
+    await createMaskForImage(inputPath, maskPath, maskBlocks, padding, effective.iopaintMaskMode || "protect-text");
     await fs.writeFile(
       configPath,
       JSON.stringify(

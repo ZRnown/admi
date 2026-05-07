@@ -211,6 +211,7 @@ export type WatermarkRemovalMode = "ocr" | "always";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
+export type IOPaintMaskMode = "protect-text" | "box";
 
 export interface WatermarkRemovalConfig {
   enabled?: boolean;
@@ -220,6 +221,7 @@ export interface WatermarkRemovalConfig {
   triggerKeywords?: string[];
   iopaintModel?: IOPaintModel;
   iopaintStrategy?: IOPaintStrategy;
+  iopaintMaskMode?: IOPaintMaskMode;
   iopaintMaskPadding?: number;
 }
 
@@ -645,6 +647,7 @@ function createDefaultAccount(): AccountConfig {
       triggerKeywords: [],
       iopaintModel: "lama",
       iopaintStrategy: "crop",
+      iopaintMaskMode: "protect-text",
     },
     discordLogin: undefined,
     botRelays: [],
@@ -802,6 +805,7 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
   const iopaintModel: IOPaintModel = raw.iopaintModel === "migan" || raw.iopaintModel === "mat" ? raw.iopaintModel : "lama";
   const iopaintStrategy: IOPaintStrategy =
     raw.iopaintStrategy === "resize" || raw.iopaintStrategy === "original" ? raw.iopaintStrategy : "crop";
+  const iopaintMaskMode: IOPaintMaskMode = raw.iopaintMaskMode === "box" ? "box" : "protect-text";
   const parsedMaskPadding = Number(raw.iopaintMaskPadding);
   const iopaintMaskPadding = Number.isFinite(parsedMaskPadding) && parsedMaskPadding >= 0
     ? Math.floor(parsedMaskPadding)
@@ -815,6 +819,7 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
     triggerKeywords === undefined &&
     raw.iopaintModel === undefined &&
     raw.iopaintStrategy === undefined &&
+    raw.iopaintMaskMode === undefined &&
     raw.iopaintMaskPadding === undefined
   ) {
     return undefined;
@@ -827,6 +832,7 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
     triggerKeywords,
     iopaintModel: provider === "iopaint" ? iopaintModel : undefined,
     iopaintStrategy: provider === "iopaint" ? iopaintStrategy : undefined,
+    iopaintMaskMode: provider === "iopaint" ? iopaintMaskMode : undefined,
     iopaintMaskPadding: provider === "iopaint" ? iopaintMaskPadding : undefined,
   };
 }
@@ -2070,6 +2076,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
         triggerKeywords: [],
         iopaintModel: "lama",
         iopaintStrategy: "crop",
+        iopaintMaskMode: "protect-text",
       },
       showSourceIdentity: false,
       publicBaseUrl: undefined,

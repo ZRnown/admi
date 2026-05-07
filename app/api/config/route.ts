@@ -527,6 +527,7 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
     : undefined;
   const iopaintModel = raw.iopaintModel === "migan" || raw.iopaintModel === "mat" ? raw.iopaintModel : "lama";
   const iopaintStrategy = raw.iopaintStrategy === "resize" || raw.iopaintStrategy === "original" ? raw.iopaintStrategy : "crop";
+  const iopaintMaskMode = raw.iopaintMaskMode === "box" ? "box" : "protect-text";
   const parsedMaskPadding = Number(raw.iopaintMaskPadding);
   const iopaintMaskPadding = Number.isFinite(parsedMaskPadding) && parsedMaskPadding >= 0
     ? Math.floor(parsedMaskPadding)
@@ -540,6 +541,7 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
     triggerKeywords === undefined &&
     raw.iopaintModel === undefined &&
     raw.iopaintStrategy === undefined &&
+    raw.iopaintMaskMode === undefined &&
     raw.iopaintMaskPadding === undefined
   ) {
     return undefined;
@@ -552,6 +554,7 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
     triggerKeywords,
     iopaintModel: provider === "iopaint" ? iopaintModel : undefined,
     iopaintStrategy: provider === "iopaint" ? iopaintStrategy : undefined,
+    iopaintMaskMode: provider === "iopaint" ? iopaintMaskMode : undefined,
     iopaintMaskPadding: provider === "iopaint" ? iopaintMaskPadding : undefined,
   };
 }
@@ -1119,6 +1122,7 @@ function accountToFrontend(
         triggerKeywords: [],
         iopaintModel: "lama",
         iopaintStrategy: "crop",
+        iopaintMaskMode: "protect-text",
       },
     scheduledContents: normalizeScheduledContentList(account.scheduledContents),
     scheduledBroadcast: normalizeScheduledBroadcastConfig(account.scheduledBroadcast),
@@ -1442,6 +1446,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         triggerKeywords: [],
         iopaintModel: "lama",
         iopaintStrategy: "crop",
+        iopaintMaskMode: "protect-text",
       },
       feishuStyle: "style1",
     } as AccountConfig);
@@ -1824,6 +1829,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           iopaintStrategy:
             resolvedAccountWatermarkRemoval.provider === "iopaint"
               ? resolvedAccountWatermarkRemoval.iopaintStrategy || "crop"
+              : undefined,
+          iopaintMaskMode:
+            resolvedAccountWatermarkRemoval.provider === "iopaint"
+              ? resolvedAccountWatermarkRemoval.iopaintMaskMode || "protect-text"
               : undefined,
           iopaintMaskPadding:
             resolvedAccountWatermarkRemoval.provider === "iopaint"

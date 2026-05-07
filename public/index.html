@@ -7713,7 +7713,7 @@
               </div>
             </div>
             ${watermarkRemoval.provider === 'iopaint' ? `
-            <div class="grid gap-4 md:grid-cols-3">
+            <div class="grid gap-4 md:grid-cols-4">
               <div>
                 <label class="block text-xs text-slate-600 mb-1">IOPaint 模型</label>
                 <select onchange="updateWatermarkRemovalField('iopaintModel', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
@@ -7731,17 +7731,25 @@
                 </select>
               </div>
               <div>
+                <label class="block text-xs text-slate-600 mb-1">遮罩模式</label>
+                <select onchange="updateWatermarkRemovalField('iopaintMaskMode', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="protect-text" ${watermarkRemoval.iopaintMaskMode === 'protect-text' ? 'selected' : ''}>保护亮色文字</option>
+                  <option value="box" ${watermarkRemoval.iopaintMaskMode === 'box' ? 'selected' : ''}>OCR 框整块</option>
+                </select>
+              </div>
+              <div>
                 <label class="block text-xs text-slate-600 mb-1">遮罩扩边 px</label>
-                <input type="number" min="0" max="120" value="${Number.isFinite(Number(watermarkRemoval.iopaintMaskPadding)) ? Number(watermarkRemoval.iopaintMaskPadding) : 18}"
+                <input type="number" min="0" max="120" value="${Number.isFinite(Number(watermarkRemoval.iopaintMaskPadding)) ? Number(watermarkRemoval.iopaintMaskPadding) : 8}"
                   onchange="updateWatermarkRemovalField('iopaintMaskPadding', this.value)"
                   class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               </div>
             </div>
             <div class="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 text-xs text-slate-600 leading-relaxed">
-              <div class="grid gap-2 md:grid-cols-3">
-                <div><span class="font-medium text-slate-800">LaMa</span>：服务器实测 768x512，处理约 10s，峰值约 1.4GB，效果更稳。</div>
-                <div><span class="font-medium text-slate-800">MIGAN</span>：同图处理约 3s，峰值约 0.9GB，适合简单水印，细节可能糊。</div>
-                <div><span class="font-medium text-slate-800">Crop</span>：只处理遮罩附近，省内存；关闭后更吃资源。</div>
+              <div class="grid gap-2 md:grid-cols-4">
+                <div><span class="font-medium text-slate-800">LaMa</span>：更稳，服务器实测 1320x614 约 27-33s，峰值约 1.3GB。</div>
+                <div><span class="font-medium text-slate-800">MIGAN</span>：更省资源，同图约 17-28s，峰值约 0.9GB，简单水印优先试。</div>
+                <div><span class="font-medium text-slate-800">保护亮色文字</span>：适合交易截图，尽量保留白字；建议扩边 4-8px。</div>
+                <div><span class="font-medium text-slate-800">OCR 框整块</span>：遮得更狠，文字和水印重合时容易误伤正常内容。</div>
               </div>
             </div>
             ` : `
@@ -9328,7 +9336,9 @@
           apiKey: '',
           triggerKeywords: [],
           iopaintModel: 'lama',
-          iopaintStrategy: 'crop'
+          iopaintStrategy: 'crop',
+          iopaintMaskMode: 'protect-text',
+          iopaintMaskPadding: 8
         };
       }
       if (acc.watermarkRemoval.mode !== 'always' && acc.watermarkRemoval.mode !== 'ocr') {
@@ -9348,6 +9358,9 @@
       }
       if (!['crop', 'resize', 'original'].includes(acc.watermarkRemoval.iopaintStrategy)) {
         acc.watermarkRemoval.iopaintStrategy = 'crop';
+      }
+      if (!['protect-text', 'box'].includes(acc.watermarkRemoval.iopaintMaskMode)) {
+        acc.watermarkRemoval.iopaintMaskMode = 'protect-text';
       }
       return acc.watermarkRemoval;
     }
@@ -9521,9 +9534,11 @@
         config.iopaintModel = ['lama', 'migan', 'mat'].includes(value) ? value : 'lama';
       } else if (field === 'iopaintStrategy') {
         config.iopaintStrategy = ['crop', 'resize', 'original'].includes(value) ? value : 'crop';
+      } else if (field === 'iopaintMaskMode') {
+        config.iopaintMaskMode = value === 'box' ? 'box' : 'protect-text';
       } else if (field === 'iopaintMaskPadding') {
         const parsed = Number(value);
-        config.iopaintMaskPadding = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 18;
+        config.iopaintMaskPadding = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 8;
       }
       saveConfig();
       render();
@@ -11736,7 +11751,9 @@
           apiKey: '',
           triggerKeywords: [],
           iopaintModel: 'lama',
-          iopaintStrategy: 'crop'
+          iopaintStrategy: 'crop',
+          iopaintMaskMode: 'protect-text',
+          iopaintMaskPadding: 8
         },
         scheduledContents: [],
         scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },

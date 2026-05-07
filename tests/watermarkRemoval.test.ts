@@ -10,6 +10,7 @@ import {
   resolveWatermarkRemovalConfig,
   runWaveSpeedRateLimited,
   shouldApplyWatermarkAfterRemoval,
+  shouldMaskIOPaintPixel,
   shouldPersistWatermarkRemovalConfig,
   shouldRetryWaveSpeedStatus,
 } from "../src/watermarkRemoval.ts";
@@ -160,6 +161,7 @@ test("resolveWatermarkRemovalConfig enables IOPaint without Wavespeed key", () =
     provider: "iopaint",
     iopaintModel: "migan",
     iopaintStrategy: "crop",
+    iopaintMaskMode: "protect-text",
   });
 
   assert.deepEqual(resolved, {
@@ -168,6 +170,7 @@ test("resolveWatermarkRemovalConfig enables IOPaint without Wavespeed key", () =
     provider: "iopaint",
     iopaintModel: "migan",
     iopaintStrategy: "crop",
+    iopaintMaskMode: "protect-text",
     apiKey: undefined,
     triggerKeywords: undefined,
   });
@@ -182,9 +185,25 @@ test("resolveWatermarkRemovalConfig keeps Wavespeed compatible when api key exis
 
 test("shouldPersistWatermarkRemovalConfig keeps IOPaint model and strategy", () => {
   assert.equal(
-    shouldPersistWatermarkRemovalConfig({ provider: "iopaint", iopaintModel: "lama", iopaintStrategy: "resize" }),
+    shouldPersistWatermarkRemovalConfig({
+      provider: "iopaint",
+      iopaintModel: "lama",
+      iopaintStrategy: "resize",
+      iopaintMaskMode: "protect-text",
+    }),
     true,
   );
+});
+
+test("shouldMaskIOPaintPixel protects bright foreground text in protect-text mode", () => {
+  assert.equal(shouldMaskIOPaintPixel({ r: 246, g: 248, b: 255 }, "protect-text"), false);
+  assert.equal(shouldMaskIOPaintPixel({ r: 138, g: 140, b: 146 }, "protect-text"), false);
+  assert.equal(shouldMaskIOPaintPixel({ r: 220, g: 36, b: 44 }, "protect-text"), true);
+  assert.equal(shouldMaskIOPaintPixel({ r: 76, g: 78, b: 82 }, "protect-text"), true);
+});
+
+test("shouldMaskIOPaintPixel masks entire OCR box in box mode", () => {
+  assert.equal(shouldMaskIOPaintPixel({ r: 246, g: 248, b: 255 }, "box"), true);
 });
 
 test("detectTextWatermarkFromOCR returns matched blocks for local masks", () => {
