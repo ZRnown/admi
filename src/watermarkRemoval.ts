@@ -92,7 +92,11 @@ const IOPAINT_TIMEOUT_MS = parseNonNegativeInt(process.env.IOPAINT_TIMEOUT_MS, 1
 const IOPAINT_MASK_PADDING = parseNonNegativeInt(process.env.IOPAINT_MASK_PADDING, 8);
 const IOPAINT_WORK_DIR = process.env.IOPAINT_WORK_DIR || path.join(process.cwd(), ".data", "iopaint_jobs");
 const IOPAINT_OUTPUT_DIR = process.env.IOPAINT_OUTPUT_DIR || path.join(process.cwd(), ".data", "watermark_removed");
-const IOPAINT_TEXT_REPAIR_ENABLED = process.env.IOPAINT_TEXT_REPAIR_ENABLED !== "false";
+const IOPAINT_PROTECT_BOX_SHRINK_RATIO = Math.min(
+  0.45,
+  Math.max(0, Number(process.env.IOPAINT_PROTECT_BOX_SHRINK_RATIO ?? "0.08")),
+);
+const IOPAINT_TEXT_REPAIR_ENABLED = process.env.IOPAINT_TEXT_REPAIR_ENABLED === "true";
 const IOPAINT_TEXT_REPAIR_FONT_PATH = process.env.IOPAINT_TEXT_REPAIR_FONT_PATH;
 const IOPAINT_TEXT_REPAIR_FONT_FAMILY = process.env.IOPAINT_TEXT_REPAIR_FONT_FAMILY || "DejaVu Sans";
 const IOPAINT_TEXT_REPAIR_CJK_FONT_FAMILY = process.env.IOPAINT_TEXT_REPAIR_CJK_FONT_FAMILY || "Noto Sans CJK SC";
@@ -549,6 +553,21 @@ function expandMaskBox(box: IOPaintMaskBox, padding: number, imageWidth: number,
   };
 }
 
+function shrinkMaskBox(box: IOPaintMaskBox, ratio: number): IOPaintMaskBox {
+  if (ratio <= 0) return box;
+  const width = Math.max(0, box.maxX - box.minX);
+  const height = Math.max(0, box.maxY - box.minY);
+  const shrinkX = Math.floor(width * ratio);
+  const shrinkY = Math.floor(height * ratio);
+  if (shrinkX * 2 >= width || shrinkY * 2 >= height) return box;
+  return {
+    minX: box.minX + shrinkX,
+    minY: box.minY + shrinkY,
+    maxX: box.maxX - shrinkX,
+    maxY: box.maxY - shrinkY,
+  };
+}
+
 function isPointInMaskBox(x: number, y: number, box: IOPaintMaskBox): boolean {
   return x >= box.minX && x < box.maxX && y >= box.minY && y < box.maxY;
 }
@@ -557,7 +576,7 @@ function boxesOverlap(a: IOPaintMaskBox, b: IOPaintMaskBox): boolean {
   return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
 }
 
-function resolveIOPaintMaskRegions(
+export function resolveIOPaintMaskRegions(
   blocks: OcrTextBlock[] | undefined,
   padding: number,
   imageWidth: number,
@@ -568,7 +587,7 @@ function resolveIOPaintMaskRegions(
   const protectBlocks = allBlocks.filter((block) => block.maskRole === "protect");
   return {
     watermarkBoxes: extractMaskBoxes(watermarkBlocks).map((box) => expandMaskBox(box, padding, imageWidth, imageHeight)),
-    protectBoxes: extractMaskBoxes(protectBlocks).map((box) => expandMaskBox(box, 1, imageWidth, imageHeight)),
+    protectBoxes: extractMaskBoxes(protectBlocks).map((box) => shrinkMaskBox(box, IOPAINT_PROTECT_BOX_SHRINK_RATIO)),
   };
 }
 

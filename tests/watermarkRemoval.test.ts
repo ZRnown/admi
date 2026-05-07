@@ -8,6 +8,7 @@ import {
   getIOPaintTextRepairBlocks,
   matchWatermarkRemovalTriggerKeywords,
   prepareImageForOcrAndForward,
+  resolveIOPaintMaskRegions,
   resolveIOPaintTextRepairFontConfig,
   resolveWatermarkRemovalConfig,
   runWaveSpeedRateLimited,
@@ -320,6 +321,39 @@ test("shouldPaintIOPaintMaskPoint protects non-watermark OCR text without color 
 
   assert.equal(shouldPaintIOPaintMaskPoint(15, 15, regions, "protect-text"), true);
   assert.equal(shouldPaintIOPaintMaskPoint(25, 25, regions, "protect-text"), false);
+});
+
+test("resolveIOPaintMaskRegions shrinks protect boxes for slightly more aggressive cleanup", () => {
+  const regions = resolveIOPaintMaskRegions(
+    [
+      {
+        text: "logo",
+        maskRole: "watermark",
+        box: [
+          [10, 10],
+          [100, 10],
+          [100, 50],
+          [10, 50],
+        ],
+      },
+      {
+        text: "body",
+        maskRole: "protect",
+        box: [
+          [20, 20],
+          [80, 20],
+          [80, 40],
+          [20, 40],
+        ],
+      },
+    ],
+    8,
+    120,
+    80,
+  );
+
+  assert.deepEqual(regions.watermarkBoxes, [{ minX: 2, minY: 2, maxX: 108, maxY: 58 }]);
+  assert.deepEqual(regions.protectBoxes, [{ minX: 24, minY: 21, maxX: 76, maxY: 39 }]);
 });
 
 test("shouldPaintIOPaintMaskPoint masks protected overlaps in box mode", () => {
