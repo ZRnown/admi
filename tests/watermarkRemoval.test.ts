@@ -167,6 +167,7 @@ test("detectTextWatermarkFromOCR includes centered watermark hints", () => {
 
   assert.equal(result.matched, true);
   assert.deepEqual(new Set(result.texts), new Set(["冰糖橙聚台", "社区网站：ftran", "猛ADiscord:hu32345"]));
+  assert.equal(result.texts.includes("2倍做多MUETF器DArex区"), false);
 });
 
 test("extractWavespeedOutputUrl supports array and nested data payloads", () => {
