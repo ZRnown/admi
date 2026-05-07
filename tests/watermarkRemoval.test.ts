@@ -85,6 +85,80 @@ test("detectTextWatermarkFromOCR ignores centered body text", () => {
   assert.equal(result.matched, false);
 });
 
+test("detectTextWatermarkFromOCR prefers watermark hints over generic edge titles", () => {
+  const result = detectTextWatermarkFromOCR({
+    code: 0,
+    msg: "success",
+    data: [
+      {
+        box: [
+          [40, 55],
+          [299, 55],
+          [299, 120],
+          [40, 120],
+        ],
+        score: 0.99,
+        text: "最近调仓",
+      },
+      {
+        box: [
+          [495, 566],
+          [816, 566],
+          [816, 598],
+          [495, 598],
+        ],
+        score: 0.97,
+        text: "猛ADiscord:hu32345",
+      },
+    ],
+  });
+
+  assert.equal(result.matched, true);
+  assert.equal(result.blocks?.[0]?.text, "猛ADiscord:hu32345");
+});
+
+test("detectTextWatermarkFromOCR includes centered watermark hints", () => {
+  const result = detectTextWatermarkFromOCR({
+    code: 0,
+    msg: "success",
+    data: [
+      {
+        box: [
+          [40, 55],
+          [299, 55],
+          [299, 120],
+          [40, 120],
+        ],
+        score: 0.99,
+        text: "最近调仓",
+      },
+      {
+        box: [
+          [364, 321],
+          [519, 321],
+          [519, 338],
+          [364, 338],
+        ],
+        score: 0.88,
+        text: "社区网站：ftran",
+      },
+      {
+        box: [
+          [495, 566],
+          [816, 566],
+          [816, 598],
+          [495, 598],
+        ],
+        score: 0.97,
+        text: "猛ADiscord:hu32345",
+      },
+    ],
+  });
+
+  assert.equal(result.matched, true);
+  assert.deepEqual(new Set(result.texts), new Set(["社区网站：ftran", "猛ADiscord:hu32345"]));
+});
+
 test("extractWavespeedOutputUrl supports array and nested data payloads", () => {
   assert.equal(
     extractWavespeedOutputUrl({
@@ -249,6 +323,32 @@ test("getIOPaintTextRepairBlocks returns protected OCR text overlapping watermar
   };
 
   assert.deepEqual(getIOPaintTextRepairBlocks([watermark, overlappedText, separateText]), [overlappedText]);
+});
+
+test("getIOPaintTextRepairBlocks skips large OCR lines to avoid repainting whole content", () => {
+  const watermark = {
+    text: "社区网站：ftran",
+    maskRole: "watermark" as const,
+    box: [
+      [360, 310],
+      [850, 310],
+      [850, 340],
+      [360, 340],
+    ],
+  };
+  const largeLine = {
+    text: "2倍做多MUETF器DArex区",
+    score: 0.82,
+    maskRole: "protect" as const,
+    box: [
+      [143, 270],
+      [773, 274],
+      [773, 331],
+      [143, 328],
+    ],
+  };
+
+  assert.deepEqual(getIOPaintTextRepairBlocks([watermark, largeLine]), []);
 });
 
 test("resolveIOPaintTextRepairFontConfig picks an installed CJK font candidate", () => {

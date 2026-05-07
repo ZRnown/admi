@@ -43,6 +43,12 @@ export interface WatermarkDetectionResult {
   blocks?: OcrTextBlock[];
 }
 
+interface WatermarkDetectionCandidate {
+  item: { block: OcrTextBlock; metrics: NonNullable<ReturnType<typeof extractBoxMetrics>> };
+  reason: string;
+  priority: number;
+}
+
 export type KeywordGroup = string[];
 export interface WatermarkPostProcessOptions {
   hasWatermarks: boolean;
@@ -101,7 +107,7 @@ const IOPAINT_TEXT_REPAIR_CJK_FONT_CANDIDATES = [
 ];
 const URL_RE = /^https?:\/\//i;
 const WATERMARK_HINT_RE =
-  /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|vx|wx|ins|instagram|telegram|tg|店铺|同款|关注|原创|搬运|出处)/i;
+  /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|vx|wx|ins|instagram|telegram|tg|discord|店铺|社区|网站|同款|关注|原创|搬运|出处)/i;
 let waveSpeedQueue: Promise<void> = Promise.resolve();
 let nextWaveSpeedStartAt = 0;
 let waveSpeedRecentStarts: number[] = [];
@@ -340,6 +346,7 @@ export function detectTextWatermarkFromOCR(result: OcrLikeResult | null | undefi
     counts.set(normalized, (counts.get(normalized) || 0) + 1);
   }
 
+  const candidates: WatermarkDetectionCandidate[] = [];
   for (const item of metrics) {
     const rawText = String(item.block.text || "").trim();
     const normalized = rawText.replace(/\s+/g, "").trim().toLowerCase();
@@ -356,18 +363,36 @@ export function detectTextWatermarkFromOCR(result: OcrLikeResult | null | undefi
     const compactBox = box.width <= imageWidth * 0.45 && box.height <= imageHeight * 0.18;
     const confident = typeof item.block.score !== "number" || item.block.score >= 0.45;
 
-    if (nearEdge && compactBox && confident && (hintMatched || shortText || repeated)) {
-      const reasons = ["edge"];
+    const eligible = compactBox && confident && (hintMatched || (nearEdge && (shortText || repeated)));
+
+    if (eligible) {
+      const reasons = [];
+      if (nearEdge) reasons.push("edge");
       if (hintMatched) reasons.push("hint");
       if (shortText) reasons.push("short-text");
       if (repeated) reasons.push("repeated");
-      return {
-        matched: true,
+      const priority = (hintMatched ? 100 : 0) + (repeated ? 40 : 0) + (shortText ? 10 : 0) + (nearEdge ? 5 : 0);
+      candidates.push({
+        item: item as WatermarkDetectionCandidate["item"],
         reason: reasons.join("+"),
-        texts: [rawText],
-        blocks: [item.block],
-      };
+        priority,
+      });
     }
+  }
+
+  candidates.sort((a, b) => b.priority - a.priority);
+  const best = candidates[0];
+  if (best) {
+    const selected =
+      best.reason.includes("hint")
+        ? candidates.filter((candidate) => candidate.reason.includes("hint") && candidate.priority >= best.priority - 30)
+        : [best];
+    return {
+      matched: true,
+      reason: best.reason,
+      texts: selected.map((candidate) => String(candidate.item.block.text || "").trim()).filter(Boolean),
+      blocks: selected.map((candidate) => candidate.item.block),
+    };
   }
 
   return { matched: false, texts: [] };
@@ -531,9 +556,14 @@ export function getIOPaintTextRepairBlocks(blocks?: OcrTextBlock[]): OcrTextBloc
   if (watermarkBoxes.length === 0) return [];
 
   return allBlocks.filter((block) => {
-    if (block.maskRole !== "protect" || !String(block.text || "").trim()) return false;
+    const text = String(block.text || "").trim();
+    if (block.maskRole !== "protect" || !text) return false;
     const metrics = extractBoxMetrics(block);
     if (!metrics) return false;
+    const compactText = estimateTextUnitCount(text) <= 12;
+    const compactBox = metrics.width <= 220 && metrics.height <= 44;
+    const confident = typeof block.score !== "number" || block.score >= 0.9;
+    if (!compactText || !compactBox || !confident) return false;
     const box = { minX: metrics.minX, minY: metrics.minY, maxX: metrics.maxX, maxY: metrics.maxY };
     return watermarkBoxes.some((watermarkBox) => boxesOverlap(box, watermarkBox));
   });
