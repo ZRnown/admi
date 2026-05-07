@@ -8,6 +8,7 @@ import {
   getIOPaintTextRepairBlocks,
   matchWatermarkRemovalTriggerKeywords,
   prepareImageForOcrAndForward,
+  resolveIOPaintTextRepairFontConfig,
   resolveWatermarkRemovalConfig,
   runWaveSpeedRateLimited,
   shouldApplyWatermarkAfterRemoval,
@@ -248,6 +249,18 @@ test("getIOPaintTextRepairBlocks returns protected OCR text overlapping watermar
   };
 
   assert.deepEqual(getIOPaintTextRepairBlocks([watermark, overlappedText, separateText]), [overlappedText]);
+});
+
+test("resolveIOPaintTextRepairFontConfig picks an installed CJK font candidate", () => {
+  const config = resolveIOPaintTextRepairFontConfig({
+    envFamily: undefined,
+    envPath: undefined,
+    candidates: ["/missing/font.ttf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"],
+    exists: (candidate) => candidate.endsWith("NotoSansCJK-Regular.ttc"),
+  });
+
+  assert.equal(config.fontPath, "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc");
+  assert.equal(config.fontFamily, "Noto Sans CJK SC");
 });
 
 test("detectTextWatermarkFromOCR returns matched blocks for local masks", () => {

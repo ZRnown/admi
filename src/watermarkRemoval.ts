@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,6 +89,16 @@ const IOPAINT_OUTPUT_DIR = process.env.IOPAINT_OUTPUT_DIR || path.join(process.c
 const IOPAINT_TEXT_REPAIR_ENABLED = process.env.IOPAINT_TEXT_REPAIR_ENABLED !== "false";
 const IOPAINT_TEXT_REPAIR_FONT_PATH = process.env.IOPAINT_TEXT_REPAIR_FONT_PATH;
 const IOPAINT_TEXT_REPAIR_FONT_FAMILY = process.env.IOPAINT_TEXT_REPAIR_FONT_FAMILY || "DejaVu Sans";
+const IOPAINT_TEXT_REPAIR_CJK_FONT_FAMILY = process.env.IOPAINT_TEXT_REPAIR_CJK_FONT_FAMILY || "Noto Sans CJK SC";
+const IOPAINT_TEXT_REPAIR_CJK_FONT_CANDIDATES = [
+  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+  "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+  "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+  "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+  "/usr/share/fonts/truetype/arphic/uming.ttc",
+  "/System/Library/Fonts/PingFang.ttc",
+  "/System/Library/Fonts/STHeiti Light.ttc",
+];
 const URL_RE = /^https?:\/\//i;
 const WATERMARK_HINT_RE =
   /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|vx|wx|ins|instagram|telegram|tg|店铺|同款|关注|原创|搬运|出处)/i;
@@ -533,6 +543,32 @@ function estimateTextUnitCount(text: string): number {
   return Array.from(text).reduce((total, char) => total + (/[\u1100-\u9fff]/u.test(char) ? 1 : 0.58), 0);
 }
 
+export function resolveIOPaintTextRepairFontConfig(options?: {
+  envPath?: string;
+  envFamily?: string;
+  cjkFamily?: string;
+  candidates?: string[];
+  exists?: (candidate: string) => boolean;
+}): { fontPath?: string; fontFamily: string; hasCjkFont: boolean } {
+  const envPath = options?.envPath ?? IOPAINT_TEXT_REPAIR_FONT_PATH;
+  const fontFamily = options?.envFamily || IOPAINT_TEXT_REPAIR_FONT_FAMILY;
+  const cjkFamily = options?.cjkFamily || IOPAINT_TEXT_REPAIR_CJK_FONT_FAMILY;
+  const exists = options?.exists || existsSync;
+
+  if (envPath && exists(envPath)) {
+    return { fontPath: envPath, fontFamily, hasCjkFont: true };
+  }
+
+  const cjkFontPath = (options?.candidates || IOPAINT_TEXT_REPAIR_CJK_FONT_CANDIDATES).find((candidate) =>
+    exists(candidate),
+  );
+  if (cjkFontPath) {
+    return { fontPath: cjkFontPath, fontFamily: cjkFamily, hasCjkFont: true };
+  }
+
+  return { fontFamily, hasCjkFont: false };
+}
+
 function sampleRepairTextColor(image: any, box: IOPaintMaskBox): string {
   const x = Math.max(0, Math.floor(box.minX));
   const y = Math.max(0, Math.floor(box.minY));
@@ -585,11 +621,12 @@ async function repairOverlappedOcrText(
   }
 
   const { createCanvas, loadImage, GlobalFonts } = canvasModule;
-  let fontFamily = IOPAINT_TEXT_REPAIR_FONT_FAMILY;
-  if (IOPAINT_TEXT_REPAIR_FONT_PATH) {
+  const fontConfig = resolveIOPaintTextRepairFontConfig();
+  const fontFamily = fontConfig.fontFamily;
+  if (fontConfig.fontPath) {
     try {
-      await fs.access(IOPAINT_TEXT_REPAIR_FONT_PATH);
-      GlobalFonts.registerFromPath(IOPAINT_TEXT_REPAIR_FONT_PATH, fontFamily);
+      await fs.access(fontConfig.fontPath);
+      GlobalFonts.registerFromPath(fontConfig.fontPath, fontFamily);
     } catch {}
   }
 
@@ -603,7 +640,7 @@ async function repairOverlappedOcrText(
     const text = String(block.text || "").trim();
     const metrics = extractBoxMetrics(block);
     if (!text || !metrics) continue;
-    if (!IOPAINT_TEXT_REPAIR_FONT_PATH && /[\u3400-\u9fff]/u.test(text)) {
+    if (!fontConfig.hasCjkFont && /[\u3400-\u9fff]/u.test(text)) {
       continue;
     }
 
