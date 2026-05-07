@@ -7733,7 +7733,7 @@
               <div>
                 <label class="block text-xs text-slate-600 mb-1">遮罩模式</label>
                 <select onchange="updateWatermarkRemovalField('iopaintMaskMode', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-                  <option value="protect-text" ${watermarkRemoval.iopaintMaskMode === 'protect-text' ? 'selected' : ''}>保护亮色文字</option>
+                  <option value="protect-text" ${watermarkRemoval.iopaintMaskMode === 'protect-text' ? 'selected' : ''}>保护 OCR 文字</option>
                   <option value="box" ${watermarkRemoval.iopaintMaskMode === 'box' ? 'selected' : ''}>OCR 框整块</option>
                 </select>
               </div>
@@ -7748,7 +7748,7 @@
               <div class="grid gap-2 md:grid-cols-4">
                 <div><span class="font-medium text-slate-800">LaMa</span>：更稳，服务器实测 1320x614 约 27-33s，峰值约 1.3GB。</div>
                 <div><span class="font-medium text-slate-800">MIGAN</span>：更省资源，同图约 17-28s，峰值约 0.9GB，简单水印优先试。</div>
-                <div><span class="font-medium text-slate-800">保护亮色文字</span>：适合交易截图，尽量保留白字；建议扩边 4-8px。</div>
+                <div><span class="font-medium text-slate-800">保护 OCR 文字</span>：按 OCR 文字框保护正常内容，不按水印颜色判断；建议扩边 4-8px。</div>
                 <div><span class="font-medium text-slate-800">OCR 框整块</span>：遮得更狠，文字和水印重合时容易误伤正常内容。</div>
               </div>
             </div>

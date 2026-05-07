@@ -10,7 +10,7 @@ import {
   resolveWatermarkRemovalConfig,
   runWaveSpeedRateLimited,
   shouldApplyWatermarkAfterRemoval,
-  shouldMaskIOPaintPixel,
+  shouldPaintIOPaintMaskPoint,
   shouldPersistWatermarkRemovalConfig,
   shouldRetryWaveSpeedStatus,
 } from "../src/watermarkRemoval.ts";
@@ -195,15 +195,23 @@ test("shouldPersistWatermarkRemovalConfig keeps IOPaint model and strategy", () 
   );
 });
 
-test("shouldMaskIOPaintPixel protects bright foreground text in protect-text mode", () => {
-  assert.equal(shouldMaskIOPaintPixel({ r: 246, g: 248, b: 255 }, "protect-text"), false);
-  assert.equal(shouldMaskIOPaintPixel({ r: 138, g: 140, b: 146 }, "protect-text"), false);
-  assert.equal(shouldMaskIOPaintPixel({ r: 220, g: 36, b: 44 }, "protect-text"), true);
-  assert.equal(shouldMaskIOPaintPixel({ r: 76, g: 78, b: 82 }, "protect-text"), true);
+test("shouldPaintIOPaintMaskPoint protects non-watermark OCR text without color checks", () => {
+  const regions = {
+    watermarkBoxes: [{ minX: 10, minY: 10, maxX: 40, maxY: 40 }],
+    protectBoxes: [{ minX: 20, minY: 20, maxX: 30, maxY: 30 }],
+  };
+
+  assert.equal(shouldPaintIOPaintMaskPoint(15, 15, regions, "protect-text"), true);
+  assert.equal(shouldPaintIOPaintMaskPoint(25, 25, regions, "protect-text"), false);
 });
 
-test("shouldMaskIOPaintPixel masks entire OCR box in box mode", () => {
-  assert.equal(shouldMaskIOPaintPixel({ r: 246, g: 248, b: 255 }, "box"), true);
+test("shouldPaintIOPaintMaskPoint masks protected overlaps in box mode", () => {
+  const regions = {
+    watermarkBoxes: [{ minX: 10, minY: 10, maxX: 40, maxY: 40 }],
+    protectBoxes: [{ minX: 20, minY: 20, maxX: 30, maxY: 30 }],
+  };
+
+  assert.equal(shouldPaintIOPaintMaskPoint(25, 25, regions, "box"), true);
 });
 
 test("detectTextWatermarkFromOCR returns matched blocks for local masks", () => {

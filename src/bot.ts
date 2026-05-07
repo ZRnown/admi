@@ -1248,8 +1248,16 @@ export class Bot {
         watermarkRemovalTargets.add(normalized);
       }
     };
-    const rememberWatermarkRemovalMaskBlocks = (targetUrl?: string, blocks?: any[]) => {
-      if (!targetUrl || !Array.isArray(blocks) || blocks.length === 0) return;
+    const rememberWatermarkRemovalMaskBlocks = (targetUrl?: string, watermarkBlocks?: any[], allBlocks?: any[]) => {
+      if (!targetUrl || !Array.isArray(watermarkBlocks) || watermarkBlocks.length === 0) return;
+      const watermarkSet = new Set(watermarkBlocks);
+      const protectBlocks = Array.isArray(allBlocks)
+        ? allBlocks.filter((block) => block && !watermarkSet.has(block)).map((block) => ({ ...block, maskRole: "protect" }))
+        : [];
+      const blocks = [
+        ...watermarkBlocks.map((block) => ({ ...block, maskRole: "watermark" })),
+        ...protectBlocks,
+      ];
       watermarkRemovalMaskBlocks.set(targetUrl, blocks);
       const normalized = normalizeImageUrl(targetUrl);
       if (normalized) {
@@ -1451,7 +1459,11 @@ export class Bot {
                             ).matched,
                           )
                         : [];
-                      rememberWatermarkRemovalMaskBlocks(url, matchedBlocks);
+                      rememberWatermarkRemovalMaskBlocks(
+                        url,
+                        matchedBlocks,
+                        Array.isArray((ocrResult as any)?.data) ? (ocrResult as any).data : [],
+                      );
                       const detectMsg = `${logPrefix} [WATERMARK] OCR命中去水印关键词: ${keywordMatch.matchedKeywords.join("、")}`;
                       console.log(`[OCR] ${detectMsg}`);
                       this.logger.info(detectMsg);
@@ -1460,7 +1472,11 @@ export class Bot {
                     const detection = detectTextWatermarkFromOCR(ocrResult);
                     if (detection.matched) {
                       markWatermarkRemovalTarget(url);
-                      rememberWatermarkRemovalMaskBlocks(url, detection.blocks);
+                      rememberWatermarkRemovalMaskBlocks(
+                        url,
+                        detection.blocks,
+                        Array.isArray((ocrResult as any)?.data) ? (ocrResult as any).data : [],
+                      );
                       const detectMsg = `${logPrefix} [WATERMARK] OCR检测到疑似水印: ${detection.texts.join("、")} (${detection.reason || "heuristic"})`;
                       console.log(`[OCR] ${detectMsg}`);
                       this.logger.info(detectMsg);

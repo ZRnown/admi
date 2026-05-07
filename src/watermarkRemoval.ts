@@ -27,6 +27,7 @@ export interface OcrTextBlock {
   box?: number[][];
   score?: number;
   text?: string;
+  maskRole?: "watermark" | "protect";
 }
 
 export interface OcrLikeResult {
@@ -442,7 +443,19 @@ function fileExtensionFromUrl(imageUrl: string): string {
   return ".png";
 }
 
-function extractMaskBoxes(blocks?: OcrTextBlock[]): Array<{ minX: number; minY: number; maxX: number; maxY: number }> {
+interface IOPaintMaskBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+interface IOPaintMaskRegions {
+  watermarkBoxes: IOPaintMaskBox[];
+  protectBoxes: IOPaintMaskBox[];
+}
+
+function extractMaskBoxes(blocks?: OcrTextBlock[]): IOPaintMaskBox[] {
   if (!Array.isArray(blocks)) return [];
   return blocks
     .map((block) => extractBoxMetrics(block))
@@ -455,28 +468,44 @@ function extractMaskBoxes(blocks?: OcrTextBlock[]): Array<{ minX: number; minY: 
     }));
 }
 
-export function shouldMaskIOPaintPixel(
-  pixel: { r: number; g: number; b: number },
+function expandMaskBox(box: IOPaintMaskBox, padding: number, imageWidth: number, imageHeight: number): IOPaintMaskBox {
+  return {
+    minX: Math.max(0, Math.floor(box.minX - padding)),
+    minY: Math.max(0, Math.floor(box.minY - padding)),
+    maxX: Math.min(imageWidth, Math.ceil(box.maxX + padding)),
+    maxY: Math.min(imageHeight, Math.ceil(box.maxY + padding)),
+  };
+}
+
+function isPointInMaskBox(x: number, y: number, box: IOPaintMaskBox): boolean {
+  return x >= box.minX && x < box.maxX && y >= box.minY && y < box.maxY;
+}
+
+function resolveIOPaintMaskRegions(
+  blocks: OcrTextBlock[] | undefined,
+  padding: number,
+  imageWidth: number,
+  imageHeight: number,
+): IOPaintMaskRegions {
+  const allBlocks = Array.isArray(blocks) ? blocks : [];
+  const watermarkBlocks = allBlocks.filter((block) => block.maskRole !== "protect");
+  const protectBlocks = allBlocks.filter((block) => block.maskRole === "protect");
+  return {
+    watermarkBoxes: extractMaskBoxes(watermarkBlocks).map((box) => expandMaskBox(box, padding, imageWidth, imageHeight)),
+    protectBoxes: extractMaskBoxes(protectBlocks).map((box) => expandMaskBox(box, 1, imageWidth, imageHeight)),
+  };
+}
+
+export function shouldPaintIOPaintMaskPoint(
+  x: number,
+  y: number,
+  regions: IOPaintMaskRegions,
   mode: IOPaintMaskMode = "protect-text",
 ): boolean {
+  const inWatermarkBox = regions.watermarkBoxes.some((box) => isPointInMaskBox(x, y, box));
+  if (!inWatermarkBox) return false;
   if (mode === "box") return true;
-
-  const r = Number(pixel.r);
-  const g = Number(pixel.g);
-  const b = Number(pixel.b);
-  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return false;
-
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const spread = max - min;
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  const brightForeground = luminance >= 118 && spread <= 95;
-  if (brightForeground) return false;
-
-  const redWatermark = r >= 100 && r > g * 1.25 && r > b * 1.25 && g <= 145 && b <= 145;
-  const grayWatermark = max >= 34 && max <= 135 && spread <= 38;
-  const pinkWatermark = r >= 120 && g >= 45 && b >= 45 && r > g * 1.12 && r > b * 1.12 && max <= 210;
-  return redWatermark || grayWatermark || pinkWatermark;
+  return !regions.protectBoxes.some((box) => isPointInMaskBox(x, y, box));
 }
 
 async function createMaskForImage(
@@ -488,20 +517,15 @@ async function createMaskForImage(
 ): Promise<void> {
   const image = await Jimp.read(imagePath);
   const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
-  const boxes = extractMaskBoxes(blocks);
+  const regions = resolveIOPaintMaskRegions(blocks, padding, image.bitmap.width, image.bitmap.height);
+  const boxes = regions.watermarkBoxes;
 
   if (boxes.length === 0) {
     const width = Math.max(1, Math.round(image.bitmap.width * 0.46));
     const height = Math.max(1, Math.round(image.bitmap.height * 0.22));
     const x = Math.max(0, image.bitmap.width - width);
     const y = Math.max(0, image.bitmap.height - height);
-    image.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
-      if (!shouldMaskIOPaintPixel(
-        { r: image.bitmap.data[idx], g: image.bitmap.data[idx + 1], b: image.bitmap.data[idx + 2] },
-        maskMode,
-      )) {
-        return;
-      }
+    mask.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
       mask.bitmap.data[idx] = 255;
       mask.bitmap.data[idx + 1] = 255;
       mask.bitmap.data[idx + 2] = 255;
@@ -512,17 +536,14 @@ async function createMaskForImage(
   }
 
   for (const box of boxes) {
-    const x = Math.max(0, Math.floor(box.minX - padding));
-    const y = Math.max(0, Math.floor(box.minY - padding));
-    const right = Math.min(image.bitmap.width, Math.ceil(box.maxX + padding));
-    const bottom = Math.min(image.bitmap.height, Math.ceil(box.maxY + padding));
+    const x = Math.max(0, Math.floor(box.minX));
+    const y = Math.max(0, Math.floor(box.minY));
+    const right = Math.min(image.bitmap.width, Math.ceil(box.maxX));
+    const bottom = Math.min(image.bitmap.height, Math.ceil(box.maxY));
     const width = Math.max(1, right - x);
     const height = Math.max(1, bottom - y);
-    image.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
-      if (!shouldMaskIOPaintPixel(
-        { r: image.bitmap.data[idx], g: image.bitmap.data[idx + 1], b: image.bitmap.data[idx + 2] },
-        maskMode,
-      )) {
+    mask.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
+      if (!shouldPaintIOPaintMaskPoint(_x, _y, regions, maskMode)) {
         return;
       }
       mask.bitmap.data[idx] = 255;
