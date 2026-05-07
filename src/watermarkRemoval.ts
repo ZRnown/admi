@@ -86,6 +86,9 @@ const IOPAINT_TIMEOUT_MS = parseNonNegativeInt(process.env.IOPAINT_TIMEOUT_MS, 1
 const IOPAINT_MASK_PADDING = parseNonNegativeInt(process.env.IOPAINT_MASK_PADDING, 8);
 const IOPAINT_WORK_DIR = process.env.IOPAINT_WORK_DIR || path.join(process.cwd(), ".data", "iopaint_jobs");
 const IOPAINT_OUTPUT_DIR = process.env.IOPAINT_OUTPUT_DIR || path.join(process.cwd(), ".data", "watermark_removed");
+const IOPAINT_TEXT_REPAIR_ENABLED = process.env.IOPAINT_TEXT_REPAIR_ENABLED !== "false";
+const IOPAINT_TEXT_REPAIR_FONT_PATH = process.env.IOPAINT_TEXT_REPAIR_FONT_PATH;
+const IOPAINT_TEXT_REPAIR_FONT_FAMILY = process.env.IOPAINT_TEXT_REPAIR_FONT_FAMILY || "DejaVu Sans";
 const URL_RE = /^https?:\/\//i;
 const WATERMARK_HINT_RE =
   /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|vx|wx|ins|instagram|telegram|tg|店铺|同款|关注|原创|搬运|出处)/i;
@@ -481,6 +484,10 @@ function isPointInMaskBox(x: number, y: number, box: IOPaintMaskBox): boolean {
   return x >= box.minX && x < box.maxX && y >= box.minY && y < box.maxY;
 }
 
+function boxesOverlap(a: IOPaintMaskBox, b: IOPaintMaskBox): boolean {
+  return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+}
+
 function resolveIOPaintMaskRegions(
   blocks: OcrTextBlock[] | undefined,
   padding: number,
@@ -506,6 +513,116 @@ export function shouldPaintIOPaintMaskPoint(
   if (!inWatermarkBox) return false;
   if (mode === "box") return true;
   return !regions.protectBoxes.some((box) => isPointInMaskBox(x, y, box));
+}
+
+export function getIOPaintTextRepairBlocks(blocks?: OcrTextBlock[]): OcrTextBlock[] {
+  const allBlocks = Array.isArray(blocks) ? blocks : [];
+  const watermarkBoxes = extractMaskBoxes(allBlocks.filter((block) => block.maskRole !== "protect"));
+  if (watermarkBoxes.length === 0) return [];
+
+  return allBlocks.filter((block) => {
+    if (block.maskRole !== "protect" || !String(block.text || "").trim()) return false;
+    const metrics = extractBoxMetrics(block);
+    if (!metrics) return false;
+    const box = { minX: metrics.minX, minY: metrics.minY, maxX: metrics.maxX, maxY: metrics.maxY };
+    return watermarkBoxes.some((watermarkBox) => boxesOverlap(box, watermarkBox));
+  });
+}
+
+function estimateTextUnitCount(text: string): number {
+  return Array.from(text).reduce((total, char) => total + (/[\u1100-\u9fff]/u.test(char) ? 1 : 0.58), 0);
+}
+
+function sampleRepairTextColor(image: any, box: IOPaintMaskBox): string {
+  const x = Math.max(0, Math.floor(box.minX));
+  const y = Math.max(0, Math.floor(box.minY));
+  const width = Math.max(1, Math.min(image.bitmap.width, Math.ceil(box.maxX)) - x);
+  const height = Math.max(1, Math.min(image.bitmap.height, Math.ceil(box.maxY)) - y);
+  const samples: Array<{ r: number; g: number; b: number; luminance: number; edge: boolean }> = [];
+
+  image.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
+    const r = image.bitmap.data[idx];
+    const g = image.bitmap.data[idx + 1];
+    const b = image.bitmap.data[idx + 2];
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const edge = _x === x || _x === x + width - 1 || _y === y || _y === y + height - 1;
+    samples.push({ r, g, b, luminance, edge });
+  });
+
+  if (samples.length === 0) return "rgb(245, 247, 250)";
+  const edgeSamples = samples.filter((sample) => sample.edge);
+  const edgeLuminance =
+    edgeSamples.reduce((sum, sample) => sum + sample.luminance, 0) / Math.max(1, edgeSamples.length);
+  const sorted = samples.slice().sort((a, b) => a.luminance - b.luminance);
+  const pickBright = edgeLuminance < 128;
+  const picked = pickBright
+    ? sorted.slice(Math.max(0, Math.floor(sorted.length * 0.78)))
+    : sorted.slice(0, Math.max(1, Math.ceil(sorted.length * 0.22)));
+  const avg = picked.reduce(
+    (acc, sample) => ({ r: acc.r + sample.r, g: acc.g + sample.g, b: acc.b + sample.b }),
+    { r: 0, g: 0, b: 0 },
+  );
+  const count = Math.max(1, picked.length);
+  return `rgb(${Math.round(avg.r / count)}, ${Math.round(avg.g / count)}, ${Math.round(avg.b / count)})`;
+}
+
+async function repairOverlappedOcrText(
+  sourcePath: string,
+  targetPath: string,
+  blocks: OcrTextBlock[] | undefined,
+  maskMode: IOPaintMaskMode,
+): Promise<void> {
+  if (!IOPAINT_TEXT_REPAIR_ENABLED || maskMode !== "protect-text") return;
+  const repairBlocks = getIOPaintTextRepairBlocks(blocks);
+  if (repairBlocks.length === 0) return;
+
+  let canvasModule: any;
+  try {
+    const requireCanvas = eval("require") as (name: string) => any;
+    canvasModule = requireCanvas("@napi-rs/canvas");
+  } catch {
+    return;
+  }
+
+  const { createCanvas, loadImage, GlobalFonts } = canvasModule;
+  let fontFamily = IOPAINT_TEXT_REPAIR_FONT_FAMILY;
+  if (IOPAINT_TEXT_REPAIR_FONT_PATH) {
+    try {
+      await fs.access(IOPAINT_TEXT_REPAIR_FONT_PATH);
+      GlobalFonts.registerFromPath(IOPAINT_TEXT_REPAIR_FONT_PATH, fontFamily);
+    } catch {}
+  }
+
+  const target = await loadImage(targetPath);
+  const canvas = createCanvas(target.width, target.height);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(target, 0, 0);
+  const sourceImage = await Jimp.read(sourcePath);
+
+  for (const block of repairBlocks) {
+    const text = String(block.text || "").trim();
+    const metrics = extractBoxMetrics(block);
+    if (!text || !metrics) continue;
+    if (!IOPAINT_TEXT_REPAIR_FONT_PATH && /[\u3400-\u9fff]/u.test(text)) {
+      continue;
+    }
+
+    const box = { minX: metrics.minX, minY: metrics.minY, maxX: metrics.maxX, maxY: metrics.maxY };
+    const width = Math.max(1, metrics.width);
+    const height = Math.max(1, metrics.height);
+    let fontSize = Math.max(8, Math.min(height * 0.92, width / Math.max(1, estimateTextUnitCount(text)) * 1.15));
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      ctx.font = `500 ${fontSize}px "${fontFamily}"`;
+      if (ctx.measureText(text).width <= width * 1.04 || fontSize <= 8) break;
+      fontSize *= 0.9;
+    }
+    ctx.font = `500 ${fontSize}px "${fontFamily}"`;
+    ctx.fillStyle = sampleRepairTextColor(sourceImage, box);
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, metrics.minX, metrics.centerY);
+  }
+
+  await fs.writeFile(targetPath, canvas.toBuffer("image/png"));
 }
 
 async function createMaskForImage(
@@ -660,6 +777,7 @@ async function removeWatermarkWithIOPaint(
     );
 
     const generatedPath = path.join(outputDir, "image.png");
+    await repairOverlappedOcrText(inputPath, generatedPath, maskBlocks, effective.iopaintMaskMode || "protect-text");
     const filename = `${Date.now()}_${jobId.slice(0, 8)}.png`;
     const savedPath = path.join(IOPAINT_OUTPUT_DIR, filename);
     await fs.copyFile(generatedPath, savedPath);

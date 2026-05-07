@@ -5,6 +5,7 @@ import {
   __resetWaveSpeedRateLimiterForTests,
   detectTextWatermarkFromOCR,
   extractWavespeedOutputUrl,
+  getIOPaintTextRepairBlocks,
   matchWatermarkRemovalTriggerKeywords,
   prepareImageForOcrAndForward,
   resolveWatermarkRemovalConfig,
@@ -212,6 +213,41 @@ test("shouldPaintIOPaintMaskPoint masks protected overlaps in box mode", () => {
   };
 
   assert.equal(shouldPaintIOPaintMaskPoint(25, 25, regions, "box"), true);
+});
+
+test("getIOPaintTextRepairBlocks returns protected OCR text overlapping watermark boxes", () => {
+  const watermark = {
+    text: "@mark",
+    maskRole: "watermark" as const,
+    box: [
+      [10, 10],
+      [60, 10],
+      [60, 40],
+      [10, 40],
+    ],
+  };
+  const overlappedText = {
+    text: "15.21%",
+    maskRole: "protect" as const,
+    box: [
+      [45, 12],
+      [90, 12],
+      [90, 38],
+      [45, 38],
+    ],
+  };
+  const separateText = {
+    text: "SOXL",
+    maskRole: "protect" as const,
+    box: [
+      [100, 100],
+      [150, 100],
+      [150, 130],
+      [100, 130],
+    ],
+  };
+
+  assert.deepEqual(getIOPaintTextRepairBlocks([watermark, overlappedText, separateText]), [overlappedText]);
 });
 
 test("detectTextWatermarkFromOCR returns matched blocks for local masks", () => {
