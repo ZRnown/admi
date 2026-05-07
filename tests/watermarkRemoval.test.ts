@@ -110,6 +110,16 @@ test("detectTextWatermarkFromOCR prefers watermark hints over generic edge title
         score: 0.97,
         text: "猛ADiscord:hu32345",
       },
+      {
+        box: [
+          [967, 363],
+          [1284, 365],
+          [1284, 401],
+          [967, 399],
+        ],
+        score: 0.99,
+        text: "参考成交价421.190",
+      },
     ],
   });
 
@@ -144,6 +154,16 @@ test("detectTextWatermarkFromOCR includes centered watermark hints", () => {
       },
       {
         box: [
+          [143, 270],
+          [773, 274],
+          [773, 331],
+          [143, 328],
+        ],
+        score: 0.8272559307515621,
+        text: "2倍做多MUETF器DArex区",
+      },
+      {
+        box: [
           [364, 321],
           [519, 321],
           [519, 338],
@@ -161,6 +181,16 @@ test("detectTextWatermarkFromOCR includes centered watermark hints", () => {
         ],
         score: 0.97,
         text: "猛ADiscord:hu32345",
+      },
+      {
+        box: [
+          [967, 363],
+          [1284, 365],
+          [1284, 401],
+          [967, 399],
+        ],
+        score: 0.99,
+        text: "参考成交价421.190",
       },
     ],
   });

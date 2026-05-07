@@ -400,6 +400,7 @@ export function detectTextWatermarkFromOCR(result: OcrLikeResult | null | undefi
         const text = String(item.block.text || "").trim();
         const score = typeof item.block.score === "number" ? item.block.score : 1;
         if (!text || text.length > 24 || score < 0.35) return false;
+        if (item.metrics.width > imageWidth * 0.42) return false;
         const lowConfidence = score < 0.85;
         const logoSized = item.metrics.height <= imageHeight * 0.08 || item.metrics.width <= imageWidth * 0.08;
         if (!lowConfidence && !logoSized) return false;
