@@ -37,7 +37,12 @@ import { reconcileExternalForwarders, shutdownExternalForwarders } from "./exter
 import { recordForwardStat } from "./forwardStats.js";
 import { stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { stripUploadedEmbedImages } from "./ocrImageFilter.js";
-import { normalizeDiscordSourceReference, preserveDiscordChannelsOnFetchFailure } from "./discordMetadataHelpers.js";
+import {
+  mergeDiscordGuildCacheEntry,
+  mergeDiscordPrivateChannelCache,
+  normalizeDiscordSourceReference,
+  preserveDiscordChannelsOnFetchFailure,
+} from "./discordMetadataHelpers.js";
 import { filenameSuggestsImage, filenameSuggestsVideo } from "./uploadMediaMetadata.js";
 import { applyReplacementDictionary } from "./replacementDictionary.js";
 import {
@@ -1200,10 +1205,11 @@ async function writeDiscordGuildsCache(accountId: string, client: any) {
     }
 
     // 更新缓存（包含用户信息和服务器列表）
-    cache[accountId] = {
+    cache[accountId] = mergeDiscordGuildCacheEntry(cache[accountId], {
       user: userInfo,
       guilds: guilds,
-    };
+      updatedAt: new Date().toISOString(),
+    });
     await fs.writeFile(discordGuildsCacheFile, JSON.stringify(cache, null, 2));
 
     // 同时写入频道缓存
@@ -1265,19 +1271,32 @@ async function writeDiscordGuildsCacheSnapshot(
       channelCache = JSON.parse(await fs.readFile(discordChannelsCacheFile, "utf-8"));
     } catch {}
 
-    guildCache[accountId] = {
+    let latestGuildCache: Record<string, any> = {};
+    let latestChannelCache: Record<string, any[]> = {};
+    try {
+      latestGuildCache = JSON.parse(await fs.readFile(discordGuildsCacheFile, "utf-8"));
+    } catch {}
+    try {
+      latestChannelCache = JSON.parse(await fs.readFile(discordChannelsCacheFile, "utf-8"));
+    } catch {}
+
+    guildCache = { ...guildCache, ...latestGuildCache };
+    channelCache = { ...channelCache, ...latestChannelCache };
+
+    guildCache[accountId] = mergeDiscordGuildCacheEntry(guildCache[accountId], {
       user: snapshot.user || null,
       guilds,
       privateChannels,
       updatedAt: new Date().toISOString(),
-    };
+    });
     for (const guild of guilds) {
       const guildId = typeof guild?.id === "string" ? guild.id : String(guild?.id || "");
       if (!guildId) continue;
       const key = `${accountId}:${guildId}`;
       channelCache[key] = Array.isArray(channelsByGuild[guildId]) ? channelsByGuild[guildId] : [];
     }
-    channelCache[`${accountId}:@private`] = privateChannels;
+    const privateCacheKey = `${accountId}:@private`;
+    channelCache[privateCacheKey] = mergeDiscordPrivateChannelCache(channelCache[privateCacheKey], privateChannels);
     await fs.writeFile(discordGuildsCacheFile, JSON.stringify(guildCache, null, 2));
     await fs.writeFile(discordChannelsCacheFile, JSON.stringify(channelCache, null, 2));
   } catch (e) {

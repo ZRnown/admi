@@ -2091,11 +2091,12 @@
     const DISCORD_PRIVATE_SCOPE_ID = '@private';
     const DISCORD_PRIVATE_SCOPE_LABEL = '私聊';
     let cachedGuilds = [];
+    let cachedGuildsByAccount = {};
     let cachedChannels = {};
     let cachedDiscordPrivateChannels = {};
     let cachedGuildsAccountId = '';
-    let cachedGuildsLoading = false;
-    let cachedGuildsFetchedAt = 0;
+    let cachedGuildsLoading = {};
+    let cachedGuildsFetchedAt = {};
     const GUILD_FETCH_COOLDOWN_MS = 15000;
 
     // 缓存 Telegram 对话列表
@@ -2135,17 +2136,12 @@
 
     function shouldFetchDiscordGuilds(accountId) {
       if (!accountId) return false;
-      if (cachedGuildsAccountId && cachedGuildsAccountId !== accountId) {
-        cachedGuilds = [];
-        cachedGuildsAccountId = accountId;
-        cachedGuildsFetchedAt = 0;
-        return true;
-      }
-      if (cachedGuildsLoading) return false;
-      if (cachedGuildsFetchedAt && Date.now() - cachedGuildsFetchedAt < GUILD_FETCH_COOLDOWN_MS) {
+      if (cachedGuildsLoading[accountId]) return false;
+      const fetchedAt = cachedGuildsFetchedAt[accountId] || 0;
+      if (fetchedAt && Date.now() - fetchedAt < GUILD_FETCH_COOLDOWN_MS) {
         return false;
       }
-      return cachedGuilds.length === 0;
+      return !Array.isArray(cachedGuildsByAccount[accountId]);
     }
 
     function getDiscordMetadataAccountId(acc) {
@@ -2386,6 +2382,7 @@
         closeAllDiscordSearchableSelects(selectId);
         discordSelectDropdownOpen[selectId] = true;
         refreshDiscordSelectOptions(selectId);
+        maybeAutoSyncDiscordSelectGuilds(selectId);
         requestAnimationFrame(() => {
           const searchInput = document.getElementById(`${selectId}-search`);
           if (searchInput) {
@@ -2528,13 +2525,67 @@
 
     function requestDiscordGuilds(accountId) {
       if (!shouldFetchDiscordGuilds(accountId)) return;
-      cachedGuildsLoading = true;
+      cachedGuildsLoading[accountId] = true;
       cachedGuildsAccountId = accountId;
       fetchDiscordGuilds(accountId)
         .finally(() => {
-          cachedGuildsLoading = false;
+          delete cachedGuildsLoading[accountId];
           refreshCachedGuildSelects();
         });
+    }
+
+    function findDiscordAccountForSync(accountId) {
+      const normalizedId = String(accountId || '').trim();
+      if (!normalizedId) return null;
+      return (state.discordAccounts || []).find(a => a.id === normalizedId)
+        || (state.accounts || []).find(a => a.id === normalizedId)
+        || null;
+    }
+
+    function shouldAutoSyncDiscordGuilds(accountId, guilds, options = {}) {
+      const account = findDiscordAccountForSync(accountId);
+      const hasToken = !!String(account?.token || '').trim();
+      if (window.DiscordSelectHelpers?.shouldAutoSyncGuildsForEmptyCache) {
+        return window.DiscordSelectHelpers.shouldAutoSyncGuildsForEmptyCache({
+          accountId,
+          hasToken,
+          guilds,
+          loading: options.loading,
+          inFlight: discordAutoSyncInFlight.has(accountId),
+          attempted: discordAutoSyncAttempted.has(accountId),
+        });
+      }
+      return !!accountId && hasToken && !options.loading && !discordAutoSyncInFlight.has(accountId)
+        && !discordAutoSyncAttempted.has(accountId) && (!Array.isArray(guilds) || guilds.length === 0);
+    }
+
+    async function autoSyncDiscordGuildsForSelect(accountId, options = {}) {
+      const normalizedId = String(accountId || '').trim();
+      if (!normalizedId) return null;
+      const guilds = Array.isArray(options.guilds) ? options.guilds : [];
+      const loading = options.loading === true || !!cachedGuildsLoading[normalizedId] || !!cachedTelegramToDiscordGuildsLoading[normalizedId];
+      if (!shouldAutoSyncDiscordGuilds(normalizedId, guilds, { loading })) return null;
+      discordAutoSyncAttempted.add(normalizedId);
+      discordAutoSyncInFlight.add(normalizedId);
+      try {
+        const result = await syncDiscordAccountDataOnly(normalizedId);
+        if (!result?.success) {
+          if (result?.error) {
+            showToast(result.error, 'error');
+          }
+          return result;
+        }
+        if (options.target === 'telegramToDiscord') {
+          await fetchTelegramToDiscordGuilds(normalizedId, { force: true });
+          refreshTelegramToDiscordGuildSelects(normalizedId);
+        } else {
+          await fetchDiscordGuilds(normalizedId);
+          refreshCachedGuildSelects();
+        }
+        return result;
+      } finally {
+        discordAutoSyncInFlight.delete(normalizedId);
+      }
     }
 
     // 获取缓存的服务器选项HTML
@@ -2644,6 +2695,23 @@
 
     function refreshCachedGuildSelects() {
       refreshDiscordSelectsBySource('cachedGuilds');
+    }
+
+    function maybeAutoSyncDiscordSelectGuilds(selectId) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+      const searchSource = select.dataset.searchSource || '';
+      const accountId = select.dataset.accountId || '';
+      if (!accountId) return;
+      if (searchSource === 'cachedGuilds') {
+        const guilds = getDiscordGuildSelectionItems(accountId, select.value || select.dataset.selectedId || '');
+        void autoSyncDiscordGuildsForSelect(accountId, { guilds, target: 'source' });
+        return;
+      }
+      if (searchSource === 'telegramToDiscordGuilds') {
+        const guilds = getTelegramToDiscordGuildSelectionItems(accountId, select.value || select.dataset.selectedId || '');
+        void autoSyncDiscordGuildsForSelect(accountId, { guilds, target: 'telegramToDiscord' });
+      }
     }
 
     function refreshCachedChannelSelects(accountId, guildId) {
@@ -2837,7 +2905,7 @@
         updateMapping(mappingIdx, 'sourceGuildId', guildId || '');
         // 保存服务器名称
         if (guildId) {
-          const guild = cachedGuilds.find(g => g.id === guildId);
+          const guild = getCachedDiscordGuildsForAccount(accountId).find(g => g.id === guildId);
           updateMapping(mappingIdx, 'sourceGuildName', guild ? guild.name : '');
         } else {
           updateMapping(mappingIdx, 'sourceGuildName', '');
@@ -3237,18 +3305,19 @@
           body: JSON.stringify({ accountId })
         });
         if (!res.ok) {
-          cachedGuildsFetchedAt = Date.now();
+          cachedGuildsFetchedAt[accountId] = Date.now();
           return [];
         }
         const data = await res.json();
-        cachedGuilds = data.guilds || [];
+        cachedGuildsByAccount[accountId] = data.guilds || [];
+        cachedGuilds = cachedGuildsByAccount[accountId];
         cachedDiscordPrivateChannels[accountId] = data.privateChannels || [];
         cachedGuildsAccountId = accountId;
-        cachedGuildsFetchedAt = Date.now();
-        return cachedGuilds;
+        cachedGuildsFetchedAt[accountId] = Date.now();
+        return cachedGuildsByAccount[accountId];
       } catch (e) {
         console.error('获取服务器列表失败', e);
-        cachedGuildsFetchedAt = Date.now();
+        cachedGuildsFetchedAt[accountId] = Date.now();
         return [];
       }
     }
@@ -3562,9 +3631,10 @@
         const guilds = data.guilds || [];
         const privateChannels = data.privateChannels || [];
 
+        cachedGuildsByAccount[accountId] = guilds;
         cachedGuilds = guilds;
         cachedGuildsAccountId = accountId;
-        cachedGuildsFetchedAt = Date.now();
+        cachedGuildsFetchedAt[accountId] = Date.now();
         cachedDiscordPrivateChannels[accountId] = privateChannels;
 
         if (privateContainer) {
@@ -5436,10 +5506,22 @@
       return accountId ? (cachedDiscordPrivateChannels[accountId] || []) : [];
     }
 
+    function getCachedDiscordGuildsForAccount(accountId) {
+      if (!accountId) return [];
+      if (Array.isArray(cachedGuildsByAccount[accountId])) {
+        return cachedGuildsByAccount[accountId];
+      }
+      return cachedGuildsAccountId === accountId ? (cachedGuilds || []) : [];
+    }
+
+    function hasDiscordAccountToken(accountId) {
+      return !!String(findDiscordAccountForSync(accountId)?.token || '').trim();
+    }
+
     function getDiscordGuildSelectionItems(accountId, selectedId) {
-      const guildItems = cachedGuildsAccountId === accountId ? (cachedGuilds || []) : [];
+      const guildItems = getCachedDiscordGuildsForAccount(accountId);
       const items = guildItems.slice();
-      if (getDiscordPrivateChannels(accountId).length > 0 || selectedId === DISCORD_PRIVATE_SCOPE_ID) {
+      if (accountId && (hasDiscordAccountToken(accountId) || getDiscordPrivateChannels(accountId).length > 0 || selectedId === DISCORD_PRIVATE_SCOPE_ID)) {
         items.push({
           id: DISCORD_PRIVATE_SCOPE_ID,
           name: DISCORD_PRIVATE_SCOPE_LABEL,
@@ -5450,7 +5532,7 @@
 
     function getTelegramToDiscordGuildSelectionItems(accountId, selectedId) {
       const items = accountId ? (cachedTelegramToDiscordGuilds[accountId] || []).slice() : [];
-      if (getDiscordPrivateChannels(accountId).length > 0 || selectedId === DISCORD_PRIVATE_SCOPE_ID) {
+      if (accountId && (hasDiscordAccountToken(accountId) || getDiscordPrivateChannels(accountId).length > 0 || selectedId === DISCORD_PRIVATE_SCOPE_ID)) {
         items.push({
           id: DISCORD_PRIVATE_SCOPE_ID,
           name: DISCORD_PRIVATE_SCOPE_LABEL,
@@ -6525,7 +6607,7 @@
       if (kind === 'discord') {
         const guildsCount = Number.isFinite(account?.guildsCount) ? account.guildsCount : null;
         const channelsCount = Number.isFinite(account?.channelsCount) ? account.channelsCount : null;
-        const guilds = cachedGuildsAccountId === id ? cachedGuilds : [];
+        const guilds = getCachedDiscordGuildsForAccount(id);
         const privateChannels = getDiscordPrivateChannels(id);
         const summary = guildsCount === null && channelsCount === null
           ? '未同步'
@@ -10734,7 +10816,8 @@
       if (guildSelectId) {
         const guildId = document.getElementById(guildSelectId)?.value || '';
         ruleConfigData.standbyMode.mainGuildId = guildId;
-        const guild = cachedGuilds.find(g => g.id === guildId);
+        const accountId = getDiscordMetadataAccountId(getActiveAccount());
+        const guild = getCachedDiscordGuildsForAccount(accountId).find(g => g.id === guildId);
         ruleConfigData.standbyMode.mainGuildName = guild ? guild.name : '';
       }
     }
@@ -10745,7 +10828,7 @@
       if (isDiscordPrivateScope(guildId)) {
         ruleConfigData.standbyMode.mainGuildName = DISCORD_PRIVATE_SCOPE_LABEL;
       } else {
-        const guild = cachedGuilds.find(g => g.id === guildId);
+        const guild = getCachedDiscordGuildsForAccount(accountId).find(g => g.id === guildId);
         ruleConfigData.standbyMode.mainGuildName = guild ? guild.name : '';
       }
       ruleConfigData.standbyMode.mainChannelId = '';
@@ -11992,7 +12075,7 @@
           if (isDiscordPrivateScope(guildId)) {
             updateMapping(idx, 'sourceGuildName', DISCORD_PRIVATE_SCOPE_LABEL);
           } else {
-            const guild = cachedGuilds.find(item => String(item?.id || '') === String(guildId));
+            const guild = getCachedDiscordGuildsForAccount(getDiscordMetadataAccountId(acc)).find(item => String(item?.id || '') === String(guildId));
             if (guild) {
               updateMapping(idx, 'sourceGuildName', guild.name || '');
             }
@@ -12140,7 +12223,7 @@
           if (isDiscordPrivateScope(guildId)) {
             acc.feishuSourceGuildNameMap[sourceChannelId] = DISCORD_PRIVATE_SCOPE_LABEL;
           } else {
-            const guild = cachedGuilds.find(g => g.id === guildId);
+            const guild = getCachedDiscordGuildsForAccount(getDiscordMetadataAccountId(acc)).find(g => g.id === guildId);
             acc.feishuSourceGuildNameMap[sourceChannelId] = guild ? guild.name : '';
           }
         } else {

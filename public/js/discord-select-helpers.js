@@ -118,8 +118,22 @@
     return html;
   }
 
+  function shouldAutoSyncGuildsForEmptyCache(options = {}) {
+    if (!options.accountId) {
+      return false;
+    }
+    if (!options.hasToken) {
+      return false;
+    }
+    if (options.loading || options.inFlight || options.attempted) {
+      return false;
+    }
+    return !Array.isArray(options.guilds) || options.guilds.length === 0;
+  }
+
   return {
     buildFullSelectOptions,
     buildLightweightSelectOptions,
+    shouldAutoSyncGuildsForEmptyCache,
   };
 });

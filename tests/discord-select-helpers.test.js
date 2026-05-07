@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   buildLightweightSelectOptions,
   buildFullSelectOptions,
+  shouldAutoSyncGuildsForEmptyCache,
 } = require("../public/js/discord-select-helpers.js");
 
 test("buildLightweightSelectOptions keeps a closed select to one selected option", () => {
@@ -67,4 +68,40 @@ test("buildFullSelectOptions renders the full filtered list when the dropdown is
   assert.doesNotMatch(html, /Alpha/);
   assert.match(html, /Beta/);
   assert.doesNotMatch(html, /Gamma/);
+});
+
+test("shouldAutoSyncGuildsForEmptyCache triggers only when an account can sync and has no cached guilds", () => {
+  assert.equal(
+    shouldAutoSyncGuildsForEmptyCache({
+      accountId: "acc-1",
+      hasToken: true,
+      guilds: [],
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAutoSyncGuildsForEmptyCache({
+      accountId: "acc-1",
+      hasToken: true,
+      guilds: [{ id: "guild-1", name: "Alpha" }],
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoSyncGuildsForEmptyCache({
+      accountId: "acc-1",
+      hasToken: false,
+      guilds: [],
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoSyncGuildsForEmptyCache({
+      accountId: "acc-1",
+      hasToken: true,
+      guilds: [],
+      attempted: true,
+    }),
+    false,
+  );
 });

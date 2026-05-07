@@ -162,6 +162,43 @@ type DiscordChannelLike = {
   type?: number | null;
 };
 
+type DiscordGuildCacheObject = {
+  user?: unknown;
+  guilds?: DiscordGuildLike[];
+  privateChannels?: DiscordChannelLike[];
+  updatedAt?: string;
+};
+
+export function mergeDiscordGuildCacheEntry(
+  existing: DiscordGuildCacheEntry,
+  next: DiscordGuildCacheObject,
+): DiscordGuildCacheObject {
+  const existingObject =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? (existing as DiscordGuildCacheObject)
+      : {};
+  const existingGuilds = readGuildListFromCacheEntry(existing);
+  const nextGuilds = Array.isArray(next.guilds) ? next.guilds : existingGuilds;
+  const existingPrivateChannels = readPrivateChannelListFromCacheEntry(existing);
+  const nextPrivateChannels = Array.isArray(next.privateChannels) ? next.privateChannels : existingPrivateChannels;
+
+  return {
+    ...existingObject,
+    ...next,
+    guilds: nextGuilds,
+    privateChannels:
+      nextPrivateChannels.length > 0 || !Array.isArray(next.privateChannels)
+        ? nextPrivateChannels
+        : existingPrivateChannels,
+  };
+}
+
+export function mergeDiscordPrivateChannelCache<T>(existing: T[] | undefined, next: T[]): T[] {
+  if (Array.isArray(next) && next.length > 0) return next;
+  if (Array.isArray(existing) && existing.length > 0) return existing;
+  return Array.isArray(next) ? next : [];
+}
+
 function readGuildListFromCacheEntry(entry: DiscordGuildCacheEntry): DiscordGuildLike[] {
   if (Array.isArray(entry)) return entry;
   if (entry && typeof entry === "object" && Array.isArray(entry.guilds)) {

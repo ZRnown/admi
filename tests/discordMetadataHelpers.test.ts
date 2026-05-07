@@ -7,6 +7,8 @@ import {
   filterDiscordNamedItems,
   getDiscordChannelEmptyMessage,
   getDiscordMetadataAccountId,
+  mergeDiscordGuildCacheEntry,
+  mergeDiscordPrivateChannelCache,
   normalizeDiscordSourceReference,
   resolveDiscordChannelMetadataFromCache,
   resolveDiscordChannelNameFromCache,
@@ -44,6 +46,35 @@ test("preserveDiscordChannelsOnFetchFailure keeps existing channels when REST fe
   const existing = [{ id: '1', name: 'alpha', type: 0 }];
   assert.deepEqual(preserveDiscordChannelsOnFetchFailure(existing, [], true), existing);
   assert.deepEqual(preserveDiscordChannelsOnFetchFailure(existing, [], false), []);
+});
+
+test("mergeDiscordGuildCacheEntry preserves existing private channels when a live snapshot is empty", () => {
+  const merged = mergeDiscordGuildCacheEntry(
+    {
+      user: { id: "user-1" },
+      guilds: [{ id: "guild-old", name: "Old Guild" }],
+      privateChannels: [{ id: "dm-1", name: "Alice", type: 1 }],
+      updatedAt: "old",
+    },
+    {
+      user: { id: "user-1", username: "new" },
+      guilds: [{ id: "guild-new", name: "New Guild" }],
+      privateChannels: [],
+      updatedAt: "new",
+    },
+  );
+
+  assert.deepEqual(merged.privateChannels, [{ id: "dm-1", name: "Alice", type: 1 }]);
+  assert.deepEqual(merged.guilds, [{ id: "guild-new", name: "New Guild" }]);
+  assert.equal(merged.updatedAt, "new");
+});
+
+test("mergeDiscordPrivateChannelCache preserves existing private channels when next snapshot is empty", () => {
+  const existing = [{ id: "dm-1", name: "Alice", type: 1 }];
+  assert.deepEqual(mergeDiscordPrivateChannelCache(existing, []), existing);
+  assert.deepEqual(mergeDiscordPrivateChannelCache(existing, [{ id: "dm-2", name: "Bob", type: 1 }]), [
+    { id: "dm-2", name: "Bob", type: 1 },
+  ]);
 });
 
 test("filterDiscordNamedItems filters by query ignoring case and surrounding spaces", () => {

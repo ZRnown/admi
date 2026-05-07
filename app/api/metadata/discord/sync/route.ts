@@ -11,6 +11,8 @@ import { promises as fs } from "fs";
 import path from "path";
 import {
   DISCORD_PRIVATE_SCOPE_ID,
+  mergeDiscordGuildCacheEntry,
+  mergeDiscordPrivateChannelCache,
   preserveDiscordChannelsOnFetchFailure,
 } from "@/src/discordMetadataHelpers";
 import { resolvePythonBin } from "@/src/pythonRuntime";
@@ -295,8 +297,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 写入前再读一次，避免多个同步请求并发时用旧快照覆盖其他账号。
+    try {
+      const data = await fs.readFile(GUILDS_CACHE_FILE, "utf-8");
+      guildsCache = { ...guildsCache, ...JSON.parse(data) };
+    } catch {
+      // 文件不存在
+    }
+    try {
+      const data = await fs.readFile(CHANNELS_CACHE_FILE, "utf-8");
+      channelsCache = { ...channelsCache, ...JSON.parse(data) };
+    } catch {
+      // 文件不存在
+    }
+
     // 更新缓存
-    guildsCache[accountId] = {
+    guildsCache[accountId] = mergeDiscordGuildCacheEntry(guildsCache[accountId], {
       user: {
         id: user.id,
         username: user.username,
@@ -308,14 +324,15 @@ export async function POST(request: NextRequest) {
       guilds: formattedGuilds,
       privateChannels,
       updatedAt: new Date().toISOString(),
-    };
+    });
 
     // 更新频道缓存
     for (const [guildId, channels] of Object.entries(channelsData)) {
       const cacheKey = `${accountId}:${guildId}`;
       channelsCache[cacheKey] = channels;
     }
-    channelsCache[`${accountId}:${DISCORD_PRIVATE_SCOPE_ID}`] = privateChannels;
+    const privateCacheKey = `${accountId}:${DISCORD_PRIVATE_SCOPE_ID}`;
+    channelsCache[privateCacheKey] = mergeDiscordPrivateChannelCache(channelsCache[privateCacheKey], privateChannels);
 
     // 写入缓存文件
     await fs.writeFile(GUILDS_CACHE_FILE, JSON.stringify(guildsCache, null, 2));
