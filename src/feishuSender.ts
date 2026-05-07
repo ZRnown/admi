@@ -1,4 +1,6 @@
 import https from "node:https";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { URL } from "node:url";
 import { getEnv } from "./env";
 import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark";
@@ -479,6 +481,12 @@ export class FeishuSender {
 
   // 下载辅助函数（用于从 Discord 获取图片）
   private async download(urlStr: string): Promise<Buffer> {
+    if (urlStr.startsWith("file://")) {
+      return fs.readFile(new URL(urlStr));
+    }
+    if (path.isAbsolute(urlStr)) {
+      return fs.readFile(urlStr);
+    }
     return new Promise((resolve, reject) => {
       const u = new URL(urlStr);
       const req = https.request(

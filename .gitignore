@@ -8,9 +8,16 @@ lerna-debug.log*
 .pnpm-debug.log*
 .data
 .DS_Store
+**/.DS_Store
+.playwright-cli/
+proofshot-artifacts/
+iopaint-test/
+iopaint-model-cache/
+iopaint-watermark-test/
 *.pyc
 __pycache__/
 .pytest_cache/
+telegram_bridge/src/telegram_bridge.egg-info/
 .venv/
 venv/
 *.session

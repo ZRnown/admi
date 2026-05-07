@@ -521,18 +521,38 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
   const mode = raw.mode === "ocr" ? "ocr" : "always";
+  const provider = raw.provider === "iopaint" ? "iopaint" : apiKey ? "wavespeed" : "iopaint";
   const triggerKeywords = Array.isArray(raw.triggerKeywords)
     ? raw.triggerKeywords.map((item: any) => String(item || "").trim()).filter(Boolean)
     : undefined;
-  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey);
-  if (!enabled && !apiKey && raw.mode === undefined && triggerKeywords === undefined) {
+  const iopaintModel = raw.iopaintModel === "migan" || raw.iopaintModel === "mat" ? raw.iopaintModel : "lama";
+  const iopaintStrategy = raw.iopaintStrategy === "resize" || raw.iopaintStrategy === "original" ? raw.iopaintStrategy : "crop";
+  const parsedMaskPadding = Number(raw.iopaintMaskPadding);
+  const iopaintMaskPadding = Number.isFinite(parsedMaskPadding) && parsedMaskPadding >= 0
+    ? Math.floor(parsedMaskPadding)
+    : undefined;
+  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey || provider === "iopaint");
+  if (
+    !enabled &&
+    !apiKey &&
+    raw.mode === undefined &&
+    raw.provider === undefined &&
+    triggerKeywords === undefined &&
+    raw.iopaintModel === undefined &&
+    raw.iopaintStrategy === undefined &&
+    raw.iopaintMaskPadding === undefined
+  ) {
     return undefined;
   }
   return {
     enabled,
     mode,
+    provider,
     apiKey,
     triggerKeywords,
+    iopaintModel: provider === "iopaint" ? iopaintModel : undefined,
+    iopaintStrategy: provider === "iopaint" ? iopaintStrategy : undefined,
+    iopaintMaskPadding: provider === "iopaint" ? iopaintMaskPadding : undefined,
   };
 }
 
@@ -1090,7 +1110,16 @@ function accountToFrontend(
     watermarkSecondary: account.watermarkSecondary,
     watermarks: resolveFrontendWatermarks(account.watermarks, account.watermark, account.watermarkSecondary),
     watermarkEnabled: account.watermarkEnabled !== false,
-    watermarkRemoval: normalizeFrontendWatermarkRemoval(account.watermarkRemoval) || { enabled: false, mode: "ocr", apiKey: "", triggerKeywords: [] },
+    watermarkRemoval:
+      normalizeFrontendWatermarkRemoval(account.watermarkRemoval) || {
+        enabled: false,
+        mode: "ocr",
+        provider: "iopaint",
+        apiKey: "",
+        triggerKeywords: [],
+        iopaintModel: "lama",
+        iopaintStrategy: "crop",
+      },
     scheduledContents: normalizeScheduledContentList(account.scheduledContents),
     scheduledBroadcast: normalizeScheduledBroadcastConfig(account.scheduledBroadcast),
     ocrServerUrl: account.ocrServerUrl || "http://localhost:9003",
@@ -1405,7 +1434,15 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       stripEnglish: dto.stripEnglish === true,
       stripChinese: dto.stripChinese === true,
       dedupeSequentialMessages: dto.dedupeSequentialMessages === true,
-      watermarkRemoval: { enabled: false, mode: "ocr", apiKey: "", triggerKeywords: [] },
+      watermarkRemoval: {
+        enabled: false,
+        mode: "ocr",
+        provider: "iopaint",
+        apiKey: "",
+        triggerKeywords: [],
+        iopaintModel: "lama",
+        iopaintStrategy: "crop",
+      },
       feishuStyle: "style1",
     } as AccountConfig);
 
@@ -1774,6 +1811,24 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           triggerKeywords: Array.isArray(resolvedAccountWatermarkRemoval.triggerKeywords)
             ? resolvedAccountWatermarkRemoval.triggerKeywords
             : undefined,
+          provider:
+            resolvedAccountWatermarkRemoval.provider === "iopaint"
+              ? "iopaint"
+              : resolvedAccountWatermarkRemoval.provider === "wavespeed"
+                ? "wavespeed"
+                : undefined,
+          iopaintModel:
+            resolvedAccountWatermarkRemoval.provider === "iopaint"
+              ? resolvedAccountWatermarkRemoval.iopaintModel || "lama"
+              : undefined,
+          iopaintStrategy:
+            resolvedAccountWatermarkRemoval.provider === "iopaint"
+              ? resolvedAccountWatermarkRemoval.iopaintStrategy || "crop"
+              : undefined,
+          iopaintMaskPadding:
+            resolvedAccountWatermarkRemoval.provider === "iopaint"
+              ? resolvedAccountWatermarkRemoval.iopaintMaskPadding
+              : undefined,
         }
       : undefined,
     scheduledContents: resolvedScheduledContents ?? base.scheduledContents,

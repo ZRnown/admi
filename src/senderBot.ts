@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import https from "node:https";
+import path from "node:path";
 import { URL, fileURLToPath } from "node:url";
 
 import { ChannelId, WatermarkConfig } from "./config.js";
@@ -420,6 +421,8 @@ export class SenderBot {
       } else if (resolvedUrl) {
         if (resolvedUrl.startsWith("file://")) {
           buf = await this.readLocalFile(fileURLToPath(resolvedUrl));
+        } else if (path.isAbsolute(resolvedUrl)) {
+          buf = await this.readLocalFile(resolvedUrl);
         } else {
           buf = await this.downloadUrl(resolvedUrl);
         }

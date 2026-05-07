@@ -13,6 +13,9 @@ WAVESPEED_ENDPOINT = "https://api.wavespeed.ai/api/v3/wavespeed-ai/image-waterma
 def normalize_watermark_removal_config(raw: Any) -> Optional[Dict[str, Any]]:
     if not raw or not isinstance(raw, dict):
         return None
+    provider = str(raw.get("provider") or "wavespeed").strip().lower()
+    if provider != "wavespeed":
+        return None
     api_key = str(raw.get("apiKey") or "").strip()
     mode = "ocr" if raw.get("mode") == "ocr" else "always"
     enabled = True if raw.get("enabled") is True else False if raw.get("enabled") is False else bool(api_key)

@@ -1237,6 +1237,7 @@ export class Bot {
     const watermarkRemovalTriggerGroups = parseKeywordGroups(effectiveWatermarkRemoval?.triggerKeywords);
     const shouldUseWatermarkRemovalKeywords = watermarkRemovalTriggerGroups.length > 0;
     const watermarkRemovalTargets = new Set<string>();
+    const watermarkRemovalMaskBlocks = new Map<string, any[]>();
     const ocrBlockedImageUrls = new Set<string>();
     const preparedImageAssets = new Map<string, PreparedImageAsset>();
     const markWatermarkRemovalTarget = (targetUrl?: string) => {
@@ -1246,6 +1247,18 @@ export class Bot {
       if (normalized) {
         watermarkRemovalTargets.add(normalized);
       }
+    };
+    const rememberWatermarkRemovalMaskBlocks = (targetUrl?: string, blocks?: any[]) => {
+      if (!targetUrl || !Array.isArray(blocks) || blocks.length === 0) return;
+      watermarkRemovalMaskBlocks.set(targetUrl, blocks);
+      const normalized = normalizeImageUrl(targetUrl);
+      if (normalized) {
+        watermarkRemovalMaskBlocks.set(normalized, blocks);
+      }
+    };
+    const getWatermarkRemovalMaskBlocks = (targetUrl?: string) => {
+      if (!targetUrl) return undefined;
+      return watermarkRemovalMaskBlocks.get(targetUrl) || watermarkRemovalMaskBlocks.get(normalizeImageUrl(targetUrl));
     };
     const rememberPreparedImageAsset = (asset: PreparedImageAsset) => {
       preparedImageAssets.set(asset.originalUrl, asset);
@@ -1429,6 +1442,16 @@ export class Bot {
                     );
                     if (keywordMatch.matched) {
                       markWatermarkRemovalTarget(url);
+                      const matchedBlocks = Array.isArray((ocrResult as any)?.data)
+                        ? (ocrResult as any).data.filter((block: any) =>
+                            matchWatermarkRemovalTriggerKeywords(
+                              String(block?.text || ""),
+                              watermarkRemovalTriggerGroups,
+                              caseInsensitive,
+                            ).matched,
+                          )
+                        : [];
+                      rememberWatermarkRemovalMaskBlocks(url, matchedBlocks);
                       const detectMsg = `${logPrefix} [WATERMARK] OCR命中去水印关键词: ${keywordMatch.matchedKeywords.join("、")}`;
                       console.log(`[OCR] ${detectMsg}`);
                       this.logger.info(detectMsg);
@@ -1437,6 +1460,7 @@ export class Bot {
                     const detection = detectTextWatermarkFromOCR(ocrResult);
                     if (detection.matched) {
                       markWatermarkRemovalTarget(url);
+                      rememberWatermarkRemovalMaskBlocks(url, detection.blocks);
                       const detectMsg = `${logPrefix} [WATERMARK] OCR检测到疑似水印: ${detection.texts.join("、")} (${detection.reason || "heuristic"})`;
                       console.log(`[OCR] ${detectMsg}`);
                       this.logger.info(detectMsg);
@@ -1466,6 +1490,7 @@ export class Bot {
                 const prepared = await prepareImageForOcrAndForward(attachment.url, {
                   shouldRemoveWatermark,
                   config: effectiveWatermarkRemoval,
+                  maskBlocks: getWatermarkRemovalMaskBlocks(attachment.url),
                 });
                 const preparedAsset: PreparedImageAsset = {
                   ...attachment,

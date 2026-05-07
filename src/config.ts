@@ -208,12 +208,19 @@ export interface WatermarkConfig {
 export type WatermarkList = WatermarkConfig[];
 
 export type WatermarkRemovalMode = "ocr" | "always";
+export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
+export type IOPaintModel = "lama" | "migan" | "mat";
+export type IOPaintStrategy = "crop" | "resize" | "original";
 
 export interface WatermarkRemovalConfig {
   enabled?: boolean;
   mode?: WatermarkRemovalMode;
+  provider?: WatermarkRemovalProvider;
   apiKey?: string;
   triggerKeywords?: string[];
+  iopaintModel?: IOPaintModel;
+  iopaintStrategy?: IOPaintStrategy;
+  iopaintMaskPadding?: number;
 }
 
 export type ScheduledMediaType = "image" | "video";
@@ -630,7 +637,15 @@ function createDefaultAccount(): AccountConfig {
     ocrServerUrl: "http://localhost:9003",
     ocrBlockedKeywords: [],
     ocrTriggerKeywords: [],
-    watermarkRemoval: { enabled: false, mode: "ocr", apiKey: undefined, triggerKeywords: [] },
+    watermarkRemoval: {
+      enabled: false,
+      mode: "ocr",
+      provider: "iopaint",
+      apiKey: undefined,
+      triggerKeywords: [],
+      iopaintModel: "lama",
+      iopaintStrategy: "crop",
+    },
     discordLogin: undefined,
     botRelays: [],
     channelRelayMap: {},
@@ -780,18 +795,39 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
   const mode: WatermarkRemovalMode = raw.mode === "ocr" ? "ocr" : "always";
+  const provider: WatermarkRemovalProvider = raw.provider === "iopaint" ? "iopaint" : apiKey ? "wavespeed" : "iopaint";
   const triggerKeywords = Array.isArray(raw.triggerKeywords)
     ? raw.triggerKeywords.map((item: any) => String(item || "").trim()).filter(Boolean)
     : undefined;
-  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey);
-  if (!enabled && !apiKey && raw.mode === undefined && triggerKeywords === undefined) {
+  const iopaintModel: IOPaintModel = raw.iopaintModel === "migan" || raw.iopaintModel === "mat" ? raw.iopaintModel : "lama";
+  const iopaintStrategy: IOPaintStrategy =
+    raw.iopaintStrategy === "resize" || raw.iopaintStrategy === "original" ? raw.iopaintStrategy : "crop";
+  const parsedMaskPadding = Number(raw.iopaintMaskPadding);
+  const iopaintMaskPadding = Number.isFinite(parsedMaskPadding) && parsedMaskPadding >= 0
+    ? Math.floor(parsedMaskPadding)
+    : undefined;
+  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey || provider === "iopaint");
+  if (
+    !enabled &&
+    !apiKey &&
+    raw.mode === undefined &&
+    raw.provider === undefined &&
+    triggerKeywords === undefined &&
+    raw.iopaintModel === undefined &&
+    raw.iopaintStrategy === undefined &&
+    raw.iopaintMaskPadding === undefined
+  ) {
     return undefined;
   }
   return {
     enabled,
     mode,
+    provider,
     apiKey,
     triggerKeywords,
+    iopaintModel: provider === "iopaint" ? iopaintModel : undefined,
+    iopaintStrategy: provider === "iopaint" ? iopaintStrategy : undefined,
+    iopaintMaskPadding: provider === "iopaint" ? iopaintMaskPadding : undefined,
   };
 }
 
@@ -2026,7 +2062,15 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       excludeKeywords: [],
       ocrBlockedKeywords: [],
       ocrTriggerKeywords: [],
-      watermarkRemoval: { enabled: false, mode: "ocr", apiKey: undefined, triggerKeywords: [] },
+      watermarkRemoval: {
+        enabled: false,
+        mode: "ocr",
+        provider: "iopaint",
+        apiKey: undefined,
+        triggerKeywords: [],
+        iopaintModel: "lama",
+        iopaintStrategy: "crop",
+      },
       showSourceIdentity: false,
       publicBaseUrl: undefined,
       replacementsDictionary: {},

@@ -35,6 +35,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "账号不存在" }, { status: 404 });
     }
 
+    if (account.watermarkRemoval?.provider === "iopaint") {
+      return NextResponse.json({ error: "IOPaint 本地模型没有余额查询" }, { status: 400 });
+    }
+
     const apiKey = String(account.watermarkRemoval?.apiKey || "").trim();
     if (!apiKey) {
       return NextResponse.json({ error: "未配置 WaveSpeed API Key" }, { status: 400 });

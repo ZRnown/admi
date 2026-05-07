@@ -23,6 +23,7 @@ test("resolveWatermarkRemovalConfig merges global api key with rule mode overrid
   assert.deepEqual(resolved, {
     enabled: true,
     mode: "ocr",
+    provider: "wavespeed",
     apiKey: "global-key",
     triggerKeywords: undefined,
   });
@@ -112,6 +113,7 @@ test("resolveWatermarkRemovalConfig carries explicit trigger keywords", () => {
   assert.deepEqual(resolved, {
     enabled: true,
     mode: "ocr",
+    provider: "wavespeed",
     apiKey: "global-key",
     triggerKeywords: ["视频号"],
   });
@@ -149,6 +151,58 @@ test("shouldPersistWatermarkRemovalConfig drops empty config", () => {
   );
 });
 
+
+
+test("resolveWatermarkRemovalConfig enables IOPaint without Wavespeed key", () => {
+  const resolved = resolveWatermarkRemovalConfig({
+    enabled: true,
+    mode: "ocr",
+    provider: "iopaint",
+    iopaintModel: "migan",
+    iopaintStrategy: "crop",
+  });
+
+  assert.deepEqual(resolved, {
+    enabled: true,
+    mode: "ocr",
+    provider: "iopaint",
+    iopaintModel: "migan",
+    iopaintStrategy: "crop",
+    apiKey: undefined,
+    triggerKeywords: undefined,
+  });
+});
+
+test("resolveWatermarkRemovalConfig keeps Wavespeed compatible when api key exists", () => {
+  const resolved = resolveWatermarkRemovalConfig({ enabled: true, mode: "always", apiKey: "global-key" });
+
+  assert.equal(resolved?.provider, "wavespeed");
+  assert.equal(resolved?.apiKey, "global-key");
+});
+
+test("shouldPersistWatermarkRemovalConfig keeps IOPaint model and strategy", () => {
+  assert.equal(
+    shouldPersistWatermarkRemovalConfig({ provider: "iopaint", iopaintModel: "lama", iopaintStrategy: "resize" }),
+    true,
+  );
+});
+
+test("detectTextWatermarkFromOCR returns matched blocks for local masks", () => {
+  const block = {
+    text: "@myshop",
+    score: 0.98,
+    box: [
+      [870, 920],
+      [980, 920],
+      [980, 960],
+      [870, 960],
+    ],
+  };
+  const result = detectTextWatermarkFromOCR({ code: 0, msg: "ok", data: [block] });
+
+  assert.equal(result.matched, true);
+  assert.deepEqual(result.blocks, [block]);
+});
 
 test("shouldRetryWaveSpeedStatus retries timeout and server errors only", () => {
   assert.equal(shouldRetryWaveSpeedStatus(504), true);

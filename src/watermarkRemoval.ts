@@ -1,10 +1,24 @@
+import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import Jimp from "jimp";
+
 export type WatermarkRemovalMode = "ocr" | "always";
+export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
+export type IOPaintModel = "lama" | "migan" | "mat";
+export type IOPaintStrategy = "crop" | "resize" | "original";
 
 export interface WatermarkRemovalConfig {
   enabled?: boolean;
   mode?: WatermarkRemovalMode;
+  provider?: WatermarkRemovalProvider;
   apiKey?: string;
   triggerKeywords?: string[];
+  iopaintModel?: IOPaintModel;
+  iopaintStrategy?: IOPaintStrategy;
+  iopaintMaskPadding?: number;
 }
 
 export interface OcrTextBlock {
@@ -23,6 +37,7 @@ export interface WatermarkDetectionResult {
   matched: boolean;
   reason?: string;
   texts: string[];
+  blocks?: OcrTextBlock[];
 }
 
 export type KeywordGroup = string[];
@@ -46,7 +61,8 @@ export interface PreparedImageForOcrAndForward {
 export interface PrepareImageForOcrOptions {
   shouldRemoveWatermark: boolean;
   config?: WatermarkRemovalConfig;
-  removeWatermark?: (imageUrl: string, config?: WatermarkRemovalConfig) => Promise<string>;
+  maskBlocks?: OcrTextBlock[];
+  removeWatermark?: (imageUrl: string, config?: WatermarkRemovalConfig, maskBlocks?: OcrTextBlock[]) => Promise<string>;
 }
 interface WaveSpeedRateLimitOptions {
   now?: () => number;
@@ -60,6 +76,13 @@ const WAVESPEED_ENDPOINT = "https://api.wavespeed.ai/api/v3/wavespeed-ai/image-w
 const WAVESPEED_MIN_INTERVAL_MS = parseNonNegativeInt(process.env.WAVESPEED_MIN_INTERVAL_MS, 2000);
 const WAVESPEED_RATE_LIMIT_WINDOW_MS = parseNonNegativeInt(process.env.WAVESPEED_RATE_LIMIT_WINDOW_MS, 60_000);
 const WAVESPEED_RATE_LIMIT_MAX_REQUESTS = parseNonNegativeInt(process.env.WAVESPEED_RATE_LIMIT_MAX_REQUESTS, 10);
+const IOPAINT_BIN = process.env.IOPAINT_BIN || "/root/iopaint-test/bin/iopaint";
+const IOPAINT_DEVICE = process.env.IOPAINT_DEVICE || "cpu";
+const IOPAINT_MODEL_DIR = process.env.IOPAINT_MODEL_DIR || "/root/iopaint-model-cache";
+const IOPAINT_TIMEOUT_MS = parseNonNegativeInt(process.env.IOPAINT_TIMEOUT_MS, 120_000);
+const IOPAINT_MASK_PADDING = parseNonNegativeInt(process.env.IOPAINT_MASK_PADDING, 18);
+const IOPAINT_WORK_DIR = process.env.IOPAINT_WORK_DIR || path.join(process.cwd(), ".data", "iopaint_jobs");
+const IOPAINT_OUTPUT_DIR = process.env.IOPAINT_OUTPUT_DIR || path.join(process.cwd(), ".data", "watermark_removed");
 const URL_RE = /^https?:\/\//i;
 const WATERMARK_HINT_RE =
   /(?:watermark|logo|@|抖音|douyin|tiktok|小红书|xhs|快手|kuaishou|bilibili|b站|微博|weibo|视频号|公众号|微信|vx|wx|ins|instagram|telegram|tg|店铺|同款|关注|原创|搬运|出处)/i;
@@ -88,6 +111,27 @@ function normalizeTriggerKeywords(input?: unknown): string[] | undefined {
   if (!Array.isArray(input)) return undefined;
   const result = input.map((item) => String(item || "").trim()).filter(Boolean);
   return result.length > 0 ? result : [];
+}
+
+function normalizeWatermarkRemovalProvider(input: unknown, apiKey?: string): WatermarkRemovalProvider {
+  if (input === "iopaint") return "iopaint";
+  return apiKey ? "wavespeed" : input === "wavespeed" ? "wavespeed" : "iopaint";
+}
+
+function normalizeIOPaintModel(input: unknown): IOPaintModel {
+  if (input === "migan" || input === "mat") return input;
+  return "lama";
+}
+
+function normalizeIOPaintStrategy(input: unknown): IOPaintStrategy {
+  if (input === "resize" || input === "original") return input;
+  return "crop";
+}
+
+function normalizeOptionalNonNegativeInt(input: unknown): number | undefined {
+  const value = Number(input);
+  if (!Number.isFinite(value) || value < 0) return undefined;
+  return Math.floor(value);
 }
 
 function normalizeMatchText(value: string, caseInsensitive: boolean): string {
@@ -136,29 +180,48 @@ export function resolveWatermarkRemovalConfig(
   };
 
   const apiKey = firstNonEmptyString(merged.apiKey);
-  const enabled = merged.enabled === true ? true : merged.enabled === false ? false : Boolean(apiKey);
-  if (!enabled || !apiKey) {
+  const provider = normalizeWatermarkRemovalProvider(merged.provider, apiKey);
+  const enabled = merged.enabled === true ? true : merged.enabled === false ? false : Boolean(apiKey || provider === "iopaint");
+  if (!enabled) {
+    return undefined;
+  }
+  if (provider === "wavespeed" && !apiKey) {
     return undefined;
   }
 
-  return {
+  const resolved: WatermarkRemovalConfig = {
     enabled: true,
     mode: merged.mode === "ocr" ? "ocr" : "always",
+    provider,
     apiKey,
     triggerKeywords: normalizeTriggerKeywords(merged.triggerKeywords),
   };
+  if (provider === "iopaint") {
+    resolved.iopaintModel = normalizeIOPaintModel(merged.iopaintModel);
+    resolved.iopaintStrategy = normalizeIOPaintStrategy(merged.iopaintStrategy);
+    const maskPadding = normalizeOptionalNonNegativeInt(merged.iopaintMaskPadding);
+    if (maskPadding !== undefined) {
+      resolved.iopaintMaskPadding = maskPadding;
+    }
+  }
+  return resolved;
 }
 
 export function shouldUseOcrWatermarkDetection(config?: WatermarkRemovalConfig): boolean {
-  return config?.enabled === true && config.mode === "ocr" && typeof config.apiKey === "string" && config.apiKey.trim().length > 0;
+  const resolved = resolveWatermarkRemovalConfig(config);
+  return resolved?.enabled === true && resolved.mode === "ocr";
 }
 
 export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalConfig): boolean {
   if (!config || typeof config !== "object") return false;
   if (config.enabled === true || config.enabled === false) return true;
   if (config.mode === "ocr" || config.mode === "always") return true;
+  if (config.provider === "wavespeed" || config.provider === "iopaint") return true;
   if (typeof config.apiKey === "string" && config.apiKey.trim().length > 0) return true;
   if (Array.isArray(config.triggerKeywords) && config.triggerKeywords.length > 0) return true;
+  if (config.iopaintModel === "lama" || config.iopaintModel === "migan" || config.iopaintModel === "mat") return true;
+  if (config.iopaintStrategy === "crop" || config.iopaintStrategy === "resize" || config.iopaintStrategy === "original") return true;
+  if (typeof config.iopaintMaskPadding === "number" && Number.isFinite(config.iopaintMaskPadding)) return true;
   return false;
 }
 
@@ -192,7 +255,7 @@ export async function prepareImageForOcrAndForward(
 
   try {
     const removeWatermark = options.removeWatermark ?? removeWatermarkFromImageUrl;
-    const resolvedUrl = await removeWatermark(imageUrl, options.config);
+    const resolvedUrl = await removeWatermark(imageUrl, options.config, options.maskBlocks);
     if (typeof resolvedUrl === "string" && resolvedUrl.trim()) {
       prepared.forwardUrl = resolvedUrl;
       prepared.ocrUrl = resolvedUrl;
@@ -279,6 +342,7 @@ export function detectTextWatermarkFromOCR(result: OcrLikeResult | null | undefi
         matched: true,
         reason: reasons.join("+"),
         texts: [rawText],
+        blocks: [item.block],
       };
     }
   }
@@ -324,6 +388,213 @@ export function extractWavespeedOutputUrl(payload: unknown): string | undefined 
   const results: string[] = [];
   collectUrls(payload, results);
   return results[0];
+}
+
+function normalizeLocalFilePath(input: string): string {
+  if (input.startsWith("file://")) {
+    return fileURLToPath(input);
+  }
+  return input;
+}
+
+function isLocalReadableUrl(input: string): boolean {
+  return input.startsWith("file://") || path.isAbsolute(input);
+}
+
+function resolveOutputPublicBaseUrl(): string | undefined {
+  return firstNonEmptyString(
+    process.env.WATERMARK_REMOVED_BASE_URL,
+    process.env.PUBLIC_BASE_URL,
+    process.env.NEXT_PUBLIC_BASE_URL,
+    process.env.BASE_URL,
+  );
+}
+
+function buildRemovedImageUrl(filename: string): string {
+  const baseUrl = resolveOutputPublicBaseUrl();
+  if (!baseUrl) {
+    return `file://${path.join(IOPAINT_OUTPUT_DIR, filename)}`;
+  }
+  return new URL(`/api/watermark/removed/${encodeURIComponent(filename)}`, baseUrl).toString();
+}
+
+function strategyToIOPaintValue(strategy?: IOPaintStrategy): "Crop" | "Resize" | "Original" {
+  if (strategy === "resize") return "Resize";
+  if (strategy === "original") return "Original";
+  return "Crop";
+}
+
+function fileExtensionFromUrl(imageUrl: string): string {
+  try {
+    const pathname = isLocalReadableUrl(imageUrl) ? normalizeLocalFilePath(imageUrl) : new URL(imageUrl).pathname;
+    const ext = path.extname(pathname).toLowerCase();
+    if ([".png", ".jpg", ".jpeg", ".webp"].includes(ext)) return ext;
+  } catch {}
+  return ".png";
+}
+
+function extractMaskBoxes(blocks?: OcrTextBlock[]): Array<{ minX: number; minY: number; maxX: number; maxY: number }> {
+  if (!Array.isArray(blocks)) return [];
+  return blocks
+    .map((block) => extractBoxMetrics(block))
+    .filter((metrics): metrics is NonNullable<ReturnType<typeof extractBoxMetrics>> => Boolean(metrics))
+    .map((metrics) => ({
+      minX: metrics.minX,
+      minY: metrics.minY,
+      maxX: metrics.maxX,
+      maxY: metrics.maxY,
+    }));
+}
+
+async function createMaskForImage(imagePath: string, maskPath: string, blocks: OcrTextBlock[] | undefined, padding: number): Promise<void> {
+  const image = await Jimp.read(imagePath);
+  const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
+  const boxes = extractMaskBoxes(blocks);
+
+  if (boxes.length === 0) {
+    const width = Math.max(1, Math.round(image.bitmap.width * 0.46));
+    const height = Math.max(1, Math.round(image.bitmap.height * 0.22));
+    const x = Math.max(0, image.bitmap.width - width);
+    const y = Math.max(0, image.bitmap.height - height);
+    mask.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
+      mask.bitmap.data[idx] = 255;
+      mask.bitmap.data[idx + 1] = 255;
+      mask.bitmap.data[idx + 2] = 255;
+      mask.bitmap.data[idx + 3] = 255;
+    });
+    await mask.writeAsync(maskPath);
+    return;
+  }
+
+  for (const box of boxes) {
+    const x = Math.max(0, Math.floor(box.minX - padding));
+    const y = Math.max(0, Math.floor(box.minY - padding));
+    const right = Math.min(image.bitmap.width, Math.ceil(box.maxX + padding));
+    const bottom = Math.min(image.bitmap.height, Math.ceil(box.maxY + padding));
+    const width = Math.max(1, right - x);
+    const height = Math.max(1, bottom - y);
+    mask.scan(x, y, width, height, (_x: number, _y: number, idx: number) => {
+      mask.bitmap.data[idx] = 255;
+      mask.bitmap.data[idx + 1] = 255;
+      mask.bitmap.data[idx + 2] = 255;
+      mask.bitmap.data[idx + 3] = 255;
+    });
+  }
+
+  await mask.writeAsync(maskPath);
+}
+
+function runCommand(command: string, args: string[], options: { cwd?: string; timeoutMs?: number } = {}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`IOPaint timed out after ${options.timeoutMs}ms`));
+    }, options.timeoutMs ?? IOPAINT_TIMEOUT_MS);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`IOPaint failed ${code}: ${(stderr || stdout).slice(0, 800)}`));
+    });
+  });
+}
+
+async function removeWatermarkWithIOPaint(
+  imageUrl: string,
+  config: WatermarkRemovalConfig,
+  maskBlocks?: OcrTextBlock[],
+): Promise<string> {
+  const effective = resolveWatermarkRemovalConfig(config);
+  if (!effective || effective.provider !== "iopaint") return imageUrl;
+
+  const jobId = randomUUID();
+  const workDir = path.join(IOPAINT_WORK_DIR, jobId);
+  const inputDir = path.join(workDir, "input");
+  const maskDir = path.join(workDir, "mask");
+  const outputDir = path.join(workDir, "output");
+  await Promise.all([
+    fs.mkdir(inputDir, { recursive: true }),
+    fs.mkdir(maskDir, { recursive: true }),
+    fs.mkdir(outputDir, { recursive: true }),
+    fs.mkdir(IOPAINT_OUTPUT_DIR, { recursive: true }),
+  ]);
+
+  const ext = fileExtensionFromUrl(imageUrl);
+  const inputPath = path.join(inputDir, `image${ext}`);
+  const maskPath = path.join(maskDir, "image.png");
+  const configPath = path.join(workDir, "config.json");
+
+  try {
+    const buffer = isLocalReadableUrl(imageUrl)
+      ? await fs.readFile(normalizeLocalFilePath(imageUrl))
+      : await downloadBufferFromUrl(imageUrl);
+    await fs.writeFile(inputPath, buffer);
+    const padding = effective.iopaintMaskPadding ?? IOPAINT_MASK_PADDING;
+    await createMaskForImage(inputPath, maskPath, maskBlocks, padding);
+    await fs.writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          hd_strategy: strategyToIOPaintValue(effective.iopaintStrategy),
+          hd_strategy_crop_trigger_size: 800,
+          hd_strategy_crop_margin: 128,
+          hd_strategy_resize_limit: 1280,
+        },
+        null,
+        2,
+      ),
+    );
+
+    await runCommand(
+      IOPAINT_BIN,
+      [
+        "run",
+        "--model",
+        effective.iopaintModel || "lama",
+        "--device",
+        IOPAINT_DEVICE,
+        "--image",
+        inputDir,
+        "--mask",
+        maskDir,
+        "--output",
+        outputDir,
+        "--config",
+        configPath,
+        "--model-dir",
+        IOPAINT_MODEL_DIR,
+      ],
+      { timeoutMs: IOPAINT_TIMEOUT_MS },
+    );
+
+    const generatedPath = path.join(outputDir, "image.png");
+    const filename = `${Date.now()}_${jobId.slice(0, 8)}.png`;
+    const savedPath = path.join(IOPAINT_OUTPUT_DIR, filename);
+    await fs.copyFile(generatedPath, savedPath);
+    return buildRemovedImageUrl(filename);
+  } finally {
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -419,9 +690,21 @@ async function requestJson(url: string, init: RequestInit): Promise<any> {
 export async function removeWatermarkFromImageUrl(
   imageUrl: string,
   config?: WatermarkRemovalConfig,
+  maskBlocks?: OcrTextBlock[],
 ): Promise<string> {
   const effective = resolveWatermarkRemovalConfig(config);
-  if (!effective || !imageUrl || !URL_RE.test(imageUrl)) {
+  if (!effective || !imageUrl) {
+    return imageUrl;
+  }
+
+  if (effective.provider === "iopaint") {
+    if (!URL_RE.test(imageUrl) && !isLocalReadableUrl(imageUrl)) {
+      return imageUrl;
+    }
+    return removeWatermarkWithIOPaint(imageUrl, effective, maskBlocks);
+  }
+
+  if (!URL_RE.test(imageUrl)) {
     return imageUrl;
   }
 
