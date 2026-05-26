@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>OCR关键词调试</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .keyword { background: #fef3c7; padding: 4px 8px; margin: 4px; border-radius: 4px; display: inline-block; }
+        .error { color: red; }
+        .success { color: green; }
+        .log { font-family: monospace; font-size: 12px; background: #f3f4f6; padding: 10px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h2>OCR关键词测试（带调试）</h2>
+    
+    <div>
+        <label>关键词列表：</label>
+        <div id="keywordList"></div>
+    </div>
+    
+    <div style="margin: 20px 0;">
+        <input type="text" id="keywordInput" placeholder="输入关键词后按回车" style="padding: 8px; width: 300px;">
+        <button onclick="simulateAdd()" style="padding: 8px 16px;">模拟添加</button>
+        <button onclick="simulateRefresh()" style="padding: 8px 16px;">模拟刷新</button>
+    </div>
+    
+    <div id="log" class="log"></div>
+    
+    <script>
+        let keywords = [];
+        let logContainer = document.getElementById('log');
+        
+        function log(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            div.className = type;
+            logContainer.appendChild(div);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(msg);
+        }
+        
+        function render() {
+            const list = document.getElementById('keywordList');
+            list.innerHTML = keywords.map(k => 
+                `<span class="keyword">${k} <button onclick="removeKeyword('${k}')">×</button></span>`
+            ).join('');
+            log('渲染完成，关键词数量: ' + keywords.length);
+        }
+        
+        async function addKeyword(value) {
+            if (!value.trim()) {
+                log('关键词为空，跳过', 'error');
+                return;
+            }
+            if (keywords.includes(value.trim())) {
+                log('关键词已存在: ' + value, 'error');
+                alert('该关键词已存在');
+                return;
+            }
+            log('开始添加关键词: ' + value);
+            keywords.push(value.trim());
+            render();
+            
+            log('模拟保存到服务器...', 'info');
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 模拟网络延迟
+            log('保存完成！', 'success');
+        }
+        
+        function removeKeyword(keyword) {
+            log('删除关键词: ' + keyword);
+            keywords = keywords.filter(k => k !== keyword);
+            render();
+        }
+        
+        async function simulateAdd() {
+            const input = document.getElementById('keywordInput');
+            const value = input.value.trim();
+            if (!value) {
+                alert('请输入关键词');
+                return;
+            }
+            input.value = ''; // 立即清空输入框
+            try {
+                await addKeyword(value);
+            } catch (e) {
+                log('添加失败: ' + e, 'error');
+            }
+        }
+        
+        function simulateRefresh() {
+            log('模拟页面刷新...');
+            keywords = []; // 清空内存中的数据
+            log('模拟从服务器加载: []', 'info');
+            render(); // 重新渲染（会显示空列表）
+        }
+        
+        document.getElementById('keywordInput').addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                const input = e.target;
+                const value = input.value;
+                input.value = ''; // 立即清空
+                log('回车键触发，输入框已清空: ' + value);
+                try {
+                    await addKeyword(value);
+                } catch (err) {
+                    log('添加失败: ' + err, 'error');
+                }
+            }
+        });
+        
+        render();
+        log('初始化完成');
+    </script>
+</body>
+</html>

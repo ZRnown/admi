@@ -5,6 +5,7 @@ import nodeHttps from "https";
 import nodeHttp from "http"; // 新增引入 http
 
 import nodeUrl from "url";
+import { matchKeywordGroups } from "./keywordMatcher.js";
 
 export interface OCRResult {
   code: number;
@@ -45,7 +46,7 @@ export class OCRClient {
       console.log(`[OCR] 识别完成，检测到 ${textCount} 个文本块`);
 
       if (result?.data && result.data.length > 0) {
-        const allText = result.data.map(item => item.text).join(' ');
+        const allText = OCRClient.extractText(result);
         console.log(`[OCR] 识别到的文字: "${allText.substring(0, 200)}${allText.length > 200 ? '...' : ''}"`);
       }
 
@@ -55,6 +56,25 @@ export class OCRClient {
       console.error(`[OCR] 错误类型: ${error.constructor.name}`);
       console.error(`[OCR] 错误详情:`, error);
       console.error(`[OCR] 错误堆栈: ${error.stack}`);
+      return null;
+    }
+  }
+
+  /**
+   * 识别本地文件中的文字
+   * @param filePath 本地文件路径
+   */
+  async recognizeLocalFile(filePath: string): Promise<OCRResult | null> {
+    try {
+      console.log(`[OCR] 开始识别本地文件: ${filePath}`);
+      const imageBuffer = await fs.readFile(filePath);
+      const maxSize = 10 * 1024 * 1024;
+      if (imageBuffer.length > maxSize) {
+        throw new Error(`图片过大 (${(imageBuffer.length / 1024 / 1024).toFixed(1)}MB)，跳过OCR识别`);
+      }
+      return await this.callOCRAPI(imageBuffer);
+    } catch (error: any) {
+      console.error(`[OCR] 本地文件识别失败: ${error.message}`);
       return null;
     }
   }
@@ -182,26 +202,26 @@ export class OCRClient {
    */
   checkOCRKeywords(
     ocrResult: OCRResult | null,
-    blockedKeywords: string[]
+    blockedKeywords: string[],
+    options?: { caseInsensitive?: boolean },
   ): { shouldBlock: boolean; matchedKeywords: string[] } {
-    if (!ocrResult?.data || ocrResult.data.length === 0) {
+    const allText = OCRClient.extractText(ocrResult);
+    if (!allText) {
       return { shouldBlock: false, matchedKeywords: [] };
     }
 
-    // 收集所有识别到的文本
-    const allText = ocrResult.data.map(item => item.text).join(" ");
-    const lowerText = allText.toLowerCase();
-
-    // 检查是否应该被屏蔽
-    if (blockedKeywords.length > 0) {
-      const matchedBlocked = blockedKeywords.filter(keyword =>
-        lowerText.includes(keyword.toLowerCase())
-      );
-      if (matchedBlocked.length > 0) {
-        return { shouldBlock: true, matchedKeywords: matchedBlocked };
-      }
+    const { matchedGroups, matchedKeywords } = matchKeywordGroups(allText, blockedKeywords, options);
+    if (matchedGroups.length > 0) {
+      return { shouldBlock: true, matchedKeywords };
     }
 
     return { shouldBlock: false, matchedKeywords: [] };
+  }
+
+  static extractText(ocrResult: OCRResult | null): string {
+    if (!ocrResult?.data || ocrResult.data.length === 0) {
+      return "";
+    }
+    return ocrResult.data.map(item => item.text).join(" ");
   }
 }

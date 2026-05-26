@@ -1,7 +1,64 @@
+import { promises as fs } from "node:fs";
 import https from "node:https";
-import { URL } from "node:url";
+import path from "node:path";
+import { URL, fileURLToPath } from "node:url";
 
-import { ChannelId } from "./config.js";
+import { ChannelId, WatermarkConfig } from "./config.js";
+import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark.js";
+import {
+  removeWatermarkFromImageUrl,
+  shouldApplyWatermarkAfterRemoval,
+  type WatermarkRemovalConfig,
+  type WatermarkRemovalRuntimeState,
+} from "./watermarkRemoval.js";
+import { formatSize } from "./format.js";
+import { stripLanguages } from "./languageFilter.js";
+import { normalizeUploadFileDescriptor } from "./uploadMediaMetadata.js";
+import { resolveWebhookIdentity } from "./webhookIdentity.js";
+import { applyReplacementDictionaryToEmbeds } from "./embedUtils.js";
+import { applyReplacementDictionary } from "./replacementDictionary.js";
+
+const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 30000;
+
+function looksLikeImage(buffer: Buffer): boolean {
+  if (!buffer || buffer.length < 12) return false;
+  // PNG
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return true;
+  }
+  // JPEG
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return true;
+  }
+  // GIF
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+    return true;
+  }
+  // BMP
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) {
+    return true;
+  }
+  // WebP (RIFF....WEBP)
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export class SenderBot {
   replacementsDictionary: Record<string, string> = {};
@@ -10,6 +67,9 @@ export class SenderBot {
   httpAgent?: unknown;
   webhookGuildId?: string;
   defaultChannelId?: string;
+  targetChannelId?: string;
+  authToken?: string;
+  authType?: "bot" | "selfbot";
   webhookName?: string;
   enableTranslation?: boolean;
   deepseekApiKey?: string;
@@ -18,6 +78,12 @@ export class SenderBot {
   translationSecret?: string;
   enableBotRelay?: boolean;
   botRelayToken?: string;
+  watermark?: WatermarkConfig;
+  watermarkSecondary?: WatermarkConfig;
+  watermarks?: WatermarkConfig[];
+  watermarkEnabled?: boolean;
+  targetWebhookName?: string;
+  targetWebhookAvatarUrl?: string;
 
   constructor(options: {
     replacementsDictionary?: Record<string, string>;
@@ -30,6 +96,15 @@ export class SenderBot {
     translationSecret?: string;
     enableBotRelay?: boolean;
     botRelayToken?: string;
+    targetChannelId?: string;
+    authToken?: string;
+    authType?: "bot" | "selfbot";
+    watermark?: WatermarkConfig;
+    watermarkSecondary?: WatermarkConfig;
+    watermarks?: WatermarkConfig[];
+    watermarkEnabled?: boolean;
+    targetWebhookName?: string;
+    targetWebhookAvatarUrl?: string;
   }) {
     this.replacementsDictionary = options.replacementsDictionary || {};
     this.webhookUrl = options.webhookUrl;
@@ -41,9 +116,202 @@ export class SenderBot {
     this.translationSecret = options.translationSecret;
     this.enableBotRelay = options.enableBotRelay || false;
     this.botRelayToken = options.botRelayToken;
+    this.targetChannelId = options.targetChannelId;
+    this.authToken = options.authToken;
+    this.authType = options.authType;
+    this.watermark = options.watermark;
+    this.watermarkSecondary = options.watermarkSecondary;
+    this.watermarks = options.watermarks;
+    this.watermarkEnabled = options.watermarkEnabled;
+    this.targetWebhookName = options.targetWebhookName;
+    this.targetWebhookAvatarUrl = options.targetWebhookAvatarUrl;
   }
 
-  private async postMultipart(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, wait = false): Promise<any> {
+  private hasDirectChannelTarget(): boolean {
+    return Boolean(this.targetChannelId && this.authToken);
+  }
+
+  private buildDiscordAuthorizationHeader(): string {
+    const rawToken = String(this.authToken || "").trim();
+    if (!rawToken) {
+      throw new Error("Discord auth token is not configured");
+    }
+    const strippedToken = rawToken.toLowerCase().startsWith("bot ") ? rawToken.slice(4).trim() : rawToken;
+    if (!strippedToken) {
+      throw new Error("Discord auth token is empty");
+    }
+    return this.authType === "bot" ? `Bot ${strippedToken}` : strippedToken;
+  }
+
+  private async postDirectMessage(
+    body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }>,
+    channelId?: string,
+  ): Promise<any> {
+    const resolvedChannelId = encodeURIComponent(String(channelId || this.targetChannelId || "").trim());
+    if (!resolvedChannelId) {
+      throw new Error("Discord target channel id is not configured");
+    }
+    const url = new URL(`https://discord.com/api/v10/channels/${resolvedChannelId}/messages`);
+    const authorization = this.buildDiscordAuthorizationHeader();
+
+    if (files.length > 0) {
+      const boundary = "----cascadeform" + Math.random().toString(16).slice(2);
+      const parts: Buffer[] = [];
+      const push = (chunk: string | Buffer) => parts.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+
+      push(`--${boundary}\r\n`);
+      push(`Content-Disposition: form-data; name="payload_json"\r\n`);
+      push(`Content-Type: application/json\r\n\r\n`);
+      push(JSON.stringify(body));
+      push(`\r\n`);
+
+      files.forEach((f, idx) => {
+        push(`--${boundary}\r\n`);
+        push(`Content-Disposition: form-data; name="files[${idx}]"; filename="${f.filename}"\r\n`);
+        push(`Content-Type: ${f.contentType || "application/octet-stream"}\r\n\r\n`);
+        push(f.buffer);
+        push(`\r\n`);
+      });
+
+      push(`--${boundary}--\r\n`);
+
+      const payload = Buffer.concat(parts);
+      const options: https.RequestOptions = {
+        method: "POST",
+        hostname: url.hostname,
+        path: url.pathname,
+        headers: {
+          "Authorization": authorization,
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": payload.byteLength,
+        },
+        agent: this.httpAgent as any,
+      };
+
+      return await new Promise<any>((resolve, reject) => {
+        const req = https.request(options, (res) => {
+          let responseBody = "";
+          res.on("data", (chunk) => (responseBody += chunk));
+          res.on("end", () => {
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                resolve(responseBody ? JSON.parse(responseBody) : null);
+              } catch {
+                resolve(null);
+              }
+              return;
+            }
+            reject(new Error(`Discord channel multipart failed ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`));
+          });
+        });
+        req.setTimeout(30000, () => {
+          req.destroy(new Error("Discord direct multipart request timeout"));
+        });
+        req.on("error", (err) => reject(err));
+        req.write(payload);
+        req.end();
+      });
+    }
+
+    const payload = JSON.stringify(body);
+    const options: https.RequestOptions = {
+      method: "POST",
+      hostname: url.hostname,
+      path: url.pathname,
+      headers: {
+        "Authorization": authorization,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+      agent: this.httpAgent as any,
+    };
+
+    return await new Promise<any>((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(responseBody ? JSON.parse(responseBody) : null);
+            } catch {
+              resolve(null);
+            }
+            return;
+          }
+          if (res.statusCode === 400 && body.message_reference) {
+            const retryBody = { ...body };
+            delete retryBody.message_reference;
+            this.postDirectMessage(retryBody, [], channelId).then(resolve).catch(reject);
+            return;
+          }
+          reject(new Error(`Discord direct request failed ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`));
+        });
+      });
+      req.setTimeout(30000, () => {
+        req.destroy(new Error("Discord direct request timeout"));
+      });
+      req.on("error", (err) => reject(err));
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private async patchDirectMessage(
+    channelId: string,
+    messageId: string,
+    body: Record<string, any>,
+  ): Promise<any> {
+    const safeChannelId = encodeURIComponent(String(channelId || this.targetChannelId || "").trim());
+    const safeMessageId = encodeURIComponent(String(messageId || "").trim());
+    if (!safeChannelId || !safeMessageId) {
+      throw new Error("Discord direct edit target is not configured");
+    }
+    const url = new URL(`https://discord.com/api/v10/channels/${safeChannelId}/messages/${safeMessageId}`);
+    const payload = JSON.stringify(body);
+    const options: https.RequestOptions = {
+      method: "PATCH",
+      hostname: url.hostname,
+      path: url.pathname,
+      headers: {
+        "Authorization": this.buildDiscordAuthorizationHeader(),
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+      agent: this.httpAgent as any,
+    };
+
+    return await new Promise<any>((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(responseBody ? JSON.parse(responseBody) : null);
+            } catch {
+              resolve(null);
+            }
+            return;
+          }
+          reject(new Error(`Discord direct edit failed ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`));
+        });
+      });
+      req.setTimeout(30000, () => {
+        req.destroy(new Error("Discord direct edit request timeout"));
+      });
+      req.on("error", (err) => reject(err));
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private async postMultipart(
+    body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }>,
+    wait = false,
+  ): Promise<any> {
     const url = new URL(this.webhookUrl);
     if (wait) url.searchParams.set("wait", "true");
 
@@ -63,7 +331,7 @@ export class SenderBot {
     files.forEach((f, idx) => {
       push(`--${boundary}\r\n`);
       push(`Content-Disposition: form-data; name="files[${idx}]"; filename="${f.filename}"\r\n`);
-      push(`Content-Type: application/octet-stream\r\n\r\n`);
+      push(`Content-Type: ${f.contentType || "application/octet-stream"}\r\n\r\n`);
       push(f.buffer);
       push(`\r\n`);
     });
@@ -109,19 +377,99 @@ export class SenderBot {
     });
   }
 
-  private async downloadUploads(uploads: Array<{ url: string; filename: string; isImage?: boolean }>): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean }>> {
-    const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean }> = [];
+  private async downloadUploads(
+    uploads: Array<{
+      url?: string;
+      localPath?: string;
+      filename: string;
+      isImage?: boolean;
+      watermarkRemoval?: WatermarkRemovalConfig;
+      watermarkRemovalState?: WatermarkRemovalRuntimeState;
+    }>,
+    watermark?: WatermarkConfig,
+    watermarkSecondary?: WatermarkConfig,
+    watermarks?: WatermarkConfig[],
+  ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean; contentType?: string }>> {
+    const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean; contentType?: string }> = [];
+    const effectiveWatermarks = this.watermarkEnabled === false
+      ? []
+      : resolveWatermarkList(
+          this.watermarks,
+          watermarks,
+          this.watermark,
+          watermark,
+          this.watermarkSecondary,
+          watermarkSecondary,
+        );
     for (const u of uploads) {
-      const buf = await this.downloadUrl(u.url);
-      results.push({ filename: u.filename, buffer: buf, isImage: u.isImage });
+      let buf: Buffer;
+      let resolvedUrl = u.url;
+      let removalAttempted = Boolean(u.watermarkRemovalState?.attempted);
+      let removalFailed = Boolean(u.watermarkRemovalState?.failed);
+      if (u.isImage && resolvedUrl && u.watermarkRemoval && !u.watermarkRemovalState) {
+        removalAttempted = true;
+        try {
+          resolvedUrl = await removeWatermarkFromImageUrl(resolvedUrl, u.watermarkRemoval);
+        } catch (error: any) {
+          removalFailed = true;
+          console.error(`[去水印] 处理失败，回退原图并跳过新水印: ${u.filename} ${String(error?.message || error)}`);
+          resolvedUrl = u.url;
+        }
+      }
+      if (u.localPath) {
+        buf = await this.readLocalFile(u.localPath);
+      } else if (resolvedUrl) {
+        if (resolvedUrl.startsWith("file://")) {
+          buf = await this.readLocalFile(fileURLToPath(resolvedUrl));
+        } else if (path.isAbsolute(resolvedUrl)) {
+          buf = await this.readLocalFile(resolvedUrl);
+        } else {
+          buf = await this.downloadUrl(resolvedUrl);
+        }
+      } else {
+        continue;
+      }
+      const isImageLike = Boolean(u.isImage || looksLikeImage(buf));
+      const shouldWatermark = shouldApplyWatermarkAfterRemoval({
+        hasWatermarks: effectiveWatermarks.length > 0,
+        isImage: isImageLike,
+        removalAttempted,
+        removalFailed,
+      });
+      let finalBuffer = buf;
+      if (shouldWatermark) {
+        finalBuffer = await applyWatermarksToBuffer(buf, effectiveWatermarks);
+        if (finalBuffer !== buf) {
+          console.log(
+            `[水印] 已处理图片: ${u.filename} (${formatSize(buf.length)} -> ${formatSize(finalBuffer.length)})`,
+          );
+        } else {
+          console.log(`[水印] 图片未发生变化: ${u.filename}`);
+        }
+      } else if (removalAttempted && removalFailed && effectiveWatermarks.length > 0 && isImageLike) {
+        console.warn(`[水印] 已跳过追加新水印: ${u.filename}（原因：去水印失败）`);
+      }
+      const normalizedFile = normalizeUploadFileDescriptor(u.filename, finalBuffer);
+      results.push({
+        filename: normalizedFile.filename,
+        buffer: finalBuffer,
+        isImage: isImageLike,
+        contentType: normalizedFile.contentType,
+      });
     }
     return results;
   }
 
+  private async readLocalFile(filePath: string): Promise<Buffer> {
+    const resolvedPath = filePath.startsWith("file://") ? fileURLToPath(filePath) : filePath;
+    const stat = await fs.stat(resolvedPath);
+    if (stat.size > MAX_UPLOAD_SIZE) {
+      throw new Error(`File too large (${stat.size} bytes)`);
+    }
+    return await fs.readFile(resolvedPath);
+  }
+
   private async downloadUrl(fileUrl: string): Promise<Buffer> {
-    // 定义最大下载大小 (15MB，留点 Buffer 给 Discord 的 25MB 限制)
-    const MAX_DOWNLOAD_SIZE = 15 * 1024 * 1024;
-    const DOWNLOAD_TIMEOUT_MS = 30000; // 30s
     const u = new URL(fileUrl);
     const options: https.RequestOptions = {
       method: "GET",
@@ -134,7 +482,7 @@ export class SenderBot {
       const req = https.request(options, (res) => {
         // 检查 Content-Length (如果有)
         const sizeStr = res.headers['content-length'];
-        if (sizeStr && parseInt(sizeStr) > MAX_DOWNLOAD_SIZE) {
+        if (sizeStr && parseInt(sizeStr) > MAX_UPLOAD_SIZE) {
           req.destroy();
           return reject(new Error(`File too large (${sizeStr} bytes)`));
         }
@@ -144,7 +492,7 @@ export class SenderBot {
         
         res.on("data", (d: Buffer) => {
           total += d.length;
-          if (total > MAX_DOWNLOAD_SIZE) {
+          if (total > MAX_UPLOAD_SIZE) {
             req.destroy();
             reject(new Error("File download exceeded size limit"));
             return;
@@ -164,6 +512,10 @@ export class SenderBot {
   }
 
   async prepare() {
+    if (this.hasDirectChannelTarget()) {
+      this.defaultChannelId = this.targetChannelId;
+      return;
+    }
     // 读取 webhook 元信息，拿到 guild_id、默认 channel_id 和名称
     try {
       const info = await this.getWebhookInfo();
@@ -207,7 +559,7 @@ export class SenderBot {
    * - 中英混合：按占比，中文多则翻译成英文，英文多则翻译成中文
    * - 都很少：不翻译
    */
-  private chooseTranslateTarget(text: string): "zh" | "en" | null {
+  public chooseTranslateTarget(text: string): "zh" | "en" | null {
     const { chineseRatio, englishRatio } = this.languageStats(text);
     if (chineseRatio > 0.5) return null;
     if (englishRatio >= 0.5) return "zh";
@@ -220,7 +572,7 @@ export class SenderBot {
   /**
    * 调用翻译 API 进行翻译（支持多个翻译服务）
    */
-  private async translateText(text: string, target: "zh" | "en" | "zh-en" | "en-zh"): Promise<string | null> {
+  public async translateText(text: string, target: "zh" | "en" | "zh-en" | "en-zh"): Promise<string | null> {
     if (!text || text.length < 2) {
       return null; // 忽略太短的
     }
@@ -570,12 +922,28 @@ export class SenderBot {
     replyToTarget?: { channelId: string; messageId: string };
     useEmbed?: boolean;
     extraEmbeds?: any[];
-    uploads?: Array<{ url: string; filename: string; isImage?: boolean; isVideo?: boolean }>;
+    uploads?: Array<{
+      url?: string;
+      localPath?: string;
+      filename: string;
+      isImage?: boolean;
+      isVideo?: boolean;
+      watermarkRemoval?: WatermarkRemovalConfig;
+      watermarkRemovalState?: WatermarkRemovalRuntimeState;
+    }>;
     components?: any[];
     // 可选：覆盖当前消息是否启用翻译；未设置则沿用实例级 enableTranslation
     enableTranslationOverride?: boolean;
     // 可选：覆盖翻译方向
     translationDirection?: "auto" | "zh-en" | "en-zh" | "off";
+    // 可选：规则级别的替换字典
+    ruleReplacementsDictionary?: Record<string, string>;
+    stripEnglish?: boolean;
+    stripChinese?: boolean;
+    // 可选：规则级别水印配置
+    watermark?: WatermarkConfig;
+    watermarkSecondary?: WatermarkConfig;
+    watermarks?: WatermarkConfig[];
   }>) {
     if (messagesToSend.length == 0) return;
 
@@ -589,10 +957,12 @@ export class SenderBot {
     // 注意：分片消息的分片之间仍需保持顺序，但不同消息可以并行
     const processedMessages = await Promise.all(
       messagesToSend.map(async (item) => {
-      let text = item.content || "";
-      for (const [a, b] of Object.entries(this.replacementsDictionary)) {
-        text = text.replaceAll(a, b);
-      }
+      let text = String(applyReplacementDictionary(item.content || "", this.replacementsDictionary));
+      text = String(applyReplacementDictionary(text, item.ruleReplacementsDictionary));
+      const replacedExtraEmbeds = applyReplacementDictionaryToEmbeds(
+        applyReplacementDictionaryToEmbeds(item.extraEmbeds, this.replacementsDictionary),
+        item.ruleReplacementsDictionary,
+      );
 
         // 如果启用了翻译，尝试翻译文本；已含分隔线视为已翻译，跳过
         const alreadyTranslated = text.includes("\n---\n");
@@ -626,6 +996,13 @@ export class SenderBot {
         }
       }
 
+      if (item.stripEnglish || item.stripChinese) {
+        text = stripLanguages(text, {
+          stripEnglish: item.stripEnglish,
+          stripChinese: item.stripChinese,
+        });
+      }
+
       // Discord limits: content 2000, embed.description 4096
       const MESSAGE_CHUNK = item.useEmbed ? 4096 : 2000;
       // 判断是否只有 embeds：无论 useEmbed 是否为 true，只要有 extraEmbeds 且没有文本内容，就认为是 only embeds
@@ -641,6 +1018,7 @@ export class SenderBot {
         return {
           item,
           text,
+          replacedExtraEmbeds,
           loopCount,
           hasUploads,
           hasOnlyEmbeds,
@@ -654,7 +1032,7 @@ export class SenderBot {
     const sendPromises = processedMessages
       .filter((msg): msg is NonNullable<typeof msg> => msg !== null)
       .map(async (processed) => {
-        const { item, text, loopCount, hasUploads, hasOnlyEmbeds, MESSAGE_CHUNK } = processed;
+        const { item, text, replacedExtraEmbeds, loopCount, hasUploads, hasOnlyEmbeds, MESSAGE_CHUNK } = processed;
         const itemResults: Array<{
           sourceMessageId?: string;
           targetMessageId: string;
@@ -669,7 +1047,12 @@ export class SenderBot {
           
         if (hasUploads) {
           // Build multipart form with files and payload_json
-          const files = await this.downloadUploads(item.uploads!);
+          const files = await this.downloadUploads(
+            item.uploads!,
+            item.watermark,
+            item.watermarkSecondary,
+            item.watermarks,
+          );
           const desc = (chunk || "").slice(0, 4096);
           const embed: any = {};
           if (item.useEmbed && desc.trim() !== "") {
@@ -684,16 +1067,22 @@ export class SenderBot {
             allowed_mentions: { parse: [], replied_user: false },
           };
           if (item.useEmbed && Object.keys(embed).length > 0) {
-            payload.embeds = [embed, ...((item.extraEmbeds as any[]) || [])];
-          } else if (item.extraEmbeds && item.extraEmbeds.length > 0) {
-            payload.embeds = item.extraEmbeds;
+            payload.embeds = [embed, ...((replacedExtraEmbeds as any[]) || [])];
+          } else if (replacedExtraEmbeds && replacedExtraEmbeds.length > 0) {
+            payload.embeds = replacedExtraEmbeds;
           }
           // Bot API不支持username和avatar_url，只在webhook模式下使用
-          const useWebhookMode = !this.enableBotRelay;
+          const useWebhookMode = !this.enableBotRelay && !this.hasDirectChannelTarget();
 
           if (useWebhookMode) {
-          if (item.username) payload.username = item.username;
-          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          const webhookIdentity = resolveWebhookIdentity(
+            item.username,
+            item.avatarUrl,
+            this.targetWebhookName,
+            this.targetWebhookAvatarUrl,
+          );
+          if (webhookIdentity.username) payload.username = webhookIdentity.username;
+          if (webhookIdentity.avatarUrl) payload.avatar_url = webhookIdentity.avatarUrl;
           }
           
           if (item.components && item.components.length > 0) {
@@ -708,7 +1097,9 @@ export class SenderBot {
           }
           
           // 如果启用机器人中转则使用 Bot API，否则使用 webhook
-          if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
+          if (this.hasDirectChannelTarget()) {
+            resp = await this.postDirectMessage(payload, files);
+          } else if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
             console.log(`[SenderBot] 使用 Bot API 发送消息（带附件）`);
             resp = await this.postViaBotAPI(payload, files, this.defaultChannelId);
           } else {
@@ -730,7 +1121,7 @@ export class SenderBot {
           if (item.useEmbed) {
             payload.content = "";
             const base = chunk ? [{ description: chunk }] : [];
-              let embeds: any[] = [...base, ...((item.extraEmbeds as any[]) || [])];
+              let embeds: any[] = [...base, ...((replacedExtraEmbeds as any[]) || [])];
 
               // 翻译 embed 字段（中英互译，非中英不翻译）
               const enableEmbedTranslation =
@@ -781,9 +1172,9 @@ export class SenderBot {
           } else {
             // useEmbed 为 false 的情况：设置文本内容，如果有 extraEmbeds 也一并添加
             payload.content = chunk || ""; // 即使 chunk 为空也设置为空字符串，避免 undefined
-            if (item.extraEmbeds && item.extraEmbeds.length > 0) {
+            if (replacedExtraEmbeds && replacedExtraEmbeds.length > 0) {
               // 如果有 extraEmbeds，即使 content 为空也要发送（允许只有 embeds 的消息）
-              payload.embeds = item.extraEmbeds;
+              payload.embeds = replacedExtraEmbeds;
               // 如果 content 为空但有 embeds，确保 content 至少是空字符串（Discord API 要求）
               if (!payload.content || payload.content.trim() === "") {
                 payload.content = "";
@@ -794,11 +1185,17 @@ export class SenderBot {
             payload.components = item.components;
           }
           // Bot API不支持username和avatar_url，只在webhook模式下使用
-          const useWebhookMode = !this.enableBotRelay;
+          const useWebhookMode = !this.enableBotRelay && !this.hasDirectChannelTarget();
           
           if (useWebhookMode) {
-          if (item.username) payload.username = item.username;
-          if (item.avatarUrl) payload.avatar_url = item.avatarUrl;
+          const webhookIdentity = resolveWebhookIdentity(
+            item.username,
+            item.avatarUrl,
+            this.targetWebhookName,
+            this.targetWebhookAvatarUrl,
+          );
+          if (webhookIdentity.username) payload.username = webhookIdentity.username;
+          if (webhookIdentity.avatarUrl) payload.avatar_url = webhookIdentity.avatarUrl;
           }
           
           if (item.replyToTarget?.messageId) {
@@ -806,7 +1203,9 @@ export class SenderBot {
           }
           
           // 如果启用机器人中转则使用 Bot API，否则使用 webhook
-          if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
+          if (this.hasDirectChannelTarget()) {
+            resp = await this.postDirectMessage(payload, []);
+          } else if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
             console.log(`[SenderBot] 使用 Bot API 发送消息 (enableBotRelay=${this.enableBotRelay})`);
             resp = await this.postViaBotAPI(payload, [], this.defaultChannelId);
           } else {
@@ -842,6 +1241,129 @@ export class SenderBot {
     }
 
     return results;
+  }
+
+  async editForwardedMessage(params: {
+    targetChannelId: string;
+    targetMessageId: string;
+    content: string;
+    useEmbed?: boolean;
+    extraEmbeds?: any[];
+    components?: any[];
+    enableTranslationOverride?: boolean;
+    translationDirection?: "auto" | "zh-en" | "en-zh" | "off";
+    ruleReplacementsDictionary?: Record<string, string>;
+    stripEnglish?: boolean;
+    stripChinese?: boolean;
+  }) {
+    let text = String(applyReplacementDictionary(params.content || "", this.replacementsDictionary));
+    text = String(applyReplacementDictionary(text, params.ruleReplacementsDictionary));
+    const replacedExtraEmbeds = applyReplacementDictionaryToEmbeds(
+      applyReplacementDictionaryToEmbeds(params.extraEmbeds, this.replacementsDictionary),
+      params.ruleReplacementsDictionary,
+    );
+
+    const alreadyTranslated = text.includes("\n---\n");
+    const enableForThis =
+      typeof params.enableTranslationOverride === "boolean"
+        ? params.enableTranslationOverride
+        : this.enableTranslation;
+
+    let targetLang: "zh" | "en" | "zh-en" | "en-zh" | null = null;
+    if (!alreadyTranslated && enableForThis && params.translationDirection !== "off") {
+      if (params.translationDirection && params.translationDirection !== "auto") {
+        targetLang = params.translationDirection;
+      } else {
+        targetLang = this.chooseTranslateTarget(text);
+      }
+    }
+    if (!alreadyTranslated && targetLang && text.trim()) {
+      const translated = await this.translateText(text, targetLang);
+      if (translated) {
+        text = `${text}\n---\n${translated}`;
+      }
+    }
+
+    if (params.stripEnglish || params.stripChinese) {
+      text = stripLanguages(text, {
+        stripEnglish: params.stripEnglish,
+        stripChinese: params.stripChinese,
+      });
+    }
+
+    const payload: any = {
+      allowed_mentions: { parse: [], replied_user: false },
+    };
+
+    if (params.useEmbed) {
+      payload.content = "";
+      const base = text ? [{ description: text.slice(0, 4096) }] : [];
+      let embeds: any[] = [...base, ...((replacedExtraEmbeds as any[]) || [])];
+
+      if (enableForThis && params.translationDirection !== "off" && embeds.length > 0) {
+        const formatTranslated = (orig: string, t?: string | null) => {
+          if (!t || t.trim() === orig.trim()) return orig;
+          return `${orig}\n---\n${t}`;
+        };
+        embeds = await Promise.all(
+          embeds.map(async (e: any) => {
+            const translateField = async (txt?: string) => {
+              if (!txt) return txt;
+              if (txt.includes("\n---\n")) return txt;
+              if (params.translationDirection === "off") return txt;
+              const target =
+                params.translationDirection && params.translationDirection !== "auto"
+                  ? params.translationDirection
+                  : this.chooseTranslateTarget(txt);
+              if (!target) return txt;
+              const t = await this.translateText(txt, target);
+              return formatTranslated(txt, t || undefined);
+            };
+            return {
+              ...e,
+              title: await translateField(e.title),
+              description: await translateField(e.description),
+              footer: e.footer ? { ...e.footer, text: await translateField(e.footer.text) } : e.footer,
+              author: e.author ? { ...e.author, name: await translateField(e.author.name) } : e.author,
+              fields: e.fields
+                ? await Promise.all(
+                    e.fields.map(async (f: any) => ({
+                      ...f,
+                      name: await translateField(f.name),
+                      value: await translateField(f.value),
+                    })),
+                  )
+                : e.fields,
+            };
+          }),
+        );
+      }
+
+      payload.embeds = embeds;
+    } else {
+      payload.content = text.slice(0, 2000);
+      if (replacedExtraEmbeds && replacedExtraEmbeds.length > 0) {
+        payload.embeds = replacedExtraEmbeds;
+      }
+    }
+
+    if (params.components && params.components.length > 0) {
+      payload.components = params.components;
+    }
+
+    const hasEmbeds = Array.isArray(payload.embeds) && payload.embeds.length > 0;
+    const hasComponents = Array.isArray(payload.components) && payload.components.length > 0;
+    if (!payload.content && !hasEmbeds && !hasComponents) {
+      payload.content = " ";
+    }
+
+    if (this.hasDirectChannelTarget()) {
+      return await this.patchDirectMessage(params.targetChannelId || this.targetChannelId || "", params.targetMessageId, payload);
+    }
+    if (this.enableBotRelay && this.botRelayToken && params.targetChannelId) {
+      return await this.patchViaBotAPI(params.targetChannelId, params.targetMessageId, payload);
+    }
+    return await this.patchWebhookMessage(params.targetMessageId, payload);
   }
 
   private async postToWebhook(body: Record<string, any>, wait = false): Promise<any> {
@@ -906,6 +1428,102 @@ export class SenderBot {
     });
   }
 
+  private async patchWebhookMessage(messageId: string, body: Record<string, any>): Promise<any> {
+    const url = new URL(this.webhookUrl);
+    const safeMessageId = encodeURIComponent(messageId);
+    const payload = JSON.stringify(body);
+
+    const options: https.RequestOptions = {
+      method: "PATCH",
+      hostname: url.hostname,
+      path: `${url.pathname}/messages/${safeMessageId}${url.search}`,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+      agent: this.httpAgent as any,
+    };
+
+    return await new Promise<any>((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(responseBody ? JSON.parse(responseBody) : null);
+            } catch {
+              resolve(null);
+            }
+          } else {
+            reject(
+              new Error(
+                `Webhook edit failed with status ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`,
+              ),
+            );
+          }
+        });
+      });
+      req.setTimeout(30000, () => {
+        req.destroy(new Error("Webhook edit request timeout"));
+      });
+      req.on("error", (err) => reject(err));
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private async patchViaBotAPI(channelId: string, messageId: string, body: Record<string, any>): Promise<any> {
+    if (!this.botRelayToken) {
+      throw new Error("Bot relay token is not configured");
+    }
+
+    const safeChannelId = encodeURIComponent(channelId);
+    const safeMessageId = encodeURIComponent(messageId);
+    const url = new URL(`https://discord.com/api/v10/channels/${safeChannelId}/messages/${safeMessageId}`);
+    const payload = JSON.stringify(body);
+
+    const options: https.RequestOptions = {
+      method: "PATCH",
+      hostname: url.hostname,
+      path: url.pathname,
+      headers: {
+        Authorization: `Bot ${this.botRelayToken}`,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+      agent: this.httpAgent as any,
+    };
+
+    return await new Promise<any>((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(responseBody ? JSON.parse(responseBody) : null);
+            } catch {
+              resolve(null);
+            }
+          } else {
+            reject(
+              new Error(
+                `Bot API edit failed with status ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`,
+              ),
+            );
+          }
+        });
+      });
+      req.setTimeout(30000, () => {
+        req.destroy(new Error("Bot API edit request timeout"));
+      });
+      req.on("error", (err) => reject(err));
+      req.write(payload);
+      req.end();
+    });
+  }
+
   private async getWebhookInfo(): Promise<{ guild_id?: string; channel_id?: string; name?: string }> {
     const url = new URL(this.webhookUrl);
     const options: https.RequestOptions = {
@@ -939,7 +1557,11 @@ export class SenderBot {
   /**
    * 通过Discord Bot API发送消息（机器人中转模式）
    */
-  private async postViaBotAPI(body: Record<string, any>, files: Array<{ filename: string; buffer: Buffer }>, channelId: string): Promise<any> {
+  private async postViaBotAPI(
+    body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }>,
+    channelId: string,
+  ): Promise<any> {
     if (!this.botRelayToken) {
       throw new Error("Bot relay token is not configured");
     }
@@ -963,7 +1585,7 @@ export class SenderBot {
       files.forEach((f, idx) => {
         push(`--${boundary}\r\n`);
         push(`Content-Disposition: form-data; name="files[${idx}]"; filename="${f.filename}"\r\n`);
-        push(`Content-Type: application/octet-stream\r\n\r\n`);
+        push(`Content-Type: ${f.contentType || "application/octet-stream"}\r\n\r\n`);
         push(f.buffer);
         push(`\r\n`);
       });

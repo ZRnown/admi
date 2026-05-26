@@ -1,0 +1,298 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  DISCORD_PRIVATE_SCOPE_ID,
+  buildDiscordSearchableDropdownModel,
+  filterDiscordNamedItems,
+  getDiscordChannelEmptyMessage,
+  getDiscordMetadataAccountId,
+  mergeDiscordGuildCacheEntry,
+  mergeDiscordPrivateChannelCache,
+  normalizeDiscordSourceReference,
+  resolveDiscordChannelMetadataFromCache,
+  resolveDiscordChannelNameFromCache,
+  resolveDiscordChannelsFromCache,
+  resolveDiscordGuildNameFromCache,
+  resolveDiscordPrivateChannelsFromCache,
+  preserveDiscordChannelsOnFetchFailure,
+  shouldReuseDiscordChannelsCache,
+} from "../src/discordMetadataHelpers.ts";
+
+test("getDiscordMetadataAccountId falls back to instance id when no library account is selected", () => {
+  assert.equal(getDiscordMetadataAccountId({ discordAccountId: "lib-1", id: "inst-1" }), "lib-1");
+  assert.equal(getDiscordMetadataAccountId({ id: "inst-1" }), "inst-1");
+  assert.equal(getDiscordMetadataAccountId({}), "");
+});
+
+test("shouldReuseDiscordChannelsCache allows force refresh even when empty cache exists", () => {
+  const cache = { "acc:guild": [] };
+  assert.equal(shouldReuseDiscordChannelsCache(cache, "acc:guild"), true);
+  assert.equal(shouldReuseDiscordChannelsCache(cache, "acc:guild", true), false);
+  assert.equal(shouldReuseDiscordChannelsCache(cache, "missing"), false);
+});
+
+
+test("getDiscordChannelEmptyMessage distinguishes unsynced from synced-empty states", () => {
+  assert.equal(getDiscordChannelEmptyMessage(false, 'guild-1', ''), '暂无频道（请先同步）');
+  assert.equal(getDiscordChannelEmptyMessage(true, 'guild-1', ''), '暂无可用频道');
+  assert.equal(getDiscordChannelEmptyMessage(false, '', ''), '请先选择服务器或私聊');
+  assert.equal(getDiscordChannelEmptyMessage(false, DISCORD_PRIVATE_SCOPE_ID, ''), '暂无私聊（请先同步）');
+  assert.equal(getDiscordChannelEmptyMessage(true, DISCORD_PRIVATE_SCOPE_ID, ''), '暂无可用私聊');
+});
+
+
+test("preserveDiscordChannelsOnFetchFailure keeps existing channels when REST fetch fails", () => {
+  const existing = [{ id: '1', name: 'alpha', type: 0 }];
+  assert.deepEqual(preserveDiscordChannelsOnFetchFailure(existing, [], true), existing);
+  assert.deepEqual(preserveDiscordChannelsOnFetchFailure(existing, [], false), []);
+});
+
+test("mergeDiscordGuildCacheEntry preserves existing private channels when a live snapshot is empty", () => {
+  const merged = mergeDiscordGuildCacheEntry(
+    {
+      user: { id: "user-1" },
+      guilds: [{ id: "guild-old", name: "Old Guild" }],
+      privateChannels: [{ id: "dm-1", name: "Alice", type: 1 }],
+      updatedAt: "old",
+    },
+    {
+      user: { id: "user-1", username: "new" },
+      guilds: [{ id: "guild-new", name: "New Guild" }],
+      privateChannels: [],
+      updatedAt: "new",
+    },
+  );
+
+  assert.deepEqual(merged.privateChannels, [{ id: "dm-1", name: "Alice", type: 1 }]);
+  assert.deepEqual(merged.guilds, [{ id: "guild-new", name: "New Guild" }]);
+  assert.equal(merged.updatedAt, "new");
+});
+
+test("mergeDiscordPrivateChannelCache preserves existing private channels when next snapshot is empty", () => {
+  const existing = [{ id: "dm-1", name: "Alice", type: 1 }];
+  assert.deepEqual(mergeDiscordPrivateChannelCache(existing, []), existing);
+  assert.deepEqual(mergeDiscordPrivateChannelCache(existing, [{ id: "dm-2", name: "Bob", type: 1 }]), [
+    { id: "dm-2", name: "Bob", type: 1 },
+  ]);
+});
+
+test("filterDiscordNamedItems filters by query ignoring case and surrounding spaces", () => {
+  const items = [
+    { id: "guild-1", name: "Alpha Traders" },
+    { id: "guild-2", name: "Beta Room" },
+    { id: "guild-3", name: "Gamma Hub" },
+  ];
+
+  assert.deepEqual(filterDiscordNamedItems(items, "  beta "), [
+    { id: "guild-2", name: "Beta Room" },
+  ]);
+  assert.deepEqual(filterDiscordNamedItems(items, "GUILD-3"), [
+    { id: "guild-3", name: "Gamma Hub" },
+  ]);
+});
+
+test("filterDiscordNamedItems keeps the selected item visible even when it does not match the query", () => {
+  const items = [
+    { id: "guild-1", name: "Alpha Traders" },
+    { id: "guild-2", name: "Beta Room" },
+    { id: "guild-3", name: "Gamma Hub" },
+  ];
+
+  assert.deepEqual(filterDiscordNamedItems(items, "beta", "guild-1"), [
+    { id: "guild-2", name: "Beta Room" },
+    { id: "guild-1", name: "Alpha Traders" },
+  ]);
+});
+
+test("buildDiscordSearchableDropdownModel uses selected item name for trigger label", () => {
+  const model = buildDiscordSearchableDropdownModel(
+    [
+      { id: "guild-1", name: "Alpha Traders" },
+      { id: "guild-2", name: "Beta Room" },
+    ],
+    {
+      selectedId: "guild-2",
+      placeholderLabel: "选择服务器",
+      emptyResultsLabel: "无匹配服务器",
+    },
+  );
+
+  assert.equal(model.triggerLabel, "Beta Room");
+  assert.equal(model.emptyLabel, "");
+});
+
+test("buildDiscordSearchableDropdownModel shows empty label when query has no matches", () => {
+  const model = buildDiscordSearchableDropdownModel(
+    [
+      { id: "guild-1", name: "Alpha Traders" },
+      { id: "guild-2", name: "Beta Room" },
+    ],
+    {
+      query: "zzz",
+      placeholderLabel: "选择服务器",
+      emptyResultsLabel: "无匹配服务器",
+    },
+  );
+
+  assert.equal(model.triggerLabel, "选择服务器");
+  assert.equal(model.emptyLabel, "无匹配服务器");
+  assert.deepEqual(model.visibleItems, []);
+});
+
+test("resolveDiscordChannelsFromCache falls back from library account id to instance account cache key", () => {
+  const channels = resolveDiscordChannelsFromCache(
+    {
+      "instance-1:guild-1": [
+        { id: "channel-1", name: "crypto-signals", type: 0 },
+      ],
+    },
+    "library-1",
+    "guild-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.deepEqual(channels, [
+    { id: "channel-1", name: "crypto-signals", type: 0 },
+  ]);
+});
+
+test("resolveDiscordGuildNameFromCache falls back from library account id to instance guild cache", () => {
+  const guildName = resolveDiscordGuildNameFromCache(
+    {
+      "instance-1": {
+        guilds: [
+          { id: "guild-1", name: "Alpha Guild" },
+        ],
+      },
+    },
+    "library-1",
+    "guild-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.equal(guildName, "Alpha Guild");
+});
+
+test("resolveDiscordPrivateChannelsFromCache falls back from library account id to instance private cache", () => {
+  const channels = resolveDiscordPrivateChannelsFromCache(
+    {
+      "instance-1": {
+        guilds: [],
+        privateChannels: [
+          { id: "dm-1", name: "Alice", type: 1 },
+        ],
+      },
+    },
+    "library-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.deepEqual(channels, [
+    { id: "dm-1", name: "Alice", type: 1 },
+  ]);
+});
+
+test("resolveDiscordChannelNameFromCache falls back from library account id to instance channel cache", () => {
+  const channelName = resolveDiscordChannelNameFromCache(
+    {
+      "instance-1:guild-1": [
+        { id: "channel-1", name: "crypto-signals", type: 0 },
+      ],
+    },
+    "library-1",
+    "guild-1",
+    "channel-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.equal(channelName, "crypto-signals");
+});
+
+test("normalizeDiscordSourceReference extracts guild and channel ids from Discord links", () => {
+  assert.deepEqual(
+    normalizeDiscordSourceReference(
+      "https://discord.com/channels/422500326654869505/1391569590969958542/1490340117020413962",
+      undefined,
+    ),
+    {
+      channelId: "1391569590969958542",
+      guildId: "422500326654869505",
+      messageId: "1490340117020413962",
+    },
+  );
+});
+
+test("resolveDiscordChannelMetadataFromCache finds channel metadata without saved guild id", () => {
+  const metadata = resolveDiscordChannelMetadataFromCache(
+    {
+      "instance-1:guild-1": [
+        { id: "channel-1", name: "crypto-signals", type: 0 },
+      ],
+    },
+    {
+      "instance-1": {
+        guilds: [
+          { id: "guild-1", name: "Alpha Guild" },
+        ],
+      },
+    },
+    "library-1",
+    "channel-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.deepEqual(metadata, {
+    guildId: "guild-1",
+    guildName: "Alpha Guild",
+    channelName: "crypto-signals",
+  });
+});
+
+test("resolveDiscordChannelMetadataFromCache resolves private channels from the private scope cache key", () => {
+  const metadata = resolveDiscordChannelMetadataFromCache(
+    {
+      [`instance-1:${DISCORD_PRIVATE_SCOPE_ID}`]: [
+        { id: "dm-1", name: "Alice", type: 1 },
+      ],
+    },
+    {
+      "instance-1": {
+        guilds: [],
+      },
+    },
+    "library-1",
+    "dm-1",
+    {
+      accounts: [
+        { id: "instance-1", discordAccountId: "library-1" },
+      ],
+    } as any,
+  );
+
+  assert.deepEqual(metadata, {
+    guildId: DISCORD_PRIVATE_SCOPE_ID,
+    guildName: undefined,
+    channelName: "Alice",
+  });
+});

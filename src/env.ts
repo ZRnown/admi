@@ -5,10 +5,13 @@ import path from "path";
 export interface Env {
   DISCORD_TOKEN: string;
   PROXY_URL?: string;
+  ENABLED_FORWARDING_TYPES?: string;
+  FEISHU_APP_ID?: string;
+  FEISHU_APP_SECRET?: string;
 }
 
 function readEnvFile(): Record<string, string> {
-  const envPath = path.resolve(process.cwd(), ".env");
+  const envPath = resolveEnvPath();
   const result: Record<string, string> = {};
   
   if (!existsSync(envPath)) {
@@ -39,6 +42,25 @@ function readEnvFile(): Record<string, string> {
   return result;
 }
 
+function resolveEnvPath(): string {
+  const root = findRepoRoot(process.cwd());
+  return path.resolve(root || process.cwd(), ".env");
+}
+
+function findRepoRoot(startDir: string): string | null {
+  let current = startDir;
+  while (true) {
+    if (existsSync(path.join(current, "package.json"))) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
 export function getEnv(): Env {
   // 每次都重新读取 .env 文件，确保获取最新值
   const envFile = readEnvFile();
@@ -47,5 +69,9 @@ export function getEnv(): Env {
   return {
     DISCORD_TOKEN: envFile.DISCORD_TOKEN || process.env.DISCORD_TOKEN || "",
     PROXY_URL: envFile.PROXY_URL || process.env.PROXY_URL || undefined,
+    ENABLED_FORWARDING_TYPES:
+      envFile.ENABLED_FORWARDING_TYPES || process.env.ENABLED_FORWARDING_TYPES || undefined,
+    FEISHU_APP_ID: envFile.FEISHU_APP_ID || process.env.FEISHU_APP_ID || undefined,
+    FEISHU_APP_SECRET: envFile.FEISHU_APP_SECRET || process.env.FEISHU_APP_SECRET || undefined,
   };
 }

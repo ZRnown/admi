@@ -1,4 +1,4 @@
-# Discord Forwarder
+# 转发狗
 
 Discord 消息转发工具，支持多账号、多频道映射、关键词过滤、自动翻译等功能。
 
@@ -17,6 +17,17 @@ pnpm install
 ```bash
 cp config.sample.json config.json
 ```
+
+### 2.1 可选环境变量（.env）
+
+`.env` 放在项目根目录（与 `package.json` 同级）。不配置则保持默认行为。
+
+```bash
+# 仅允许显示指定转发类型（留空或不设置则全部可用）
+ENABLED_FORWARDING_TYPES=discord-to-discord,discord-to-telegram,telegram-to-discord,discord-to-feishu,discord-to-dingtalk
+```
+
+管理界面“导入配置”会覆盖当前所有配置，导入后以导入内容为准。
 
 ### 3. 启动服务
 
@@ -76,6 +87,50 @@ pnpm start:bot
 ```bash
 pnpm dev:server
 ```
+
+## 📌 转发类型使用说明
+
+### Discord → Discord
+
+1. 选择转发类型为“Discord → Discord”。
+2. 填写 Discord Token（自用号或机器人 Token）。
+3. 在“转发规则”中填写来源频道/子区 ID 和目标 Webhook URL。
+4. 需要伪装源用户时勾选“使用源用户昵称和头像”。
+
+### Discord → Telegram
+
+1. 选择转发类型为“Discord → Telegram”。
+2. 填写 Discord Token 与 Telegram Bot Token。
+3. 将 Bot 拉入目标 Telegram 群/频道并授予发消息权限。
+4. 在“转发规则”中填写来源 Discord 频道/子区 ID 和目标 Telegram Chat ID。
+
+### Telegram → Discord
+
+1. 选择转发类型为“Telegram → Discord”。
+2. 填写 Telegram API ID / API Hash，并完成 Session 认证（文件或字符串）。
+3. 在“转发规则”中填写来源 Telegram Chat ID 或用户名（可用 @xxx 或 xxx），目标填 Discord Webhook URL。
+
+### Discord → 飞书
+
+1. 选择转发类型为“Discord → 飞书”。
+2. 填写 Discord Token，并开启飞书转发。
+3. 目标可用飞书 Webhook 或线程 ID（Thread）。
+4. 需要转发图片/视频时填写飞书 App ID / Secret，并在飞书后台开通 `im:resource:upload` 与 `im:message:send_as_bot` 权限。
+
+### Discord → 钉钉
+
+1. 选择转发类型为“Discord → 钉钉”。
+2. 在钉钉群里添加“自定义机器人”，把 Webhook 地址填写到规则目标。
+3. 如果机器人安全设置启用了“加签”，在该规则填写“加签密钥（secret）”。
+4. 文本会按 Markdown 发送；图片会以 Markdown 图片发送；视频/音频/文档会以可点击链接发送。
+5. 钉钉自定义机器人有频控限制：单机器人每分钟最多 20 条，超限会被限流。
+
+官方文档（钉钉）：
+
+- 自定义机器人发送群消息：https://open.dingtalk.com/document/development/custom-robots-send-group-messages
+- 消息类型（含 Markdown、图片语法）：https://open.dingtalk.com/document/dingstart/custom-bot-send-message-type
+- 安全设置（加签算法）：https://open.dingtalk.com/document/dingstart/customize-robot-security-settings
+- 获取 Webhook 地址：https://open.dingtalk.com/document/dingstart/obtain-the-webhook-address-of-a-custom-robot
 
 ## 📄 许可证
 
