@@ -262,6 +262,7 @@ export class SenderBot {
     channelId: string,
     messageId: string,
     body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }> = [],
   ): Promise<any> {
     const safeChannelId = encodeURIComponent(String(channelId || this.targetChannelId || "").trim());
     const safeMessageId = encodeURIComponent(String(messageId || "").trim());
@@ -269,6 +270,24 @@ export class SenderBot {
       throw new Error("Discord direct edit target is not configured");
     }
     const url = new URL(`https://discord.com/api/v10/channels/${safeChannelId}/messages/${safeMessageId}`);
+    if (files.length > 0) {
+      const boundary = "----cascadeform" + Math.random().toString(16).slice(2);
+      const payload = this.buildMultipartPayload(boundary, body, files);
+      const options: https.RequestOptions = {
+        method: "PATCH",
+        hostname: url.hostname,
+        path: url.pathname,
+        headers: {
+          "Authorization": this.buildDiscordAuthorizationHeader(),
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": payload.byteLength,
+        },
+        agent: this.httpAgent as any,
+      };
+
+      return await this.requestDiscordJson(options, payload, "Discord direct multipart edit");
+    }
+
     const payload = JSON.stringify(body);
     const options: https.RequestOptions = {
       method: "PATCH",
@@ -316,30 +335,7 @@ export class SenderBot {
     if (wait) url.searchParams.set("wait", "true");
 
     const boundary = "----cascadeform" + Math.random().toString(16).slice(2);
-
-    const parts: Buffer[] = [];
-    const push = (chunk: string | Buffer) => parts.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-
-    // payload_json part
-    push(`--${boundary}\r\n`);
-    push(`Content-Disposition: form-data; name="payload_json"\r\n`);
-    push(`Content-Type: application/json\r\n\r\n`);
-    push(JSON.stringify(body));
-    push(`\r\n`);
-
-    // files
-    files.forEach((f, idx) => {
-      push(`--${boundary}\r\n`);
-      push(`Content-Disposition: form-data; name="files[${idx}]"; filename="${f.filename}"\r\n`);
-      push(`Content-Type: ${f.contentType || "application/octet-stream"}\r\n\r\n`);
-      push(f.buffer);
-      push(`\r\n`);
-    });
-
-    // end boundary
-    push(`--${boundary}--\r\n`);
-
-    const payload = Buffer.concat(parts);
+    const payload = this.buildMultipartPayload(boundary, body, files);
 
     const options: https.RequestOptions = {
       method: "POST",
@@ -370,6 +366,62 @@ export class SenderBot {
       });
       req.setTimeout(30000, () => {
         req.destroy(new Error("Webhook multipart request timeout"));
+      });
+      req.on("error", (err) => reject(err));
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  private buildMultipartPayload(
+    boundary: string,
+    body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }>,
+  ): Buffer {
+    const parts: Buffer[] = [];
+    const push = (chunk: string | Buffer) => parts.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+
+    push(`--${boundary}\r\n`);
+    push(`Content-Disposition: form-data; name="payload_json"\r\n`);
+    push(`Content-Type: application/json\r\n\r\n`);
+    push(JSON.stringify(body));
+    push(`\r\n`);
+
+    files.forEach((f, idx) => {
+      push(`--${boundary}\r\n`);
+      push(`Content-Disposition: form-data; name="files[${idx}]"; filename="${f.filename}"\r\n`);
+      push(`Content-Type: ${f.contentType || "application/octet-stream"}\r\n\r\n`);
+      push(f.buffer);
+      push(`\r\n`);
+    });
+
+    push(`--${boundary}--\r\n`);
+    return Buffer.concat(parts);
+  }
+
+  private async requestDiscordJson(
+    options: https.RequestOptions,
+    payload: string | Buffer,
+    label: string,
+  ): Promise<any> {
+    return await new Promise<any>((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(responseBody ? JSON.parse(responseBody) : null);
+            } catch {
+              resolve(null);
+            }
+            return;
+          }
+          reject(new Error(`${label} failed ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`));
+        });
+      });
+      req.setTimeout(30000, () => {
+        req.destroy(new Error(`${label} request timeout`));
       });
       req.on("error", (err) => reject(err));
       req.write(payload);
@@ -1255,6 +1307,18 @@ export class SenderBot {
     ruleReplacementsDictionary?: Record<string, string>;
     stripEnglish?: boolean;
     stripChinese?: boolean;
+    uploads?: Array<{
+      url?: string;
+      localPath?: string;
+      filename: string;
+      isImage?: boolean;
+      isVideo?: boolean;
+      watermarkRemoval?: WatermarkRemovalConfig;
+      watermarkRemovalState?: WatermarkRemovalRuntimeState;
+    }>;
+    watermark?: WatermarkConfig;
+    watermarkSecondary?: WatermarkConfig;
+    watermarks?: WatermarkConfig[];
   }) {
     let text = String(applyReplacementDictionary(params.content || "", this.replacementsDictionary));
     text = String(applyReplacementDictionary(text, params.ruleReplacementsDictionary));
@@ -1347,6 +1411,22 @@ export class SenderBot {
       }
     }
 
+    const files = params.uploads && params.uploads.length > 0
+      ? await this.downloadUploads(params.uploads, params.watermark, params.watermarkSecondary, params.watermarks)
+      : [];
+    if (files.length > 0) {
+      payload.attachments = files.map((f, idx) => ({ id: idx, filename: f.filename }));
+      if (params.useEmbed) {
+        const firstImage = files.find((f) => f.isImage);
+        if (firstImage) {
+          payload.embeds = [
+            ...((Array.isArray(payload.embeds) ? payload.embeds : []) as any[]),
+            { image: { url: `attachment://${firstImage.filename}` } },
+          ];
+        }
+      }
+    }
+
     if (params.components && params.components.length > 0) {
       payload.components = params.components;
     }
@@ -1358,12 +1438,12 @@ export class SenderBot {
     }
 
     if (this.hasDirectChannelTarget()) {
-      return await this.patchDirectMessage(params.targetChannelId || this.targetChannelId || "", params.targetMessageId, payload);
+      return await this.patchDirectMessage(params.targetChannelId || this.targetChannelId || "", params.targetMessageId, payload, files);
     }
     if (this.enableBotRelay && this.botRelayToken && params.targetChannelId) {
-      return await this.patchViaBotAPI(params.targetChannelId, params.targetMessageId, payload);
+      return await this.patchViaBotAPI(params.targetChannelId, params.targetMessageId, payload, files);
     }
-    return await this.patchWebhookMessage(params.targetMessageId, payload);
+    return await this.patchWebhookMessage(params.targetMessageId, payload, files);
   }
 
   private async postToWebhook(body: Record<string, any>, wait = false): Promise<any> {
@@ -1428,9 +1508,30 @@ export class SenderBot {
     });
   }
 
-  private async patchWebhookMessage(messageId: string, body: Record<string, any>): Promise<any> {
+  private async patchWebhookMessage(
+    messageId: string,
+    body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }> = [],
+  ): Promise<any> {
     const url = new URL(this.webhookUrl);
     const safeMessageId = encodeURIComponent(messageId);
+    if (files.length > 0) {
+      const boundary = "----cascadeform" + Math.random().toString(16).slice(2);
+      const payload = this.buildMultipartPayload(boundary, body, files);
+      const options: https.RequestOptions = {
+        method: "PATCH",
+        hostname: url.hostname,
+        path: `${url.pathname}/messages/${safeMessageId}${url.search}`,
+        headers: {
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": payload.byteLength,
+        },
+        agent: this.httpAgent as any,
+      };
+
+      return await this.requestDiscordJson(options, payload, "Webhook multipart edit");
+    }
+
     const payload = JSON.stringify(body);
 
     const options: https.RequestOptions = {
@@ -1473,7 +1574,12 @@ export class SenderBot {
     });
   }
 
-  private async patchViaBotAPI(channelId: string, messageId: string, body: Record<string, any>): Promise<any> {
+  private async patchViaBotAPI(
+    channelId: string,
+    messageId: string,
+    body: Record<string, any>,
+    files: Array<{ filename: string; buffer: Buffer; contentType?: string }> = [],
+  ): Promise<any> {
     if (!this.botRelayToken) {
       throw new Error("Bot relay token is not configured");
     }
@@ -1481,6 +1587,24 @@ export class SenderBot {
     const safeChannelId = encodeURIComponent(channelId);
     const safeMessageId = encodeURIComponent(messageId);
     const url = new URL(`https://discord.com/api/v10/channels/${safeChannelId}/messages/${safeMessageId}`);
+    if (files.length > 0) {
+      const boundary = "----cascadeform" + Math.random().toString(16).slice(2);
+      const payload = this.buildMultipartPayload(boundary, body, files);
+      const options: https.RequestOptions = {
+        method: "PATCH",
+        hostname: url.hostname,
+        path: url.pathname,
+        headers: {
+          "Authorization": `Bot ${this.botRelayToken}`,
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": payload.byteLength,
+        },
+        agent: this.httpAgent as any,
+      };
+
+      return await this.requestDiscordJson(options, payload, "Bot API multipart edit");
+    }
+
     const payload = JSON.stringify(body);
 
     const options: https.RequestOptions = {

@@ -2616,6 +2616,38 @@ export class Bot {
         extraEmbeds = stripEmbedTitles(extraEmbeds);
       }
     }
+    const updateSkipImages = ruleConfig.ignoreImages !== undefined
+      ? ruleConfig.ignoreImages
+      : this.config.ignoreImages;
+    const updateUploads: Array<{ url: string; filename: string; isImage?: boolean }> = [];
+    const updateSeenImages = new Set<string>();
+    if (!updateSkipImages) {
+      let updateImageIndex = 0;
+      for (const asset of collectImageAssets(resolvedMessage as Message)) {
+        if (!asset.url) continue;
+        const normalized = normalizeImageUrl(asset.url);
+        if (updateSeenImages.has(asset.url) || (normalized && updateSeenImages.has(normalized))) continue;
+        updateSeenImages.add(asset.url);
+        if (normalized) updateSeenImages.add(normalized);
+        updateUploads.push({
+          url: asset.url,
+          filename: buildImageFilename(asset.url, ++updateImageIndex, asset.name),
+          isImage: true,
+        });
+      }
+    }
+    if (extraEmbeds && updateUploads.length > 0) {
+      const imageUrlToFilename = new Map<string, string>();
+      for (const item of updateUploads) {
+        imageUrlToFilename.set(item.url, item.filename);
+        const normalized = normalizeImageUrl(item.url);
+        if (normalized) {
+          imageUrlToFilename.set(normalized, item.filename);
+        }
+      }
+      extraEmbeds = replaceEmbedImageUrls(extraEmbeds, imageUrlToFilename);
+      extraEmbeds = stripUploadedEmbedImages(extraEmbeds, updateUploads);
+    }
 
     const channelTranslateMap: Record<string, boolean> = (this.config as any).channelTranslate || {};
     const channelTranslateDirectionMap: Record<string, string> =
@@ -2646,6 +2678,7 @@ export class Bot {
             ruleReplacementsDictionary: ruleConfig.replacementsDictionary,
             stripEnglish,
             stripChinese,
+            uploads: updateUploads,
           });
           synced = true;
           successCount++;

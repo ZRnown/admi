@@ -8,6 +8,8 @@ from loguru import logger
 
 from .ipc import IPCServer
 
+LATE_MEDIA_REFETCH_SECONDS = float(os.getenv("DISCORD_LATE_MEDIA_REFETCH_SECONDS", "2.5"))
+
 try:
     import discord
 except Exception as e:  # pragma: no cover - runtime dependency
@@ -72,6 +74,47 @@ class DiscordAccountSession:
             return int(raw.value) if hasattr(raw, "value") else int(raw)
         except Exception:
             return None
+
+    def _message_has_media(self, message: Any) -> bool:
+        if getattr(message, "attachments", None):
+            return True
+        for embed in getattr(message, "embeds", []) or []:
+            try:
+                data = embed.to_dict()
+            except Exception:
+                try:
+                    data = dict(embed)
+                except Exception:
+                    data = {}
+            if data.get("image") or data.get("thumbnail"):
+                return True
+            if data.get("type") == "image" and data.get("url"):
+                return True
+        return False
+
+    async def _fetch_message_again(self, message: Any) -> Any:
+        channel = getattr(message, "channel", None)
+        message_id = getattr(message, "id", None)
+        if channel is None or message_id is None or not hasattr(channel, "fetch_message"):
+            return message
+        try:
+            return await channel.fetch_message(message_id)
+        except Exception as exc:
+            logger.debug(f"Late media refetch failed for message {message_id}: {exc}")
+            return message
+
+    async def _emit_late_media_update(self, message: Any, account_ids: list[str]) -> None:
+        if LATE_MEDIA_REFETCH_SECONDS <= 0:
+            return
+        await asyncio.sleep(LATE_MEDIA_REFETCH_SECONDS)
+        fetched = await self._fetch_message_again(message)
+        if not self._message_has_media(fetched):
+            return
+        for acc_id in account_ids:
+            payload = build_message_payload(fetched, acc_id)
+            payload["eventType"] = "message_update"
+            payload["lateMediaRefetch"] = True
+            await self.ipc.send_notification("discord_message_update", payload)
 
     def build_cache_snapshot(self) -> Dict[str, Any]:
         guilds_payload = []
@@ -300,6 +343,8 @@ class DiscordAccountSession:
                 for acc_id in target_accounts:
                     payload = build_message_payload(message, acc_id)
                     await self.ipc.send_notification("discord_message", payload)
+                if not self._message_has_media(message):
+                    asyncio.create_task(self._emit_late_media_update(message, list(target_accounts)))
             except Exception as exc:
                 logger.error(f"Failed to handle message: {exc}")
 

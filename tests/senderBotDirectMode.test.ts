@@ -177,3 +177,44 @@ test("SenderBot applies replacements to embed text when editing forwarded messag
   assert.equal(payload.embeds[0].title, "baz edit");
   assert.equal(payload.embeds[0].description, "baz edit desc");
 });
+
+test("SenderBot edits webhook messages with uploaded images", async (t) => {
+  t.mock.method(SenderBot.prototype as any, "downloadUploads", async () => [
+    {
+      filename: "chart.png",
+      buffer: Buffer.from([
+        0x89, 0x50, 0x4e, 0x47,
+        0x0d, 0x0a, 0x1a, 0x0a,
+        0x00, 0x00, 0x00, 0x0d,
+      ]),
+      isImage: true,
+      contentType: "image/png",
+    },
+  ]);
+  const calls = installHttpsRequestMock(t, { id: "target-msg-5", channel_id: "webhook-channel" });
+  const sender = new SenderBot({
+    webhookUrl: "https://discord.com/api/webhooks/1/example",
+  });
+
+  await sender.editForwardedMessage({
+    targetChannelId: "webhook-channel",
+    targetMessageId: "target-msg-5",
+    content: "edited with image",
+    useEmbed: true,
+    uploads: [
+      {
+        url: "https://cdn.discordapp.com/attachments/source/chart.png",
+        filename: "chart.png",
+        isImage: true,
+      },
+    ],
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, "PATCH");
+  assert.match(calls[0].options.path, /\/api\/webhooks\/1\/example\/messages\/target-msg-5$/);
+  assert.match(String(calls[0].options.headers["Content-Type"]), /^multipart\/form-data; boundary=/);
+  assert.match(calls[0].body, /name="payload_json"/);
+  assert.match(calls[0].body, /"url":"attachment:\/\/chart\.png"/);
+  assert.match(calls[0].body, /name="files\[0\]"; filename="chart\.png"/);
+});
