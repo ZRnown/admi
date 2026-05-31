@@ -500,8 +500,6 @@
             <option value="all">全部</option>
             <option value="discord">Discord</option>
             <option value="telegram">Telegram</option>
-            <option value="x">X</option>
-            <option value="truthsocial">TruthSocial</option>
           </select>
           <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 新建账号</button>
         </div>
@@ -787,6 +785,20 @@
         case 'truthsocial-to-discord': return 'TruthSocial → Discord';
         default: return value;
       }
+    }
+
+    const HIDE_EXTERNAL_FORWARDING_TYPES = true;
+
+    function isExternalForwardingType(type) {
+      return type === 'x-to-discord' || type === 'truthsocial-to-discord';
+    }
+
+    function shouldHideForwardingType(type) {
+      return HIDE_EXTERNAL_FORWARDING_TYPES && isExternalForwardingType(type);
+    }
+
+    function isLibraryKindHidden(kind) {
+      return HIDE_EXTERNAL_FORWARDING_TYPES && (kind === 'x' || kind === 'truthsocial');
     }
 
     function formatTime(value) {
@@ -4608,10 +4620,11 @@
 
     function getAllowedLibraryKinds() {
       if (!Array.isArray(state.enabledForwardingTypes) || state.enabledForwardingTypes.length === 0) {
-        return ['discord', 'telegram', 'truthsocial'];
+        return HIDE_EXTERNAL_FORWARDING_TYPES ? ['discord', 'telegram'] : ['discord', 'telegram', 'truthsocial'];
       }
       const allowed = new Set();
       state.enabledForwardingTypes.forEach((type) => {
+        if (shouldHideForwardingType(type)) return;
         if (type === 'discord-to-discord' || type === 'discord-to-feishu' || type === 'discord-to-dingtalk') {
           allowed.add('discord');
         } else if (type === 'discord-to-telegram') {
@@ -4629,9 +4642,9 @@
         }
       });
       if (allowed.size === 0) {
-        return ['discord', 'telegram', 'truthsocial'];
+        return HIDE_EXTERNAL_FORWARDING_TYPES ? ['discord', 'telegram'] : ['discord', 'telegram', 'truthsocial'];
       }
-      return Array.from(allowed);
+      return Array.from(allowed).filter((kind) => !isLibraryKindHidden(kind));
     }
 
     function isLibraryKindAllowed(kind) {
@@ -4666,7 +4679,9 @@
       const items = [];
       (state.discordAccounts || []).forEach((acc) => items.push({ kind: 'discord', id: acc.id, account: acc }));
       (state.telegramAccounts || []).forEach((acc) => items.push({ kind: 'telegram', id: acc.id, account: acc }));
-      (state.truthSocialAccounts || []).forEach((acc) => items.push({ kind: 'truthsocial', id: acc.id, account: acc }));
+      if (!isLibraryKindHidden('truthsocial')) {
+        (state.truthSocialAccounts || []).forEach((acc) => items.push({ kind: 'truthsocial', id: acc.id, account: acc }));
+      }
       return items;
     }
 
@@ -6701,7 +6716,6 @@
               class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="discord" ${current.kind === 'discord' ? 'selected' : ''}>Discord</option>
               <option value="telegram" ${current.kind === 'telegram' ? 'selected' : ''}>Telegram</option>
-              <option value="truthsocial" ${current.kind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>
             </select>
           </div>
           <div>
@@ -7081,8 +7095,6 @@
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-telegram')) ? `<option value="telegram-to-telegram" ${acc.forwardingType === 'telegram-to-telegram' ? 'selected' : ''}>Telegram → Telegram</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-feishu')) ? `<option value="discord-to-feishu" ${acc.forwardingType === 'discord-to-feishu' ? 'selected' : ''}>Discord → 飞书</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-dingtalk')) ? `<option value="discord-to-dingtalk" ${acc.forwardingType === 'discord-to-dingtalk' ? 'selected' : ''}>Discord → 钉钉</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('x-to-discord')) ? `<option value="x-to-discord" ${acc.forwardingType === 'x-to-discord' ? 'selected' : ''}>X → Discord</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('truthsocial-to-discord')) ? `<option value="truthsocial-to-discord" ${acc.forwardingType === 'truthsocial-to-discord' ? 'selected' : ''}>TruthSocial → Discord</option>` : ''}
               </select>
             </div>
             </div>
