@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename } from "fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, unlink, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "node:path";
 import { randomUUID } from "crypto";
@@ -11,6 +11,7 @@ export type ChannelId = number | string;
 export type ChatId = ChannelId;
 
 const CONFIG_PATH = resolveConfigPath();
+const CONFIG_BACKUP_LIMIT = 100;
 
 export function getConfigPath(): string {
   return CONFIG_PATH;
@@ -2062,8 +2063,26 @@ export async function saveMultiConfig(config: MultiConfig) {
   const { enabledForwardingTypes: _ignored, ...payload } = config;
   const content = JSON.stringify(payload, null, 2) + "\n";
   const tmpPath = path.join(path.dirname(CONFIG_PATH), `config.json.tmp-${randomUUID()}`);
+  await backupConfigBeforeSave();
   await writeFile(tmpPath, content);
   await rename(tmpPath, CONFIG_PATH);
+}
+
+async function backupConfigBeforeSave() {
+  if (!existsSync(CONFIG_PATH)) return;
+  const backupDir = path.join(path.dirname(CONFIG_PATH), ".data", "config_backups");
+  try {
+    await mkdir(backupDir, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    await copyFile(CONFIG_PATH, path.join(backupDir, `config-${timestamp}.json`));
+    const backups = (await readdir(backupDir))
+      .filter((name) => /^config-.*\.json$/.test(name))
+      .sort();
+    const staleBackups = backups.slice(0, Math.max(0, backups.length - CONFIG_BACKUP_LIMIT));
+    await Promise.all(staleBackups.map((name) => unlink(path.join(backupDir, name)).catch(() => {})));
+  } catch (error) {
+    console.warn(`Failed to back up config before save: ${String((error as any)?.message || error)}`);
+  }
 }
 
 export type Config = LegacyConfig;
