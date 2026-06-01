@@ -29,17 +29,18 @@ import {
   resolveDiscordChannelNameFromCache,
   resolveDiscordGuildNameFromCache,
 } from "@/src/discordMetadataHelpers";
+import { resolveDataPath } from "@/src/paths";
 import { readDiscordLibraryStatus, readStatus, triggerFile } from "../_lib/common";
 import { requireAuth } from "@/app/api/_lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
-const externalStatusFile = path.resolve(process.cwd(), ".data", "external_forward_status.json");
-const forwardStatsFile = path.resolve(process.cwd(), ".data", "forward_stats.json");
-const discordGuildsCacheFile = path.resolve(process.cwd(), ".data", "discord_guilds_cache.json");
-const discordChannelsCacheFile = path.resolve(process.cwd(), ".data", "discord_channels_cache.json");
+const telegramStatusFile = resolveDataPath("telegram_status.json");
+const externalStatusFile = resolveDataPath("external_forward_status.json");
+const forwardStatsFile = resolveDataPath("forward_stats.json");
+const discordGuildsCacheFile = resolveDataPath("discord_guilds_cache.json");
+const discordChannelsCacheFile = resolveDataPath("discord_channels_cache.json");
 
 const MASKED_SECRET = "********";
 

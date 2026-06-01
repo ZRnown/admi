@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { resolveDataPath } from "@/src/paths";
 
-const authFile = path.resolve(process.cwd(), ".data", "auth.json");
+const authFile = resolveDataPath("auth.json");
 const cookieName = "auth_token";
 
 type AuthState = {

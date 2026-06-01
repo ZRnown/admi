@@ -7,8 +7,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
-import path from "path";
 import { resolveDiscordChannelsFromCache } from "@/src/discordMetadataHelpers";
+import { getConfigPath } from "@/src/config";
+import { resolveDataPath } from "@/src/paths";
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,8 +21,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 读取缓存的频道列表（由 bot 进程写入）
-    const cacheFile = path.join(process.cwd(), ".data", "discord_channels_cache.json");
-    const configFile = path.join(process.cwd(), "config.json");
+    const cacheFile = resolveDataPath("discord_channels_cache.json");
+    const configFile = getConfigPath();
     try {
       const data = await fs.readFile(cacheFile, "utf-8");
       const cache = JSON.parse(data);

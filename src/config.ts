@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import path from "node:path";
 import { randomUUID } from "crypto";
 import { getEnv } from "./env";
+import { resolveProjectPath } from "./paths";
 import { clearDiscordLibraryReferences } from "./discordLibraryCleanup";
 import { normalizeDiscordMappingRule, normalizeTelegramMapping } from "./mappingNormalization";
 
@@ -32,23 +33,7 @@ function resolveConfigPath(): string {
   if (process.env.CONFIG_PATH) {
     return process.env.CONFIG_PATH;
   }
-  const root = findRepoRoot(process.cwd());
-  const base = root || process.cwd();
-  return path.join(base, "config.json");
-}
-
-function findRepoRoot(startDir: string): string | null {
-  let current = startDir;
-  while (true) {
-    if (existsSync(path.join(current, "package.json"))) {
-      return current;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return null;
-    }
-    current = parent;
-  }
+  return resolveProjectPath("config.json");
 }
 
 // Telegram相关类型定义

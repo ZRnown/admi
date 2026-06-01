@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
-import path from "path";
 import { getMultiConfig } from "@/src/config";
 import { buildConfigStatusPayload } from "@/src/configStatusPayload";
+import { resolveDataPath } from "@/src/paths";
 import { readDiscordLibraryStatus, readStatus } from "@/app/api/_lib/common";
 import { requireAuth } from "@/app/api/_lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
-const externalStatusFile = path.resolve(process.cwd(), ".data", "external_forward_status.json");
+const telegramStatusFile = resolveDataPath("telegram_status.json");
+const externalStatusFile = resolveDataPath("external_forward_status.json");
 
 async function readTelegramStatus() {
   try {

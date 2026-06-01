@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
-import path from "path";
+import { resolveDataPath } from "@/src/paths";
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,8 +19,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 读取缓存的服务器列表（由 bot 进程写入）
-    const cacheFile = path.join(process.cwd(), ".data", "discord_guilds_cache.json");
-    const channelsCacheFile = path.join(process.cwd(), ".data", "discord_channels_cache.json");
+    const cacheFile = resolveDataPath("discord_guilds_cache.json");
+    const channelsCacheFile = resolveDataPath("discord_channels_cache.json");
     try {
       const data = await fs.readFile(cacheFile, "utf-8");
       const cache = JSON.parse(data);

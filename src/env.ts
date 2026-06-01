@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import { readFileSync, existsSync } from "fs";
 import path from "path";
+import { resolveProjectRoot } from "./paths";
 
 export interface Env {
   DISCORD_TOKEN: string;
@@ -43,22 +44,7 @@ function readEnvFile(): Record<string, string> {
 }
 
 function resolveEnvPath(): string {
-  const root = findRepoRoot(process.cwd());
-  return path.resolve(root || process.cwd(), ".env");
-}
-
-function findRepoRoot(startDir: string): string | null {
-  let current = startDir;
-  while (true) {
-    if (existsSync(path.join(current, "package.json"))) {
-      return current;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return null;
-    }
-    current = parent;
-  }
+  return path.resolve(resolveProjectRoot(), ".env");
 }
 
 export function getEnv(): Env {

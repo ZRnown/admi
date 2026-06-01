@@ -16,6 +16,7 @@ import {
   preserveDiscordChannelsOnFetchFailure,
 } from "@/src/discordMetadataHelpers";
 import { resolvePythonBin } from "@/src/pythonRuntime";
+import { resolveDataPath, resolveProjectPath, resolveProjectRoot } from "@/src/paths";
 
 function hydrateDiscordChannelsViaSelfbot(
   token: string,
@@ -26,8 +27,9 @@ function hydrateDiscordChannelsViaSelfbot(
   if (!token || (guildIds.length === 0 && !options?.includePrivateChannels)) {
     return { channelsByGuild: {}, privateChannels: [] };
   }
-  const bridgeRoot = path.join(process.cwd(), "discord_bridge");
-  const pythonBin = resolvePythonBin({ cwd: process.cwd(), extraRoots: [bridgeRoot] });
+  const projectRoot = resolveProjectRoot();
+  const bridgeRoot = resolveProjectPath("discord_bridge");
+  const pythonBin = resolvePythonBin({ cwd: projectRoot, extraRoots: [bridgeRoot] });
   if (!pythonBin) return { channelsByGuild: {}, privateChannels: [] };
   const bridgeSrc = path.join(bridgeRoot, "src");
   const input = JSON.stringify({
@@ -70,7 +72,7 @@ function hydrateDiscordChannelsViaSelfbot(
 const DISCORD_API = "https://discord.com/api/v10";
 
 // 缓存文件路径
-const DATA_DIR = path.join(process.cwd(), ".data");
+const DATA_DIR = resolveDataPath();
 const GUILDS_CACHE_FILE = path.join(DATA_DIR, "discord_guilds_cache.json");
 const CHANNELS_CACHE_FILE = path.join(DATA_DIR, "discord_channels_cache.json");
 

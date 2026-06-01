@@ -1,13 +1,10 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { resolveDataPath } from "@/src/paths";
 
-export const statusFile = path.resolve(process.cwd(), ".data", "status.json");
-export const discordLibraryStatusFile = path.resolve(
-  process.cwd(),
-  ".data",
-  "discord_library_status.json",
-);
-export const triggerFile = path.resolve(process.cwd(), ".data", "trigger_reload");
+export const statusFile = resolveDataPath("status.json");
+export const discordLibraryStatusFile = resolveDataPath("discord_library_status.json");
+export const triggerFile = resolveDataPath("trigger_reload");
 
 export async function readStatus(): Promise<Record<string, { loginState?: string; loginMessage?: string }>> {
   try {
