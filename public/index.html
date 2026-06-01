@@ -500,8 +500,6 @@
             <option value="all">全部</option>
             <option value="discord">Discord</option>
             <option value="telegram">Telegram</option>
-            <option value="x">X</option>
-            <option value="truthsocial">TruthSocial</option>
           </select>
           <button onclick="addLibraryAccountFromSelect()" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 新建账号</button>
         </div>
@@ -787,6 +785,24 @@
         case 'truthsocial-to-discord': return 'TruthSocial → Discord';
         default: return value;
       }
+    }
+
+    const HIDE_EXTERNAL_FORWARDING_TYPES = true;
+
+    function isExternalForwardingType(type) {
+      return type === 'x-to-discord' || type === 'truthsocial-to-discord';
+    }
+
+    function shouldHideForwardingType(type) {
+      return HIDE_EXTERNAL_FORWARDING_TYPES && isExternalForwardingType(type);
+    }
+
+    function getVisibleAccounts() {
+      return (state.accounts || []).filter((acc) => !shouldHideForwardingType(acc.forwardingType));
+    }
+
+    function isLibraryKindHidden(kind) {
+      return HIDE_EXTERNAL_FORWARDING_TYPES && (kind === 'x' || kind === 'truthsocial');
     }
 
     function formatTime(value) {
@@ -2084,11 +2100,25 @@
       });
     }
 
-    async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+    const TELEGRAM_LOGIN_ROUTE_WAIT_MS = 40000;
+    const TELEGRAM_CREATE_LOGIN_START_TIMEOUT_MS = TELEGRAM_LOGIN_ROUTE_WAIT_MS + 5000;
+    const TELEGRAM_CREATE_LOGIN_CONFIRM_TIMEOUT_MS = TELEGRAM_LOGIN_ROUTE_WAIT_MS + 10000;
+
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 15000, timeoutMessage = '') {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const message = timeoutMessage || `请求超时（${Math.ceil(timeoutMs / 1000)}秒）`;
+      const timer = setTimeout(() => controller.abort(new Error(message)), timeoutMs);
       try {
         return await fetch(url, { ...options, signal: controller.signal });
+      } catch (e) {
+        if (controller.signal.aborted) {
+          const reason = controller.signal.reason;
+          if (reason instanceof Error) {
+            throw reason;
+          }
+          throw new Error(typeof reason === 'string' && reason ? reason : message);
+        }
+        throw e;
       } finally {
         clearTimeout(timer);
       }
@@ -4164,11 +4194,12 @@
         return;
       }
 
-      if (state.accounts.length === 0) {
+      const visibleAccounts = getVisibleAccounts();
+      if (visibleAccounts.length === 0) {
         // 如果没有账号，显示提示和添加按钮
         appEl.innerHTML = `
           <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-8 text-center">
-            <p class="text-slate-400 mb-4">暂无转发实例</p>
+            <p class="text-slate-400 mb-4">暂无可见转发实例</p>
             <button onclick="addAccount(); render();" class="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
               + 添加转发实例
             </button>
@@ -4177,7 +4208,10 @@
         return;
       }
 
-      const activeAccount = state.accounts.find(a => a.id === state.activeId) || state.accounts[0];
+      const activeAccount = visibleAccounts.find(a => a.id === state.activeId) || visibleAccounts[0];
+      if (activeAccount && state.activeId !== activeAccount.id) {
+        state.activeId = activeAccount.id;
+      }
       if (activeAccount) {
         if (!activeAccount.forwardingType) {
           activeAccount.forwardingType = currentForwardingType || 'discord-to-discord';
@@ -4198,7 +4232,7 @@
         return;
       }
 
-      let tabsHtml = state.accounts.map(acc => {
+      let tabsHtml = visibleAccounts.map(acc => {
         const typeLabel = getForwardingTypeLabel(acc.forwardingType);
         const isActive = acc.id === state.activeId;
         const summary = buildAccountCardSummary(acc, { includeDetail: false });
@@ -4608,10 +4642,11 @@
 
     function getAllowedLibraryKinds() {
       if (!Array.isArray(state.enabledForwardingTypes) || state.enabledForwardingTypes.length === 0) {
-        return ['discord', 'telegram', 'truthsocial'];
+        return HIDE_EXTERNAL_FORWARDING_TYPES ? ['discord', 'telegram'] : ['discord', 'telegram', 'truthsocial'];
       }
       const allowed = new Set();
       state.enabledForwardingTypes.forEach((type) => {
+        if (shouldHideForwardingType(type)) return;
         if (type === 'discord-to-discord' || type === 'discord-to-feishu' || type === 'discord-to-dingtalk') {
           allowed.add('discord');
         } else if (type === 'discord-to-telegram') {
@@ -4629,9 +4664,9 @@
         }
       });
       if (allowed.size === 0) {
-        return ['discord', 'telegram', 'truthsocial'];
+        return HIDE_EXTERNAL_FORWARDING_TYPES ? ['discord', 'telegram'] : ['discord', 'telegram', 'truthsocial'];
       }
-      return Array.from(allowed);
+      return Array.from(allowed).filter((kind) => !isLibraryKindHidden(kind));
     }
 
     function isLibraryKindAllowed(kind) {
@@ -4666,7 +4701,9 @@
       const items = [];
       (state.discordAccounts || []).forEach((acc) => items.push({ kind: 'discord', id: acc.id, account: acc }));
       (state.telegramAccounts || []).forEach((acc) => items.push({ kind: 'telegram', id: acc.id, account: acc }));
-      (state.truthSocialAccounts || []).forEach((acc) => items.push({ kind: 'truthsocial', id: acc.id, account: acc }));
+      if (!isLibraryKindHidden('truthsocial')) {
+        (state.truthSocialAccounts || []).forEach((acc) => items.push({ kind: 'truthsocial', id: acc.id, account: acc }));
+      }
       return items;
     }
 
@@ -5212,7 +5249,7 @@
             apiHash,
             twoFactorPassword: twoFactorPassword || undefined
           })
-        }, 20000);
+        }, TELEGRAM_CREATE_LOGIN_START_TIMEOUT_MS, '发送验证码超时，请稍后重试');
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data?.error) {
           const detail = data?.message || data?.detail || '';
@@ -5379,7 +5416,7 @@
                 code: codeValue,
                 twoFactorPassword: account.twoFactorPassword || undefined
               })
-            }, 25000);
+            }, TELEGRAM_CREATE_LOGIN_CONFIRM_TIMEOUT_MS, 'Telegram 登录确认超时，请稍后重试');
             const data = await res.json().catch(() => ({}));
             if (!res.ok || data?.error) {
               throw new Error(data?.error || data?.message || '登录失败');
@@ -6701,7 +6738,7 @@
               class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
               <option value="discord" ${current.kind === 'discord' ? 'selected' : ''}>Discord</option>
               <option value="telegram" ${current.kind === 'telegram' ? 'selected' : ''}>Telegram</option>
-              <option value="truthsocial" ${current.kind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>
+              ${isLibraryKindHidden('truthsocial') ? '' : `<option value="truthsocial" ${current.kind === 'truthsocial' ? 'selected' : ''}>TruthSocial</option>`}
             </select>
           </div>
           <div>
@@ -7081,8 +7118,6 @@
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-telegram')) ? `<option value="telegram-to-telegram" ${acc.forwardingType === 'telegram-to-telegram' ? 'selected' : ''}>Telegram → Telegram</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-feishu')) ? `<option value="discord-to-feishu" ${acc.forwardingType === 'discord-to-feishu' ? 'selected' : ''}>Discord → 飞书</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-dingtalk')) ? `<option value="discord-to-dingtalk" ${acc.forwardingType === 'discord-to-dingtalk' ? 'selected' : ''}>Discord → 钉钉</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('x-to-discord')) ? `<option value="x-to-discord" ${acc.forwardingType === 'x-to-discord' ? 'selected' : ''}>X → Discord</option>` : ''}
-                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('truthsocial-to-discord')) ? `<option value="truthsocial-to-discord" ${acc.forwardingType === 'truthsocial-to-discord' ? 'selected' : ''}>TruthSocial → Discord</option>` : ''}
               </select>
             </div>
             </div>

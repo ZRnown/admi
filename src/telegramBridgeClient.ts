@@ -6,6 +6,17 @@
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = 65000;
+const LONG_RUNNING_REQUEST_METHODS = new Set([
+  "startClientLogin",
+  "confirmClientLogin",
+  "connectClient",
+  "connectBot",
+  "getClientChannels",
+  "getBotChannels",
+]);
+
 export interface TelegramBridgeMessage {
   text?: string;
   photo?: string; // URL
@@ -171,9 +182,14 @@ export class TelegramBridgeClient extends EventEmitter {
   /**
    * 发送 RPC 请求
    */
+  private _getRequestTimeoutMs(method: string): number {
+    return LONG_RUNNING_REQUEST_METHODS.has(method) ? LONG_RUNNING_REQUEST_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+
   private async _sendRequest(method: string, params: any): Promise<any> {
     const id = randomUUID();
     const request: RPCRequest = { id, method, params };
+    const timeoutMs = this._getRequestTimeoutMs(method);
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
@@ -188,12 +204,26 @@ export class TelegramBridgeClient extends EventEmitter {
       });
 
       // 设置超时
-      setTimeout(() => {
+      const timeout = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           reject(new Error(`Request ${method} timed out`));
         }
-      }, 30000); // 30秒超时
+      }, timeoutMs);
+
+      const pending = this.pendingRequests.get(id);
+      if (pending) {
+        this.pendingRequests.set(id, {
+          resolve: (value: any) => {
+            clearTimeout(timeout);
+            pending.resolve(value);
+          },
+          reject: (error: Error) => {
+            clearTimeout(timeout);
+            pending.reject(error);
+          },
+        });
+      }
     });
   }
 
