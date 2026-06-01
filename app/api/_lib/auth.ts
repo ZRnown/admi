@@ -7,8 +7,32 @@ const cookieName = "auth_token";
 
 type AuthState = {
   token?: string;
+  tokens?: Record<string, number>;
   issuedAt?: number;
 };
+
+const maxTokenAgeMs = 60 * 60 * 24 * 7 * 1000;
+
+function normalizeAuthState(state: AuthState): AuthState {
+  const now = Date.now();
+  const tokens: Record<string, number> = {};
+
+  if (state.token) {
+    tokens[state.token] = typeof state.issuedAt === "number" ? state.issuedAt : now;
+  }
+
+  if (state.tokens && typeof state.tokens === "object") {
+    for (const [token, issuedAt] of Object.entries(state.tokens)) {
+      if (!token) continue;
+      const timestamp = typeof issuedAt === "number" && Number.isFinite(issuedAt) ? issuedAt : now;
+      if (now - timestamp <= maxTokenAgeMs) {
+        tokens[token] = timestamp;
+      }
+    }
+  }
+
+  return { tokens };
+}
 
 async function readAuthState(): Promise<AuthState> {
   try {
@@ -39,8 +63,8 @@ export function getAuthToken(req: NextRequest): string | undefined {
 export async function isAuthenticated(req: NextRequest): Promise<boolean> {
   const token = getAuthToken(req);
   if (!token) return false;
-  const state = await readAuthState();
-  return Boolean(state.token && state.token === token);
+  const state = normalizeAuthState(await readAuthState());
+  return Boolean(state.tokens?.[token]);
 }
 
 export async function requireAuth(req: NextRequest): Promise<NextResponse | null> {
@@ -52,11 +76,21 @@ export async function requireAuth(req: NextRequest): Promise<NextResponse | null
 }
 
 export async function setAuthToken(token: string) {
-  await writeAuthState({ token, issuedAt: Date.now() });
+  const state = normalizeAuthState(await readAuthState());
+  const tokens = state.tokens || {};
+  tokens[token] = Date.now();
+  await writeAuthState({ tokens });
 }
 
-export async function clearAuthToken() {
-  await writeAuthState(null);
+export async function clearAuthToken(token?: string) {
+  if (!token) {
+    await writeAuthState(null);
+    return;
+  }
+  const state = normalizeAuthState(await readAuthState());
+  const tokens = state.tokens || {};
+  delete tokens[token];
+  await writeAuthState(Object.keys(tokens).length > 0 ? { tokens } : null);
 }
 
 export function applyAuthCookie(response: NextResponse, token: string) {
