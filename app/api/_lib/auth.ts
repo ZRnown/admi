@@ -44,8 +44,9 @@ async function readAuthState(): Promise<AuthState> {
 }
 
 async function writeAuthState(state: AuthState | null) {
+  const hasTokens = state?.tokens && Object.keys(state.tokens).length > 0;
   try {
-    if (!state || !state.token) {
+    if (!state || (!state.token && !hasTokens)) {
       await fs.unlink(authFile);
       return;
     }
