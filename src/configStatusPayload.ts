@@ -261,7 +261,10 @@ export function buildConfigStatusPayload({
         loginState: normalizeDiscordState(statusEntry.loginState),
         loginMessage:
           typeof statusEntry.loginMessage === "string" ? statusEntry.loginMessage : undefined,
-        syncedUser: statusEntry.syncedUser,
+        syncedUser:
+          statusEntry.syncedUser && typeof statusEntry.syncedUser === "object"
+            ? statusEntry.syncedUser
+            : account.syncedUser,
         guildsCount:
           typeof statusEntry.guildsCount === "number" ? statusEntry.guildsCount : account.guildsCount,
         channelsCount:
@@ -282,6 +285,12 @@ export function buildConfigStatusPayload({
         loginState: normalizedState,
         loginMessage: normalizeTelegramMessage(normalizedState, statusEntry?.message),
         userInfo: statusEntry?.userInfo,
+        syncedUser:
+          account.syncedUser && typeof account.syncedUser === "object"
+            ? account.syncedUser
+            : undefined,
+        dialogsCount: account.dialogsCount,
+        lastSyncTime: account.lastSyncTime,
       };
     }),
   };

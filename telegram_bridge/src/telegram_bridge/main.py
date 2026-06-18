@@ -117,11 +117,11 @@ class TelegramBridgeService:
             else:
                 merged_map = {}
                 for item in existing:
-                    key = str(item.get("id")) if isinstance(item, dict) and item.get("id") is not None else None
+                    key = self._normalize_dialog_cache_key(item.get("id")) if isinstance(item, dict) else None
                     if key:
                         merged_map[key] = item
                 for item in incoming:
-                    key = str(item.get("id")) if isinstance(item, dict) and item.get("id") is not None else None
+                    key = self._normalize_dialog_cache_key(item.get("id")) if isinstance(item, dict) else None
                     if key:
                         prev = merged_map.get(key)
                         merged_map[key] = {**prev, **item} if prev else item
@@ -137,6 +137,13 @@ class TelegramBridgeService:
             logger.debug(f"Telegram dialogs cache updated: {account_id}")
         except Exception as e:
             logger.error(f"Failed to write telegram dialogs cache: {e}")
+
+    @staticmethod
+    def _normalize_dialog_cache_key(value) -> str:
+        raw = str(value or "").strip()
+        if raw.startswith("-100") and raw[4:].isdigit():
+            return raw[4:]
+        return raw
 
     @staticmethod
     def _format_telegram_display_name(user_info: dict) -> str:
@@ -179,13 +186,19 @@ class TelegramBridgeService:
                         "id": message_data.get("id"),
                         "chat_title": message_data.get("chat_title"),
                         "chat_username": message_data.get("chat_username"),
+                        "chat_avatar_file": message_data.get("chat_avatar_file"),
                         "chat_id": message_data.get("chat_id"),
                         "text": message_data.get("text"),
                         "date": message_data.get("date"),
+                        "from_user": user_info,
+                        "from_id": user_info.get("id"),
                         "from_username": user_info.get("username"),
                         "from_display_name": display_name,
                         "from_avatar_file": message_data.get("from_avatar_file") or user_info.get("avatarFile"),
                         "reply_to_message_id": message_data.get("reply_to_message_id"),
+                        "reply_to_top_id": message_data.get("reply_to_top_id"),
+                        "message_thread_id": message_data.get("message_thread_id"),
+                        "is_forum_topic": message_data.get("is_forum_topic"),
                         "reply_to": message_data.get("reply_to_message"),
                         "media": message_data.get("media")
                     }
@@ -317,6 +330,9 @@ class TelegramBridgeService:
         async def wrap_get_client_channels(params):
             return await self.client_manager.get_channels(params.get("accountId"))
 
+        async def wrap_get_client_forum_topics(params):
+            return await self.client_manager.get_forum_topics(params.get("accountId"), params.get("chatId"))
+
         async def wrap_start_client_login(params):
             return await self.client_manager.start_login(params)
 
@@ -335,11 +351,15 @@ class TelegramBridgeService:
         async def wrap_get_bot_channels(params):
             return await self.bot_manager.get_channels(params.get("accountId"))
 
+        async def wrap_get_bot_forum_topics(params):
+            return await self.bot_manager.get_forum_topics(params.get("accountId"), params.get("chatId"))
+
         # 客户端管理
         self.ipc_server.register_handler("connectClient", wrap_connect_client)
         self.ipc_server.register_handler("disconnectClient", wrap_disconnect_client)
         self.ipc_server.register_handler("getClientStatus", wrap_get_client_status)
         self.ipc_server.register_handler("getClientChannels", wrap_get_client_channels)
+        self.ipc_server.register_handler("getClientForumTopics", wrap_get_client_forum_topics)
         self.ipc_server.register_handler("startClientLogin", wrap_start_client_login)
         self.ipc_server.register_handler("confirmClientLogin", wrap_confirm_client_login)
 
@@ -348,6 +368,7 @@ class TelegramBridgeService:
         self.ipc_server.register_handler("disconnectBot", wrap_disconnect_bot)
         self.ipc_server.register_handler("getBotStatus", wrap_get_bot_status)
         self.ipc_server.register_handler("getBotChannels", wrap_get_bot_channels)
+        self.ipc_server.register_handler("getBotForumTopics", wrap_get_bot_forum_topics)
 
         # 消息发送
         self.ipc_server.register_handler("sendMessage", self._handle_send_message)
@@ -487,7 +508,7 @@ class TelegramBridgeService:
 
         # 2. 填充有规则的监听列表
         for mapping in mappings:
-            if mapping.type not in ["telegram-to-discord", "telegram-to-telegram"]:
+            if mapping.type not in ["telegram-to-discord", "telegram-to-telegram", "telegram-to-mobile-client"]:
                 continue
             raw_id = mapping.source_channel_id
             chat_id = None

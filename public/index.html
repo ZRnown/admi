@@ -779,6 +779,7 @@
         case 'discord-to-telegram': return 'Discord → Telegram';
         case 'telegram-to-discord': return 'Telegram → Discord';
         case 'telegram-to-telegram': return 'Telegram → Telegram';
+        case 'telegram-to-dingtalk': return 'Telegram → 钉钉';
         case 'discord-to-feishu': return 'Discord → 飞书';
         case 'discord-to-dingtalk': return 'Discord → 钉钉';
         case 'x-to-discord': return 'X → Discord';
@@ -846,6 +847,8 @@
         } else if (type === 'telegram-to-telegram') {
           if (acc.telegramListenerAccountId) ids.push(acc.telegramListenerAccountId);
           if (acc.telegramSenderAccountId) ids.push(acc.telegramSenderAccountId);
+        } else if (type === 'telegram-to-dingtalk') {
+          if (acc.telegramListenerAccountId) ids.push(acc.telegramListenerAccountId);
         }
         const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
         if (uniqueIds.length === 0) return 'idle';
@@ -857,7 +860,7 @@
         return 'idle';
       }
 
-      if (type === 'telegram-to-discord') {
+      if (type === 'telegram-to-discord' || type === 'telegram-to-dingtalk') {
         return acc?.telegramClientState || 'idle';
       }
       const botState = normalizeRuntimeStatus(acc?.telegramBotState || 'idle');
@@ -893,7 +896,7 @@
 
     function getInstanceState(acc) {
       const type = acc?.forwardingType || 'discord-to-discord';
-      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram' || type === 'telegram-to-dingtalk') {
         return resolveTelegramInstanceState(acc, type);
       }
       if (type === 'x-to-discord' || type === 'truthsocial-to-discord') {
@@ -916,6 +919,10 @@
           targets.push({ id: acc.telegramSenderAccountId, role: 'sender' });
         }
       } else if (type === 'telegram-to-discord') {
+        if (acc.telegramListenerAccountId) {
+          targets.push({ id: acc.telegramListenerAccountId, role: 'listener' });
+        }
+      } else if (type === 'telegram-to-dingtalk') {
         if (acc.telegramListenerAccountId) {
           targets.push({ id: acc.telegramListenerAccountId, role: 'listener' });
         }
@@ -952,9 +959,16 @@
         });
       }
       if (type === 'discord-to-feishu') {
-        return Object.entries(acc.channelFeishuWebhooks || {}).some(([sourceId, rawTarget]) => {
+        const feishuMappings = Array.isArray(acc.feishuMappings)
+          ? acc.feishuMappings
+          : Object.entries(acc.channelFeishuWebhooks || {}).map(([sourceChannelId, rawTarget]) => ({
+              sourceChannelId,
+              target: rawTarget,
+            }));
+        return feishuMappings.some((mapping) => {
+          const sourceId = mapping?.sourceChannelId;
           if (!hasValidRuleSourceChannel(sourceId)) return false;
-          const target = normalizeFeishuTargetValue(rawTarget);
+          const target = normalizeFeishuTargetValue(mapping?.target || mapping);
           if (target.mode === 'thread') {
             return !!String(target.threadId || '').trim();
           }
@@ -965,6 +979,14 @@
         return (acc.mappings || []).some((m) => {
           if (!hasValidRuleSourceChannel(m?.sourceChannelId)) return false;
           const target = typeof m?.targetWebhookUrl === 'string' ? m.targetWebhookUrl.trim() : '';
+          return !!target;
+        });
+      }
+      if (type === 'telegram-to-dingtalk') {
+        return (acc.telegramConfig?.mappings || []).some((m) => {
+          if (m?.type !== 'telegram-to-dingtalk') return false;
+          if (!hasValidRuleSourceChannel(m?.sourceChannelId)) return false;
+          const target = String(m?.targetChannelId || '').trim();
           return !!target;
         });
       }
@@ -1082,7 +1104,7 @@
         return;
       }
       const type = acc.forwardingType || 'discord-to-discord';
-      const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
+      const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram' || type === 'telegram-to-dingtalk';
       const usingLibrary = hasTelegramLibrarySelection(acc);
       const discordLibraryId = acc.discordAccountId || acc.discordSenderAccountId;
       const usingDiscordLibrary = Boolean(discordLibraryId);
@@ -1196,7 +1218,7 @@
         return;
       }
       const type = acc.forwardingType || 'discord-to-discord';
-      const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram';
+      const requiresTelegram = type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram' || type === 'telegram-to-dingtalk';
       const usingLibrary = hasTelegramLibrarySelection(acc);
       const needsDiscord = type === 'discord-to-discord' || type === 'discord-to-telegram' || type === 'discord-to-feishu' || type === 'discord-to-dingtalk';
       if (needsDiscord) {
@@ -1326,7 +1348,7 @@
         }
       }
 
-      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram' || type === 'telegram-to-dingtalk') {
         if (hasTelegramLibrarySelection(acc)) {
           const targets = getTelegramLibraryTargetsForInstance(acc, type);
           if (targets.length === 0) {
@@ -1394,7 +1416,7 @@
           detailHtml: includeDetail ? buildAccountDetailHtml(acc, type, summary) : ''
         };
       }
-      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram') {
+      if (type === 'telegram-to-discord' || type === 'telegram-to-telegram' || type === 'discord-to-telegram' || type === 'telegram-to-dingtalk') {
         const state = resolveTelegramInstanceState(acc, type);
         const usingLibrary = hasTelegramLibrarySelection(acc);
         if (usingLibrary) {
@@ -2031,6 +2053,30 @@
         if (Array.isArray(persisted.telegramConfig.accounts)) {
           persisted.telegramConfig.accounts = persisted.telegramConfig.accounts.map(buildPersistedTelegramAccount);
         }
+      }
+      if (Array.isArray(persisted.feishuMappings)) {
+        persisted.channelFeishuWebhooks = {};
+        persisted.feishuRuleConfigs = {};
+        persisted.feishuSourceGuildMap = {};
+        persisted.feishuSourceGuildNameMap = {};
+        persisted.feishuSourceChannelNameMap = {};
+        persisted.channelNotes = { ...(persisted.channelNotes || {}) };
+        persisted.feishuMappings.forEach((mapping) => {
+          if (!mapping || !mapping.sourceChannelId) return;
+          const source = String(mapping.sourceChannelId);
+          if (!source) return;
+          const target = normalizeFeishuTargetValue(mapping.target || mapping);
+          persisted.channelFeishuWebhooks[source] = {
+            mode: target.mode,
+            webhookUrl: target.webhookUrl,
+            threadId: target.threadId,
+          };
+          persisted.feishuRuleConfigs[mapping.id || source] = { ...mapping };
+          if (mapping.sourceGuildId) persisted.feishuSourceGuildMap[source] = mapping.sourceGuildId;
+          if (mapping.sourceGuildName) persisted.feishuSourceGuildNameMap[source] = mapping.sourceGuildName;
+          if (mapping.sourceChannelName) persisted.feishuSourceChannelNameMap[source] = mapping.sourceChannelName;
+          if (mapping.note) persisted.channelNotes[source] = mapping.note;
+        });
       }
       return persisted;
     }
@@ -6761,7 +6807,7 @@
         forwardingType === 'discord-to-feishu' ||
         forwardingType === 'discord-to-dingtalk';
       const needsDiscordSender = forwardingType === 'discord-to-discord';
-      const needsTelegramListener = forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram';
+      const needsTelegramListener = forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk';
       const needsTelegramSender = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-telegram';
       const needsTruth = forwardingType === 'truthsocial-to-discord';
 
@@ -7116,6 +7162,7 @@
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-telegram')) ? `<option value="discord-to-telegram" ${acc.forwardingType === 'discord-to-telegram' ? 'selected' : ''}>Discord → Telegram</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-discord')) ? `<option value="telegram-to-discord" ${acc.forwardingType === 'telegram-to-discord' ? 'selected' : ''}>Telegram → Discord</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-telegram')) ? `<option value="telegram-to-telegram" ${acc.forwardingType === 'telegram-to-telegram' ? 'selected' : ''}>Telegram → Telegram</option>` : ''}
+                ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('telegram-to-dingtalk')) ? `<option value="telegram-to-dingtalk" ${acc.forwardingType === 'telegram-to-dingtalk' ? 'selected' : ''}>Telegram → 钉钉</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-feishu')) ? `<option value="discord-to-feishu" ${acc.forwardingType === 'discord-to-feishu' ? 'selected' : ''}>Discord → 飞书</option>` : ''}
                 ${(!state.enabledForwardingTypes || state.enabledForwardingTypes.includes('discord-to-dingtalk')) ? `<option value="discord-to-dingtalk" ${acc.forwardingType === 'discord-to-dingtalk' ? 'selected' : ''}>Discord → 钉钉</option>` : ''}
               </select>
@@ -7156,7 +7203,7 @@
             </div>
             ` : ''}
 
-            ${forwardingType === 'discord-to-dingtalk' ? `
+            ${(forwardingType === 'discord-to-dingtalk' || forwardingType === 'telegram-to-dingtalk') ? `
             <div class="border-t pt-4 border-slate-200">
               <h3 class="text-sm font-medium text-slate-800 mb-3">钉钉机器人配置</h3>
               <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
@@ -7296,6 +7343,7 @@
                     forwardingType === 'discord-to-telegram' ? 'Discord → Telegram 转发规则' :
                     forwardingType === 'telegram-to-discord' ? 'Telegram → Discord 转发规则' :
                     forwardingType === 'telegram-to-telegram' ? 'Telegram → Telegram 转发规则' :
+                    forwardingType === 'telegram-to-dingtalk' ? 'Telegram → 钉钉 转发规则' :
                     forwardingType === 'discord-to-feishu' ? 'Discord → 飞书 转发规则' :
                     forwardingType === 'discord-to-dingtalk' ? 'Discord → 钉钉 转发规则' :
                     forwardingType === 'x-to-discord' ? 'X → Discord 转发规则' :
@@ -7306,6 +7354,7 @@
                     forwardingType === 'discord-to-telegram' ? '配置Discord消息转发到Telegram频道的映射关系' :
                     forwardingType === 'telegram-to-discord' ? '配置Telegram消息转发到Discord频道的映射关系' :
                     forwardingType === 'telegram-to-telegram' ? '配置Telegram消息转发到Telegram频道的映射关系' :
+                    forwardingType === 'telegram-to-dingtalk' ? '配置Telegram消息转发到钉钉机器人的映射关系' :
                     forwardingType === 'discord-to-feishu' ? '配置Discord消息转发到飞书的映射关系' :
                     forwardingType === 'discord-to-dingtalk' ? '配置Discord消息转发到钉钉机器人的映射关系' :
                     forwardingType === 'x-to-discord' ? '配置 X 平台内容转发到 Discord 的规则' :
@@ -7373,6 +7422,20 @@
                   <span class="text-sm text-slate-800 font-medium">Telegram → Telegram 转发规则</span>
                 </div>
                 <button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
+              </div>
+              ${renderMappings(acc, forwardingType)}
+            </div>
+            ` : forwardingType === 'telegram-to-dingtalk' ? `
+            <div class="w-full space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm text-slate-800 font-medium">Telegram → 钉钉转发规则</span>
+                </div>
+                <button onclick="addMapping('${forwardingType}')" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-md hover:bg-indigo-100">+ 添加规则</button>
+              </div>
+              <div class="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-3 space-y-1">
+                <p>来源填写 Telegram 群组/频道 Chat ID，目标填写钉钉自定义机器人 Webhook。</p>
+                <p>若钉钉机器人开启加签，请填写对应加签密钥。</p>
               </div>
               ${renderMappings(acc, forwardingType)}
             </div>
@@ -7882,7 +7945,7 @@
     function renderMappings(acc, forwardingType) {
       // 根据转发类型决定读取哪个数组，并过滤出对应类型的 mappings
       let allMappings;
-      const isTelegramForwarding = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram';
+      const isTelegramForwarding = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk';
       if (isTelegramForwarding) {
         allMappings = (acc.telegramConfig?.mappings || []);
         // 过滤出当前转发类型的 mappings
@@ -7912,6 +7975,7 @@
                         forwardingType === 'discord-to-telegram' ? 'Discord→Telegram' :
                         forwardingType === 'telegram-to-discord' ? 'Telegram→Discord' :
                         forwardingType === 'telegram-to-telegram' ? 'Telegram→Telegram' :
+                        forwardingType === 'telegram-to-dingtalk' ? 'Telegram→钉钉' :
                         forwardingType === 'discord-to-dingtalk' ? 'Discord→钉钉' :
                         'Discord→飞书';
         return `<div class="text-center py-8 text-slate-400 text-sm">暂无 ${typeName} 规则，点击"添加规则"创建</div>`;
@@ -7943,6 +8007,10 @@
           sourcePlaceholder = 'Telegram 频道/Chat ID';
           targetPlaceholder = 'Telegram 频道/Chat ID';
           arrowIcon = '→';
+        } else if (forwardingType === 'telegram-to-dingtalk') {
+          sourcePlaceholder = 'Telegram 频道/Chat ID';
+          targetPlaceholder = '钉钉 Webhook 地址';
+          arrowIcon = '→';
         } else if (forwardingType === 'discord-to-feishu') {
           sourcePlaceholder = 'Discord 频道/子区 ID';
           targetPlaceholder = '飞书 Webhook 地址';
@@ -7969,7 +8037,7 @@
             ${renderSourceChannelInput(acc, m, originalIndex, forwardingType, sourcePlaceholder)}
             <span class="text-slate-300">${arrowIcon}</span>
             ${renderTargetChannelInput(acc, m, originalIndex, forwardingType, targetPlaceholder)}
-            ${forwardingType === 'discord-to-dingtalk' ? `
+            ${(forwardingType === 'discord-to-dingtalk' || forwardingType === 'telegram-to-dingtalk') ? `
             <input type="password" value="${m.dingtalkSecret || ''}" onchange="updateMapping(${originalIndex}, 'dingtalkSecret', this.value)"
               placeholder="加签密钥（可选）" class="w-52 px-3 py-1.5 border border-dashed border-slate-200 rounded-lg text-xs font-mono focus:border-indigo-500 focus:outline-none">
             ` : ''}
@@ -8283,7 +8351,66 @@
       };
     }
 
+    function ensureFeishuMappings(acc) {
+      if (!acc) return [];
+      if (Array.isArray(acc.feishuMappings)) return acc.feishuMappings;
+      const hooks = acc.channelFeishuWebhooks || {};
+      const notes = acc.channelNotes || {};
+      const guildMap = acc.feishuSourceGuildMap || {};
+      const channelNameMap = acc.feishuSourceChannelNameMap || {};
+      const guildNameMap = acc.feishuSourceGuildNameMap || {};
+      const ruleConfigs = acc.feishuRuleConfigs || {};
+      acc.feishuMappings = Object.entries(hooks).map(([source, raw]) => {
+        const target = normalizeFeishuTargetValue(raw);
+        const rule = ruleConfigs[source] || {};
+        return {
+          ...rule,
+          id: `legacy-feishu-${source}`,
+          sourceChannelId: source,
+          sourceGuildId: guildMap[source] || '',
+          sourceGuildName: guildNameMap[source] || '',
+          sourceChannelName: channelNameMap[source] || '',
+          target: {
+            mode: target.mode,
+            webhookUrl: target.webhookUrl,
+            threadId: target.threadId,
+          },
+          note: notes[source] || '',
+          inputMode:
+            rule.inputMode === 'manual'
+              ? 'manual'
+              : rule.inputMode === 'select'
+                ? 'select'
+                : undefined
+        };
+      });
+      return acc.feishuMappings;
+    }
+
     function getFeishuMappings(acc) {
+      if (Array.isArray(acc?.feishuMappings)) {
+        return acc.feishuMappings.map((mapping) => {
+          const target = normalizeFeishuTargetValue(mapping.target || mapping);
+          return {
+            ...mapping,
+            id: mapping.id || genId(),
+            sourceChannelId: mapping.sourceChannelId || '',
+            sourceGuildId: mapping.sourceGuildId || '',
+            sourceGuildName: mapping.sourceGuildName || '',
+            sourceChannelName: mapping.sourceChannelName || '',
+            mode: target.mode,
+            webhookUrl: target.webhookUrl,
+            threadId: target.threadId,
+            note: mapping.note || '',
+            inputMode:
+              mapping.inputMode === 'manual'
+                ? 'manual'
+                : mapping.inputMode === 'select'
+                  ? 'select'
+                  : undefined
+          };
+        });
+      }
       const hooks = acc.channelFeishuWebhooks || {};
       const notes = acc.channelNotes || {};
       const guildMap = acc.feishuSourceGuildMap || {};
@@ -10944,7 +11071,7 @@
 
       // 根据转发类型获取正确的映射配置
       let mapping;
-      if (currentLongMessageForwardingType === 'discord-to-telegram' || currentLongMessageForwardingType === 'telegram-to-discord' || currentLongMessageForwardingType === 'telegram-to-telegram') {
+      if (currentLongMessageForwardingType === 'discord-to-telegram' || currentLongMessageForwardingType === 'telegram-to-discord' || currentLongMessageForwardingType === 'telegram-to-telegram' || currentLongMessageForwardingType === 'telegram-to-dingtalk') {
         if (!acc.telegramConfig) acc.telegramConfig = {};
         if (!acc.telegramConfig.mappings) acc.telegramConfig.mappings = [];
         if (!acc.telegramConfig.mappings[mappingIndex]) return;
@@ -11316,7 +11443,7 @@
       let mapping;
 
       // 根据转发类型获取对应的规则
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk') {
         ensureTelegramConfig(acc);
         mapping = acc.telegramConfig?.mappings?.[mappingIndex];
       } else if (forwardingType === 'x-to-discord') {
@@ -11329,8 +11456,7 @@
         const entries = getFeishuMappings(acc);
         const entry = entries[mappingIndex];
         if (entry) {
-          const configs = acc.feishuRuleConfigs || {};
-          mapping = configs[entry.sourceChannelId] || {};
+          mapping = entry;
         }
       } else {
         const mappings = acc.mappings || [];
@@ -11435,7 +11561,7 @@
       document.getElementById('ruleStripChinese').checked = ruleConfigData.stripChinese;
 
       const standbySection = document.getElementById('ruleStandbySection');
-      const supportsStandby = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(forwardingType);
+      const supportsStandby = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'telegram-to-dingtalk', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(forwardingType);
       if (standbySection) {
         if (supportsStandby) {
           standbySection.classList.remove('hidden');
@@ -11509,7 +11635,7 @@
 
       // 超长消息处理（Discord/TG/飞书规则）
       const longMsgSection = document.getElementById('ruleLongMessageSection');
-      const supportsLongMessage = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(forwardingType);
+      const supportsLongMessage = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'telegram-to-dingtalk', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(forwardingType);
       if (supportsLongMessage) {
         longMsgSection.classList.remove('hidden');
         const longMsg = mapping.longMessage || {};
@@ -11547,15 +11673,8 @@
         ensureTruthSocialConfig(acc);
         mapping = acc.truthSocialConfig.mappings[currentRuleConfigIndex];
       } else if (currentRuleConfigType === 'discord-to-feishu') {
-        // 飞书规则需要特殊处理
-        const entries = getFeishuMappings(acc);
-        const entry = entries[currentRuleConfigIndex];
-        if (entry) {
-          // 飞书规则存储在 channelFeishuWebhooks 中，需要扩展存储
-          if (!acc.feishuRuleConfigs) acc.feishuRuleConfigs = {};
-          mapping = acc.feishuRuleConfigs[entry.sourceChannelId] || {};
-          acc.feishuRuleConfigs[entry.sourceChannelId] = mapping;
-        }
+        const entries = ensureFeishuMappings(acc);
+        mapping = entries[currentRuleConfigIndex];
       } else {
         if (!acc.mappings) acc.mappings = [];
         mapping = acc.mappings[currentRuleConfigIndex];
@@ -11601,7 +11720,7 @@
       mapping.ignoreChineseThreshold = Number.isFinite(ruleChineseThreshold) ? ruleChineseThreshold : undefined;
 
       // 主备模式（规则级别）
-      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(currentRuleConfigType)) {
+      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'telegram-to-dingtalk', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(currentRuleConfigType)) {
         const standbyEnabled = document.getElementById('ruleStandbyEnabled').checked;
         if (standbyEnabled) {
           const cooldownValue = parseInt(document.getElementById('ruleStandbyCooldown').value, 10);
@@ -11690,7 +11809,7 @@
       }
 
       // 超长消息处理（Discord/TG/飞书规则）
-      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(currentRuleConfigType)) {
+      if (['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'telegram-to-dingtalk', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(currentRuleConfigType)) {
         mapping.longMessage = {
           enabled: document.getElementById('ruleLongMessageEnabled').checked,
           threshold: parseInt(document.getElementById('ruleLongMessageThreshold').value) || 0,
@@ -11715,7 +11834,7 @@
 
       // 根据转发类型从正确的位置获取映射
       let mapping;
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk') {
         mapping = acc.telegramConfig?.mappings?.[mappingIndex];
       } else {
         mapping = acc.mappings[mappingIndex];
@@ -11874,7 +11993,7 @@
         }
         // 如果之前是需要 Discord 的类型，现在切换到 Telegram-only，断开 Discord
         if ((previousType === 'discord-to-discord' || previousType === 'discord-to-telegram' || previousType === 'discord-to-feishu' || previousType === 'discord-to-dingtalk')
-            && (forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram')
+            && (forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk')
             && acc.loginState === 'online') {
           requestStop();
         }
@@ -11895,7 +12014,7 @@
         if (!usingLibrary && !acc.telegramBotState) acc.telegramBotState = 'idle';
         ensureTelegramConfig(acc);
       }
-      if (forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
+      if (forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk') {
         if (!acc.telegramApiId) acc.telegramApiId = '';
         if (!acc.telegramApiHash) acc.telegramApiHash = '';
         if (!usingLibrary && !acc.telegramClientState) acc.telegramClientState = 'idle';
@@ -11991,6 +12110,7 @@
         botRelays: [],
         channelRelayMap: {},
         channelFeishuWebhooks: {},
+        feishuMappings: [],
         enableFeishuForward: false,
         feishuAppId: '',
         feishuAppSecret: '',
@@ -12056,13 +12176,13 @@
       }
 
       // 根据转发类型决定添加到哪里
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk') {
         // Discord→Telegram / Telegram→Discord 转发规则
         ensureTelegramConfig(acc);
 
         const mappingType = forwardingType === 'telegram-to-telegram'
           ? 'telegram-to-telegram'
-          : (forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram');
+          : (forwardingType === 'telegram-to-dingtalk' ? 'telegram-to-dingtalk' : (forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram'));
 
         const newMapping = {
           id: genId(),
@@ -12205,7 +12325,7 @@
       const acc = getActiveAccount();
       const forwardingType = acc.forwardingType || currentForwardingType;
       let mappings;
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk') {
         mappings = (acc.telegramConfig?.mappings || []).filter(m => m.type === forwardingType);
       } else if (forwardingType === 'x-to-discord') {
         mappings = acc.xConfig?.mappings || [];
@@ -12226,7 +12346,7 @@
       const shouldRerender = field === 'inputMode';
 
       // 根据转发类型决定更新哪个数组
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk') {
         // 更新 Telegram 规则
         ensureTelegramConfig(acc);
 
@@ -12247,7 +12367,7 @@
           if (!acc.telegramConfig.mappings[idx].type) {
             acc.telegramConfig.mappings[idx].type = forwardingType === 'telegram-to-telegram'
               ? 'telegram-to-telegram'
-              : (forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram');
+              : (forwardingType === 'telegram-to-dingtalk' ? 'telegram-to-dingtalk' : (forwardingType === 'telegram-to-discord' ? 'telegram-to-discord' : 'discord-to-telegram'));
           }
           console.log('[DEBUG] 更新 Telegram 规则:', idx, field, value);
         }
@@ -12351,7 +12471,7 @@
         updateMapping(idx, 'sourceGuildId', guildId);
         const acc = getActiveAccount();
         const forwardingType = acc.forwardingType || currentForwardingType;
-        const mappings = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram'
+        const mappings = forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk'
           ? (acc.telegramConfig?.mappings || [])
           : (acc.mappings || []);
         const mapping = mappings[idx];
@@ -12376,7 +12496,7 @@
       const forwardingType = acc.forwardingType || currentForwardingType;
 
       // 根据转发类型决定删除哪个数组中的规则
-      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram') {
+      if (forwardingType === 'discord-to-telegram' || forwardingType === 'telegram-to-discord' || forwardingType === 'telegram-to-telegram' || forwardingType === 'telegram-to-dingtalk') {
         // 删除 Telegram 规则
         if (!acc.telegramConfig || !acc.telegramConfig.mappings || idx >= acc.telegramConfig.mappings.length) return;
 
@@ -12453,33 +12573,23 @@
 
     function setFeishuMappingInputMode(idx, mode) {
       const acc = getActiveAccount();
-      const entries = getFeishuMappings(acc);
+      const entries = ensureFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      if (!acc.feishuRuleConfigs) acc.feishuRuleConfigs = {};
-      const source = hit.sourceChannelId;
-      const current = acc.feishuRuleConfigs[source] && typeof acc.feishuRuleConfigs[source] === 'object'
-        ? acc.feishuRuleConfigs[source]
-        : {};
-      acc.feishuRuleConfigs[source] = {
-        ...current,
-        inputMode: mode === 'manual' ? 'manual' : 'select',
-      };
+      hit.inputMode = mode === 'manual' ? 'manual' : 'select';
       saveConfigImmediate();
       render();
     }
 
     function addFeishuMapping() {
       const acc = getActiveAccount();
-      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-      if (!acc.feishuRuleConfigs) acc.feishuRuleConfigs = {};
-      // 使用时间戳作为key，确保新规则排在前面
-      const newKey = 'new_' + Date.now();
-      acc.channelFeishuWebhooks[newKey] = { mode: 'webhook', webhookUrl: '' };
-      acc.feishuRuleConfigs[newKey] = {
-        ...(acc.feishuRuleConfigs[newKey] || {}),
+      const entries = ensureFeishuMappings(acc);
+      entries.unshift({
+        id: genId(),
+        sourceChannelId: '',
+        target: { mode: 'webhook', webhookUrl: '' },
         inputMode: globalRuleInputMode === 'manual' ? 'manual' : 'select',
-      };
+      });
       pagination.feishuPage = 1;
       saveConfig();
       render();
@@ -12495,23 +12605,21 @@
 
       // 保存选择的服务器ID和名称（使用立即保存，避免刷新时丢失）
       const acc = getActiveAccount();
-      const entries = getFeishuMappings(acc);
+      const entries = ensureFeishuMappings(acc);
       if (entries[mappingIdx]) {
-        const sourceChannelId = entries[mappingIdx].sourceChannelId;
-        if (!acc.feishuSourceGuildMap) acc.feishuSourceGuildMap = {};
-        acc.feishuSourceGuildMap[sourceChannelId] = guildId || '';
+        const mapping = entries[mappingIdx];
+        mapping.sourceGuildId = guildId || '';
 
         // 保存服务器名称
-        if (!acc.feishuSourceGuildNameMap) acc.feishuSourceGuildNameMap = {};
         if (guildId) {
           if (isDiscordPrivateScope(guildId)) {
-            acc.feishuSourceGuildNameMap[sourceChannelId] = DISCORD_PRIVATE_SCOPE_LABEL;
+            mapping.sourceGuildName = DISCORD_PRIVATE_SCOPE_LABEL;
           } else {
             const guild = getCachedDiscordGuildsForAccount(getDiscordMetadataAccountId(acc)).find(g => g.id === guildId);
-            acc.feishuSourceGuildNameMap[sourceChannelId] = guild ? guild.name : '';
+            mapping.sourceGuildName = guild ? guild.name : '';
           }
         } else {
-          delete acc.feishuSourceGuildNameMap[sourceChannelId];
+          delete mapping.sourceGuildName;
         }
         saveConfigImmediate();
       }
@@ -12536,32 +12644,14 @@
 
     function updateFeishuSource(idx, value, guildSelectId) {
       const acc = getActiveAccount();
-      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-      const entries = getFeishuMappings(acc);
+      const entries = ensureFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      const oldSource = hit.sourceChannelId;
       const newSource = value || '';
-      const webhook = acc.channelFeishuWebhooks[oldSource];
-      const notes = acc.channelNotes || {};
-      if (oldSource !== newSource) {
-        const currentEntries = Object.entries(acc.channelFeishuWebhooks);
-        const oldIndex = currentEntries.findIndex(([sourceId]) => sourceId === oldSource);
-        const nextEntries = currentEntries.filter(([sourceId]) => sourceId !== oldSource);
-        if (newSource) {
-          // 占位规则（new_）第一次选中频道后，保持在顶部，避免跳到尾页
-          const preferredIndex =
-            oldSource.startsWith('new_') && !newSource.startsWith('new_') ? 0 : oldIndex;
-          const insertIndex =
-            preferredIndex >= 0 && preferredIndex <= nextEntries.length ? preferredIndex : nextEntries.length;
-          nextEntries.splice(insertIndex, 0, [newSource, webhook]);
-        }
-        acc.channelFeishuWebhooks = Object.fromEntries(nextEntries);
-      }
+      hit.sourceChannelId = newSource;
 
       // 修复：从 DOM 获取当前选择的服务器ID，确保服务器ID被正确保存
-      if (!acc.feishuSourceGuildMap) acc.feishuSourceGuildMap = {};
-      let guildId = acc.feishuSourceGuildMap[oldSource] || '';
+      let guildId = hit.sourceGuildId || '';
       if (guildSelectId) {
         const guildSelect = document.getElementById(guildSelectId);
         if (guildSelect && guildSelect.value) {
@@ -12569,14 +12659,10 @@
         }
       }
       if (guildId && newSource) {
-        acc.feishuSourceGuildMap[newSource] = guildId;
-      }
-      if (oldSource !== newSource && acc.feishuSourceGuildMap[oldSource] !== undefined) {
-        delete acc.feishuSourceGuildMap[oldSource];
+        hit.sourceGuildId = guildId;
       }
 
       // 保存频道名称，避免刷新后退回到ID显示
-      if (!acc.feishuSourceChannelNameMap) acc.feishuSourceChannelNameMap = {};
       let channelName = '';
       if (acc.discordAccountId && guildId && newSource) {
         const cacheKey = `${acc.discordAccountId}:${guildId}`;
@@ -12587,22 +12673,7 @@
         }
       }
       if (channelName && newSource) {
-        acc.feishuSourceChannelNameMap[newSource] = channelName;
-      } else if (oldSource !== newSource && acc.feishuSourceChannelNameMap[oldSource] !== undefined) {
-        acc.feishuSourceChannelNameMap[newSource] = acc.feishuSourceChannelNameMap[oldSource];
-      }
-      if (oldSource !== newSource && acc.feishuSourceChannelNameMap[oldSource] !== undefined) {
-        delete acc.feishuSourceChannelNameMap[oldSource];
-      }
-
-      if (notes && Object.prototype.hasOwnProperty.call(notes, oldSource)) {
-        notes[newSource] = notes[oldSource];
-        if (oldSource !== newSource) delete notes[oldSource];
-        acc.channelNotes = notes;
-      }
-      if (acc.feishuRuleConfigs && Object.prototype.hasOwnProperty.call(acc.feishuRuleConfigs, oldSource)) {
-        acc.feishuRuleConfigs[newSource] = acc.feishuRuleConfigs[oldSource];
-        if (oldSource !== newSource) delete acc.feishuRuleConfigs[oldSource];
+        hit.sourceChannelName = channelName;
       }
       // 使用立即保存，避免刷新时丢失服务器ID
       saveConfigImmediate();
@@ -12611,36 +12682,28 @@
 
     function updateFeishuWebhookEntry(idx, value) {
       const acc = getActiveAccount();
-      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-      const entries = getFeishuMappings(acc);
+      const entries = ensureFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      const source = hit.sourceChannelId;
       const trimmed = value ? value.trim() : '';
-      if (trimmed) {
-        acc.channelFeishuWebhooks[source] = { mode: 'webhook', webhookUrl: trimmed };
-      } else {
-        delete acc.channelFeishuWebhooks[source];
-      }
+      hit.target = { mode: 'webhook', webhookUrl: trimmed };
       saveConfig();
       render();
     }
 
     function updateFeishuMode(idx, value) {
       const acc = getActiveAccount();
-      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-      const entries = getFeishuMappings(acc);
+      const entries = ensureFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      const source = hit.sourceChannelId;
-      const current = normalizeFeishuTargetValue(acc.channelFeishuWebhooks[source]);
+      const current = normalizeFeishuTargetValue(hit.target || hit);
       if (value === 'thread') {
-        acc.channelFeishuWebhooks[source] = {
+        hit.target = {
           mode: 'thread',
           threadId: current.threadId || '',
         };
       } else {
-        acc.channelFeishuWebhooks[source] = {
+        hit.target = {
           mode: 'webhook',
           webhookUrl: current.webhookUrl || '',
         };
@@ -12651,62 +12714,41 @@
 
     function updateFeishuThreadId(idx, value) {
       const acc = getActiveAccount();
-      if (!acc.channelFeishuWebhooks) acc.channelFeishuWebhooks = {};
-      const entries = getFeishuMappings(acc);
+      const entries = ensureFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      const source = hit.sourceChannelId;
       const trimmed = value ? value.trim() : '';
-      if (trimmed) {
-        acc.channelFeishuWebhooks[source] = {
-          mode: 'thread',
-          threadId: trimmed,
-        };
-      } else {
-        delete acc.channelFeishuWebhooks[source];
-      }
+      hit.target = {
+        mode: 'thread',
+        threadId: trimmed,
+      };
       saveConfig();
       render();
     }
 
     function updateFeishuNote(idx, value) {
       const acc = getActiveAccount();
-      const entries = getFeishuMappings(acc);
+      const entries = ensureFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
-      const source = hit.sourceChannelId;
-      if (!acc.channelNotes) acc.channelNotes = {};
       if (value && value.trim()) {
-        acc.channelNotes[source] = value.trim();
+        hit.note = value.trim();
       } else {
-        delete acc.channelNotes[source];
+        delete hit.note;
       }
       saveConfig();
     }
 
     function removeFeishuMapping(idx) {
       const acc = getActiveAccount();
-      const entries = getFeishuMappings(acc);
+      const entries = ensureFeishuMappings(acc);
       const hit = entries[idx];
       if (!hit) return;
 
-      const source = hit.sourceChannelId;
-      delete acc.channelFeishuWebhooks[source];
-      if (acc.channelNotes && acc.channelNotes[source] !== undefined) {
-        delete acc.channelNotes[source];
-      }
-      if (acc.feishuRuleConfigs && acc.feishuRuleConfigs[source] !== undefined) {
-        delete acc.feishuRuleConfigs[source];
-      }
-      if (acc.feishuSourceGuildMap && acc.feishuSourceGuildMap[source] !== undefined) {
-        delete acc.feishuSourceGuildMap[source];
-      }
-      if (acc.feishuSourceChannelNameMap && acc.feishuSourceChannelNameMap[source] !== undefined) {
-        delete acc.feishuSourceChannelNameMap[source];
-      }
+      entries.splice(idx, 1);
 
       // 删除后调整分页
-      const updatedEntries = Object.entries(acc.channelFeishuWebhooks || {});
+      const updatedEntries = entries;
       const { feishuPage, pageSize } = pagination;
       const totalPages = Math.ceil(updatedEntries.length / pageSize) || 1;
 

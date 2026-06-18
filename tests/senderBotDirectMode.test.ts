@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import https from "node:https";
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 const require = createRequire(import.meta.url);
 const { SenderBot } = require("../dist-bot/senderBot.js");
@@ -29,12 +32,20 @@ function installHttpsRequestMock(
     };
     req.end = () => {
       calls.push({ options, body });
-      const res = new EventEmitter() as EventEmitter & { statusCode?: number; statusMessage?: string };
+      const res = new EventEmitter() as EventEmitter & {
+        statusCode?: number;
+        statusMessage?: string;
+        headers?: Record<string, string>;
+      };
       res.statusCode = statusCode;
       res.statusMessage = statusCode >= 200 && statusCode < 300 ? "OK" : "ERROR";
+      res.headers = {
+        "content-length": String(Buffer.byteLength(JSON.stringify(responseBody))),
+        "content-type": "application/json",
+      };
       process.nextTick(() => {
         callback(res);
-        res.emit("data", JSON.stringify(responseBody));
+        res.emit("data", Buffer.from(JSON.stringify(responseBody)));
         res.emit("end");
       });
     };
@@ -176,4 +187,102 @@ test("SenderBot applies replacements to embed text when editing forwarded messag
   const payload = JSON.parse(calls[0].body);
   assert.equal(payload.embeds[0].title, "baz edit");
   assert.equal(payload.embeds[0].description, "baz edit desc");
+});
+
+test("SenderBot sends upload once and splits long overflow text", async (t) => {
+  const calls = installHttpsRequestMock(t, { id: "target-msg-long", channel_id: "1234567890" });
+  const sender = new SenderBot({
+    webhookUrl: "https://discord.com/api/webhooks/1/example",
+  });
+
+  await sender.sendData([
+    {
+      content: "a".repeat(2500),
+      sourceMessageId: "source-long",
+      uploads: [
+        {
+          url: "https://cdn.example.com/chart.jpg",
+          filename: "chart.jpg",
+          isImage: true,
+        },
+      ],
+    },
+  ]);
+
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(calls[1].options.path, "/api/webhooks/1/example?wait=true");
+  assert.equal(calls[2].options.path, "/api/webhooks/1/example?wait=true");
+
+  const firstPayloadMatch = calls[1].body.match(/name="payload_json"\r\nContent-Type: application\/json\r\n\r\n(.+?)\r\n--/s);
+  assert.ok(firstPayloadMatch?.[1]);
+  const firstPayload = JSON.parse(firstPayloadMatch[1]);
+  assert.equal(firstPayload.content.length, 2000);
+  assert.equal(firstPayload.attachments.length, 1);
+
+  const secondPayload = JSON.parse(calls[2].body);
+  assert.equal(secondPayload.content.length, 500);
+  assert.equal(secondPayload.attachments, undefined);
+});
+
+test("SenderBot sends message with oversized upload as link instead of failing", async (t) => {
+  const calls = installHttpsRequestMock(t, { id: "target-msg-large", channel_id: "1234567890" });
+  const tempDir = path.join(os.tmpdir(), `sender-large-${Date.now()}`);
+  await mkdir(tempDir, { recursive: true });
+  t.after(() => rm(tempDir, { recursive: true, force: true }));
+  const largeFile = path.join(tempDir, "large-video.mp4");
+  await writeFile(largeFile, Buffer.alloc(16 * 1024 * 1024));
+
+  const sender = new SenderBot({
+    webhookUrl: "https://discord.com/api/webhooks/1/example",
+  });
+
+  const result = await sender.sendData([
+    {
+      content: "正文应该继续发送",
+      sourceMessageId: "source-large",
+      uploads: [
+        {
+          localPath: largeFile,
+          url: "https://cdn.example.com/large-video.mp4",
+          filename: "large-video.mp4",
+          isVideo: true,
+        },
+      ],
+    },
+  ]);
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(result, [
+    {
+      sourceMessageId: "source-large",
+      targetMessageId: "target-msg-large",
+      targetChannelId: "1234567890",
+    },
+  ]);
+  const payload = JSON.parse(calls[0].body);
+  assert.match(payload.content, /正文应该继续发送/);
+  assert.match(payload.content, /附件过大，已改为链接/);
+  assert.match(payload.content, /large-video\.mp4/);
+  assert.match(payload.content, /https:\/\/cdn\.example\.com\/large-video\.mp4/);
+});
+
+test("SenderBot deletes forwarded messages via direct channel API", async (t) => {
+  const calls = installHttpsRequestMock(t, {}, 204);
+  const sender = new SenderBot({
+    webhookUrl: "https://discord.com/api/webhooks/1/example",
+    targetChannelId: "dm-42",
+    authToken: "self-user-token",
+    authType: "selfbot",
+  });
+
+  await sender.deleteForwardedMessage({
+    targetChannelId: "dm-42",
+    targetMessageId: "target-msg-delete",
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, "DELETE");
+  assert.equal(calls[0].options.path, "/api/v10/channels/dm-42/messages/target-msg-delete");
+  assert.equal(calls[0].options.headers.Authorization, "self-user-token");
 });

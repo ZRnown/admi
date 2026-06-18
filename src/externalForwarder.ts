@@ -12,6 +12,7 @@ import { FileLogger } from "./logger";
 import { clampPercent, getLanguageRatio } from "./languageFilter";
 import { formatKeywordGroups, matchParsedKeywordGroups, parseKeywordGroups } from "./keywordMatcher";
 import { recordForwardStat } from "./forwardStats";
+import { runTwscrape } from "./xTwscrapeBridge";
 
 const STATE_FILE = path.resolve(process.cwd(), ".data", "external_forward_state.json");
 const STATUS_FILE = path.resolve(process.cwd(), ".data", "external_forward_status.json");
@@ -151,6 +152,9 @@ function buildSignature(account: AccountConfig): string {
     translationProvider: account.translationProvider,
     translationApiKey: account.translationApiKey,
     translationSecret: account.translationSecret,
+    translationBaseUrl: account.translationBaseUrl,
+    translationModel: account.translationModel,
+    translationPrompt: account.translationPrompt,
     deepseekApiKey: account.deepseekApiKey,
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
@@ -190,6 +194,9 @@ function buildSender(account: AccountConfig, running: ExternalRunningAccount, we
     translationProvider: account.translationProvider || "deepseek",
     translationApiKey: account.translationApiKey || account.deepseekApiKey,
     translationSecret: account.translationSecret,
+    translationBaseUrl: account.translationBaseUrl,
+    translationModel: account.translationModel,
+    translationPrompt: account.translationPrompt,
     watermark: account.watermark,
     watermarkSecondary: account.watermarkSecondary,
     watermarks: account.watermarks,
@@ -509,7 +516,12 @@ function isTweetRetweet(tweet: any): boolean {
 }
 
 function resolveXStreamMode(account: AccountConfig): XStreamMode {
+  if ((account.xConfig as any)?.sourceProvider === "twscrape") return "poll";
   return account.xConfig?.mode === "websocket" ? "websocket" : DEFAULT_X_STREAM_MODE;
+}
+
+function resolveXSourceProvider(account: AccountConfig): "twitterapi" | "twscrape" {
+  return (account.xConfig as any)?.sourceProvider === "twscrape" ? "twscrape" : "twitterapi";
 }
 
 function buildXRuleTag(accountId: string, ruleId: string): string {
@@ -669,6 +681,27 @@ async function forwardXRule(account: AccountConfig, rule: XForwardingRule, runni
   const logPrefix = `[X->Discord] ${account.name || account.id} :: ${rule.sourceUserName || rule.sourceUserId}`;
   const now = Date.now();
   updateRuleStatus("x", account.id, rule.id, { lastPollAt: now });
+  const sourceProvider = resolveXSourceProvider(account);
+  let tweets: any[] = [];
+
+  if (sourceProvider === "twscrape") {
+    try {
+      tweets = await runTwscrape({
+        sourceUserName: rule.sourceUserName,
+        sourceUserId: rule.sourceUserId,
+        includeReplies: rule.includeReplies === true,
+        includeRetweets: rule.includeRetweets === true,
+        limit: 10,
+        dbPath: (account.xConfig as any)?.twscrapeDbPath,
+        proxyUrl: account.proxyUrl,
+      });
+    } catch (e: any) {
+      logger.error(`${logPrefix} twscrape 获取推文失败: ${String(e?.message || e)}`);
+      updateRuleStatus("x", account.id, rule.id, { lastError: String(e?.message || e), lastErrorAt: Date.now() });
+      return;
+    }
+    updateRuleStatus("x", account.id, rule.id, { lastSuccessAt: Date.now(), lastError: "", lastErrorAt: undefined });
+  } else {
   const apiKey = account.xConfig?.apiKey;
   if (!apiKey) {
     logger.error(`${logPrefix} 缺少 X API Key`);
@@ -697,7 +730,8 @@ async function forwardXRule(account: AccountConfig, rule: XForwardingRule, runni
   }
   updateRuleStatus("x", account.id, rule.id, { lastSuccessAt: Date.now(), lastError: "", lastErrorAt: undefined });
 
-  const tweets = extractXItems(payload);
+  tweets = extractXItems(payload);
+  }
   if (tweets.length === 0) return;
 
   const lastSeen = getLastSeen("x", account.id, rule.id);

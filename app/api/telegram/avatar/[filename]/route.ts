@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { resolveDataPath } from "@/src/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ function resolveAvatarPath(filename: string): string | null {
   if (!safeName || safeName !== filename) {
     return null;
   }
-  return path.join(process.cwd(), ".data", "telegram_avatars", safeName);
+  return resolveDataPath("telegram_avatars", safeName);
 }
 
 function getContentType(filePath: string): string {

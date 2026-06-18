@@ -15,6 +15,8 @@ const LONG_RUNNING_REQUEST_METHODS = new Set([
   "connectBot",
   "getClientChannels",
   "getBotChannels",
+  "getClientForumTopics",
+  "getBotForumTopics",
 ]);
 
 export interface TelegramBridgeMessage {
@@ -283,6 +285,10 @@ export class TelegramBridgeClient extends EventEmitter {
     return this._sendRequest("getClientChannels", { accountId });
   }
 
+  async getClientForumTopics(accountId: string, chatId: string | number): Promise<any> {
+    return this._sendRequest("getClientForumTopics", { accountId, chatId });
+  }
+
   /**
    * 开始 Telegram Client 手机号登录（发送验证码）
    */
@@ -316,6 +322,10 @@ export class TelegramBridgeClient extends EventEmitter {
    */
   async getBotChannels(accountId: string): Promise<any> {
     return this._sendRequest("getBotChannels", { accountId });
+  }
+
+  async getBotForumTopics(accountId: string, chatId: string | number): Promise<any> {
+    return this._sendRequest("getBotForumTopics", { accountId, chatId });
   }
 
   /**

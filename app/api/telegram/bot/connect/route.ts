@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMultiConfig, saveMultiConfig, type AccountConfig } from "@/src/config";
 import { promises as fs } from "fs";
 import path from "path";
+import { resolveDataPath } from "@/src/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Telegram 状态文件路径
-const telegramStatusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
-const triggerFile = path.resolve(process.cwd(), ".data", "trigger_reload");
+const telegramStatusFile = resolveDataPath("telegram_status.json");
+const triggerFile = resolveDataPath("trigger_reload");
 
 async function writeTelegramStatus(accountId: string, state: string, message: string, userInfo?: any) {
   try {

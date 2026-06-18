@@ -5,6 +5,7 @@ import { URL } from "node:url";
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|bmp|webp|svg)(?:$|[?#])/i;
 const MAX_MARKDOWN_IMAGES = 20;
 const MAX_MARKDOWN_LENGTH = 3800;
+type DingTalkMarkdownPayload = { msgtype: "markdown"; markdown: { title: string; text: string } };
 
 export interface DingTalkAttachment {
   url: string;
@@ -23,6 +24,28 @@ export interface DingTalkSendPayload {
 function truncateText(input: string, limit: number): string {
   if (!input || input.length <= limit) return input;
   return `${input.slice(0, Math.max(0, limit - 16))}\n\n...(内容过长已截断)`;
+}
+
+function splitTextByLimit(input: string, limit: number): string[] {
+  const text = String(input || "").trim();
+  if (!text) return [];
+  if (text.length <= limit) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > limit) {
+    let cut = remaining.lastIndexOf("\n", limit);
+    if (cut < Math.floor(limit * 0.5)) {
+      cut = remaining.lastIndexOf(" ", limit);
+    }
+    if (cut < Math.floor(limit * 0.5)) {
+      cut = limit;
+    }
+    chunks.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks.filter(Boolean);
 }
 
 function inferIsImage(att: DingTalkAttachment): boolean {
@@ -74,12 +97,14 @@ export class DingTalkSender {
   }
 
   async send(data: DingTalkSendPayload) {
-    const payload = this.buildPayload(data);
-    if (!payload) return;
+    const payloads = this.buildPayloads(data);
+    if (payloads.length === 0) return;
     const url = this.buildSignedWebhookUrl();
-    const res = await this.request(url, JSON.stringify(payload));
-    if (typeof res?.errcode === "number" && res.errcode !== 0) {
-      throw new Error(`钉钉返回错误: errcode=${res.errcode}, errmsg=${res?.errmsg || "unknown"}`);
+    for (const payload of payloads) {
+      const res = await this.request(url, JSON.stringify(payload));
+      if (typeof res?.errcode === "number" && res.errcode !== 0) {
+        throw new Error(`钉钉返回错误: errcode=${res.errcode}, errmsg=${res?.errmsg || "unknown"}`);
+      }
     }
   }
 
@@ -96,7 +121,7 @@ export class DingTalkSender {
     return webhook;
   }
 
-  private buildPayload(data: DingTalkSendPayload): { msgtype: "markdown"; markdown: { title: string; text: string } } | null {
+  private buildPayloads(data: DingTalkSendPayload): DingTalkMarkdownPayload[] {
     const lines: string[] = [];
     const mainContent = String(data.content || "").trim();
 
@@ -133,18 +158,18 @@ export class DingTalkSender {
       lines.push(`#### 附件/媒体\n${fileLines.join("\n")}`);
     }
 
-    const text = truncateText(lines.join("\n\n").trim(), MAX_MARKDOWN_LENGTH);
-    if (!text) return null;
+    const chunks = splitTextByLimit(lines.join("\n\n").trim(), MAX_MARKDOWN_LENGTH);
+    if (chunks.length === 0) return [];
 
     const titleSource = mainContent || data.username || "Discord 转发消息";
     const title = truncateText(titleSource.replace(/\s+/g, " ").trim(), 60) || "Discord 转发消息";
-    return {
+    return chunks.map((text, index) => ({
       msgtype: "markdown",
       markdown: {
-        title,
+        title: chunks.length > 1 ? `${title} (${index + 1}/${chunks.length})` : title,
         text,
       },
-    };
+    }));
   }
 
   private async request(url: URL, payload: string): Promise<any> {

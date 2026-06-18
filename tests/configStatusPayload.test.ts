@@ -27,10 +27,22 @@ test("buildConfigStatusPayload strips heavy rule collections from poll responses
         },
       ],
       discordAccounts: [
-        { id: "discord-lib-1", name: "Discord A", token: "discord-token" },
+        {
+          id: "discord-lib-1",
+          name: "Discord A",
+          token: "discord-token",
+          syncedUser: { id: "user-1", username: "demo", globalName: "Demo User" },
+        },
       ],
       telegramAccounts: [
-        { id: "tg-lib-1", name: "Telegram A", token: "tg-token" },
+        {
+          id: "tg-lib-1",
+          name: "Telegram A",
+          token: "tg-token",
+          syncedUser: { id: "tg-user-1", username: "demo" },
+          dialogsCount: 236,
+          lastSyncTime: "2026-06-15T16:00:00.000Z",
+        },
       ],
       xAccounts: [],
       truthSocialAccounts: [],
@@ -111,7 +123,7 @@ test("buildConfigStatusPayload strips heavy rule collections from poll responses
       loginEnabled: undefined,
       loginState: "online",
       loginMessage: "ready",
-      syncedUser: undefined,
+      syncedUser: { id: "user-1", username: "demo", globalName: "Demo User" },
       guildsCount: 12,
       channelsCount: 120,
       lastSyncTime: undefined,
@@ -126,6 +138,9 @@ test("buildConfigStatusPayload strips heavy rule collections from poll responses
       loginState: "online",
       loginMessage: "connected",
       userInfo: { username: "demo" },
+      syncedUser: { id: "tg-user-1", username: "demo" },
+      dialogsCount: 236,
+      lastSyncTime: "2026-06-15T16:00:00.000Z",
     },
   ]);
 });

@@ -287,12 +287,17 @@ interface FrontendMapping {
   sourceGuildId?: string;
   sourceGuildName?: string;
   sourceChannelName?: string;
+  mobileClientCategoryName?: string;
+  mobileClientChannelName?: string;
+  mobileClientChannelAvatarUrl?: string;
+  sourceThreadId?: string;
   targetWebhookUrl: string;
   targetChannelId?: string;
   targetGuildId?: string;
   discordSenderType?: "account" | "webhook";
   discordSenderAccountId?: string;
   showSourceIdentity?: boolean;
+  safewAccountId?: string;
   dingtalkSecret?: string;
   inputMode?: "manual" | "select";
   note?: string;
@@ -317,6 +322,7 @@ interface FrontendMapping {
   // 规则级别的忽略配置
   ignoreSelf?: boolean;
   ignoreBot?: boolean;
+  onlyBot?: boolean;
   ignoreImages?: boolean;
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
@@ -345,10 +351,14 @@ interface FrontendAccount {
   forwardingType?:
     | "discord-to-discord"
     | "discord-to-telegram"
+    | "discord-to-mobile-client"
     | "telegram-to-discord"
     | "telegram-to-telegram"
+    | "telegram-to-mobile-client"
+    | "telegram-to-dingtalk"
     | "discord-to-feishu"
     | "discord-to-dingtalk"
+    | "discord-to-safew"
     | "x-to-discord"
     | "truthsocial-to-discord";
   token: string;
@@ -377,20 +387,36 @@ interface FrontendAccount {
   translationProvider?: "deepseek" | "google" | "baidu" | "youdao" | "openai";
   translationApiKey?: string;
   translationSecret?: string;
+  translationBaseUrl?: string;
+  translationModel?: string;
+  translationPrompt?: string;
   deepseekApiKey?: string;
   enableBotRelay?: boolean;
   botRelays?: Array<{ id: string; name: string; token: string; loginState?: string; loginMessage?: string }>;
   channelRelayMap?: Record<string, string>;
   channelFeishuWebhooks?: Record<string, FeishuTargetConfig>;
+  feishuMappings?: Array<RuleLevelConfig & {
+    id?: string;
+    sourceChannelId?: string;
+    sourceGuildId?: string;
+    sourceGuildName?: string;
+    sourceChannelName?: string;
+    target?: FeishuTargetConfig | string;
+    note?: string;
+    inputMode?: "select" | "manual";
+  }>;
   feishuSourceGuildMap?: Record<string, string>;
   feishuSourceChannelNameMap?: Record<string, string>;
   enableFeishuForward?: boolean;
   enableDiscordForward?: boolean;
   feishuAppId?: string;
   feishuAppSecret?: string;
+  safewBotToken?: string;
+  safewAccounts?: Array<{ id: string; name: string; botToken: string; loginState?: string; loginMessage?: string; groups?: Array<{ id: string; title: string; type?: string }> }>;
   publicBaseUrl?: string;
   ignoreSelf?: boolean;
   ignoreBot?: boolean;
+  onlyBot?: boolean;
   ignoreImages?: boolean;
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
@@ -434,6 +460,7 @@ interface FrontendAccount {
   telegramOverflowMessage?: string; // 全局超长时附加的消息
   // Telegram 配置（包含 accounts 和 mappings）
   telegramConfig?: FrontendTelegramConfig;
+  mobileClientTarget?: any;
   feishuRuleConfigs?: Record<string, RuleLevelConfig>;
   discordLogin?: {
     email?: string;
@@ -482,10 +509,14 @@ interface FrontendPayload {
   enabledForwardingTypes?: Array<
     | "discord-to-discord"
     | "discord-to-telegram"
+    | "discord-to-mobile-client"
     | "telegram-to-discord"
     | "telegram-to-telegram"
+    | "telegram-to-mobile-client"
+    | "telegram-to-dingtalk"
     | "discord-to-feishu"
     | "discord-to-dingtalk"
+    | "discord-to-safew"
     | "x-to-discord"
     | "truthsocial-to-discord"
   >;
@@ -516,6 +547,31 @@ function normalizeFeishuTargets(raw: any): Record<string, FeishuTargetConfig> {
     }
   }
   return result;
+}
+
+function normalizeFeishuMappingRule(raw: any): any | null {
+  if (!raw || typeof raw !== "object") return null;
+  const target = normalizeFeishuTarget(raw.target || raw);
+  if (!target) return null;
+  const sourceChannelId = typeof raw.sourceChannelId === "string" ? raw.sourceChannelId.trim() : "";
+  if (!sourceChannelId) return null;
+  return {
+    ...normalizeRuleConfig(raw),
+    id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : randomUUID(),
+    sourceChannelId,
+    sourceGuildId: typeof raw.sourceGuildId === "string" && raw.sourceGuildId.trim() ? raw.sourceGuildId.trim() : undefined,
+    sourceGuildName: typeof raw.sourceGuildName === "string" && raw.sourceGuildName.trim() ? raw.sourceGuildName.trim() : undefined,
+    sourceChannelName:
+      typeof raw.sourceChannelName === "string" && raw.sourceChannelName.trim() ? raw.sourceChannelName.trim() : undefined,
+    target,
+    note: typeof raw.note === "string" && raw.note.trim() ? raw.note.trim() : undefined,
+    inputMode: raw.inputMode === "manual" ? "manual" : raw.inputMode === "select" ? "select" : undefined,
+  };
+}
+
+function normalizeFeishuMappings(raw: any): any[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => normalizeFeishuMappingRule(item)).filter(Boolean);
 }
 
 function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | undefined {
@@ -595,6 +651,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       showSourceIdentity: undefined,
       ignoreSelf: undefined,
       ignoreBot: undefined,
+      onlyBot: undefined,
       ignoreImages: undefined,
       ignoreAudio: undefined,
       ignoreVideo: undefined,
@@ -644,6 +701,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
     ignoreSelf: raw.ignoreSelf === true ? true : undefined,
     ignoreBot: raw.ignoreBot === true ? true : undefined,
+    onlyBot: raw.onlyBot === true ? true : undefined,
     ignoreImages: raw.ignoreImages === true ? true : undefined,
     ignoreAudio: raw.ignoreAudio === true ? true : undefined,
     ignoreVideo: raw.ignoreVideo === true ? true : undefined,
@@ -782,6 +840,18 @@ function mergeXConfig(incoming?: XSourceConfig, fallback?: XSourceConfig): XSour
   } else if (fallback?.apiBaseUrl) {
     next.apiBaseUrl = fallback.apiBaseUrl;
   }
+  if (typeof (incoming as any).sourceProvider === "string") {
+    const token = (incoming as any).sourceProvider.trim().toLowerCase();
+    (next as any).sourceProvider =
+      token === "twscrape" ? "twscrape" : token === "twitterapi" || token === "twitterapi.io" ? "twitterapi" : undefined;
+  } else if ((fallback as any)?.sourceProvider) {
+    (next as any).sourceProvider = (fallback as any).sourceProvider;
+  }
+  if (typeof (incoming as any).twscrapeDbPath === "string") {
+    (next as any).twscrapeDbPath = (incoming as any).twscrapeDbPath.trim() || undefined;
+  } else if ((fallback as any)?.twscrapeDbPath) {
+    (next as any).twscrapeDbPath = (fallback as any).twscrapeDbPath;
+  }
   if (typeof incoming.mode === "string") {
     const token = incoming.mode.trim().toLowerCase();
     next.mode = token === "websocket" || token === "ws" ? "websocket" : token === "poll" || token === "polling" ? "poll" : undefined;
@@ -801,6 +871,8 @@ function mergeXConfig(incoming?: XSourceConfig, fallback?: XSourceConfig): XSour
   const hasAny =
     !!next.apiKey ||
     !!next.apiBaseUrl ||
+    !!(next as any).sourceProvider ||
+    !!(next as any).twscrapeDbPath ||
     !!next.mode ||
     !!next.pollIntervalSeconds ||
     hasMappings;
@@ -912,6 +984,102 @@ function mergeTelegramConfig(
   };
 }
 
+function isMobileClientForwardingEnabled(account: AccountConfig | FrontendAccount): boolean {
+  const forwardingType = account.forwardingType;
+  if (forwardingType !== "discord-to-mobile-client" && forwardingType !== "telegram-to-mobile-client") {
+    return false;
+  }
+  const target = (account as any).mobileClientTarget;
+  return !target || typeof target !== "object" || target.enabled !== false;
+}
+
+function shouldExposeMobileClientSourceOnlyMapping(account: AccountConfig): boolean {
+  return (
+    (account.forwardingType === "discord-to-mobile-client" ||
+      account.forwardingType === "telegram-to-mobile-client") &&
+    isMobileClientForwardingEnabled(account)
+  );
+}
+
+function shouldExposeMobileClientDraftMapping(account: AccountConfig, mapping: any): boolean {
+  return (
+    shouldExposeMobileClientSourceOnlyMapping(account) &&
+    typeof mapping?.id === "string" &&
+    mapping.id.trim().length > 0
+  );
+}
+
+function mergeMobileClientTarget(dto: FrontendAccount, base: AccountConfig) {
+  const incoming = (dto as any).mobileClientTarget;
+  const fallback = (base as any).mobileClientTarget;
+  const forwardingType = dto.forwardingType || base.forwardingType;
+  if (incoming && typeof incoming === "object") {
+    return {
+      ...(fallback && typeof fallback === "object" ? fallback : {}),
+      ...incoming,
+      enabled: incoming.enabled === true,
+    };
+  }
+  if (
+    (forwardingType === "discord-to-mobile-client" || forwardingType === "telegram-to-mobile-client") &&
+    (!fallback || typeof fallback !== "object")
+  ) {
+    return withDefaultMobileClientTarget({ enabled: true });
+  }
+  return fallback;
+}
+
+function resolveLinkedDiscordAccountId(dto: FrontendAccount, base: AccountConfig): string | undefined {
+  if (typeof dto.discordAccountId === "string" && dto.discordAccountId.trim()) {
+    return dto.discordAccountId.trim();
+  }
+  return base.discordAccountId;
+}
+
+function withDefaultMobileClientTarget(target: any) {
+  return {
+    enabled: target?.enabled === true,
+    endpoint:
+      typeof target?.endpoint === "string" && target.endpoint.trim()
+        ? target.endpoint.trim().replace(/\/+$/, "")
+        : process.env.MOBILE_CLIENT_SYNC_ENDPOINT || "http://192.210.141.219:8765",
+    adminToken:
+      typeof target?.adminToken === "string" && target.adminToken.trim()
+        ? target.adminToken.trim()
+        : process.env.MOBILE_CLIENT_SYNC_ADMIN_TOKEN || "jujing-admin-2026",
+    guildId:
+      typeof target?.guildId === "string" && target.guildId.trim()
+        ? target.guildId.trim()
+        : "mobile-client",
+    guildName:
+      typeof target?.guildName === "string" && target.guildName.trim()
+        ? target.guildName.trim()
+        : "手机客户端",
+  };
+}
+
+function validateMobileClientCategoriesForStart(account: AccountConfig): { ok: true } | { ok: false; message: string } {
+  const type = account.forwardingType;
+  if (type !== "discord-to-mobile-client" && type !== "telegram-to-mobile-client") {
+    return { ok: true };
+  }
+
+  const mappings =
+    type === "telegram-to-mobile-client"
+      ? ((account as any).telegramConfig?.mappings || []).filter((mapping: any) => mapping?.type === "telegram-to-mobile-client")
+      : account.mappings || [];
+  const activeMappings = mappings.filter((mapping: any) => String(mapping?.sourceChannelId || "").trim());
+  if (activeMappings.length === 0) {
+    return { ok: true };
+  }
+
+  const missing = activeMappings.some((mapping: any) => !String(mapping?.mobileClientCategoryName || "").trim());
+  if (missing) {
+    return { ok: false, message: "请先填写每条手机客户端规则的客户端分类" };
+  }
+  return { ok: true };
+}
+
 function accountToFrontend(
   account: AccountConfig,
   options?: {
@@ -933,7 +1101,8 @@ function accountToFrontend(
   // 优先使用 savedMappings 数组（支持相同源ID的多个规则）
   if (savedMappings.length > 0) {
     for (const savedRule of savedMappings) {
-      if (!savedRule?.sourceChannelId || (!savedRule?.targetWebhookUrl && !(savedRule as any)?.targetChannelId)) continue;
+      if (!savedRule?.sourceChannelId && !shouldExposeMobileClientDraftMapping(account, savedRule)) continue;
+      if (!savedRule?.targetWebhookUrl && !(savedRule as any)?.targetChannelId && !shouldExposeMobileClientSourceOnlyMapping(account) && !shouldExposeMobileClientDraftMapping(account, savedRule)) continue;
       const sourceRef = normalizeDiscordSourceReference(
         String(savedRule.sourceChannelId),
         typeof savedRule.sourceGuildId === "string" ? savedRule.sourceGuildId : undefined,
@@ -978,6 +1147,25 @@ function accountToFrontend(
         sourceGuildId,
         sourceGuildName: sourceGuildName || undefined,
         sourceChannelName: sourceChannelName || undefined,
+        mobileClientCategoryName:
+          typeof (savedRule as any).mobileClientCategoryName === "string" && (savedRule as any).mobileClientCategoryName.trim()
+            ? (savedRule as any).mobileClientCategoryName.trim()
+            : undefined,
+        mobileClientChannelName:
+          typeof (savedRule as any).mobileClientChannelName === "string" && (savedRule as any).mobileClientChannelName.trim()
+            ? (savedRule as any).mobileClientChannelName.trim()
+            : undefined,
+        mobileClientChannelAvatarUrl:
+          typeof (savedRule as any).mobileClientChannelAvatarUrl === "string" &&
+          (savedRule as any).mobileClientChannelAvatarUrl.trim()
+            ? (savedRule as any).mobileClientChannelAvatarUrl.trim()
+            : undefined,
+        sourceThreadId:
+          typeof (savedRule as any).sourceThreadId === "string" && (savedRule as any).sourceThreadId.trim()
+            ? (savedRule as any).sourceThreadId.trim()
+            : typeof (savedRule as any).sourceTopicId === "string" && (savedRule as any).sourceTopicId.trim()
+              ? (savedRule as any).sourceTopicId.trim()
+              : undefined,
         targetWebhookUrl: String(savedRule.targetWebhookUrl || ""),
         targetChannelId:
           typeof (savedRule as any).targetChannelId === "string" && (savedRule as any).targetChannelId.trim()
@@ -997,6 +1185,10 @@ function accountToFrontend(
           typeof (savedRule as any).discordSenderAccountId === "string" &&
           (savedRule as any).discordSenderAccountId.trim()
             ? (savedRule as any).discordSenderAccountId.trim()
+            : undefined,
+        safewAccountId:
+          typeof (savedRule as any).safewAccountId === "string" && (savedRule as any).safewAccountId.trim()
+            ? (savedRule as any).safewAccountId.trim()
             : undefined,
         dingtalkSecret:
           typeof (savedRule as any).dingtalkSecret === "string" ? (savedRule as any).dingtalkSecret : undefined,
@@ -1024,6 +1216,7 @@ function accountToFrontend(
         // 规则级别的忽略配置
         ignoreSelf: savedRule.ignoreSelf,
         ignoreBot: savedRule.ignoreBot,
+        onlyBot: savedRule.onlyBot,
         ignoreImages: savedRule.ignoreImages,
         ignoreAudio: savedRule.ignoreAudio,
         ignoreVideo: savedRule.ignoreVideo,
@@ -1106,20 +1299,32 @@ function accountToFrontend(
     translationProvider: account.translationProvider || "deepseek",
     translationApiKey: account.translationApiKey || account.deepseekApiKey || "",
     translationSecret: account.translationSecret || "",
+    translationBaseUrl: account.translationBaseUrl || "",
+    translationModel: account.translationModel || "",
+    translationPrompt: account.translationPrompt || "",
     deepseekApiKey: account.deepseekApiKey || "",
     enableBotRelay: account.enableBotRelay === true,
     botRelays: account.botRelays || [],
     channelRelayMap: account.channelRelayMap || {},
     channelFeishuWebhooks: normalizeFeishuTargets(account.channelFeishuWebhooks),
+    feishuMappings: normalizeFeishuMappings((account as any).feishuMappings),
     feishuSourceGuildMap: (account as any).feishuSourceGuildMap || {},
     feishuSourceChannelNameMap: (account as any).feishuSourceChannelNameMap || {},
     enableFeishuForward: account.enableFeishuForward === true,
     enableDiscordForward: account.enableDiscordForward !== false,
+    mobileClientTarget:
+      (account as any).forwardingType === "discord-to-mobile-client" ||
+      (account as any).forwardingType === "telegram-to-mobile-client"
+        ? withDefaultMobileClientTarget((account as any).mobileClientTarget || { enabled: true })
+        : (account as any).mobileClientTarget,
     feishuAppId: account.feishuAppId || "",
     feishuAppSecret: account.feishuAppSecret || "",
+    safewBotToken: (account as any).safewBotToken || "",
+    safewAccounts: Array.isArray((account as any).safewAccounts) ? (account as any).safewAccounts : [],
     publicBaseUrl: account.publicBaseUrl || "",
     ignoreSelf: account.ignoreSelf === true,
     ignoreBot: account.ignoreBot === true,
+    onlyBot: account.onlyBot === true,
     ignoreImages: account.ignoreImages === true,
     ignoreAudio: account.ignoreAudio === true,
     ignoreVideo: account.ignoreVideo === true,
@@ -1179,6 +1384,13 @@ function maskFrontendAccount(account: FrontendAccount): FrontendAccount {
   masked.translationSecret = maskSecret(account.translationSecret);
   masked.deepseekApiKey = maskSecret(account.deepseekApiKey);
   masked.feishuAppSecret = maskSecret(account.feishuAppSecret);
+  masked.safewBotToken = maskSecret(account.safewBotToken);
+  if (Array.isArray(masked.safewAccounts)) {
+    masked.safewAccounts = masked.safewAccounts.map((item) => ({
+      ...item,
+      botToken: maskSecret(item?.botToken),
+    }));
+  }
   if (masked.watermarkRemoval) {
     masked.watermarkRemoval = {
       ...masked.watermarkRemoval,
@@ -1431,6 +1643,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       enableDiscordForward: true,
       feishuAppId: "",
       feishuAppSecret: "",
+      safewAccounts: [],
       publicBaseUrl: "",
       channelNotes: {},
       blockedKeywords: [],
@@ -1499,6 +1712,31 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     }
   }
 
+  function shouldKeepMobileClientSourceOnlyMapping(accountDto: FrontendAccount): boolean {
+    return (
+      (accountDto.forwardingType === "discord-to-mobile-client" ||
+        accountDto.forwardingType === "telegram-to-mobile-client") &&
+      isMobileClientForwardingEnabled(accountDto)
+    );
+  }
+
+  function shouldKeepMobileClientDraftMapping(accountDto: FrontendAccount, mapping: any): boolean {
+    return (
+      shouldKeepMobileClientSourceOnlyMapping(accountDto) &&
+      typeof mapping?.id === "string" &&
+      mapping.id.trim().length > 0
+    );
+  }
+
+  function shouldKeepDiscordDraftMapping(mapping: any): boolean {
+    return (
+      typeof mapping?.id === "string" &&
+      mapping.id.trim().length > 0 &&
+      typeof mapping?.sourceChannelId === "string" &&
+      mapping.sourceChannelId.trim().length > 0
+    );
+  }
+
   if (Array.isArray(dto.mappings)) {
     for (const mapping of dto.mappings) {
       const sourceRef = normalizeDiscordSourceReference(
@@ -1508,7 +1746,9 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       const key = sourceRef.channelId;
       const targetWebhookUrl = String(mapping?.targetWebhookUrl || "").trim();
       const targetChannelId = String((mapping as any)?.targetChannelId || "").trim();
-      if (key && (targetWebhookUrl || targetChannelId)) {
+      const shouldKeepDraftMapping =
+        shouldKeepMobileClientDraftMapping(dto, mapping) || shouldKeepDiscordDraftMapping(mapping);
+      if ((key || shouldKeepDraftMapping) && (targetWebhookUrl || targetChannelId || shouldKeepMobileClientSourceOnlyMapping(dto) || shouldKeepDraftMapping)) {
         if (targetWebhookUrl) {
           channelWebhooks[key] = targetWebhookUrl;
         }
@@ -1559,6 +1799,25 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
             typeof mapping.sourceChannelName === "string" && mapping.sourceChannelName.trim()
               ? mapping.sourceChannelName.trim()
               : undefined,
+          mobileClientCategoryName:
+            typeof mapping.mobileClientCategoryName === "string" && mapping.mobileClientCategoryName.trim()
+              ? mapping.mobileClientCategoryName.trim()
+              : undefined,
+          mobileClientChannelName:
+            typeof mapping.mobileClientChannelName === "string" && mapping.mobileClientChannelName.trim()
+              ? mapping.mobileClientChannelName.trim()
+              : undefined,
+          mobileClientChannelAvatarUrl:
+            typeof (mapping as any).mobileClientChannelAvatarUrl === "string" &&
+            (mapping as any).mobileClientChannelAvatarUrl.trim()
+              ? (mapping as any).mobileClientChannelAvatarUrl.trim()
+              : undefined,
+          sourceThreadId:
+            typeof (mapping as any).sourceThreadId === "string" && (mapping as any).sourceThreadId.trim()
+              ? (mapping as any).sourceThreadId.trim()
+              : typeof (mapping as any).sourceTopicId === "string" && (mapping as any).sourceTopicId.trim()
+                ? (mapping as any).sourceTopicId.trim()
+                : undefined,
           targetWebhookUrl,
           targetChannelId: targetChannelId || undefined,
           targetGuildId:
@@ -1574,6 +1833,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           discordSenderAccountId:
             typeof mapping.discordSenderAccountId === "string" && mapping.discordSenderAccountId.trim()
               ? mapping.discordSenderAccountId.trim()
+              : undefined,
+          safewAccountId:
+            typeof (mapping as any).safewAccountId === "string" && (mapping as any).safewAccountId.trim()
+              ? (mapping as any).safewAccountId.trim()
               : undefined,
           dingtalkSecret:
             typeof resolvedDingTalkSecret === "string" && resolvedDingTalkSecret.trim()
@@ -1607,6 +1870,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           // 规则级别的忽略配置
           ignoreSelf: mapping.ignoreSelf,
           ignoreBot: mapping.ignoreBot,
+          onlyBot: mapping.onlyBot,
           ignoreImages: mapping.ignoreImages,
           ignoreAudio: mapping.ignoreAudio,
           ignoreVideo: mapping.ignoreVideo,
@@ -1636,6 +1900,13 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     }
   }
   const channelFeishuWebhooks = normalizeFeishuTargets(dto.channelFeishuWebhooks);
+  const feishuMappings = normalizeFeishuMappings((dto as any).feishuMappings);
+  const shouldPreserveFeishuTargets =
+    (dto.forwardingType || base.forwardingType) === "discord-to-feishu" &&
+    fallback?.loginRequested === true &&
+    Object.keys(channelFeishuWebhooks).length === 0 &&
+    feishuMappings.length === 0 &&
+    Object.keys(base.channelFeishuWebhooks || {}).length > 0;
   const feishuSourceGuildMap =
     dto.feishuSourceGuildMap && typeof dto.feishuSourceGuildMap === "object"
       ? Object.fromEntries(
@@ -1677,6 +1948,31 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         .filter(Boolean)
     : base.botRelays || [];
 
+  const baseSafewAccountMap = new Map<string, any>();
+  for (const item of ((base as any).safewAccounts || [])) {
+    if (item?.id) {
+      baseSafewAccountMap.set(item.id, item);
+    }
+  }
+  const nextSafewAccounts = Array.isArray((dto as any).safewAccounts)
+    ? ((dto as any).safewAccounts as any[])
+        .map((item: any) => {
+          if (!item) return null;
+          const fallbackAccount = item.id ? baseSafewAccountMap.get(item.id) : undefined;
+          const resolvedToken = resolveSecretValue(item.botToken, fallbackAccount?.botToken);
+          if (typeof resolvedToken !== "string" || !resolvedToken.trim()) return null;
+          return {
+            id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : randomUUID(),
+            name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "SafeW 机器人",
+            botToken: resolvedToken.trim(),
+            loginState: typeof item.loginState === "string" ? item.loginState : fallbackAccount?.loginState || "idle",
+            loginMessage: typeof item.loginMessage === "string" ? item.loginMessage : fallbackAccount?.loginMessage || "",
+            groups: Array.isArray(item.groups) ? item.groups : Array.isArray(fallbackAccount?.groups) ? fallbackAccount.groups : [],
+          };
+        })
+        .filter(Boolean)
+    : (base as any).safewAccounts || [];
+
   const resolvedAccountWatermarks = resolveFrontendWatermarks(
     dto.watermarks,
     dto.watermark,
@@ -1703,7 +1999,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     loginRequested = dto.loginRequested === true;
   }
 
-  return {
+  const nextAccount: AccountConfig = {
     ...base,
     id: dto.id || base.id,
     name: dto.name || base.name,
@@ -1713,10 +2009,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     proxyUrl: dto.proxyUrl || "",
     loginRequested,
     loginNonce: dto.loginNonce ?? base.loginNonce,
-    discordAccountId:
-      typeof dto.discordAccountId === "string" && dto.discordAccountId.trim()
-        ? dto.discordAccountId.trim()
-        : base.discordAccountId,
+    discordAccountId: resolveLinkedDiscordAccountId(dto, base),
     telegramListenerAccountId:
       typeof dto.telegramListenerAccountId === "string" && dto.telegramListenerAccountId.trim()
         ? dto.telegramListenerAccountId.trim()
@@ -1736,11 +2029,13 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     showSourceIdentity: dto.showSourceIdentity === true,
     channelWebhooks,
     mappings: savedMappings,
-    channelFeishuWebhooks,
+    mobileClientTarget: mergeMobileClientTarget(dto, base),
+    channelFeishuWebhooks: shouldPreserveFeishuTargets ? base.channelFeishuWebhooks || {} : channelFeishuWebhooks,
+    feishuMappings: shouldPreserveFeishuTargets ? (base as any).feishuMappings || [] : feishuMappings,
     feishuSourceGuildMap,
     feishuSourceChannelNameMap,
     feishuRuleConfigs,
-    enableFeishuForward: dto.enableFeishuForward === true,
+    enableFeishuForward: shouldPreserveFeishuTargets ? true : dto.enableFeishuForward === true,
     enableDiscordForward: dto.enableDiscordForward !== false,
     feishuAppId: typeof dto.feishuAppId === "string" && dto.feishuAppId.trim() ? dto.feishuAppId.trim() : base.feishuAppId,
     feishuAppSecret:
@@ -1748,6 +2043,12 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       resolveSecretValue(dto.feishuAppSecret, base.feishuAppSecret)!.trim()
         ? resolveSecretValue(dto.feishuAppSecret, base.feishuAppSecret)!.trim()
         : base.feishuAppSecret,
+    safewBotToken:
+      typeof resolveSecretValue(dto.safewBotToken, (base as any).safewBotToken) === "string" &&
+      resolveSecretValue(dto.safewBotToken, (base as any).safewBotToken)!.trim()
+        ? resolveSecretValue(dto.safewBotToken, (base as any).safewBotToken)!.trim()
+        : (base as any).safewBotToken,
+    safewAccounts: nextSafewAccounts,
     publicBaseUrl:
       typeof dto.publicBaseUrl === "string" && dto.publicBaseUrl.trim()
         ? dto.publicBaseUrl.trim()
@@ -1757,10 +2058,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     channelTranslateDirection,
     channelLongMessage,
     blockedKeywords: Array.isArray(dto.blockedKeywords) ? dto.blockedKeywords : [],
-    caseInsensitiveKeywords:
-      typeof dto.caseInsensitiveKeywords === "boolean"
-        ? dto.caseInsensitiveKeywords
-        : base.caseInsensitiveKeywords ?? true,
+    caseInsensitiveKeywords: true,
     excludeKeywords: Array.isArray(dto.excludeKeywords) ? dto.excludeKeywords : [],
     replacementsDictionary,
     allowedUsersIds: Array.isArray(dto.allowedUsersIds) ? dto.allowedUsersIds : base.allowedUsersIds || [],
@@ -1783,6 +2081,18 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
       resolveSecretValue(dto.translationSecret, base.translationSecret)!.trim()
         ? resolveSecretValue(dto.translationSecret, base.translationSecret)!.trim()
         : base.translationSecret,
+    translationBaseUrl:
+      typeof dto.translationBaseUrl === "string" && dto.translationBaseUrl.trim()
+        ? dto.translationBaseUrl.trim()
+        : base.translationBaseUrl,
+    translationModel:
+      typeof dto.translationModel === "string" && dto.translationModel.trim()
+        ? dto.translationModel.trim()
+        : base.translationModel,
+    translationPrompt:
+      typeof dto.translationPrompt === "string" && dto.translationPrompt.trim()
+        ? dto.translationPrompt.trim()
+        : base.translationPrompt,
     deepseekApiKey:
       typeof resolveSecretValue(dto.deepseekApiKey, base.deepseekApiKey) === "string" &&
       resolveSecretValue(dto.deepseekApiKey, base.deepseekApiKey)!.trim()
@@ -1796,6 +2106,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         : base.channelRelayMap || {},
     ignoreSelf: dto.ignoreSelf === true,
     ignoreBot: dto.ignoreBot === true,
+    onlyBot: dto.onlyBot === true,
     ignoreImages: dto.ignoreImages === true,
     ignoreAudio: dto.ignoreAudio === true,
     ignoreVideo: dto.ignoreVideo === true,
@@ -1905,6 +2216,15 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
     xConfig: mergedXConfig,
     truthSocialConfig: mergedTruthSocialConfig,
   };
+
+  const mobileCategoryValidation = validateMobileClientCategoriesForStart(nextAccount);
+  if (nextAccount.loginRequested === true && !mobileCategoryValidation.ok) {
+    nextAccount.loginRequested = false;
+    nextAccount.loginState = "error";
+    nextAccount.loginMessage = "请先填写每条手机客户端规则的客户端分类";
+  }
+
+  return nextAccount;
 }
 
 export async function GET(req: NextRequest) {
@@ -2023,7 +2343,15 @@ export async function POST(req: NextRequest) {
       const currentX = new Map((current.xAccounts || []).map((acc) => [acc.id, acc]));
       const currentTruth = new Map((current.truthSocialAccounts || []).map((acc) => [acc.id, acc]));
 
-      const discordAccounts = Array.isArray(body.discordAccounts)
+      const hasIncomingDiscordAccountLibrary = Array.isArray(body.discordAccounts);
+      const shouldPreserveDiscordAccounts =
+        hasIncomingDiscordAccountLibrary &&
+        body.discordAccounts.length === 0 &&
+        (current.discordAccounts || []).length > 0;
+
+      const discordAccounts = shouldPreserveDiscordAccounts
+        ? current.discordAccounts || []
+        : hasIncomingDiscordAccountLibrary
         ? (body.discordAccounts as FrontendDiscordAccountLibrary[]).map((acc) =>
             dtoToDiscordLibraryAccount(acc, currentDiscord.get(acc.id)),
           )

@@ -10,6 +10,8 @@
     "start": "next start",
     "build:bot": "tsc -p tsconfig.bot.json",
     "start:bot": "node dist-bot/index.js",
+    "sync:kolunite-fear-greed": "node scripts/koluniteFearGreedSync.js",
+    "test:kolunite-fear-greed": "node --test tests/koluniteFearGreedSync.test.js",
     "test:ocr": "node test_ocr.js",
     "start:paddle-ocr-server": "node paddle_ocr_server.js"
   },

@@ -10,11 +10,12 @@ import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import { getMultiConfig } from "@/src/config";
+import { resolveDataPath } from "@/src/paths";
 
-const telegramSyncRequestDir = path.resolve(process.cwd(), ".data", "telegram_sync_requests");
-const telegramSyncResponseDir = path.resolve(process.cwd(), ".data", "telegram_sync_responses");
-const dialogsCacheFile = path.resolve(process.cwd(), ".data", "telegram_dialogs_cache.json");
-const statusFile = path.resolve(process.cwd(), ".data", "telegram_status.json");
+const telegramSyncRequestDir = resolveDataPath("telegram_sync_requests");
+const telegramSyncResponseDir = resolveDataPath("telegram_sync_responses");
+const dialogsCacheFile = resolveDataPath("telegram_dialogs_cache.json");
+const statusFile = resolveDataPath("telegram_status.json");
 
 async function waitForSyncResponse(requestId: string, maxWaitMs = 20000): Promise<any | null> {
   const startTime = Date.now();
@@ -88,6 +89,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const accountPayload = body?.account && typeof body.account === "object" ? body.account : undefined;
+    const forceRefresh = body?.forceRefresh === true;
     const accountIdRaw =
       typeof body?.accountId === "string"
         ? body.accountId
@@ -108,6 +110,20 @@ export async function POST(request: NextRequest) {
     }
     if (!configuredAccountIds.has(accountId)) {
       return NextResponse.json({ error: `未找到 Telegram 账号: ${accountId}` }, { status: 404 });
+    }
+
+    const cachedBeforeRequest = await readCachedDialogs(accountId);
+    const userInfoBeforeRequest = await readUserInfo(accountId);
+    if (!forceRefresh && (cachedBeforeRequest.length > 0 || userInfoBeforeRequest)) {
+      return NextResponse.json({
+        success: true,
+        stale: true,
+        message: "返回已缓存的 Telegram 对话列表",
+        user: userInfoBeforeRequest || null,
+        dialogs: cachedBeforeRequest,
+        dialogsCount: cachedBeforeRequest.length,
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     const requestId = randomUUID();

@@ -3,12 +3,28 @@ import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import { getMultiConfig, saveMultiConfig, type AccountConfig } from "@/src/config";
+import { resolveDataPath } from "@/src/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const loginRequestFile = path.resolve(process.cwd(), ".data", "telegram_login_request.json");
-const loginResponseFile = path.resolve(process.cwd(), ".data", "telegram_login_response.json");
+const loginRequestFile = resolveDataPath("telegram_login_request.json");
+const loginResponseFile = resolveDataPath("telegram_login_response.json");
+const loginDebugFile = resolveDataPath("telegram_login_debug.jsonl");
+
+async function appendLoginDebug(event: string, payload: Record<string, any>) {
+  try {
+    await fs.mkdir(path.dirname(loginDebugFile), { recursive: true });
+    await fs.appendFile(
+      loginDebugFile,
+      JSON.stringify({
+        time: new Date().toISOString(),
+        event,
+        ...payload,
+      }) + "\n",
+    );
+  } catch {}
+}
 
 async function waitForLoginResponse(requestId: string, maxWaitMs = 15000): Promise<any | null> {
   const startTime = Date.now();
@@ -58,6 +74,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "缺少 phoneNumber / apiId / apiHash" }, { status: 400 });
     }
 
+    await appendLoginDebug("request", {
+      useLibrary,
+      accountId: accountId || undefined,
+      telegramAccountId,
+      phoneSuffix: phoneNumber.slice(-4),
+      apiIdPresent: Boolean(apiId),
+      apiHashLength: apiHash.length,
+    });
+
     const multi = await getMultiConfig();
     if (useLibrary) {
       if (!telegramAccountId) {
@@ -104,6 +129,14 @@ export async function POST(req: NextRequest) {
       );
 
       const response = await waitForLoginResponse(requestId, 40000);
+      await appendLoginDebug("response", {
+        requestId,
+        telegramAccountId,
+        success: response?.success === true,
+        error: response?.error,
+        resultError: response?.result?.error,
+        resultMessage: response?.result?.message,
+      });
       if (!response) {
         return NextResponse.json({ error: "登录请求超时" }, { status: 504 });
       }
@@ -190,6 +223,15 @@ export async function POST(req: NextRequest) {
     );
 
     const response = await waitForLoginResponse(requestId, 40000);
+    await appendLoginDebug("response", {
+      requestId,
+      accountId,
+      telegramAccountId: clientAccountId,
+      success: response?.success === true,
+      error: response?.error,
+      resultError: response?.result?.error,
+      resultMessage: response?.result?.message,
+    });
     if (!response) {
       return NextResponse.json({ error: "登录请求超时" }, { status: 504 });
     }

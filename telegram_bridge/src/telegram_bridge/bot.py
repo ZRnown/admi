@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from telethon import TelegramClient, events
 from telethon.tl.types import User, Chat, Channel
+from telethon.tl.functions.messages import GetForumTopicsRequest
 from loguru import logger
 from .telegram_types import TelegramAccount, ConnectionStatus, ConnectionState, TelegramChannel, TelegramMessage
 from .connection import ConnectionManager, ReconnectConfig
@@ -107,6 +108,22 @@ class TelegramBotManager:
             pass
         return candidates
 
+    def _build_entity_lookup_candidates(self, raw_chat_id: str) -> List[Union[int, str]]:
+        cleaned = str(raw_chat_id or "").strip()
+        if not cleaned:
+            return []
+        candidates: List[Union[int, str]] = [cleaned]
+        if cleaned.lstrip("-").isdigit():
+            numeric = int(cleaned)
+            candidates.append(numeric)
+            if numeric < 0:
+                abs_id = abs(numeric)
+                candidates.append(abs_id)
+                abs_str = str(abs_id)
+                if abs_str.startswith("100") and len(abs_str) > 3:
+                    candidates.append(int(abs_str[3:]))
+        return list(dict.fromkeys(candidates))
+
     def _build_dialog_entry(self, chat_id: int, chat_title: Optional[str], chat_username: Optional[str], chat_type: Optional[str]):
         chat_id_str = str(chat_id) if chat_id is not None else ""
         if not chat_id_str:
@@ -137,6 +154,26 @@ class TelegramBotManager:
             "username": username or None,
             "member_count": None,
         }
+
+    async def _detect_forum_channel(self, client: TelegramClient, entity: Any) -> Optional[bool]:
+        """Best-effort forum flag for Telegram dialog metadata."""
+        if not isinstance(entity, Channel) or not getattr(entity, "megagroup", False):
+            return False
+        forum_attr = getattr(entity, "forum", None)
+        if isinstance(forum_attr, bool):
+            return forum_attr
+        try:
+            result = await client(GetForumTopicsRequest(
+                peer=entity,
+                offset_date=0,
+                offset_id=0,
+                offset_topic=0,
+                limit=1,
+                q=None,
+            ))
+            return len(getattr(result, "topics", []) or []) > 0
+        except Exception:
+            return False
 
     def _resolve_chat_type(self, chat: Any, fallback: Optional[str] = None) -> str:
         if fallback:
@@ -404,6 +441,8 @@ class TelegramBotManager:
         if sender is None:
             return True
         if getattr(sender, "min", False):
+            return True
+        if not self._build_display_name(self._parse_user(sender)):
             return True
         if getattr(sender, "photo", None) is None:
             return True
@@ -838,7 +877,8 @@ class TelegramBotManager:
                             title=title or "Unknown",
                             type=chat_type,
                             username=getattr(entity, 'username', None),
-                            member_count=getattr(entity, 'participants_count', None)
+                            member_count=getattr(entity, 'participants_count', None),
+                            is_forum=await self._detect_forum_channel(bot, entity)
                         )
                         channels.append(channel.dict())
 
@@ -867,7 +907,8 @@ class TelegramBotManager:
                                         title=chat.get("title") or chat.get("first_name") or "Unknown",
                                         type=chat_type,
                                         username=chat.get("username"),
-                                        member_count=None
+                                        member_count=None,
+                                        is_forum=chat_type == "supergroup" and bool(chat.get("is_forum", False))
                                     )
                                     channels.append(channel.dict())
                         else:
@@ -920,6 +961,82 @@ class TelegramBotManager:
             return {
                 "success": False,
                 "error": "GET_CHANNELS_FAILED",
+                "message": str(e)
+            }
+
+    async def get_forum_topics(self, account_id: str, chat_id: Union[int, str]) -> Dict[str, Any]:
+        """获取机器人可见的论坛话题列表"""
+        try:
+            if account_id not in self.bots:
+                return {
+                    "success": False,
+                    "error": "NOT_CONNECTED",
+                    "message": "Bot not connected"
+                }
+
+            raw_chat_id = str(chat_id).strip()
+            if not raw_chat_id:
+                return {
+                    "success": False,
+                    "error": "INVALID_CHAT_ID",
+                    "message": "Chat ID is empty"
+                }
+
+            bot = self.bots[account_id]
+            entity = None
+            last_error = None
+            for candidate in self._build_entity_lookup_candidates(raw_chat_id):
+                try:
+                    entity = await bot.get_entity(candidate)
+                    break
+                except Exception as e:
+                    last_error = e
+            if entity is None:
+                raise last_error or ValueError("Chat entity not found")
+            if not isinstance(entity, Channel) or not getattr(entity, "megagroup", False):
+                return {
+                    "success": True,
+                    "topics": [],
+                    "message": "Selected chat is not a forum group"
+                }
+
+            result = await bot(GetForumTopicsRequest(
+                peer=entity,
+                offset_date=0,
+                offset_id=0,
+                offset_topic=0,
+                limit=100,
+                q=None,
+            ))
+
+            topics = []
+            for item in getattr(result, "topics", []) or []:
+                top_message_id = getattr(item, "top_message", None)
+                if hasattr(top_message_id, "id"):
+                    top_message_id = top_message_id.id
+                topic_id = getattr(item, "id", None) or top_message_id
+                if topic_id is None:
+                    continue
+                topics.append({
+                    "id": str(topic_id),
+                    "title": getattr(item, "title", None) or f"话题 {topic_id}",
+                    "chat_id": str(entity.id),
+                    "chat_title": getattr(entity, "title", None),
+                    "is_closed": bool(getattr(item, "closed", False)),
+                    "is_hidden": bool(getattr(item, "hidden", False)),
+                    "top_message_id": int(top_message_id) if isinstance(top_message_id, int) else None,
+                })
+
+            return {
+                "success": True,
+                "topics": topics,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get forum topics for bot {account_id}, chat {chat_id}: {e}")
+            return {
+                "success": False,
+                "error": "GET_FORUM_TOPICS_FAILED",
                 "message": str(e)
             }
 
@@ -1133,6 +1250,11 @@ class TelegramBotManager:
             chat_username = getattr(message.chat, 'username', None)
             chat_title = getattr(message.chat, 'title', None)
             chat_type = getattr(message.chat, 'type', None)
+            chat_avatar_file = None
+            try:
+                chat_avatar_file = await self._get_avatar_file(event.client, message.chat)
+            except Exception:
+                chat_avatar_file = None
 
             # 记录对话到缓存（即便未监听，也保留同步名单）
             self._record_dialog(account_id, chat_id, chat_title, chat_username, chat_type)
@@ -1192,7 +1314,7 @@ class TelegramBotManager:
                 except Exception as e:
                     logger.debug(f"Failed to refresh sender entity: {e}")
                 finally:
-                    if sender_id:
+                    if sender_id and sender is not None and not self._should_refresh_sender(account_id, sender, sender_id):
                         self._mark_sender_refreshed(account_id, sender_id)
             from_user = self._parse_user(sender) if sender else None
             avatar_file = await self._get_avatar_file(event.client, sender) if sender else None
@@ -1210,6 +1332,15 @@ class TelegramBotManager:
                                 reply_sender = await reply_msg.get_sender()
                             except Exception:
                                 reply_sender = None
+                        reply_sender_id = getattr(reply_msg, "sender_id", None) or getattr(reply_sender, "id", None)
+                        if self._should_refresh_sender(account_id, reply_sender, reply_sender_id):
+                            try:
+                                reply_sender = await event.client.get_entity(reply_sender_id)
+                            except Exception as e:
+                                logger.debug(f"Failed to refresh reply sender entity: {e}")
+                            finally:
+                                if reply_sender_id and reply_sender is not None and not self._should_refresh_sender(account_id, reply_sender, reply_sender_id):
+                                    self._mark_sender_refreshed(account_id, reply_sender_id)
                         reply_user = self._parse_user(reply_sender) if reply_sender else None
                         reply_avatar_file = await self._get_avatar_file(event.client, reply_sender) if reply_sender else None
                         if reply_user and reply_avatar_file:
@@ -1229,6 +1360,7 @@ class TelegramBotManager:
                 chat_id=message.chat_id,
                 chat_title=getattr(message.chat, 'title', None),
                 chat_username=getattr(message.chat, 'username', None),
+                chat_avatar_file=chat_avatar_file,
                 from_user=from_user,
                 from_username=from_user.get("username") if from_user else None,
                 from_display_name=self._build_display_name(from_user),
@@ -1278,7 +1410,8 @@ class TelegramBotManager:
             "id": user.id,
             "firstName": getattr(user, 'first_name', None),
             "lastName": getattr(user, 'last_name', None),
-            "username": getattr(user, 'username', None)
+            "username": getattr(user, 'username', None),
+            "isBot": bool(getattr(user, 'bot', False))
         }
 
     def _build_display_name(self, user_info: Optional[Dict[str, Any]]) -> Optional[str]:

@@ -55,11 +55,15 @@ export function normalizeDiscordMappingRule(input: any) {
     sourceGuildId: sourceRef.guildId,
     sourceGuildName: normalizeOptionalTrimmedString(input?.sourceGuildName),
     sourceChannelName: normalizeOptionalTrimmedString(input?.sourceChannelName),
+    mobileClientCategoryName: normalizeOptionalTrimmedString(input?.mobileClientCategoryName),
+    mobileClientChannelName: normalizeOptionalTrimmedString(input?.mobileClientChannelName),
+    mobileClientChannelAvatarUrl: normalizeOptionalTrimmedString(input?.mobileClientChannelAvatarUrl),
     targetWebhookUrl: typeof input?.targetWebhookUrl === "string" ? input.targetWebhookUrl : "",
     targetChannelId: normalizeOptionalTrimmedString(input?.targetChannelId),
     targetGuildId: normalizeOptionalTrimmedString(input?.targetGuildId),
     discordSenderType: normalizeOptionalDiscordSenderType(input?.discordSenderType),
     discordSenderAccountId: normalizeOptionalTrimmedString(input?.discordSenderAccountId),
+    safewAccountId: normalizeOptionalTrimmedString(input?.safewAccountId),
     dingtalkSecret: normalizeOptionalTrimmedString(input?.dingtalkSecret),
     inputMode: normalizeOptionalInputMode(input?.inputMode),
     note: typeof input?.note === "string" ? input.note : undefined,
@@ -74,8 +78,23 @@ export function normalizeTelegramMapping(input: any) {
   const rawTarget = typeof input?.targetChannelId === "string" ? input.targetChannelId.trim() : "";
   const targetIsWebhook = /^https?:\/\/(?:canary\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(rawTarget);
   const rawType = typeof input?.type === "string" ? input.type : "";
-  let normalizedType: "telegram-to-discord" | "discord-to-telegram" | "telegram-to-telegram" = "telegram-to-discord";
-  if (rawType === "discord-to-telegram" || rawType === "telegram-to-discord" || rawType === "telegram-to-telegram") {
+  const rawThreadId =
+    typeof input?.sourceThreadId === "string"
+      ? input.sourceThreadId.trim()
+      : typeof input?.sourceTopicId === "string"
+        ? input.sourceTopicId.trim()
+        : "";
+  let normalizedType:
+    | "telegram-to-discord"
+    | "discord-to-telegram"
+    | "telegram-to-telegram"
+    | "telegram-to-mobile-client" = "telegram-to-discord";
+  if (
+    rawType === "discord-to-telegram" ||
+    rawType === "telegram-to-discord" ||
+    rawType === "telegram-to-telegram" ||
+    rawType === "telegram-to-mobile-client"
+  ) {
     normalizedType = rawType;
   }
   if (targetIsWebhook && normalizedType !== "telegram-to-telegram") {
@@ -88,6 +107,10 @@ export function normalizeTelegramMapping(input: any) {
     sourceGuildId: sourceRef.guildId,
     sourceGuildName: normalizeOptionalTrimmedString(input?.sourceGuildName),
     sourceChannelName: normalizeOptionalTrimmedString(input?.sourceChannelName),
+    mobileClientCategoryName: normalizeOptionalTrimmedString(input?.mobileClientCategoryName),
+    mobileClientChannelName: normalizeOptionalTrimmedString(input?.mobileClientChannelName),
+    mobileClientChannelAvatarUrl: normalizeOptionalTrimmedString(input?.mobileClientChannelAvatarUrl),
+    sourceThreadId: rawThreadId || undefined,
     targetChannelId: rawTarget,
     type: normalizedType,
     inputMode: normalizeOptionalInputMode(input?.inputMode),

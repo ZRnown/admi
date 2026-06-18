@@ -2,7 +2,7 @@ export function normalizeDiscordLoginErrorMessage(error?: string): string {
   const msg = typeof error === "string" ? error.trim() : "";
   if (!msg) return "";
   if (msg.includes("Improper token")) {
-    return "Token 无效或被风控（异地/IP），请重新登录或使用代理";
+    return "";
   }
   if (msg.includes("DISCORD_LOGIN_TIMEOUT")) {
     return "登录超时，可能被风控或网络受限";

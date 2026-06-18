@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { promises as fs } from "fs";
 import { getMultiConfig, saveMultiConfig } from "@/src/config";
+import { resolveDataPath } from "@/src/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Session 文件为空" }, { status: 400 });
       }
 
-      const sessionDir = path.join(process.cwd(), ".data", "telegram_sessions");
+      const sessionDir = resolveDataPath("telegram_sessions");
       await fs.mkdir(sessionDir, { recursive: true });
       const sessionKey = telegramAccountId.trim();
       const sessionPath = path.join(sessionDir, `${sessionKey}.session`);
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Session 文件为空" }, { status: 400 });
     }
 
-    const sessionDir = path.join(process.cwd(), ".data", "telegram_sessions");
+    const sessionDir = resolveDataPath("telegram_sessions");
     await fs.mkdir(sessionDir, { recursive: true });
     const sessionKey =
       typeof telegramAccountId === "string" && telegramAccountId.trim()

@@ -15,6 +15,10 @@ test("getDiscordErrorMessage keeps the generic failure fallback for real error s
   assert.equal(getDiscordErrorMessage(undefined), "连接失败");
 });
 
+test("getDiscordErrorMessage hides Discord token/IP risk details from the UI", () => {
+  assert.equal(getDiscordErrorMessage("Improper token has been passed."), "连接失败");
+});
+
 test("shouldPreserveLibraryOnlineStatus keeps library status online when metadata disconnects after instance is online", () => {
   assert.equal(
     shouldPreserveLibraryOnlineStatus({

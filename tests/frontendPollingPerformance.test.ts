@@ -64,7 +64,7 @@ test("hidden account-library modals are skipped during main render passes", () =
   assert.match(html, /function renderAccountLibraryModal\(\) {\s*const modal = document\.getElementById\('accountLibraryModal'\);\s*if \(!modal\) return;\s*if \(modal\.classList\.contains\('hidden'\)\) return;/);
   assert.match(html, /function renderAccountLibraryEditModal\(\) {\s*const modal = document\.getElementById\('accountLibraryEditModal'\);\s*if \(!modal\) return;\s*if \(modal\.classList\.contains\('hidden'\)\) return;/);
   assert.match(html, /if \(accountTabsEl\.innerHTML !== tabsHtml\) {\s*accountTabsEl\.innerHTML = tabsHtml;\s*}/);
-  assert.match(html, /const nextFormHtml = renderAccountForm\(activeAccount, currentForwardingType\);\s*if \(configFormEl\.innerHTML !== nextFormHtml\) {\s*configFormEl\.innerHTML = nextFormHtml;\s*}/);
+  assert.match(html, /const nextFormHtml = renderAccountForm\(activeAccount, resolvedForwardingType\);\s*if \(configFormEl\.innerHTML !== nextFormHtml\) {\s*configFormEl\.innerHTML = nextFormHtml;\s*}/);
 });
 
 test("status polling only builds account detail html for the active instance and skips redundant detail DOM writes", () => {

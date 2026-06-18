@@ -20,15 +20,24 @@ export function getConfigPath(): string {
 const FORWARDING_TYPES = [
   "discord-to-discord",
   "discord-to-telegram",
+  "discord-to-mobile-client",
   "telegram-to-discord",
   "telegram-to-telegram",
+  "telegram-to-mobile-client",
+  "telegram-to-dingtalk",
   "discord-to-feishu",
   "discord-to-dingtalk",
+  "discord-to-safew",
   "x-to-discord",
   "truthsocial-to-discord",
 ] as const;
 
 type ForwardingType = (typeof FORWARDING_TYPES)[number];
+const MOBILE_CLIENT_FORWARDING_TYPES: ForwardingType[] = [
+  "discord-to-mobile-client",
+  "telegram-to-mobile-client",
+];
+const DEFAULT_ENABLED_FORWARDING_TYPES: ForwardingType[] = ["discord-to-dingtalk"];
 
 function resolveConfigPath(): string {
   if (process.env.CONFIG_PATH) {
@@ -102,8 +111,12 @@ export interface TelegramMapping extends RuleLevelConfig {
   sourceGuildId?: string;      // Discord来源服务器ID（用于discord-to-telegram）
   sourceGuildName?: string;
   sourceChannelName?: string;
+  mobileClientCategoryName?: string;
+  mobileClientChannelName?: string;
+  mobileClientChannelAvatarUrl?: string;
+  sourceThreadId?: string;
   targetChannelId: string;     // 目标频道ID
-  type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
+  type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram' | 'telegram-to-mobile-client' | 'telegram-to-dingtalk';
   inputMode?: "manual" | "select";
   note?: string;
   translate?: boolean;
@@ -111,6 +124,7 @@ export interface TelegramMapping extends RuleLevelConfig {
   senderAccountType?: 'bot' | 'client';
   discordSenderType?: "account" | "webhook";
   discordSenderAccountId?: string;
+  dingtalkSecret?: string;
   targetGuildId?: string;
   longMessage?: {
     enabled: boolean;
@@ -145,8 +159,12 @@ export interface FrontendTelegramMapping extends RuleLevelConfig {
   sourceGuildId?: string;
   sourceGuildName?: string;
   sourceChannelName?: string;
+  mobileClientCategoryName?: string;
+  mobileClientChannelName?: string;
+  mobileClientChannelAvatarUrl?: string;
+  sourceThreadId?: string;
   targetChannelId: string;
-  type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram';
+  type: 'telegram-to-discord' | 'discord-to-telegram' | 'telegram-to-telegram' | 'telegram-to-mobile-client' | 'telegram-to-dingtalk';
   inputMode?: "manual" | "select";
   note?: string;
   translate?: boolean;
@@ -154,6 +172,7 @@ export interface FrontendTelegramMapping extends RuleLevelConfig {
   senderAccountType?: 'bot' | 'client';
   discordSenderType?: "account" | "webhook";
   discordSenderAccountId?: string;
+  dingtalkSecret?: string;
   targetGuildId?: string;
 }
 
@@ -266,6 +285,8 @@ export interface RuleLevelConfig {
   ignoreSelf?: boolean;
   // 忽略机器人消息（规则级别）
   ignoreBot?: boolean;
+  // 只转发机器人/系统 Webhook 消息（规则级别）
+  onlyBot?: boolean;
   // 忽略图片（规则级别）
   ignoreImages?: boolean;
   // 忽略音频（规则级别）
@@ -330,10 +351,13 @@ export interface XForwardingRule extends RuleLevelConfig {
 }
 
 export type XStreamMode = "poll" | "websocket";
+export type XSourceProvider = "twitterapi" | "twscrape";
 
 export interface XSourceConfig {
   apiKey?: string;
   apiBaseUrl?: string;
+  sourceProvider?: XSourceProvider;
+  twscrapeDbPath?: string;
   mode?: XStreamMode;
   pollIntervalSeconds?: number;
   mappings?: XForwardingRule[];
@@ -364,6 +388,34 @@ export interface FeishuTargetConfig {
 
 export type FeishuTargetMap = Record<string, FeishuTargetConfig | string>;
 
+export interface FeishuMappingRule extends RuleLevelConfig {
+  id: string;
+  sourceChannelId: string;
+  sourceGuildId?: string;
+  sourceGuildName?: string;
+  sourceChannelName?: string;
+  target: FeishuTargetConfig;
+  note?: string;
+  inputMode?: "select" | "manual";
+}
+
+export interface SafewBotAccountConfig {
+  id: string;
+  name: string;
+  botToken: string;
+  loginState?: string;
+  loginMessage?: string;
+  groups?: Array<{ id: string; title: string; type?: string }>;
+}
+
+export interface MobileClientTargetConfig {
+  enabled?: boolean;
+  endpoint?: string;
+  adminToken?: string;
+  guildId?: string;
+  guildName?: string;
+}
+
 /**
  * 旧版（单账号）配置结构。仅用于向后兼容读取旧的 config.json。
  */
@@ -379,6 +431,8 @@ export interface LegacyConfig {
   // 飞书企业自建应用 AppID / Secret（可选，优先于环境变量）
   feishuAppId?: string;
   feishuAppSecret?: string;
+  safewBotToken?: string;
+  safewAccounts?: SafewBotAccountConfig[];
   // 每个频道的备注，仅用于管理界面展示
   channelNotes?: Record<string, string>;
   mutedGuildsIds?: ChannelId[];
@@ -423,6 +477,9 @@ export interface LegacyConfig {
   translationProvider?: "deepseek" | "google" | "baidu" | "youdao" | "openai";
   translationApiKey?: string;
   translationSecret?: string;
+  translationBaseUrl?: string;
+  translationModel?: string;
+  translationPrompt?: string;
   // 机器人中转配置
   enableBotRelay?: boolean;
   botRelayToken?: string; // 兼容旧版单一中转机器人
@@ -441,6 +498,7 @@ export interface LegacyConfig {
   // 忽略选项
   ignoreSelf?: boolean;
   ignoreBot?: boolean;
+  onlyBot?: boolean;
   ignoreImages?: boolean;
   ignoreAudio?: boolean;
   ignoreVideo?: boolean;
@@ -487,10 +545,14 @@ export interface LegacyConfig {
   };
   // 转发类型
   forwardingType?: ForwardingType;
+  // 手机客户端目标配置
+  mobileClientTarget?: MobileClientTargetConfig;
   // Discord→Discord 规则列表（带规则级别用户过滤）
   mappings?: DiscordMappingRule[];
   // 飞书规则级别过滤配置
   feishuRuleConfigs?: Record<string, RuleLevelConfig>;
+  // 飞书规则列表。新版使用独立规则 ID，支持同一个源频道转发到多个飞书目标。
+  feishuMappings?: FeishuMappingRule[];
   // Discord 登录配置（兼容旧字段）
   discordLogin?: {
     email?: string;
@@ -514,6 +576,7 @@ export interface AccountConfig extends LegacyConfig {
   proxyUrl?: string;
   channelFeishuWebhooks?: Record<string, FeishuTargetConfig>;
   feishuRuleConfigs?: Record<string, RuleLevelConfig>;
+  feishuMappings?: FeishuMappingRule[];
   feishuSourceGuildMap?: Record<string, string>;
   feishuSourceChannelNameMap?: Record<string, string>;
   restartNonce?: number;
@@ -569,6 +632,7 @@ export interface AccountConfig extends LegacyConfig {
     threshold?: number;
     appendMessage?: string;
   };
+  mobileClientTarget?: MobileClientTargetConfig;
 }
 
 export interface MultiConfig {
@@ -587,6 +651,7 @@ export interface MultiConfig {
   version?: string;
   // 启用的转发类型（如果不设置，默认全部启用）
   enabledForwardingTypes?: ForwardingType[];
+  mobileClientTarget?: MobileClientTargetConfig;
 }
 
 function createDefaultAccount(): AccountConfig {
@@ -627,10 +692,18 @@ function createDefaultAccount(): AccountConfig {
     channelConfigs: {},
     enableTranslation: false,
     deepseekApiKey: undefined,
+    translationProvider: "deepseek",
+    translationApiKey: undefined,
+    translationSecret: undefined,
+    translationBaseUrl: undefined,
+    translationModel: undefined,
+    translationPrompt: undefined,
     enableFeishuForward: false,
     channelFeishuWebhooks: {},
     feishuAppId: undefined,
     feishuAppSecret: undefined,
+    safewBotToken: undefined,
+    safewAccounts: [],
     ocrServerUrl: "http://localhost:9003",
     ocrBlockedKeywords: [],
     ocrTriggerKeywords: [],
@@ -712,6 +785,67 @@ function normalizeFeishuTarget(raw: any): FeishuTargetConfig | null {
   }
   const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
   return { mode: "webhook", webhookUrl };
+}
+
+function normalizeFeishuMappingRule(raw: any): FeishuMappingRule | null {
+  if (!raw || typeof raw !== "object") return null;
+  const target = normalizeFeishuTarget(raw.target || raw);
+  if (!target) return null;
+  const sourceChannelId = typeof raw.sourceChannelId === "string" ? raw.sourceChannelId.trim() : "";
+  if (!sourceChannelId) return null;
+  const ruleConfig = normalizeRuleConfig(raw);
+  return {
+    ...ruleConfig,
+    id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : randomUUID(),
+    sourceChannelId,
+    sourceGuildId: typeof raw.sourceGuildId === "string" && raw.sourceGuildId.trim() ? raw.sourceGuildId.trim() : undefined,
+    sourceGuildName: typeof raw.sourceGuildName === "string" && raw.sourceGuildName.trim() ? raw.sourceGuildName.trim() : undefined,
+    sourceChannelName:
+      typeof raw.sourceChannelName === "string" && raw.sourceChannelName.trim() ? raw.sourceChannelName.trim() : undefined,
+    target,
+    note: typeof raw.note === "string" && raw.note.trim() ? raw.note.trim() : undefined,
+    inputMode: raw.inputMode === "manual" ? "manual" : raw.inputMode === "select" ? "select" : ruleConfig.inputMode,
+  };
+}
+
+function normalizeFeishuMappings(input: any): FeishuMappingRule[] {
+  if (Array.isArray(input?.feishuMappings)) {
+    return input.feishuMappings
+      .map((item: any) => normalizeFeishuMappingRule(item))
+      .filter((item: FeishuMappingRule | null): item is FeishuMappingRule => Boolean(item));
+  }
+
+  const hooks = input?.channelFeishuWebhooks && typeof input.channelFeishuWebhooks === "object" ? input.channelFeishuWebhooks : {};
+  const notes = input?.channelNotes && typeof input.channelNotes === "object" ? input.channelNotes : {};
+  const guildMap = input?.feishuSourceGuildMap && typeof input.feishuSourceGuildMap === "object" ? input.feishuSourceGuildMap : {};
+  const guildNameMap =
+    input?.feishuSourceGuildNameMap && typeof input.feishuSourceGuildNameMap === "object" ? input.feishuSourceGuildNameMap : {};
+  const channelNameMap =
+    input?.feishuSourceChannelNameMap && typeof input.feishuSourceChannelNameMap === "object"
+      ? input.feishuSourceChannelNameMap
+      : {};
+  const ruleConfigs = normalizeRuleConfigs(input?.feishuRuleConfigs);
+  const result: FeishuMappingRule[] = [];
+  for (const [sourceChannelId, rawTarget] of Object.entries(hooks)) {
+    const source = String(sourceChannelId || "").trim();
+    const target = normalizeFeishuTarget(rawTarget);
+    if (!source || !target) continue;
+    const ruleConfig = ruleConfigs[source] || {};
+    result.push({
+      ...ruleConfig,
+      id: `legacy-feishu-${source}`,
+      sourceChannelId: source,
+      sourceGuildId: typeof guildMap[source] === "string" && guildMap[source].trim() ? guildMap[source].trim() : undefined,
+      sourceGuildName:
+        typeof guildNameMap[source] === "string" && guildNameMap[source].trim() ? guildNameMap[source].trim() : undefined,
+      sourceChannelName:
+        typeof channelNameMap[source] === "string" && channelNameMap[source].trim() ? channelNameMap[source].trim() : undefined,
+      target,
+      note: typeof notes[source] === "string" && notes[source].trim() ? notes[source].trim() : undefined,
+      inputMode: ruleConfig.inputMode === "manual" ? "manual" : ruleConfig.inputMode === "select" ? "select" : undefined,
+    });
+  }
+  return result;
 }
 
 function normalizeWatermarkConfig(raw: any): WatermarkConfig | undefined {
@@ -906,6 +1040,29 @@ function normalizeScheduledBroadcastConfig(raw: any): ScheduledBroadcastConfig |
   };
 }
 
+function normalizeMobileClientTargetConfig(raw: any): MobileClientTargetConfig | undefined {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const endpoint =
+    typeof source.endpoint === "string" && source.endpoint.trim()
+      ? source.endpoint.trim().replace(/\/+$/, "")
+      : process.env.MOBILE_CLIENT_SYNC_ENDPOINT || "http://192.210.141.219:8765";
+  const adminToken =
+    typeof source.adminToken === "string" && source.adminToken.trim()
+      ? source.adminToken.trim()
+      : process.env.MOBILE_CLIENT_SYNC_ADMIN_TOKEN || "jujing-admin-2026";
+  const guildId =
+    typeof source.guildId === "string" && source.guildId.trim()
+      ? source.guildId.trim()
+      : "mobile-client";
+  const guildName =
+    typeof source.guildName === "string" && source.guildName.trim()
+      ? source.guildName.trim()
+      : "手机客户端";
+  const enabled = source.enabled === true;
+  if (!enabled && !raw) return undefined;
+  return { enabled, endpoint, adminToken, guildId, guildName };
+}
+
 function normalizeStandbyMode(raw: any): RuleLevelConfig["standbyMode"] | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const mainChannelId = typeof raw.mainChannelId === "string" ? raw.mainChannelId.trim() : "";
@@ -991,6 +1148,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
     ignoreSelf: raw.ignoreSelf === true ? true : undefined,
     ignoreBot: raw.ignoreBot === true ? true : undefined,
+    onlyBot: raw.onlyBot === true ? true : undefined,
     ignoreImages: raw.ignoreImages === true ? true : undefined,
     ignoreAudio: raw.ignoreAudio === true ? true : undefined,
     ignoreVideo: raw.ignoreVideo === true ? true : undefined,
@@ -1194,6 +1352,40 @@ function normalizeTruthSocialAccountLibrary(raw: any): TruthSocialAccountLibrary
     .filter(Boolean) as TruthSocialAccountLibrary[];
 }
 
+function normalizeSafewAccounts(raw: any): SafewBotAccountConfig[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const accounts: SafewBotAccountConfig[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : randomUUID();
+    if (seen.has(id)) continue;
+    const botToken = typeof item.botToken === "string" && item.botToken.trim() ? item.botToken.trim() : "";
+    if (!botToken) continue;
+    accounts.push({
+      id,
+      name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "SafeW 机器人",
+      botToken,
+      loginState: typeof item.loginState === "string" ? item.loginState : "idle",
+      loginMessage: typeof item.loginMessage === "string" ? item.loginMessage : "",
+      groups: Array.isArray(item.groups)
+        ? item.groups
+            .map((group: any) => {
+              if (!group || group.id === undefined || group.id === null) return null;
+              return {
+                id: String(group.id),
+                title: typeof group.title === "string" && group.title.trim() ? group.title.trim() : "未命名群组",
+                type: typeof group.type === "string" && group.type.trim() ? group.type.trim() : undefined,
+              };
+            })
+            .filter(Boolean) as Array<{ id: string; title: string; type?: string }>
+        : [],
+    });
+    seen.add(id);
+  }
+  return accounts;
+}
+
 function normalizeRuleConfigs(raw: any): Record<string, RuleLevelConfig> {
   const result: Record<string, RuleLevelConfig> = {};
   if (!raw || typeof raw !== "object") return result;
@@ -1249,6 +1441,16 @@ function normalizeXConfig(raw: any): XSourceConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
   const apiBaseUrl = typeof raw.apiBaseUrl === "string" && raw.apiBaseUrl.trim() ? raw.apiBaseUrl.trim() : undefined;
+  const providerToken =
+    typeof raw.sourceProvider === "string"
+      ? raw.sourceProvider.trim().toLowerCase()
+      : typeof raw.provider === "string"
+        ? raw.provider.trim().toLowerCase()
+        : "";
+  const sourceProvider: XSourceProvider | undefined =
+    providerToken === "twscrape" ? "twscrape" : providerToken === "twitterapi" || providerToken === "twitterapi.io" ? "twitterapi" : undefined;
+  const twscrapeDbPath =
+    typeof raw.twscrapeDbPath === "string" && raw.twscrapeDbPath.trim() ? raw.twscrapeDbPath.trim() : undefined;
   const modeRaw =
     typeof raw.mode === "string"
       ? raw.mode
@@ -1264,12 +1466,14 @@ function normalizeXConfig(raw: any): XSourceConfig | undefined {
         : undefined;
   const pollIntervalSeconds = normalizeOptionalNumber(raw.pollIntervalSeconds);
   const mappings = normalizeXMappings(raw.mappings);
-  if (!apiKey && !apiBaseUrl && !mode && !pollIntervalSeconds && mappings.length === 0) {
+  if (!apiKey && !apiBaseUrl && !sourceProvider && !twscrapeDbPath && !mode && !pollIntervalSeconds && mappings.length === 0) {
     return undefined;
   }
   return {
     apiKey,
     apiBaseUrl,
+    sourceProvider,
+    twscrapeDbPath,
     mode,
     pollIntervalSeconds,
     mappings,
@@ -1353,6 +1557,13 @@ function parseEnvForwardingTypes(raw?: string): ForwardingType[] | undefined {
   return normalized;
 }
 
+function normalizeEnabledForwardingTypesForAdmin(types?: ForwardingType[]): ForwardingType[] {
+  const source = Array.isArray(types) ? types : [];
+  const defaultAllowed = new Set<ForwardingType>(DEFAULT_ENABLED_FORWARDING_TYPES);
+  const allowed = source.filter((type) => defaultAllowed.has(type));
+  return allowed.length > 0 ? allowed : [...DEFAULT_ENABLED_FORWARDING_TYPES];
+}
+
 function applyForwardingTypeRestrictions(
   accounts: AccountConfig[],
   allowedTypes?: ForwardingType[],
@@ -1360,7 +1571,7 @@ function applyForwardingTypeRestrictions(
   if (!allowedTypes || allowedTypes.length === 0) return accounts;
   return accounts.map((account) => {
     const current = account.forwardingType;
-    if (current && FORWARDING_TYPES.includes(current as ForwardingType)) {
+    if (current && allowedTypes.includes(current as ForwardingType)) {
       return account;
     }
     return { ...account, forwardingType: allowedTypes[0] };
@@ -1419,6 +1630,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         )
       : {};
   const feishuRuleConfigs = normalizeRuleConfigs(input?.feishuRuleConfigs);
+  const feishuMappings = normalizeFeishuMappings(input);
 
   // 兼容旧版单个 botRelayToken，升级为 botRelays
   let botRelays: AccountConfig["botRelays"] = Array.isArray(input?.botRelays)
@@ -1464,6 +1676,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   const watermarkRemoval = normalizeWatermarkRemovalConfig(input?.watermarkRemoval);
   const scheduledContents = normalizeScheduledContentList(input?.scheduledContents);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(input?.scheduledBroadcast);
+  const mobileClientTarget = normalizeMobileClientTargetConfig(input?.mobileClientTarget);
   const discordLoginRaw = input?.discordLogin && typeof input.discordLogin === "object" ? input.discordLogin : {};
   const discordLoginEmail = typeof discordLoginRaw.email === "string" ? discordLoginRaw.email : input?.discordLoginEmail;
   const discordLoginPassword = typeof discordLoginRaw.password === "string" ? discordLoginRaw.password : input?.discordLoginPassword;
@@ -1509,6 +1722,18 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         const watermarkRemoval = normalizeWatermarkRemovalConfig(m.watermarkRemoval);
         return {
           ...normalizedRule,
+          mobileClientCategoryName:
+            typeof m.mobileClientCategoryName === "string" && m.mobileClientCategoryName.trim()
+              ? m.mobileClientCategoryName.trim()
+              : undefined,
+          mobileClientChannelName:
+            typeof m.mobileClientChannelName === "string" && m.mobileClientChannelName.trim()
+              ? m.mobileClientChannelName.trim()
+              : undefined,
+          mobileClientChannelAvatarUrl:
+            typeof m.mobileClientChannelAvatarUrl === "string" && m.mobileClientChannelAvatarUrl.trim()
+              ? m.mobileClientChannelAvatarUrl.trim()
+              : undefined,
           // RuleLevelConfig 规则级别过滤配置
           allowedUsersIds: Array.isArray(m.allowedUsersIds) ? m.allowedUsersIds : [],
           mutedUsersIds: Array.isArray(m.mutedUsersIds) ? m.mutedUsersIds : [],
@@ -1577,6 +1802,18 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           const scheduledBroadcast = normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast);
           return {
             ...normalizedMapping,
+            mobileClientCategoryName:
+              typeof mapping.mobileClientCategoryName === "string" && mapping.mobileClientCategoryName.trim()
+                ? mapping.mobileClientCategoryName.trim()
+                : undefined,
+            mobileClientChannelName:
+              typeof mapping.mobileClientChannelName === "string" && mapping.mobileClientChannelName.trim()
+                ? mapping.mobileClientChannelName.trim()
+                : undefined,
+            mobileClientChannelAvatarUrl:
+              typeof mapping.mobileClientChannelAvatarUrl === "string" && mapping.mobileClientChannelAvatarUrl.trim()
+                ? mapping.mobileClientChannelAvatarUrl.trim()
+                : undefined,
             // Telegram特有的超长消息处理（规则级别）
             longMessage: mapping.longMessage && typeof mapping.longMessage === "object" ? {
               enabled: mapping.longMessage.enabled === true,
@@ -1657,15 +1894,18 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     mappings,
     channelFeishuWebhooks,
     feishuRuleConfigs,
+    feishuMappings,
     feishuSourceGuildMap,
     feishuSourceChannelNameMap,
     enableFeishuForward: input?.enableFeishuForward === true,
     enableDiscordForward: input?.enableDiscordForward !== false,
     feishuAppId: typeof input?.feishuAppId === "string" && input.feishuAppId.trim() ? input.feishuAppId.trim() : undefined,
     feishuAppSecret: typeof input?.feishuAppSecret === "string" && input.feishuAppSecret.trim() ? input.feishuAppSecret.trim() : undefined,
+    safewBotToken: typeof input?.safewBotToken === "string" && input.safewBotToken.trim() ? input.safewBotToken.trim() : undefined,
+    safewAccounts: normalizeSafewAccounts(input?.safewAccounts),
     channelNotes: input?.channelNotes || {},
     blockedKeywords: Array.isArray(input?.blockedKeywords) ? input.blockedKeywords : [],
-    caseInsensitiveKeywords: input?.caseInsensitiveKeywords === false ? false : true,
+    caseInsensitiveKeywords: true,
     excludeKeywords: Array.isArray(input?.excludeKeywords) ? input.excludeKeywords : [],
     showSourceIdentity: input?.showSourceIdentity === true,
     publicBaseUrl:
@@ -1699,6 +1939,9 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     translationProvider: input?.translationProvider || "deepseek",
     translationApiKey: typeof input?.translationApiKey === "string" && input.translationApiKey.trim() ? input.translationApiKey.trim() : undefined,
     translationSecret: typeof input?.translationSecret === "string" && input.translationSecret.trim() ? input.translationSecret.trim() : undefined,
+    translationBaseUrl: typeof input?.translationBaseUrl === "string" && input.translationBaseUrl.trim() ? input.translationBaseUrl.trim() : undefined,
+    translationModel: typeof input?.translationModel === "string" && input.translationModel.trim() ? input.translationModel.trim() : undefined,
+    translationPrompt: typeof input?.translationPrompt === "string" && input.translationPrompt.trim() ? input.translationPrompt.trim() : undefined,
     enableBotRelay: input?.enableBotRelay === true,
     botRelayToken: typeof input?.botRelayToken === "string" && input.botRelayToken.trim() ? input.botRelayToken.trim() : undefined,
     botRelayUseWebhook: input?.botRelayUseWebhook === true, // 兼容旧字段
@@ -1708,6 +1951,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     channelRelayMap,
     ignoreSelf: input?.ignoreSelf === true,
     ignoreBot: input?.ignoreBot === true,
+    onlyBot: input?.onlyBot === true,
     ignoreImages: input?.ignoreImages === true,
     ignoreAudio: input?.ignoreAudio === true,
     ignoreVideo: input?.ignoreVideo === true,
@@ -1758,6 +2002,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     xConfig,
     truthSocialConfig,
     telegramConfig,
+    mobileClientTarget,
     forwardingType: FORWARDING_TYPES.includes(input?.forwardingType as ForwardingType)
       ? (input.forwardingType as ForwardingType)
       : "discord-to-discord",
@@ -1960,7 +2205,7 @@ function ensureAccountLibraries(config: MultiConfig): { config: MultiConfig; cha
 export async function getMultiConfig(): Promise<MultiConfig> {
   const raw = await readRawConfig();
   const envForwardingTypes = parseEnvForwardingTypes(getEnv().ENABLED_FORWARDING_TYPES);
-  const effectiveForwardingTypes = envForwardingTypes;
+  const effectiveForwardingTypes = normalizeEnabledForwardingTypesForAdmin(envForwardingTypes);
   if (Array.isArray(raw?.accounts)) {
     const rawTelegramAccounts = Array.isArray(raw.telegramAccounts) ? raw.telegramAccounts : [];
     const hadTelegramLibraryPlaceholders = rawTelegramAccounts.some(
@@ -2006,7 +2251,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
       xAccounts,
       truthSocialAccounts,
       version: CONFIG_VERSION,
-      enabledForwardingTypes: envForwardingTypes,
+      enabledForwardingTypes: effectiveForwardingTypes,
     };
 
     const libraryResult = ensureAccountLibraries(config);
@@ -2043,7 +2288,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
     return {
       ...libraryResult.config,
       accounts: restrictedAccounts,
-      enabledForwardingTypes: envForwardingTypes,
+      enabledForwardingTypes: effectiveForwardingTypes,
     };
   }
   const legacyConfig = migrateLegacyToMulti(raw);
@@ -2055,7 +2300,7 @@ export async function getMultiConfig(): Promise<MultiConfig> {
   return {
     ...legacyLibraryResult.config,
     accounts: legacyRestrictedAccounts,
-    enabledForwardingTypes: envForwardingTypes,
+    enabledForwardingTypes: effectiveForwardingTypes,
   };
 }
 
@@ -2096,6 +2341,8 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       enableDiscordForward: true,
       feishuAppId: undefined,
       feishuAppSecret: undefined,
+      safewBotToken: undefined,
+      safewAccounts: [],
       channelNotes: {},
       blockedKeywords: [],
       caseInsensitiveKeywords: true,
@@ -2141,11 +2388,15 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       translationProvider: "deepseek",
       translationApiKey: undefined,
       translationSecret: undefined,
+      translationBaseUrl: undefined,
+      translationModel: undefined,
+      translationPrompt: undefined,
       enableBotRelay: false,
       botRelays: [],
       channelRelayMap: {},
       ignoreSelf: false,
       ignoreBot: false,
+      onlyBot: false,
       ignoreImages: false,
       ignoreAudio: false,
       ignoreVideo: false,
@@ -2160,17 +2411,21 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
       feishuStyle: "style1",
       channelTranslate: {},
       channelTranslateDirection: {},
+      mobileClientTarget: normalizeMobileClientTargetConfig(undefined),
     };
   }
   return {
     channelWebhooks: account.channelWebhooks,
     channelFeishuWebhooks: account.channelFeishuWebhooks,
+    feishuMappings: account.feishuMappings,
     mappings: account.mappings,
     feishuRuleConfigs: account.feishuRuleConfigs,
     enableFeishuForward: account.enableFeishuForward,
     enableDiscordForward: account.enableDiscordForward,
     feishuAppId: account.feishuAppId,
     feishuAppSecret: account.feishuAppSecret,
+    safewBotToken: account.safewBotToken,
+    safewAccounts: account.safewAccounts,
     channelNotes: account.channelNotes,
     blockedKeywords: account.blockedKeywords,
     caseInsensitiveKeywords: account.caseInsensitiveKeywords,
@@ -2204,11 +2459,15 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     translationProvider: account.translationProvider,
     translationApiKey: account.translationApiKey,
     translationSecret: account.translationSecret,
+    translationBaseUrl: account.translationBaseUrl,
+    translationModel: account.translationModel,
+    translationPrompt: account.translationPrompt,
     enableBotRelay: account.enableBotRelay,
     botRelays: account.botRelays,
     channelRelayMap: account.channelRelayMap,
     ignoreSelf: account.ignoreSelf,
     ignoreBot: account.ignoreBot,
+    onlyBot: account.onlyBot,
     ignoreImages: account.ignoreImages,
     ignoreAudio: account.ignoreAudio,
     ignoreVideo: account.ignoreVideo,
@@ -2232,6 +2491,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     feishuStyle: account.feishuStyle,
     channelTranslate: (account as any).channelTranslate || {},
     channelTranslateDirection: (account as any).channelTranslateDirection || {},
+    mobileClientTarget: account.mobileClientTarget,
     telegramConfig: (account as any).telegramConfig,
   };
 }

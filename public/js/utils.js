@@ -89,6 +89,8 @@ function getForwardingTypeLabel(type) {
       return 'Telegram → Telegram';
     case 'discord-to-feishu':
       return 'Discord → 飞书';
+    case 'discord-to-safew':
+      return 'Discord → SafeW';
     case 'x-to-discord':
       return 'X → Discord';
     case 'truthsocial-to-discord':

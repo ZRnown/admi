@@ -73,6 +73,15 @@ class DiscordAccountSession:
         except Exception:
             return None
 
+    def _user_display_name(self, user: Any) -> str:
+        if user is None:
+            return ""
+        for attr in ("global_name", "display_name", "displayName", "nick", "name", "username"):
+            value = str(getattr(user, attr, "") or "").strip()
+            if value:
+                return value
+        return ""
+
     def build_cache_snapshot(self) -> Dict[str, Any]:
         guilds_payload = []
         channels_by_guild: Dict[str, list] = {}
@@ -107,22 +116,25 @@ class DiscordAccountSession:
             channels_by_guild[guild_id] = channels
 
         for channel in list(getattr(client, "private_channels", []) or []):
+            channel_id = str(getattr(channel, "id", "") or "")
             explicit_name = str(getattr(channel, "name", "") or "").strip()
+            if explicit_name == channel_id:
+                explicit_name = ""
             if explicit_name:
                 channel_name = explicit_name
             else:
                 recipients = list(getattr(channel, "recipients", []) or [])
+                direct_recipient = getattr(channel, "recipient", None)
+                if direct_recipient is not None:
+                    recipients.append(direct_recipient)
                 recipient_names = []
                 for recipient in recipients:
-                    global_name = str(getattr(recipient, "global_name", "") or "").strip()
-                    username = str(getattr(recipient, "name", None) or getattr(recipient, "username", "") or "").strip()
-                    if global_name:
-                        recipient_names.append(global_name)
-                    elif username:
-                        recipient_names.append(username)
-                channel_name = ", ".join(recipient_names) if recipient_names else str(getattr(channel, "id", "") or "")
+                    display_name = self._user_display_name(recipient)
+                    if display_name:
+                        recipient_names.append(display_name)
+                channel_name = ", ".join(dict.fromkeys(recipient_names)) if recipient_names else channel_id
             private_channels_payload.append({
-                "id": str(getattr(channel, "id", "") or ""),
+                "id": channel_id,
                 "name": channel_name,
                 "type": self._channel_type_value(channel),
                 "recipientCount": len(list(getattr(channel, "recipients", []) or [])),
@@ -329,6 +341,32 @@ class DiscordAccountSession:
                     await self.ipc.send_notification("discord_message_update", payload)
             except Exception as exc:
                 logger.error(f"Failed to handle message edit: {exc}")
+
+        @self.client.event
+        async def on_message_delete(message: Any):
+            if message is None:
+                return
+            try:
+                channel = getattr(message, "channel", None)
+                channel_id = getattr(channel, "id", None) or getattr(message, "channel_id", None)
+                if channel_id is None:
+                    return
+                channel_id_int = int(channel_id)
+
+                target_accounts = []
+                for acc_id, channels in self.shared_accounts.items():
+                    if not channels or channel_id_int in channels:
+                        target_accounts.append(acc_id)
+
+                if not target_accounts:
+                    return
+
+                for acc_id in target_accounts:
+                    payload = build_message_payload(message, acc_id)
+                    payload["eventType"] = "message_delete"
+                    await self.ipc.send_notification("discord_message_delete", payload)
+            except Exception as exc:
+                logger.error(f"Failed to handle message delete: {exc}")
 
     def _resolve_start_kwargs(self, bot_flag: Optional[bool]) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
@@ -663,6 +701,55 @@ class DiscordBridge:
         return {"success": True, "sessions": len(self.sessions_by_token), "accounts": total_accounts}
 
 
+def _component_to_dict(component: Any) -> Optional[Dict[str, Any]]:
+    if component is None:
+        return None
+    try:
+        raw = component.to_dict()
+        if isinstance(raw, dict):
+            return raw
+    except Exception:
+        pass
+    try:
+        if isinstance(component, dict):
+            return dict(component)
+    except Exception:
+        pass
+
+    data = getattr(component, "data", None)
+    if isinstance(data, dict):
+        component = data
+
+    item: Dict[str, Any] = {}
+    for source_key, target_key in (
+        ("type", "type"),
+        ("style", "style"),
+        ("label", "label"),
+        ("url", "url"),
+        ("custom_id", "custom_id"),
+        ("disabled", "disabled"),
+    ):
+        value = getattr(component, source_key, None)
+        if value is None:
+            continue
+        item[target_key] = getattr(value, "value", value)
+
+    children = []
+    for child in getattr(component, "children", []) or getattr(component, "components", []) or []:
+        child_payload = _component_to_dict(child)
+        if child_payload:
+            children.append(child_payload)
+    if children:
+        item["components"] = children
+
+    accessory = getattr(component, "accessory", None)
+    accessory_payload = _component_to_dict(accessory)
+    if accessory_payload:
+        item["accessory"] = accessory_payload
+
+    return item or None
+
+
 def build_message_payload(message: Any, account_id: str) -> Dict[str, Any]:
     author = getattr(message, "author", None)
     member = getattr(message, "author", None)
@@ -695,6 +782,12 @@ def build_message_payload(message: Any, account_id: str) -> Dict[str, Any]:
                 embeds.append(dict(embed))
             except Exception:
                 pass
+
+    components = []
+    for component in getattr(message, "components", []) or []:
+        component_payload = _component_to_dict(component)
+        if component_payload:
+            components.append(component_payload)
 
     mentions = {
         "users": [],
@@ -840,6 +933,7 @@ def build_message_payload(message: Any, account_id: str) -> Dict[str, Any]:
         },
         "attachments": attachments,
         "embeds": embeds,
+        "components": components,
         "mentions": mentions,
         "reference": reference,
         "referenceMessage": reference_message,

@@ -62,18 +62,43 @@ function showToast(message, type = 'success') {
 }
 
 // 复制到剪贴板
-function copyToClipboard(text, type) {
-  navigator.clipboard.writeText(text).then(() => {
-    showToast(`${type}已复制到剪贴板`, 'success');
-  }).catch(err => {
+function fallbackCopyToClipboard(value, type) {
+  const textArea = document.createElement('textarea');
+  textArea.value = value;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'fixed';
+  textArea.style.left = '-9999px';
+  textArea.style.top = '0';
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (err) {
     console.error('复制失败:', err);
-    // 降级到传统方法
-    const textArea = document.createElement('textarea');
-    textArea.value = text;
-    document.body.appendChild(textArea);
-    textArea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textArea);
+  }
+  document.body.removeChild(textArea);
+  if (copied) {
     showToast(`${type}已复制到剪贴板`, 'success');
-  });
+  } else {
+    showToast(`复制失败，请手动复制：${value}`, 'error');
+  }
+  return copied;
+}
+
+function copyToClipboard(text, type) {
+  const value = String(text ?? '');
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(value)
+      .then(() => {
+        showToast(`${type}已复制到剪贴板`, 'success');
+      })
+      .catch(err => {
+        console.error('复制失败，尝试降级复制:', err);
+        fallbackCopyToClipboard(value, type);
+      });
+    return;
+  }
+  fallbackCopyToClipboard(value, type);
 }

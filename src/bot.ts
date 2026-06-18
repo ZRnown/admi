@@ -12,6 +12,7 @@ import { formatSize } from "./format.js";
 import { SenderBot } from "./senderBot.js";
 import { FeishuSender } from "./feishuSender.js";
 import { DingTalkSender } from "./dingtalkSender.js";
+import { SafewSender } from "./safewSender.js";
 import { OCRClient } from "./ocrClient.js";
 import { FileLogger } from "./logger.js";
 import { getTelegramBridgeClient } from "./index.js";
@@ -37,8 +38,10 @@ import {
 } from "./watermarkRemoval.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { applyReplacementDictionaryToEmbeds, stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
+import { appendDiscordComponentLinks, extractDiscordComponentLinks } from "./discordComponentLinks.js";
 import { shouldSkipMessageForIgnoredImages } from "./messageFilterDecisions.js";
 import { applyReplacementDictionary } from "./replacementDictionary.js";
+import { forwardDiscordMessageToMobileClient } from "./mobileClientForwarder.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -60,6 +63,11 @@ const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i;
 const VIDEO_EXT_RE = /\.(mp4|mov|webm|mkv|avi|flv)(?:$|[?#])/i;
 const AUDIO_EXT_RE = /\.(mp3|wav|ogg|flac|m4a|aac)(?:$|[?#])/i;
 const DOCUMENT_EXT_RE = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(?:$|[?#])/i;
+
+type FeishuRuntimeSender = {
+  sender: FeishuSender;
+  rule?: any;
+};
 
 export type Client<Ready extends boolean = boolean> = BotClient<Ready>;
 
@@ -96,6 +104,7 @@ export interface BridgeDiscordMessagePayload {
     height?: number;
   }>;
   embeds?: any[];
+  components?: any[];
   mentions?: {
     users?: Array<{ id: string; username?: string; displayName?: string }>;
     roles?: Array<{ id: string; name?: string }>;
@@ -243,6 +252,7 @@ function buildBridgeMessage(payload: BridgeDiscordMessagePayload): any {
     },
     attachments,
     embeds: payload.embeds || [],
+    components: payload.components || [],
     mentions: {
       users,
       channels,
@@ -563,8 +573,9 @@ class DedupeCache {
 export class Bot {
   senderBot?: SenderBot; // default sender (可选，如果关闭 Discord 转发则为 undefined)
   private senderBotsBySource?: Map<string, SenderBot[]>;  // 支持相同源ID对应多个webhook
-  private feishuSendersBySource?: Map<string, FeishuSender>;
+  private feishuSendersBySource?: Map<string, FeishuRuntimeSender[]>;
   private dingtalkSendersBySource?: Map<string, DingTalkSender[]>;
+  private safewSendersBySource?: Map<string, SafewSender[]>;
   config: Config;
   client: Client;
   // 记录频道最近活跃时间（用于主备模式）
@@ -589,6 +600,7 @@ export class Bot {
     warnHandler: (info: any) => void;
     messageHandler: (message: Message) => void;
     messageUpdateHandler: (oldMessage: Message | PartialMessage, newMessage: Message | PartialMessage) => void;
+    messageDeleteHandler: (message: Message | PartialMessage) => void;
   };
   // 标记数据是否变动，减少 I/O
   private isMappingDirty = false;
@@ -606,8 +618,9 @@ export class Bot {
     config: Config,
     senderBot: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot[]>,
-    feishuSendersBySource?: Map<string, FeishuSender>,
+    feishuSendersBySource?: Map<string, FeishuRuntimeSender[]>,
     dingtalkSendersBySource?: Map<string, DingTalkSender[]>,
+    safewSendersBySource?: Map<string, SafewSender[]>,
     options?: { sharedClient?: boolean; externalMessageSource?: boolean },
   ) {
     this.config = config;
@@ -616,6 +629,7 @@ export class Bot {
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
     this.dingtalkSendersBySource = dingtalkSendersBySource;
+    this.safewSendersBySource = safewSendersBySource;
 
     // 初始化OCR客户端 - 自动根据屏蔽/触发词启用/禁用
     const hasOCRKeywords = this.hasOcrFilters(config);
@@ -641,6 +655,7 @@ export class Bot {
       (this.client as any).removeAllListeners?.("warn");
       (this.client as any).removeAllListeners?.("messageCreate");
       (this.client as any).removeAllListeners?.("messageUpdate");
+      (this.client as any).removeAllListeners?.("messageDelete");
     }
 
     if (!externalMessageSource) {
@@ -682,6 +697,11 @@ export class Bot {
       };
       (this.client as any).on?.("messageUpdate", messageUpdateHandler);
 
+      const messageDeleteHandler = async (message: Message | PartialMessage) => {
+        await this.handleMessageDelete(message);
+      };
+      (this.client as any).on?.("messageDelete", messageDeleteHandler);
+
       this.attachedListeners = {
         readyHandler,
         errorHandler,
@@ -689,6 +709,7 @@ export class Bot {
         warnHandler,
         messageHandler,
         messageUpdateHandler,
+        messageDeleteHandler,
       };
     }
 
@@ -726,6 +747,7 @@ export class Bot {
       target.off?.("warn", this.attachedListeners.warnHandler);
       target.off?.("messageCreate", this.attachedListeners.messageHandler);
       target.off?.("messageUpdate", this.attachedListeners.messageUpdateHandler);
+      target.off?.("messageDelete", this.attachedListeners.messageDeleteHandler);
       this.attachedListeners = undefined;
     }
     // 注意：process 监听器是全局的，不应该在这里移除（因为可能被其他实例使用）
@@ -745,14 +767,16 @@ export class Bot {
     config: Config,
     defaultSender: SenderBot | undefined,
     senderBotsBySource?: Map<string, SenderBot[]>,
-    feishuSendersBySource?: Map<string, FeishuSender>,
+    feishuSendersBySource?: Map<string, FeishuRuntimeSender[]>,
     dingtalkSendersBySource?: Map<string, DingTalkSender[]>,
+    safewSendersBySource?: Map<string, SafewSender[]>,
   ) {
     this.config = config;
     this.senderBot = defaultSender;
     this.senderBotsBySource = senderBotsBySource;
     this.feishuSendersBySource = feishuSendersBySource;
     this.dingtalkSendersBySource = dingtalkSendersBySource;
+    this.safewSendersBySource = safewSendersBySource;
 
     // 更新OCR配置 - 自动根据屏蔽/触发词启用/禁用
     const hasOCRKeywords = this.hasOcrFilters(config);
@@ -797,6 +821,11 @@ export class Bot {
     await this.handleMessageUpdate(message as any, message as any);
   }
 
+  async handleExternalMessageDelete(payload: BridgeDiscordMessagePayload) {
+    const message = buildBridgeMessage(payload);
+    await this.handleMessageDelete(message as any);
+  }
+
   private getSendersForChannel(channelId: string): SenderBot[] {
     return this.senderBotsBySource?.get(channelId) || [];
   }
@@ -820,6 +849,10 @@ export class Bot {
     for (const rule of telegramMappings) {
       if (hasRuleOcr(rule)) return true;
     }
+    const feishuMappings = (config as any).feishuMappings || [];
+    for (const rule of feishuMappings) {
+      if (hasRuleOcr(rule)) return true;
+    }
     const feishuRuleConfigs = (config as any).feishuRuleConfigs || {};
     for (const rule of Object.values(feishuRuleConfigs)) {
       if (hasRuleOcr(rule)) return true;
@@ -827,12 +860,62 @@ export class Bot {
     return false;
   }
 
-  private getFeishuSenderForChannel(channelId: string): FeishuSender | undefined {
-    return this.feishuSendersBySource?.get(channelId);
+  private getFeishuSendersForChannel(channelId: string): FeishuRuntimeSender[] {
+    return this.feishuSendersBySource?.get(channelId) || [];
   }
 
   private getDingTalkSendersForChannel(channelId: string): DingTalkSender[] {
     return this.dingtalkSendersBySource?.get(channelId) || [];
+  }
+
+  private getSafewSendersForChannel(channelId: string): SafewSender[] {
+    return this.safewSendersBySource?.get(channelId) || [];
+  }
+
+  private shouldSendToRuleTarget(options: {
+    rule?: any;
+    message: Message;
+    isWebhook: boolean;
+    textHay: string;
+    hasTextForKeywords: boolean;
+    caseInsensitive: boolean;
+    logPrefix: string;
+    targetLabel: string;
+  }): boolean {
+    const { rule, message, isWebhook, textHay, hasTextForKeywords, caseInsensitive, logPrefix, targetLabel } = options;
+    if (!rule || typeof rule !== "object") return true;
+    const authorId = message.author?.id;
+    if (!isWebhook && authorId) {
+      const mutedUsers = (rule.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
+      if (mutedUsers.length > 0 && mutedUsers.includes(authorId)) {
+        this.logger.info(`${logPrefix} [FEISHU] 跳过目标 ${targetLabel}: 作者在该规则黑名单`);
+        return false;
+      }
+      const allowedUsers = (rule.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
+      if (allowedUsers.length > 0 && !allowedUsers.includes(authorId)) {
+        this.logger.info(`${logPrefix} [FEISHU] 跳过目标 ${targetLabel}: 作者不在该规则白名单`);
+        return false;
+      }
+    }
+    if (hasTextForKeywords) {
+      const blockedGroups = parseKeywordGroups(rule.blockedKeywords);
+      if (blockedGroups.length > 0) {
+        const { matchedGroups } = matchParsedKeywordGroups(textHay, blockedGroups, { caseInsensitive });
+        if (matchedGroups.length === 0) {
+          this.logger.info(`${logPrefix} [FEISHU] 跳过目标 ${targetLabel}: 未命中该规则触发关键词`);
+          return false;
+        }
+      }
+      const excludeGroups = parseKeywordGroups(rule.excludeKeywords);
+      if (excludeGroups.length > 0) {
+        const { matchedGroups } = matchParsedKeywordGroups(textHay, excludeGroups, { caseInsensitive });
+        if (matchedGroups.length > 0) {
+          this.logger.info(`${logPrefix} [FEISHU] 跳过目标 ${targetLabel}: 命中该规则屏蔽关键词 ${formatKeywordGroups(matchedGroups)}`);
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   private normalizeTargets(targets: TargetMessageRef[] | undefined): TargetMessageRef[] {
@@ -888,7 +971,10 @@ export class Bot {
     }
     const attachments = attachmentKeys.join("|");
     const embeds = message.embeds?.length || 0;
-    return `${text}||att:${attachments}||emb:${embeds}`;
+    const componentLinks = extractDiscordComponentLinks((message as any).components)
+      .map((link) => `${link.label}:${link.url}`)
+      .join("|");
+    return `${text}||att:${attachments}||emb:${embeds}||components:${componentLinks}`;
   }
 
   /**
@@ -912,6 +998,7 @@ export class Bot {
     showSourceIdentity?: boolean;
     ignoreSelf?: boolean;
     ignoreBot?: boolean;
+    onlyBot?: boolean;
     ignoreImages?: boolean;
     ignoreAudio?: boolean;
     ignoreVideo?: boolean;
@@ -931,6 +1018,9 @@ export class Bot {
       mainChannelId: string;
       cooldownSeconds: number;
     };
+    mobileClientCategoryName?: string;
+    mobileClientChannelName?: string;
+    mobileClientChannelAvatarUrl?: string;
   } {
     // 查找顶层 mappings（Discord->Discord 规则）
     const mappings = (this.config as any).mappings || [];
@@ -943,6 +1033,12 @@ export class Bot {
     }
 
     // 如果还没找到，查找 feishuRuleConfigs（Discord->Feishu 规则）
+    if (!rule) {
+      const feishuMappings = (this.config as any).feishuMappings || [];
+      rule = feishuMappings.find((m: any) => m.sourceChannelId === channelId);
+    }
+
+    // 如果还没找到，查找旧版 feishuRuleConfigs（Discord->Feishu 规则）
     if (!rule) {
       const feishuRuleConfigs = (this.config as any).feishuRuleConfigs || {};
       rule = feishuRuleConfigs[channelId];
@@ -961,6 +1057,7 @@ export class Bot {
         showSourceIdentity: undefined,
         ignoreSelf: undefined,
         ignoreBot: undefined,
+        onlyBot: undefined,
         ignoreImages: undefined,
         ignoreAudio: undefined,
         ignoreVideo: undefined,
@@ -976,6 +1073,9 @@ export class Bot {
         watermarks: undefined,
         watermarkRemoval: undefined,
         standbyMode: undefined,
+        mobileClientCategoryName: undefined,
+        mobileClientChannelName: undefined,
+        mobileClientChannelAvatarUrl: undefined,
       };
     }
     return {
@@ -998,6 +1098,7 @@ export class Bot {
       showSourceIdentity: rule.showSourceIdentity,
       ignoreSelf: rule.ignoreSelf,
       ignoreBot: rule.ignoreBot,
+      onlyBot: rule.onlyBot,
       ignoreImages: rule.ignoreImages,
       ignoreAudio: rule.ignoreAudio,
       ignoreVideo: rule.ignoreVideo,
@@ -1013,6 +1114,18 @@ export class Bot {
       watermarks: rule.watermarks,
       watermarkRemoval: rule.watermarkRemoval,
       standbyMode: rule.standbyMode,
+      mobileClientCategoryName:
+        typeof rule.mobileClientCategoryName === "string" && rule.mobileClientCategoryName.trim()
+          ? rule.mobileClientCategoryName.trim()
+          : undefined,
+      mobileClientChannelName:
+        typeof rule.mobileClientChannelName === "string" && rule.mobileClientChannelName.trim()
+          ? rule.mobileClientChannelName.trim()
+          : undefined,
+      mobileClientChannelAvatarUrl:
+        typeof rule.mobileClientChannelAvatarUrl === "string" && rule.mobileClientChannelAvatarUrl.trim()
+          ? rule.mobileClientChannelAvatarUrl.trim()
+          : undefined,
     };
   }
 
@@ -1067,7 +1180,6 @@ export class Bot {
   }
 
   private async saveMapping() {
-    if (this.sourceToTarget.size === 0) return;
     try {
       await this.ensureDataDir();
       // 只保留最近 MAX_MAP_SIZE 条
@@ -1150,8 +1262,9 @@ export class Bot {
 
     // 快速检查：路由映射是否存在，不存在则快速返回
     const sendersForThis = this.getSendersForChannel(message.channelId);
-    const feishuSenderForThis = this.getFeishuSenderForChannel(message.channelId);
+    const feishuSendersForThis = this.getFeishuSendersForChannel(message.channelId);
     const dingtalkSendersForThis = this.getDingTalkSendersForChannel(message.channelId);
+    const safewSendersForThis = this.getSafewSendersForChannel(message.channelId);
 
     // 检查是否有 Telegram 映射（受 enableTelegramForward 控制）
     const telegramConfig = (this.config as any).telegramConfig;
@@ -1160,9 +1273,19 @@ export class Bot {
     const hasTelegramMapping = telegramMappingsCheck.some(
       (m: any) => m.type === 'discord-to-telegram' && m.sourceChannelId === message.channelId
     );
+    const hasMobileClientMapping =
+      (this.config as any).mobileClientTarget?.enabled === true &&
+      ((this.config as any).mappings || []).some((m: any) => String(m?.sourceChannelId || "") === message.channelId);
 
     // 只有在没有任何转发目标时才返回
-    if (sendersForThis.length === 0 && !feishuSenderForThis && dingtalkSendersForThis.length === 0 && !hasTelegramMapping) {
+    if (
+      sendersForThis.length === 0 &&
+      feishuSendersForThis.length === 0 &&
+      dingtalkSendersForThis.length === 0 &&
+      safewSendersForThis.length === 0 &&
+      !hasTelegramMapping &&
+      !hasMobileClientMapping
+    ) {
       return; // 快速返回，不做多余计算
     }
 
@@ -1297,6 +1420,12 @@ export class Bot {
         : this.config.ignoreBot;
       if (shouldIgnoreBot && (message.author?.bot || isWebhook)) {
         this.logger.info(`${logPrefix} [SKIP] Ignoring bot/webhook message (ignoreBot=true, rule=${ruleConfig.ignoreBot})`);
+        return;
+      }
+
+      const shouldOnlyBot = ruleConfig.onlyBot === true || (this.config as any).onlyBot === true;
+      if (shouldOnlyBot && !(message.author?.bot || isWebhook)) {
+        this.logger.info(`${logPrefix} [SKIP] Only forwarding bot/webhook message (onlyBot=true, rule=${ruleConfig.onlyBot})`);
         return;
       }
 
@@ -1654,10 +1783,12 @@ export class Bot {
     // 路由：仅当该源频道在映射中时才转发；未映射则跳过（sendersForThis 已在前面检查过）
     if (sendersForThis.length > 0) {
       this.logger.info(`${logPrefix} [ROUTE] Found ${sendersForThis.length} mapping(s) for channel ${message.channelId}, will forward to webhook(s)`);
-    } else if (feishuSenderForThis) {
-      this.logger.info(`${logPrefix} [ROUTE] Found Feishu mapping for channel ${message.channelId}, will forward to Feishu`);
+    } else if (feishuSendersForThis.length > 0) {
+      this.logger.info(`${logPrefix} [ROUTE] Found ${feishuSendersForThis.length} Feishu mapping(s) for channel ${message.channelId}`);
     } else if (dingtalkSendersForThis.length > 0) {
       this.logger.info(`${logPrefix} [ROUTE] Found ${dingtalkSendersForThis.length} DingTalk mapping(s) for channel ${message.channelId}`);
+    } else if (safewSendersForThis.length > 0) {
+      this.logger.info(`${logPrefix} [ROUTE] Found ${safewSendersForThis.length} SafeW mapping(s) for channel ${message.channelId}`);
     }
 
     // 用户过滤：全局白名单/黑名单 + 规则级别白名单/黑名单
@@ -1963,6 +2094,16 @@ export class Bot {
       discordContent = applyLongMessageConfig(discordContent, longMessageConfig);
     }
     const feishuContentRaw = applyLongMessageConfig(finalContent, longMessageConfig);
+    const messageComponents = Array.isArray((message as any).components) ? (message as any).components : [];
+    const componentLinks = extractDiscordComponentLinks(messageComponents);
+    if (componentLinks.length > 0) {
+      const labels = componentLinks.map((link) => link.label).join(", ");
+      this.logger.info(`${logPrefix} [COMPONENTS] Found ${componentLinks.length} link button(s): ${labels}`);
+    } else if (messageComponents.length > 0) {
+      this.logger.info(`${logPrefix} [COMPONENTS] Found ${messageComponents.length} component(s), no link buttons parsed`);
+    }
+    discordContent = appendDiscordComponentLinks(discordContent, messageComponents);
+    const feishuContentWithLinks = appendDiscordComponentLinks(feishuContentRaw, messageComponents);
 
     // 根据配置决定是否伪装为源用户头像和昵称
     // 对于 webhook 消息，使用 webhook 的名称和头像
@@ -2060,7 +2201,9 @@ export class Bot {
         }
         return item;
       };
-      const shouldRewriteEmbedImages = (effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval) && !skipImages;
+      const shouldUploadEmbedImagesForFeishu = feishuSendersForThis.length > 0 && !skipImages;
+      const shouldRewriteEmbedImages =
+        ((effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval) || shouldUploadEmbedImagesForFeishu) && !skipImages;
 
       for (const att of message.attachments.values()) {
         const url = att.url;
@@ -2230,6 +2373,42 @@ export class Bot {
       watermarks: effectiveWatermarks,
     }];
 
+    if ((this.config as any).mobileClientTarget?.enabled === true) {
+      try {
+        await forwardDiscordMessageToMobileClient((this.config as any).mobileClientTarget, {
+          channelId: message.channelId,
+          channelName: ruleConfig.mobileClientChannelName || (message.channel as any)?.name,
+          channelAvatarUrl: ruleConfig.mobileClientChannelAvatarUrl,
+          guildId: (message.guild as any)?.id,
+          guildName: (message.guild as any)?.name,
+          categoryName: ruleConfig.mobileClientCategoryName,
+          messageId: message.id,
+          author: username || authorLabel,
+          authorId: message.author?.id,
+          authorAvatarUrl: avatarUrl,
+          content: `${discordContent}`.trim(),
+          createdAt: new Date(message.createdTimestamp || Date.now()).toISOString(),
+          attachments: finalUploads.map((item: any) => ({
+            id: item.sourceUrl || item.url,
+            url: item.url,
+            filename: item.filename,
+            contentType: item.isImage ? "image/*" : item.isVideo ? "video/*" : "",
+          })),
+          embeds: extraEmbeds || [],
+          reference:
+            replyUserNameForStyle2 || replyContentForStyle2
+              ? {
+                  messageId: message.reference?.messageId,
+                  author: replyUserNameForStyle2,
+                  content: replyContentForStyle2,
+                }
+              : null,
+        });
+      } catch (error: any) {
+        this.logger.error(`${logPrefix} [MOBILE] 转发到手机客户端失败: ${String(error?.message || error)}`);
+      }
+    }
+
     // 在发送前写入去重缓存，避免特殊频道同一源消息在快速多次更新时重复发送
 
     // 检查 Discord 转发开关
@@ -2302,61 +2481,75 @@ export class Bot {
 
     // 检查飞书转发开关（飞书不受样式开关影响，始终使用 finalContent）
     const enableFeishuForward = this.config.enableFeishuForward === true;
-    const shouldSendFeishu = feishuSenderForThis && enableFeishuForward;
-    if (feishuSenderForThis && !enableFeishuForward) {
+    const shouldSendFeishu = feishuSendersForThis.length > 0 && enableFeishuForward;
+    if (feishuSendersForThis.length > 0 && !enableFeishuForward) {
       this.logger.info(`${logPrefix} [SKIP] 飞书转发已关闭，跳过转发`);
     }
     if (shouldSendFeishu) {
-      try {
-        const feishuContent = stripLanguages(
-          String(
-            applyReplacementDictionary(
-              String(applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {})),
-              ruleConfig.replacementsDictionary || {},
-            ),
+      const feishuContent = stripLanguages(
+        String(
+          applyReplacementDictionary(
+            String(applyReplacementDictionary(feishuContentWithLinks, this.config.replacementsDictionary || {})),
+            ruleConfig.replacementsDictionary || {},
           ),
-          stripOptions,
-        );
-        const feishuEmbeds = shouldStripEmbedImages
-          ? stripAllEmbedImages(stripEmbedText(message.embeds, stripOptions))
-          : stripBlockedEmbedImages(
-              stripEmbedText(message.embeds, stripOptions),
-              ocrBlockedImageUrls,
-            );
-        const finalFeishuEmbeds = stripUploadedEmbedImages(feishuEmbeds, finalUploads);
-        await feishuSenderForThis.send({
-          content: feishuContent,
-          username: username,
-          avatarUrl: avatarUrl,
-          attachments: finalUploads.map((u) => ({
-            url: u.url,
-            filename: u.filename,
-            isImage: u.isImage,
-            watermarkRemoval: u.watermarkRemoval,
-            watermarkRemovalState: u.watermarkRemovalState,
-          })),
-          embeds: finalFeishuEmbeds && finalFeishuEmbeds.length > 0 ? finalFeishuEmbeds : undefined,
-          watermark: effectiveWatermarks[0],
-          watermarkSecondary: effectiveWatermarks[1],
-          watermarks: effectiveWatermarks,
-        });
-        const feishuTarget = feishuSenderForThis.target;
-        const feishuPreview = formatLogPreview(feishuContent);
-        const imageCount = finalUploads.filter((u) => u.isImage).length;
-        const logMsg =
-          `${logPrefix} [FEISHU] 转发成功 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
-          `目标: ${feishuTarget} | 内容: ${feishuPreview} | 附件: ${finalUploads.length} | 图片: ${imageCount}`;
-        console.log(logMsg);
-        this.logger.info(logMsg);
-        recordForwardStat(getStatsAccountId(this.config), "discord-to-feishu");
-      } catch (err: any) {
-        const feishuTarget = feishuSenderForThis.target;
-        const feishuPreview = formatLogPreview(feishuContentRaw);
-        const errorMsg =
-          `${logPrefix} [FEISHU] 转发失败 | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
-          `目标: ${feishuTarget} | 内容: ${feishuPreview} | 错误: ${String(err?.message || err)}`;
-        console.error(errorMsg);
-        this.logger.error(errorMsg);
+        ),
+        stripOptions,
+      );
+      const feishuEmbeds = shouldStripEmbedImages
+        ? stripAllEmbedImages(stripEmbedText(message.embeds, stripOptions))
+        : stripBlockedEmbedImages(
+            stripEmbedText(message.embeds, stripOptions),
+            ocrBlockedImageUrls,
+          );
+      const finalFeishuEmbeds = stripUploadedEmbedImages(feishuEmbeds, finalUploads);
+      for (let senderIndex = 0; senderIndex < feishuSendersForThis.length; senderIndex++) {
+        const feishuRuntime = feishuSendersForThis[senderIndex];
+        const feishuSender = feishuRuntime.sender;
+        if (!this.shouldSendToRuleTarget({
+          rule: feishuRuntime.rule,
+          message,
+          isWebhook,
+          textHay,
+          hasTextForKeywords,
+          caseInsensitive,
+          logPrefix,
+          targetLabel: feishuSender.target,
+        })) {
+          continue;
+        }
+        try {
+          await feishuSender.send({
+            content: feishuContent,
+            username: username,
+            avatarUrl: avatarUrl,
+            attachments: finalUploads.map((u) => ({
+              url: u.url,
+              filename: u.filename,
+              isImage: u.isImage,
+              watermarkRemoval: u.watermarkRemoval,
+              watermarkRemovalState: u.watermarkRemovalState,
+            })),
+            embeds: finalFeishuEmbeds && finalFeishuEmbeds.length > 0 ? finalFeishuEmbeds : undefined,
+            watermark: effectiveWatermarks[0],
+            watermarkSecondary: effectiveWatermarks[1],
+            watermarks: effectiveWatermarks,
+          });
+          const feishuPreview = formatLogPreview(feishuContent);
+          const imageCount = finalUploads.filter((u) => u.isImage).length;
+          const logMsg =
+            `${logPrefix} [FEISHU] 转发成功 [${senderIndex + 1}/${feishuSendersForThis.length}] | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
+            `目标: ${feishuSender.target} | 内容: ${feishuPreview} | 附件: ${finalUploads.length} | 图片: ${imageCount}`;
+          console.log(logMsg);
+          this.logger.info(logMsg);
+          recordForwardStat(getStatsAccountId(this.config), "discord-to-feishu");
+        } catch (err: any) {
+          const feishuPreview = formatLogPreview(feishuContentWithLinks);
+          const errorMsg =
+            `${logPrefix} [FEISHU] 转发失败 [${senderIndex + 1}/${feishuSendersForThis.length}] | 来自: ${authorLabel} | 源: ${message.channelId} | ` +
+            `目标: ${feishuSender.target} | 内容: ${feishuPreview} | 错误: ${String(err?.message || err)}`;
+          console.error(errorMsg);
+          this.logger.error(errorMsg);
+        }
       }
     }
 
@@ -2364,7 +2557,7 @@ export class Bot {
       const dingtalkContent = stripLanguages(
         String(
           applyReplacementDictionary(
-            String(applyReplacementDictionary(feishuContentRaw, this.config.replacementsDictionary || {})),
+            String(applyReplacementDictionary(feishuContentWithLinks, this.config.replacementsDictionary || {})),
             ruleConfig.replacementsDictionary || {},
           ),
         ),
@@ -2404,6 +2597,61 @@ export class Bot {
       }
     }
 
+    if (safewSendersForThis.length > 0) {
+      const safewContent = stripLanguages(
+        String(
+          applyReplacementDictionary(
+            String(applyReplacementDictionary(feishuContentWithLinks, this.config.replacementsDictionary || {})),
+            ruleConfig.replacementsDictionary || {},
+          ),
+        ),
+        stripOptions,
+      );
+      const safewEmbeds = shouldStripEmbedImages
+        ? stripAllEmbedImages(stripEmbedText(message.embeds, stripOptions))
+        : stripBlockedEmbedImages(
+            stripEmbedText(message.embeds, stripOptions),
+            ocrBlockedImageUrls,
+          );
+      const finalSafewEmbeds = stripUploadedEmbedImages(safewEmbeds, finalUploads);
+      const pendingMappings: TargetMessageRef[] = [];
+      for (let senderIndex = 0; senderIndex < safewSendersForThis.length; senderIndex++) {
+        const sender = safewSendersForThis[senderIndex];
+        try {
+          const result = await sender.send({
+            content: safewContent,
+            sourceMessageId: message.id,
+            replyToTargetMessageId: replyToTarget?.messageId,
+            attachments: finalUploads.map((u) => ({
+              url: u.url,
+              filename: u.filename,
+              isImage: u.isImage,
+              isVideo: u.isVideo,
+            })),
+            embeds: finalSafewEmbeds && finalSafewEmbeds.length > 0 ? finalSafewEmbeds : undefined,
+          });
+          if (result?.targetMessageId) {
+            pendingMappings.push({
+              channelId: result.targetChannelId,
+              messageId: result.targetMessageId,
+            });
+          }
+          const preview = formatLogPreview(safewContent);
+          this.logger.info(
+            `${logPrefix} [SAFEW] 转发成功 [${senderIndex + 1}/${safewSendersForThis.length}] | 来自: ${authorLabel} | 源: ${message.channelId} | 目标: ${sender.chatId} | 内容: ${preview}`,
+          );
+          recordForwardStat(getStatsAccountId(this.config), "discord-to-safew" as any);
+        } catch (err: any) {
+          const errorMsg = `${logPrefix} [SAFEW] 转发失败 [${senderIndex + 1}/${safewSendersForThis.length}] | 来自: ${authorLabel} | 源: ${message.channelId} | 目标: ${sender.chatId} | 错误: ${String(err?.message || err)}`;
+          console.error(errorMsg);
+          this.logger.error(errorMsg);
+        }
+      }
+      if (pendingMappings.length > 0) {
+        this.setSourceMapping(message.id, pendingMappings);
+      }
+    }
+
     // Telegram 转发 - 只要有匹配的 discord-to-telegram 规则就尝试转发
     const telegramMappings = telegramForwardEnabled ? telegramConfig?.mappings || [] : [];
     const discordToTelegramMappings = telegramMappings.filter(
@@ -2428,7 +2676,7 @@ export class Bot {
         for (const mapping of discordToTelegramMappings) {
           try {
             // 准备消息内容 - 对于Telegram使用原始内容,让Python端处理翻译
-            let contentForTelegram = message.content || '';
+            let contentForTelegram = appendDiscordComponentLinks(message.content || "", messageComponents);
             const globalReplacementDictionary = this.config.replacementsDictionary || {};
             const ruleReplacementDictionary =
               (mapping as any).replacementsDictionary || ruleConfig.replacementsDictionary || {};
@@ -2515,6 +2763,98 @@ export class Bot {
       }
     }
     return message;
+  }
+
+  private getDeleteSendersForTarget(senders: SenderBot[], target: TargetMessageRef): SenderBot[] {
+    const matching = senders.filter((sender) => {
+      const senderAny = sender as any;
+      const channelId = String(senderAny.targetChannelId || senderAny.defaultChannelId || "").trim();
+      return channelId && channelId === target.channelId;
+    });
+    if (matching.length > 0) return matching;
+    if (senders.length === 1) return senders;
+
+    const unresolved = senders.filter((sender) => {
+      const senderAny = sender as any;
+      return !senderAny.targetChannelId && !senderAny.defaultChannelId;
+    });
+    return unresolved.length > 0 ? unresolved : senders;
+  }
+
+  private async handleMessageDelete(message: Message | PartialMessage) {
+    const messageAny = message as any;
+    const sourceMessageId = String(messageAny?.id || "").trim();
+    if (!sourceMessageId) return;
+
+    if (this.sourceToTarget.size === 0) {
+      await this.loadMapping();
+    }
+
+    const mappedTargets = this.getMappedTargets(sourceMessageId);
+    if (mappedTargets.length === 0) {
+      this.logger.debug(`[DELETE] Skip delete, no target mapping for source ${sourceMessageId}`);
+      return;
+    }
+
+    if (this.config.enableDiscordForward === false) {
+      return;
+    }
+
+    const sourceChannelId = String(messageAny?.channelId || messageAny?.channel?.id || "").trim();
+    if (!sourceChannelId) {
+      this.logger.warn(`[DELETE] Source channel missing for message ${sourceMessageId}, skip delete sync`);
+      return;
+    }
+
+    const sendersForThis = this.getSendersForChannel(sourceChannelId);
+    if (sendersForThis.length === 0) {
+      this.logger.warn(`[DELETE] No Discord sender found for source channel ${sourceChannelId}, skip delete sync`);
+      return;
+    }
+
+    this.logger.info(
+      `[DELETE] Received source delete: message=${sourceMessageId} channel=${sourceChannelId} targets=${mappedTargets.length}`,
+    );
+
+    let successCount = 0;
+    for (const target of mappedTargets) {
+      let deleted = false;
+      let lastError: any;
+      for (const sender of this.getDeleteSendersForTarget(sendersForThis, target)) {
+        try {
+          await sender.deleteForwardedMessage({
+            targetChannelId: target.channelId,
+            targetMessageId: target.messageId,
+          });
+          deleted = true;
+          successCount++;
+          break;
+        } catch (err: any) {
+          lastError = err;
+        }
+      }
+      if (!deleted) {
+        this.logger.warn(
+          `[DELETE] Sync failed for source ${sourceMessageId} -> ${target.channelId}/${target.messageId}: ${String(
+            lastError?.message || lastError,
+          )}`,
+        );
+      }
+    }
+
+    if (successCount === mappedTargets.length) {
+      this.sourceToTarget.delete(sourceMessageId);
+      this.isMappingDirty = true;
+      await this.saveMapping();
+      this.logger.info(
+        `[DELETE] Sync success: source ${sourceMessageId} deleted ${successCount}/${mappedTargets.length} target message(s)`,
+      );
+      return;
+    }
+
+    this.logger.warn(
+      `[DELETE] Sync partial: source ${sourceMessageId} deleted ${successCount}/${mappedTargets.length} target message(s), mapping retained`,
+    );
   }
 
   private async handleMessageUpdate(oldMessage: Message | PartialMessage, newMessage: Message | PartialMessage) {

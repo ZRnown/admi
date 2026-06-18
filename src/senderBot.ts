@@ -21,6 +21,13 @@ import { applyReplacementDictionary } from "./replacementDictionary.js";
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30000;
 
+interface SkippedUploadLink {
+  filename: string;
+  url?: string;
+  size?: number;
+  reason: string;
+}
+
 function looksLikeImage(buffer: Buffer): boolean {
   if (!buffer || buffer.length < 12) return false;
   // PNG
@@ -60,6 +67,28 @@ function looksLikeImage(buffer: Buffer): boolean {
   return false;
 }
 
+function parseOversizedBytes(message: string): number | undefined {
+  const match = String(message || "").match(/File too large \((\d+) bytes\)/i);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function formatSkippedUploadLinks(skipped: SkippedUploadLink[]): string {
+  if (skipped.length === 0) return "";
+  const lines = skipped.map((item, index) => {
+    const sizeText = item.size ? `，大小 ${formatSize(item.size)}` : "";
+    const link = item.url ? `\n${item.url}` : "";
+    return `${index + 1}. ${item.filename}${sizeText}：${item.reason}${link}`;
+  });
+  return `附件过大，已改为链接：\n${lines.join("\n")}`;
+}
+
+function appendSkippedUploadLinks(content: string, skipped: SkippedUploadLink[]): string {
+  const note = formatSkippedUploadLinks(skipped);
+  return [content, note].map((item) => String(item || "").trim()).filter(Boolean).join("\n\n");
+}
+
 export class SenderBot {
   replacementsDictionary: Record<string, string> = {};
 
@@ -76,6 +105,9 @@ export class SenderBot {
   translationProvider?: "deepseek" | "google" | "baidu" | "youdao" | "openai";
   translationApiKey?: string;
   translationSecret?: string;
+  translationBaseUrl?: string;
+  translationModel?: string;
+  translationPrompt?: string;
   enableBotRelay?: boolean;
   botRelayToken?: string;
   watermark?: WatermarkConfig;
@@ -94,6 +126,9 @@ export class SenderBot {
     translationProvider?: "deepseek" | "google" | "baidu" | "youdao" | "openai";
     translationApiKey?: string;
     translationSecret?: string;
+    translationBaseUrl?: string;
+    translationModel?: string;
+    translationPrompt?: string;
     enableBotRelay?: boolean;
     botRelayToken?: string;
     targetChannelId?: string;
@@ -114,6 +149,9 @@ export class SenderBot {
     this.translationProvider = options.translationProvider || "deepseek";
     this.translationApiKey = options.translationApiKey || options.deepseekApiKey;
     this.translationSecret = options.translationSecret;
+    this.translationBaseUrl = options.translationBaseUrl;
+    this.translationModel = options.translationModel;
+    this.translationPrompt = options.translationPrompt;
     this.enableBotRelay = options.enableBotRelay || false;
     this.botRelayToken = options.botRelayToken;
     this.targetChannelId = options.targetChannelId;
@@ -389,8 +427,12 @@ export class SenderBot {
     watermark?: WatermarkConfig,
     watermarkSecondary?: WatermarkConfig,
     watermarks?: WatermarkConfig[],
-  ): Promise<Array<{ filename: string; buffer: Buffer; isImage?: boolean; contentType?: string }>> {
+  ): Promise<{
+    files: Array<{ filename: string; buffer: Buffer; isImage?: boolean; contentType?: string }>;
+    skipped: SkippedUploadLink[];
+  }> {
     const results: Array<{ filename: string; buffer: Buffer; isImage?: boolean; contentType?: string }> = [];
+    const skipped: SkippedUploadLink[] = [];
     const effectiveWatermarks = this.watermarkEnabled === false
       ? []
       : resolveWatermarkList(
@@ -402,62 +444,78 @@ export class SenderBot {
           watermarkSecondary,
         );
     for (const u of uploads) {
-      let buf: Buffer;
-      let resolvedUrl = u.url;
-      let removalAttempted = Boolean(u.watermarkRemovalState?.attempted);
-      let removalFailed = Boolean(u.watermarkRemovalState?.failed);
-      if (u.isImage && resolvedUrl && u.watermarkRemoval && !u.watermarkRemovalState) {
-        removalAttempted = true;
-        try {
-          resolvedUrl = await removeWatermarkFromImageUrl(resolvedUrl, u.watermarkRemoval);
-        } catch (error: any) {
-          removalFailed = true;
-          console.error(`[去水印] 处理失败，回退原图并跳过新水印: ${u.filename} ${String(error?.message || error)}`);
-          resolvedUrl = u.url;
+      try {
+        let buf: Buffer;
+        let resolvedUrl = u.url;
+        let removalAttempted = Boolean(u.watermarkRemovalState?.attempted);
+        let removalFailed = Boolean(u.watermarkRemovalState?.failed);
+        if (u.isImage && resolvedUrl && u.watermarkRemoval && !u.watermarkRemovalState) {
+          removalAttempted = true;
+          try {
+            resolvedUrl = await removeWatermarkFromImageUrl(resolvedUrl, u.watermarkRemoval);
+          } catch (error: any) {
+            removalFailed = true;
+            console.error(`[去水印] 处理失败，回退原图并跳过新水印: ${u.filename} ${String(error?.message || error)}`);
+            resolvedUrl = u.url;
+          }
         }
-      }
-      if (u.localPath) {
-        buf = await this.readLocalFile(u.localPath);
-      } else if (resolvedUrl) {
-        if (resolvedUrl.startsWith("file://")) {
-          buf = await this.readLocalFile(fileURLToPath(resolvedUrl));
-        } else if (path.isAbsolute(resolvedUrl)) {
-          buf = await this.readLocalFile(resolvedUrl);
+        if (u.localPath) {
+          buf = await this.readLocalFile(u.localPath);
+        } else if (resolvedUrl) {
+          if (resolvedUrl.startsWith("file://")) {
+            buf = await this.readLocalFile(fileURLToPath(resolvedUrl));
+          } else if (path.isAbsolute(resolvedUrl)) {
+            buf = await this.readLocalFile(resolvedUrl);
+          } else {
+            buf = await this.downloadUrl(resolvedUrl);
+          }
         } else {
-          buf = await this.downloadUrl(resolvedUrl);
+          continue;
         }
-      } else {
-        continue;
-      }
-      const isImageLike = Boolean(u.isImage || looksLikeImage(buf));
-      const shouldWatermark = shouldApplyWatermarkAfterRemoval({
-        hasWatermarks: effectiveWatermarks.length > 0,
-        isImage: isImageLike,
-        removalAttempted,
-        removalFailed,
-      });
-      let finalBuffer = buf;
-      if (shouldWatermark) {
-        finalBuffer = await applyWatermarksToBuffer(buf, effectiveWatermarks);
-        if (finalBuffer !== buf) {
-          console.log(
-            `[水印] 已处理图片: ${u.filename} (${formatSize(buf.length)} -> ${formatSize(finalBuffer.length)})`,
-          );
-        } else {
-          console.log(`[水印] 图片未发生变化: ${u.filename}`);
+        const isImageLike = Boolean(u.isImage || looksLikeImage(buf));
+        const shouldWatermark = shouldApplyWatermarkAfterRemoval({
+          hasWatermarks: effectiveWatermarks.length > 0,
+          isImage: isImageLike,
+          removalAttempted,
+          removalFailed,
+        });
+        let finalBuffer = buf;
+        if (shouldWatermark) {
+          finalBuffer = await applyWatermarksToBuffer(buf, effectiveWatermarks);
+          if (finalBuffer !== buf) {
+            console.log(
+              `[水印] 已处理图片: ${u.filename} (${formatSize(buf.length)} -> ${formatSize(finalBuffer.length)})`,
+            );
+          } else {
+            console.log(`[水印] 图片未发生变化: ${u.filename}`);
+          }
+        } else if (removalAttempted && removalFailed && effectiveWatermarks.length > 0 && isImageLike) {
+          console.warn(`[水印] 已跳过追加新水印: ${u.filename}（原因：去水印失败）`);
         }
-      } else if (removalAttempted && removalFailed && effectiveWatermarks.length > 0 && isImageLike) {
-        console.warn(`[水印] 已跳过追加新水印: ${u.filename}（原因：去水印失败）`);
+        const normalizedFile = normalizeUploadFileDescriptor(u.filename, finalBuffer);
+        results.push({
+          filename: normalizedFile.filename,
+          buffer: finalBuffer,
+          isImage: isImageLike,
+          contentType: normalizedFile.contentType,
+        });
+      } catch (error: any) {
+        const message = String(error?.message || error);
+        const size = parseOversizedBytes(message);
+        const hasLink = typeof u.url === "string" && u.url.trim();
+        if (!hasLink && size === undefined && !/exceeded size limit|download timeout|too large/i.test(message)) {
+          throw error;
+        }
+        skipped.push({
+          filename: u.filename || "attachment",
+          url: hasLink ? u.url : undefined,
+          size,
+          reason: size || /too large|exceeded size limit/i.test(message) ? "超过 Discord 上传限制" : "附件下载失败",
+        });
+        console.warn(`[SenderBot] 附件跳过上传，改为链接: ${u.filename} ${message}`);
       }
-      const normalizedFile = normalizeUploadFileDescriptor(u.filename, finalBuffer);
-      results.push({
-        filename: normalizedFile.filename,
-        buffer: finalBuffer,
-        isImage: isImageLike,
-        contentType: normalizedFile.contentType,
-      });
     }
-    return results;
+    return { files: results, skipped };
   }
 
   private async readLocalFile(filePath: string): Promise<Buffer> {
@@ -644,19 +702,21 @@ export class SenderBot {
   }
 
   private async translateWithAI(provider: "deepseek" | "openai", apiKey: string, text: string, target: "zh" | "en"): Promise<string | null> {
-    const baseUrl = provider === "deepseek" ? "https://api.deepseek.com" : "https://api.openai.com";
-    const model = provider === "deepseek" ? "deepseek-chat" : "gpt-3.5-turbo";
+    const baseUrl = (this.translationBaseUrl || (provider === "deepseek" ? "https://api.deepseek.com" : "https://api.openai.com")).replace(/\/+$/, "");
+    const model = this.translationModel || (provider === "deepseek" ? "deepseek-chat" : "gpt-4o-mini");
     const url = new URL(`${baseUrl}/v1/chat/completions`);
+    const defaultPrompt =
+      target === "zh"
+        ? "You are a translator. Translate the given text into Simplified Chinese. Preserve punctuation, numbers, links, emojis, and spacing. Return only the translated result."
+        : "You are a translator. Translate the given text into English. Preserve punctuation, numbers, links, emojis, and spacing. Return only the translated result.";
+    const prompt = this.translationPrompt?.trim() || defaultPrompt;
     
       const payload = JSON.stringify({
       model,
         messages: [
           {
             role: "system",
-          content:
-            target === "zh"
-              ? "You are a translator. Translate the given text into Simplified Chinese. If the text is already in Chinese, translate it to Chinese anyway (it may be a different dialect or need refinement). If the text contains English or other languages, translate those parts to Chinese. Preserve punctuation, numbers, links, emojis, and spacing. Return only the translated result."
-              : "You are a translator. Translate the given text into English. If the text is already in English, translate it to English anyway (it may need refinement or correction). If the text contains Chinese or other languages, translate those parts to English. Preserve punctuation, numbers, links, emojis, and spacing. Return only the translated result."
+          content: prompt
           },
           {
             role: "user",
@@ -1013,7 +1073,7 @@ export class SenderBot {
         }
 
         // 计算分片数量
-      const loopCount = hasUploads ? 1 : Math.max(1, hasOnlyEmbeds ? 1 : Math.ceil(text.length / MESSAGE_CHUNK));
+      const loopCount = Math.max(1, hasOnlyEmbeds ? 1 : Math.ceil(text.length / MESSAGE_CHUNK));
         
         return {
           item,
@@ -1039,21 +1099,55 @@ export class SenderBot {
           targetChannelId: string;
         }> = [];
 
+        const sendPreparedPayload = async (
+          payload: any,
+          files: Array<{ filename: string; buffer: Buffer; isImage?: boolean; contentType?: string }>,
+          hasFileUpload: boolean,
+        ) => {
+          if (this.hasDirectChannelTarget()) {
+            return await this.postDirectMessage(payload, files);
+          }
+          if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
+            console.log(
+              hasFileUpload
+                ? `[SenderBot] 使用 Bot API 发送消息（带附件）`
+                : `[SenderBot] 使用 Bot API 发送消息 (enableBotRelay=${this.enableBotRelay})`,
+            );
+            return await this.postViaBotAPI(payload, files, this.defaultChannelId);
+          }
+          if (this.enableBotRelay) {
+            if (!this.botRelayToken) {
+              console.warn(`[SenderBot] 机器人中转已启用但 botRelayToken 未配置，回退到 webhook 模式`);
+            } else if (!this.defaultChannelId) {
+              console.warn(`[SenderBot] 机器人中转已启用但 defaultChannelId 未设置，回退到 webhook 模式`);
+            }
+          }
+          if (hasFileUpload) {
+            console.log(`[SenderBot] 使用 Webhook 发送消息（带附件）(enableBotRelay=${this.enableBotRelay}, username=${payload.username || 'none'}, avatarUrl=${payload.avatar_url ? 'yes' : 'no'})`);
+            return await this.postMultipart(payload, files, true);
+          }
+          console.log(`[SenderBot] 使用 Webhook 发送消息 (enableBotRelay=${this.enableBotRelay}, username=${payload.username || 'none'}, avatarUrl=${payload.avatar_url ? 'yes' : 'no'})`);
+          return await this.postToWebhook(payload, true);
+        };
+
         // 分片消息的分片之间需要保持顺序（因为回复关系）
       for (let idx = 0; idx < loopCount; idx++) {
         const i = idx * MESSAGE_CHUNK;
         const chunk = text.substring(i, i + MESSAGE_CHUNK);
         let resp: any = null;
           
-        if (hasUploads) {
+        const sendUploadsWithThisChunk = hasUploads && idx === 0;
+
+        if (sendUploadsWithThisChunk) {
           // Build multipart form with files and payload_json
-          const files = await this.downloadUploads(
+          const { files, skipped } = await this.downloadUploads(
             item.uploads!,
             item.watermark,
             item.watermarkSecondary,
             item.watermarks,
           );
-          const desc = (chunk || "").slice(0, 4096);
+          const chunkWithSkippedLinks = appendSkippedUploadLinks(chunk || "", skipped);
+          const desc = chunkWithSkippedLinks.slice(0, 4096);
           const embed: any = {};
           if (item.useEmbed && desc.trim() !== "") {
             embed.description = desc;
@@ -1063,7 +1157,7 @@ export class SenderBot {
             embed.image = { url: `attachment://${firstImage.filename}` };
           }
           const payload: any = {
-            content: item.useEmbed ? "" : (chunk || "").trim() || " ",
+            content: item.useEmbed ? "" : chunkWithSkippedLinks.trim() || " ",
             allowed_mentions: { parse: [], replied_user: false },
           };
           if (item.useEmbed && Object.keys(embed).length > 0) {
@@ -1096,24 +1190,7 @@ export class SenderBot {
             payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
           }
           
-          // 如果启用机器人中转则使用 Bot API，否则使用 webhook
-          if (this.hasDirectChannelTarget()) {
-            resp = await this.postDirectMessage(payload, files);
-          } else if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
-            console.log(`[SenderBot] 使用 Bot API 发送消息（带附件）`);
-            resp = await this.postViaBotAPI(payload, files, this.defaultChannelId);
-          } else {
-            // 如果启用机器人中转但缺少必要参数，记录警告并回退到 webhook
-            if (this.enableBotRelay) {
-              if (!this.botRelayToken) {
-                console.warn(`[SenderBot] 机器人中转已启用但 botRelayToken 未配置，回退到 webhook 模式`);
-              } else if (!this.defaultChannelId) {
-                console.warn(`[SenderBot] 机器人中转已启用但 defaultChannelId 未设置，回退到 webhook 模式`);
-              }
-            }
-            console.log(`[SenderBot] 使用 Webhook 发送消息（带附件）(enableBotRelay=${this.enableBotRelay}, username=${payload.username || 'none'}, avatarUrl=${payload.avatar_url ? 'yes' : 'no'})`);
-          resp = await this.postMultipart(payload, files, true);
-          }
+          resp = await sendPreparedPayload(payload, files, files.length > 0);
         } else {
           const payload: any = {
             allowed_mentions: { parse: [], replied_user: false }
@@ -1202,24 +1279,7 @@ export class SenderBot {
             payload.message_reference = { message_id: item.replyToTarget.messageId, fail_if_not_exists: false };
           }
           
-          // 如果启用机器人中转则使用 Bot API，否则使用 webhook
-          if (this.hasDirectChannelTarget()) {
-            resp = await this.postDirectMessage(payload, []);
-          } else if (this.enableBotRelay && this.botRelayToken && this.defaultChannelId) {
-            console.log(`[SenderBot] 使用 Bot API 发送消息 (enableBotRelay=${this.enableBotRelay})`);
-            resp = await this.postViaBotAPI(payload, [], this.defaultChannelId);
-          } else {
-            // 如果启用机器人中转但缺少必要参数，记录警告并回退到 webhook
-            if (this.enableBotRelay) {
-              if (!this.botRelayToken) {
-                console.warn(`[SenderBot] 机器人中转已启用但 botRelayToken 未配置，回退到 webhook 模式`);
-              } else if (!this.defaultChannelId) {
-                console.warn(`[SenderBot] 机器人中转已启用但 defaultChannelId 未设置，回退到 webhook 模式`);
-              }
-            }
-            console.log(`[SenderBot] 使用 Webhook 发送消息 (enableBotRelay=${this.enableBotRelay}, username=${payload.username || 'none'}, avatarUrl=${payload.avatar_url ? 'yes' : 'no'})`);
-          resp = await this.postToWebhook(payload, true);
-          }
+          resp = await sendPreparedPayload(payload, [], false);
         }
           
         if (resp?.id && resp?.channel_id) {
@@ -1364,6 +1424,27 @@ export class SenderBot {
       return await this.patchViaBotAPI(params.targetChannelId, params.targetMessageId, payload);
     }
     return await this.patchWebhookMessage(params.targetMessageId, payload);
+  }
+
+  async deleteForwardedMessage(params: {
+    targetChannelId?: string;
+    targetMessageId: string;
+  }): Promise<void> {
+    const targetMessageId = String(params.targetMessageId || "").trim();
+    if (!targetMessageId) {
+      throw new Error("Discord delete target message id is not configured");
+    }
+
+    if (this.hasDirectChannelTarget()) {
+      const channelId = params.targetChannelId || this.targetChannelId || "";
+      await this.deleteDiscordChannelMessage(channelId, targetMessageId, this.buildDiscordAuthorizationHeader());
+      return;
+    }
+    if (this.enableBotRelay && this.botRelayToken && params.targetChannelId) {
+      await this.deleteDiscordChannelMessage(params.targetChannelId, targetMessageId, `Bot ${this.botRelayToken}`);
+      return;
+    }
+    await this.deleteWebhookMessage(targetMessageId);
   }
 
   private async postToWebhook(body: Record<string, any>, wait = false): Promise<any> {
@@ -1520,6 +1601,66 @@ export class SenderBot {
       });
       req.on("error", (err) => reject(err));
       req.write(payload);
+      req.end();
+    });
+  }
+
+  private async deleteWebhookMessage(messageId: string): Promise<void> {
+    const url = new URL(this.webhookUrl);
+    const safeMessageId = encodeURIComponent(messageId);
+
+    const options: https.RequestOptions = {
+      method: "DELETE",
+      hostname: url.hostname,
+      path: `${url.pathname}/messages/${safeMessageId}${url.search}`,
+      agent: this.httpAgent as any,
+    };
+
+    await this.deleteRequest(options, "Webhook delete");
+  }
+
+  private async deleteDiscordChannelMessage(
+    channelId: string,
+    messageId: string,
+    authorization: string,
+  ): Promise<void> {
+    const safeChannelId = encodeURIComponent(String(channelId || "").trim());
+    const safeMessageId = encodeURIComponent(String(messageId || "").trim());
+    if (!safeChannelId || !safeMessageId) {
+      throw new Error("Discord channel delete target is not configured");
+    }
+
+    const url = new URL(`https://discord.com/api/v10/channels/${safeChannelId}/messages/${safeMessageId}`);
+    const options: https.RequestOptions = {
+      method: "DELETE",
+      hostname: url.hostname,
+      path: url.pathname,
+      headers: {
+        Authorization: authorization,
+      },
+      agent: this.httpAgent as any,
+    };
+
+    await this.deleteRequest(options, "Discord channel delete");
+  }
+
+  private async deleteRequest(options: https.RequestOptions, label: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && ((res.statusCode >= 200 && res.statusCode < 300) || res.statusCode === 404)) {
+            resolve();
+            return;
+          }
+          reject(new Error(`${label} failed with status ${res.statusCode}: ${res.statusMessage} ${responseBody || ""}`));
+        });
+      });
+      req.setTimeout(30000, () => {
+        req.destroy(new Error(`${label} request timeout`));
+      });
+      req.on("error", (err) => reject(err));
       req.end();
     });
   }

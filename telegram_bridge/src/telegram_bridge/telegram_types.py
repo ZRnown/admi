@@ -82,11 +82,25 @@ class TelegramMapping(BaseModel):
 
 class TelegramChannel(BaseModel):
     """Telegram频道信息"""
+    model_config = {"populate_by_name": True}
+
     id: str
     title: str
     type: str  # 'channel' | 'group' | 'supergroup' | 'private'
     username: Optional[str] = None
     member_count: Optional[int] = None
+    is_forum: Optional[bool] = Field(default=None, alias="isForum")
+
+
+class TelegramForumTopic(BaseModel):
+    """Telegram论坛话题信息"""
+    id: str
+    title: str
+    chat_id: str
+    chat_title: Optional[str] = None
+    is_closed: Optional[bool] = None
+    is_hidden: Optional[bool] = None
+    top_message_id: Optional[int] = None
 
 
 class TelegramMessage(BaseModel):
@@ -95,6 +109,7 @@ class TelegramMessage(BaseModel):
     chat_id: int
     chat_title: Optional[str] = None
     chat_username: Optional[str] = None
+    chat_avatar_file: Optional[str] = None
     from_user: Optional[Dict[str, Any]] = None
     from_username: Optional[str] = None
     from_display_name: Optional[str] = None
@@ -103,6 +118,8 @@ class TelegramMessage(BaseModel):
     date: int
     media: Optional[List[Dict[str, Any]]] = None
     reply_to_message_id: Optional[int] = None
+    reply_to_top_id: Optional[int] = None
+    is_forum_topic: Optional[bool] = None
     reply_to_message: Optional[Dict[str, Any]] = None
 
 

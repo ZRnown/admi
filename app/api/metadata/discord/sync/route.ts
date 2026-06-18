@@ -146,19 +146,28 @@ async function getPrivateChannels(token: string) {
 }
 
 function resolvePrivateChannelName(channel: any): string {
-  const explicitName = typeof channel?.name === "string" ? channel.name.trim() : "";
+  let explicitName = typeof channel?.name === "string" ? channel.name.trim() : "";
+  if (explicitName === String(channel?.id || "").trim()) {
+    explicitName = "";
+  }
   if (explicitName) return explicitName;
   const recipients = Array.isArray(channel?.recipients) ? channel.recipients : [];
   const recipientNames = recipients
     .map((recipient: any) => {
       const globalName =
         typeof recipient?.global_name === "string" && recipient.global_name.trim() ? recipient.global_name.trim() : "";
+      const displayName =
+        typeof recipient?.display_name === "string" && recipient.display_name.trim() ? recipient.display_name.trim() : "";
+      const camelDisplayName =
+        typeof recipient?.displayName === "string" && recipient.displayName.trim() ? recipient.displayName.trim() : "";
+      const nick = typeof recipient?.nick === "string" && recipient.nick.trim() ? recipient.nick.trim() : "";
+      const name = typeof recipient?.name === "string" && recipient.name.trim() ? recipient.name.trim() : "";
       const username =
         typeof recipient?.username === "string" && recipient.username.trim() ? recipient.username.trim() : "";
-      return globalName || username;
+      return globalName || displayName || camelDisplayName || nick || name || username;
     })
     .filter(Boolean);
-  if (recipientNames.length > 0) return recipientNames.join(", ");
+  if (recipientNames.length > 0) return Array.from(new Set(recipientNames)).join(", ");
   return String(channel?.id || "").trim();
 }
 

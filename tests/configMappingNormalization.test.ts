@@ -18,6 +18,7 @@ test("normalizeDiscordMappingRule preserves display metadata and account-send fi
     targetGuildId: "target-guild-1",
     discordSenderType: "account",
     discordSenderAccountId: "library-1",
+    safewAccountId: "safe-1",
   });
 
   assert.equal(rule.sourceGuildName, "Alpha Guild");
@@ -26,6 +27,7 @@ test("normalizeDiscordMappingRule preserves display metadata and account-send fi
   assert.equal(rule.targetGuildId, "target-guild-1");
   assert.equal(rule.discordSenderType, "account");
   assert.equal(rule.discordSenderAccountId, "library-1");
+  assert.equal(rule.safewAccountId, "safe-1");
 });
 
 test("normalizeTelegramMapping preserves Discord display metadata and sender fields", () => {
@@ -68,4 +70,48 @@ test("normalizeTelegramMapping parses Discord channel links into channel and gui
 
   assert.equal(rule.sourceChannelId, "1391569590969958542");
   assert.equal(rule.sourceGuildId, "422500326654869505");
+});
+
+test("normalizeDiscordMappingRule preserves mobile client rules without a target webhook", () => {
+  const rule = normalizeDiscordMappingRule({
+    id: "rule-mobile",
+    sourceChannelId: "source-mobile",
+    targetWebhookUrl: "",
+    targetChannelId: "",
+    safewAccountId: "",
+    mobileClientCategoryName: "一级智囊团",
+    mobileClientChannelName: "自定义Discord频道",
+    mobileClientChannelAvatarUrl: "https://example.com/discord-channel.png",
+  });
+
+  assert.equal(rule.id, "rule-mobile");
+  assert.equal(rule.sourceChannelId, "source-mobile");
+  assert.equal(rule.targetWebhookUrl, "");
+  assert.equal(rule.targetChannelId, undefined);
+  assert.equal(rule.safewAccountId, undefined);
+  assert.equal(rule.mobileClientCategoryName, "一级智囊团");
+  assert.equal(rule.mobileClientChannelName, "自定义Discord频道");
+  assert.equal(rule.mobileClientChannelAvatarUrl, "https://example.com/discord-channel.png");
+});
+
+test("normalizeTelegramMapping preserves mobile client rules without a target channel", () => {
+  const rule = normalizeTelegramMapping({
+    id: "rule-telegram-mobile",
+    sourceChannelId: "-1003795790190",
+    sourceThreadId: "12345",
+    targetChannelId: "",
+    type: "telegram-to-mobile-client",
+    mobileClientCategoryName: "大镖客vip会员群",
+    mobileClientChannelName: "自定义Telegram频道",
+    mobileClientChannelAvatarUrl: "https://example.com/tg-channel.png",
+  });
+
+  assert.equal(rule.id, "rule-telegram-mobile");
+  assert.equal(rule.sourceChannelId, "-1003795790190");
+  assert.equal(rule.sourceThreadId, "12345");
+  assert.equal(rule.targetChannelId, "");
+  assert.equal(rule.type, "telegram-to-mobile-client");
+  assert.equal(rule.mobileClientCategoryName, "大镖客vip会员群");
+  assert.equal(rule.mobileClientChannelName, "自定义Telegram频道");
+  assert.equal(rule.mobileClientChannelAvatarUrl, "https://example.com/tg-channel.png");
 });

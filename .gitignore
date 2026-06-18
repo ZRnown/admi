@@ -14,6 +14,7 @@ proofshot-artifacts/
 iopaint-test/
 iopaint-model-cache/
 iopaint-watermark-test/
+pdf_exports/
 *.pyc
 __pycache__/
 .pytest_cache/

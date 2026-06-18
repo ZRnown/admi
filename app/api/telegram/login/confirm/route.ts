@@ -4,12 +4,13 @@ import { promises as fs } from "fs";
 import path from "path";
 import { getMultiConfig, saveMultiConfig, type AccountConfig } from "@/src/config";
 import { triggerFile } from "@/app/api/_lib/common";
+import { resolveDataPath } from "@/src/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const loginRequestFile = path.resolve(process.cwd(), ".data", "telegram_login_request.json");
-const loginResponseFile = path.resolve(process.cwd(), ".data", "telegram_login_response.json");
+const loginRequestFile = resolveDataPath("telegram_login_request.json");
+const loginResponseFile = resolveDataPath("telegram_login_response.json");
 
 async function waitForLoginResponse(requestId: string, maxWaitMs = 20000): Promise<any | null> {
   const startTime = Date.now();

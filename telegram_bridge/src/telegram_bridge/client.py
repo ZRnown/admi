@@ -9,17 +9,42 @@ import os
 import json
 import time
 import uuid
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import User, Chat, Channel
+from telethon.tl.functions.messages import GetForumTopicsRequest
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, PhoneCodeExpiredError
 from loguru import logger
 from .telegram_types import TelegramAccount, ConnectionStatus, ConnectionState, TelegramChannel, TelegramMessage
 from .session import SessionManager
 from .connection import ConnectionManager, ReconnectConfig
 from .media_handler import MediaHandler
+
+
+def parse_proxy_url(proxy_url: Optional[str]) -> Optional[Dict[str, Any]]:
+    raw = str(proxy_url or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    scheme = (parsed.scheme or "").lower()
+    host = parsed.hostname
+    port = parsed.port
+    if not scheme or not host or not port:
+        return None
+    proxy: Dict[str, Any] = {
+        "proxy_type": scheme,
+        "addr": host,
+        "port": port,
+        "rdns": True,
+    }
+    if parsed.username:
+        proxy["username"] = parsed.username
+    if parsed.password:
+        proxy["password"] = parsed.password
+    return proxy
 
 
 class TelegramClientManager:
@@ -96,6 +121,26 @@ class TelegramClientManager:
             "member_count": None,
         }
 
+    async def _detect_forum_channel(self, client: TelegramClient, entity: Any) -> Optional[bool]:
+        """Best-effort forum flag for Telegram dialog metadata."""
+        if not isinstance(entity, Channel) or not getattr(entity, "megagroup", False):
+            return False
+        forum_attr = getattr(entity, "forum", None)
+        if isinstance(forum_attr, bool):
+            return forum_attr
+        try:
+            result = await client(GetForumTopicsRequest(
+                peer=entity,
+                offset_date=0,
+                offset_id=0,
+                offset_topic=0,
+                limit=1,
+                q=None,
+            ))
+            return len(getattr(result, "topics", []) or []) > 0
+        except Exception:
+            return False
+
     def _load_dialogs_cache(self) -> Dict[str, Any]:
         try:
             if self.dialogs_cache_file.exists():
@@ -114,9 +159,16 @@ class TelegramClientManager:
         seen = set()
         for item in existing:
             if isinstance(item, dict) and item.get("id") is not None:
-                seen.add(str(item.get("id")))
+                seen.add(self._normalize_dialog_cache_key(item.get("id")))
         self._dialogs_cache_seen[account_id] = seen
         return seen
+
+    @staticmethod
+    def _normalize_dialog_cache_key(value: Any) -> str:
+        raw = str(value or "").strip()
+        if raw.startswith("-100") and raw[4:].isdigit():
+            return raw[4:]
+        return raw
 
     def _record_dialog(self, account_id: str, chat_id: int, chat_title: Optional[str], chat_username: Optional[str], chat_type: Optional[str]):
         try:
@@ -124,20 +176,21 @@ class TelegramClientManager:
             if not entry:
                 return
             seen = self._ensure_dialogs_seen(account_id)
-            if entry["id"] in seen:
+            entry_key = self._normalize_dialog_cache_key(entry["id"])
+            if entry_key in seen:
                 return
             cache = self._load_dialogs_cache()
             existing = cache.get(account_id) if isinstance(cache.get(account_id), list) else []
             merged_map = {}
             for item in existing:
                 if isinstance(item, dict) and item.get("id") is not None:
-                    merged_map[str(item.get("id"))] = item
-            merged_map[entry["id"]] = entry
+                    merged_map[self._normalize_dialog_cache_key(item.get("id"))] = item
+            merged_map[entry_key] = entry
             cache[account_id] = list(merged_map.values())
             self.dialogs_cache_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.dialogs_cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
-            seen.add(entry["id"])
+            seen.add(entry_key)
         except Exception:
             pass
 
@@ -177,6 +230,22 @@ class TelegramClientManager:
                 combined.update(self._get_watched_chat_ids(acc_id))
             return list(combined)
         return self._get_watched_chat_ids(task_key)
+
+    def _build_entity_lookup_candidates(self, raw_chat_id: str) -> List[Union[int, str]]:
+        cleaned = str(raw_chat_id or "").strip()
+        if not cleaned:
+            return []
+        candidates: List[Union[int, str]] = [cleaned]
+        if cleaned.lstrip("-").isdigit():
+            numeric = int(cleaned)
+            candidates.append(numeric)
+            if numeric < 0:
+                abs_id = abs(numeric)
+                candidates.append(abs_id)
+                abs_str = str(abs_id)
+                if abs_str.startswith("100") and len(abs_str) > 3:
+                    candidates.append(int(abs_str[3:]))
+        return list(dict.fromkeys(candidates))
 
     async def _attach_shared_client(
         self,
@@ -481,6 +550,8 @@ class TelegramClientManager:
             return True
         if getattr(sender, "min", False):
             return True
+        if not self._build_display_name(self._parse_user(sender)):
+            return True
         if getattr(sender, "photo", None) is None:
             return True
         return False
@@ -587,7 +658,7 @@ class TelegramClientManager:
                                 StringSession(session_string),
                                 account.api_id,
                                 account.api_hash,
-                                proxy=account.proxy_url
+                                proxy=parse_proxy_url(account.proxy_url)
                             )
                         else:
                             # 使用session文件
@@ -596,7 +667,7 @@ class TelegramClientManager:
                                 session_path,
                                 account.api_id,
                                 account.api_hash,
-                                proxy=account.proxy_url
+                                proxy=parse_proxy_url(account.proxy_url)
                             )
 
                         # 连接客户端
@@ -783,7 +854,7 @@ class TelegramClientManager:
                 session,
                 int(api_id),
                 str(api_hash),
-                proxy=proxy_url
+                proxy=parse_proxy_url(proxy_url)
             )
             await client.connect()
             sent = await client.send_code_request(str(phone_number))
@@ -804,7 +875,13 @@ class TelegramClientManager:
                     await client.disconnect()
                 except Exception:
                     pass
-            logger.error(f"Failed to start login: {e}")
+            logger.exception(
+                "Failed to start Telegram login | phone_suffix={} api_id_present={} api_hash_present={} proxy_present={}",
+                str(phone_number)[-4:] if phone_number else "",
+                bool(api_id),
+                bool(api_hash),
+                bool(proxy_url),
+            )
             return {
                 "success": False,
                 "error": "LOGIN_START_FAILED",
@@ -992,7 +1069,8 @@ class TelegramClientManager:
                     title=title or "Unknown",
                     type=channel_type,
                     username=getattr(entity, 'username', None),
-                    member_count=getattr(entity, 'participants_count', None)
+                    member_count=getattr(entity, 'participants_count', None),
+                    is_forum=await self._detect_forum_channel(client, entity)
                 )
                 channels.append(channel.dict())
 
@@ -1006,6 +1084,82 @@ class TelegramClientManager:
             return {
                 "success": False,
                 "error": "GET_CHANNELS_FAILED",
+                "message": str(e)
+            }
+
+    async def get_forum_topics(self, account_id: str, chat_id: Union[int, str]) -> Dict[str, Any]:
+        """获取论坛群话题列表"""
+        try:
+            if account_id not in self.clients:
+                return {
+                    "success": False,
+                    "error": "NOT_CONNECTED",
+                    "message": "Client not connected"
+                }
+
+            raw_chat_id = str(chat_id).strip()
+            if not raw_chat_id:
+                return {
+                    "success": False,
+                    "error": "INVALID_CHAT_ID",
+                    "message": "Chat ID is empty"
+                }
+
+            client = self.clients[account_id]
+            entity = None
+            last_error = None
+            for candidate in self._build_entity_lookup_candidates(raw_chat_id):
+                try:
+                    entity = await client.get_entity(candidate)
+                    break
+                except Exception as e:
+                    last_error = e
+            if entity is None:
+                raise last_error or ValueError("Chat entity not found")
+            if not isinstance(entity, Channel) or not getattr(entity, "megagroup", False):
+                return {
+                    "success": True,
+                    "topics": [],
+                    "message": "Selected chat is not a forum group"
+                }
+
+            result = await client(GetForumTopicsRequest(
+                peer=entity,
+                offset_date=0,
+                offset_id=0,
+                offset_topic=0,
+                limit=100,
+                q=None,
+            ))
+
+            topics = []
+            for item in getattr(result, "topics", []) or []:
+                top_message_id = getattr(item, "top_message", None)
+                if hasattr(top_message_id, "id"):
+                    top_message_id = top_message_id.id
+                topic_id = getattr(item, "id", None) or top_message_id
+                if topic_id is None:
+                    continue
+                topics.append({
+                    "id": str(topic_id),
+                    "title": getattr(item, "title", None) or f"话题 {topic_id}",
+                    "chat_id": str(entity.id),
+                    "chat_title": getattr(entity, "title", None),
+                    "is_closed": bool(getattr(item, "closed", False)),
+                    "is_hidden": bool(getattr(item, "hidden", False)),
+                    "top_message_id": int(top_message_id) if isinstance(top_message_id, int) else None,
+                })
+
+            return {
+                "success": True,
+                "topics": topics,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get forum topics for account {account_id}, chat {chat_id}: {e}")
+            return {
+                "success": False,
+                "error": "GET_FORUM_TOPICS_FAILED",
                 "message": str(e)
             }
 
@@ -1132,6 +1286,7 @@ class TelegramClientManager:
             chat_username = None
             chat_title = None
             chat_type = None
+            chat = None
             try:
                 chat = await event.get_chat()
                 chat_username = getattr(chat, "username", None)
@@ -1199,7 +1354,7 @@ class TelegramClientManager:
                 except Exception as e:
                     logger.debug(f"Failed to refresh sender entity: {e}")
                 finally:
-                    if sender_id:
+                    if sender_id and sender is not None and not self._should_refresh_sender(account_id, sender, sender_id):
                         self._mark_sender_refreshed(account_id, sender_id)
             from_user = self._parse_user(sender) if sender else None
             if from_user:
@@ -1210,10 +1365,12 @@ class TelegramClientManager:
 
             chat_title = None
             chat_username = None
+            chat_avatar_file = None
             try:
                 chat = await event.get_chat()
                 chat_title = getattr(chat, "title", None) or getattr(chat, "username", None)
                 chat_username = getattr(chat, "username", None)
+                chat_avatar_file = await self._get_avatar_file(event.client, chat)
             except Exception:
                 chat_title = getattr(message.chat, "title", None)
                 chat_username = getattr(message.chat, "username", None)
@@ -1235,6 +1392,15 @@ class TelegramClientManager:
                                 reply_sender = await reply_msg.get_sender()
                             except Exception:
                                 reply_sender = None
+                        reply_sender_id = getattr(reply_msg, "sender_id", None) or getattr(reply_sender, "id", None)
+                        if self._should_refresh_sender(account_id, reply_sender, reply_sender_id):
+                            try:
+                                reply_sender = await event.client.get_entity(reply_sender_id)
+                            except Exception as e:
+                                logger.debug(f"Failed to refresh reply sender entity: {e}")
+                            finally:
+                                if reply_sender_id and reply_sender is not None and not self._should_refresh_sender(account_id, reply_sender, reply_sender_id):
+                                    self._mark_sender_refreshed(account_id, reply_sender_id)
                         reply_user = self._parse_user(reply_sender) if reply_sender else None
                         if reply_user:
                             reply_user["displayName"] = self._build_display_name(reply_user)
@@ -1249,12 +1415,17 @@ class TelegramClientManager:
                 except Exception as e:
                     logger.debug(f"Failed to load reply message: {e}")
 
+            reply_to = getattr(message, "reply_to", None)
+            reply_to_top_id = getattr(reply_to, "reply_to_top_id", None) if reply_to else None
+            is_forum_topic = bool(getattr(reply_to, "forum_topic", False)) if reply_to else False
+
             # 转换为内部格式
             telegram_message = TelegramMessage(
                 id=message.id,
                 chat_id=message.chat_id,
                 chat_title=chat_title,
                 chat_username=chat_username,
+                chat_avatar_file=chat_avatar_file,
                 from_user=from_user,
                 from_username=from_user.get("username") if from_user else None,
                 from_display_name=self._build_display_name(from_user),
@@ -1263,6 +1434,8 @@ class TelegramClientManager:
                 date=int(message.date.timestamp()),
                 media=media,
                 reply_to_message_id=message.reply_to_msg_id,
+                reply_to_top_id=reply_to_top_id,
+                is_forum_topic=is_forum_topic,
                 reply_to_message=reply_to_message
             )
 
@@ -1288,7 +1461,8 @@ class TelegramClientManager:
             "id": user.id,
             "firstName": getattr(user, 'first_name', None),
             "lastName": getattr(user, 'last_name', None),
-            "username": getattr(user, 'username', None)
+            "username": getattr(user, 'username', None),
+            "isBot": bool(getattr(user, 'bot', False))
         }
 
     def _build_display_name(self, user_info: Optional[Dict[str, Any]]) -> Optional[str]:

@@ -24,21 +24,26 @@ def _normalize_channel(channel: Any) -> Dict[str, Any]:
 
 
 def _resolve_private_channel_name(channel: Any) -> str:
+    channel_id = str(getattr(channel, "id", "") or "").strip()
     explicit_name = str(getattr(channel, "name", "") or "").strip()
+    if explicit_name == channel_id:
+        explicit_name = ""
     if explicit_name:
         return explicit_name
     recipients = list(getattr(channel, "recipients", []) or [])
+    direct_recipient = getattr(channel, "recipient", None)
+    if direct_recipient is not None:
+        recipients.append(direct_recipient)
     recipient_names = []
     for recipient in recipients:
-        global_name = str(getattr(recipient, "global_name", "") or "").strip()
-        username = str(getattr(recipient, "name", None) or getattr(recipient, "username", "") or "").strip()
-        if global_name:
-            recipient_names.append(global_name)
-        elif username:
-            recipient_names.append(username)
+        for attr in ("global_name", "display_name", "displayName", "nick", "name", "username"):
+            value = str(getattr(recipient, attr, "") or "").strip()
+            if value:
+                recipient_names.append(value)
+                break
     if recipient_names:
-        return ", ".join(recipient_names)
-    return str(getattr(channel, "id", "") or "").strip()
+        return ", ".join(dict.fromkeys(recipient_names))
+    return channel_id
 
 
 def _normalize_private_channel(channel: Any) -> Dict[str, Any]:
