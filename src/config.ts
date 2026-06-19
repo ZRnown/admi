@@ -1559,8 +1559,8 @@ function parseEnvForwardingTypes(raw?: string): ForwardingType[] | undefined {
 
 function normalizeEnabledForwardingTypesForAdmin(types?: ForwardingType[]): ForwardingType[] {
   const source = Array.isArray(types) ? types : [];
-  const defaultAllowed = new Set<ForwardingType>(DEFAULT_ENABLED_FORWARDING_TYPES);
-  const allowed = source.filter((type) => defaultAllowed.has(type));
+  const validTypes = new Set<ForwardingType>(FORWARDING_TYPES);
+  const allowed = source.filter((type) => validTypes.has(type));
   return allowed.length > 0 ? allowed : [...DEFAULT_ENABLED_FORWARDING_TYPES];
 }
 

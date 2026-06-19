@@ -11,8 +11,8 @@ test("admin config exposes Discord to DingTalk forwarding by default", () => {
     /const DEFAULT_ENABLED_FORWARDING_TYPES: ForwardingType\[\] = \["discord-to-dingtalk"\]/,
   );
   assert.match(source, /function normalizeEnabledForwardingTypesForAdmin\(types\?: ForwardingType\[\]\): ForwardingType\[\]/);
-  assert.match(source, /const defaultAllowed = new Set<ForwardingType>\(DEFAULT_ENABLED_FORWARDING_TYPES\)/);
-  assert.match(source, /source\.filter\(\(type\) => defaultAllowed\.has\(type\)\)/);
+  assert.match(source, /const validTypes = new Set<ForwardingType>\(FORWARDING_TYPES\)/);
+  assert.match(source, /source\.filter\(\(type\) => validTypes\.has\(type\)\)/);
   assert.match(source, /const effectiveForwardingTypes = normalizeEnabledForwardingTypesForAdmin\(envForwardingTypes\)/);
   assert.match(source, /enabledForwardingTypes: effectiveForwardingTypes/);
 });
