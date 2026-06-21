@@ -96,6 +96,33 @@ function hideDiscordLinksInEmbeds(embeds: any[] | undefined): any[] | undefined 
   });
 }
 
+function buildSenderNameKeywordHaystack(message: Message, isWebhook: boolean, webhookName?: string): string {
+  const pieces: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: any) => {
+    if (value === undefined || value === null) return;
+    const text = String(value).trim();
+    if (!text || seen.has(text)) return;
+    seen.add(text);
+    pieces.push(text);
+  };
+  const anyMessage = message as any;
+  const anyAuthor = message.author as any;
+  const anyMember = message.member as any;
+  if (isWebhook) {
+    push(webhookName);
+    push(anyMessage.webhook?.name);
+    push(anyMessage.username);
+  }
+  push(anyMember?.displayName);
+  push(anyMember?.nickname);
+  push(anyAuthor?.globalName);
+  push(anyAuthor?.displayName);
+  push(anyAuthor?.username);
+  push(anyAuthor?.tag);
+  return pieces.join("\n");
+}
+
 type FeishuRuntimeSender = {
   sender: FeishuSender;
   rule?: any;
@@ -908,13 +935,14 @@ export class Bot {
     rule?: any;
     message: Message;
     isWebhook: boolean;
+    senderNameHay: string;
     textHay: string;
     hasTextForKeywords: boolean;
     caseInsensitive: boolean;
     logPrefix: string;
     targetLabel: string;
   }): boolean {
-    const { rule, message, isWebhook, textHay, hasTextForKeywords, caseInsensitive, logPrefix, targetLabel } = options;
+    const { rule, message, isWebhook, senderNameHay, textHay, hasTextForKeywords, caseInsensitive, logPrefix, targetLabel } = options;
     if (!rule || typeof rule !== "object") return true;
     const authorId = message.author?.id;
     if (!isWebhook && authorId) {
@@ -926,6 +954,22 @@ export class Bot {
       const allowedUsers = (rule.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean);
       if (allowedUsers.length > 0 && !allowedUsers.includes(authorId)) {
         this.logger.info(`${logPrefix} [FEISHU] 跳过目标 ${targetLabel}: 作者不在该规则白名单`);
+        return false;
+      }
+    }
+    const blockedSenderNameGroups = parseKeywordGroups(rule.blockedSenderNameKeywords);
+    if (blockedSenderNameGroups.length > 0) {
+      const { matchedGroups } = matchParsedKeywordGroups(senderNameHay, blockedSenderNameGroups, { caseInsensitive });
+      if (matchedGroups.length > 0) {
+        this.logger.info(`${logPrefix} [FEISHU] 跳过目标 ${targetLabel}: 命中发送人名字屏蔽关键词 ${formatKeywordGroups(matchedGroups)}`);
+        return false;
+      }
+    }
+    const allowedSenderNameGroups = parseKeywordGroups(rule.allowedSenderNameKeywords);
+    if (allowedSenderNameGroups.length > 0) {
+      const { matchedGroups } = matchParsedKeywordGroups(senderNameHay, allowedSenderNameGroups, { caseInsensitive });
+      if (matchedGroups.length === 0) {
+        this.logger.info(`${logPrefix} [FEISHU] 跳过目标 ${targetLabel}: 未命中只发送发送人名字关键词`);
         return false;
       }
     }
@@ -1017,6 +1061,8 @@ export class Bot {
   private getRuleLevelConfig(channelId: string): {
     allowedUsersIds: string[];
     mutedUsersIds: string[];
+    allowedSenderNameKeywords: string[];
+    blockedSenderNameKeywords: string[];
     blockedKeywords: string[];
     excludeKeywords: string[];
     ocrBlockedKeywords: string[];
@@ -1081,6 +1127,8 @@ export class Bot {
       return {
         allowedUsersIds: [],
         mutedUsersIds: [],
+        allowedSenderNameKeywords: [],
+        blockedSenderNameKeywords: [],
         blockedKeywords: [],
         excludeKeywords: [],
         ocrBlockedKeywords: [],
@@ -1115,6 +1163,8 @@ export class Bot {
     return {
       allowedUsersIds: (rule.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean),
       mutedUsersIds: (rule.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean),
+      allowedSenderNameKeywords: (rule.allowedSenderNameKeywords || []).map((x: any) => String(x)).filter(Boolean),
+      blockedSenderNameKeywords: (rule.blockedSenderNameKeywords || []).map((x: any) => String(x)).filter(Boolean),
       blockedKeywords: (rule.blockedKeywords || []).filter(Boolean),
       excludeKeywords: (rule.excludeKeywords || []).filter(Boolean),
       ocrBlockedKeywords: (rule.ocrBlockedKeywords || []).filter(Boolean),
@@ -1347,6 +1397,7 @@ export class Bot {
     const authorLabel = isWebhook
       ? (webhookName !== "unknown" ? webhookName : message.author?.username || "Webhook")
       : (message.member as any)?.displayName || message.author?.tag || message.author?.username || "unknown";
+    const senderNameHay = buildSenderNameKeywordHaystack(message, isWebhook, webhookName);
 
     this.logger.info(`${logPrefix} [START] Processing message: channel=${message.channelId} id=${message.id} ${authorInfo}`);
     this.logger.info(`${logPrefix} [CONTENT] content="${(message.content || "").substring(0, 200)}" contentLength=${message.content?.length || 0} embeds=${message.embeds?.length || 0} attachments=${message.attachments?.size || 0}`);
@@ -1889,6 +1940,29 @@ export class Bot {
       }
     } catch (e: any) {
       this.logger.error(`${logPrefix} [ERROR] User filter check failed: ${String(e?.message || e)}`);
+    }
+
+    try {
+      const blockedSenderNameGroups = parseKeywordGroups(ruleConfig.blockedSenderNameKeywords);
+      if (blockedSenderNameGroups.length > 0) {
+        const { matchedGroups } = matchParsedKeywordGroups(senderNameHay, blockedSenderNameGroups, { caseInsensitive });
+        if (matchedGroups.length > 0) {
+          this.logger.info(`${logPrefix} [SKIP] Sender name blocked keyword matched: ${formatKeywordGroups(matchedGroups)}`);
+          return;
+        }
+      }
+
+      const allowedSenderNameGroups = parseKeywordGroups(ruleConfig.allowedSenderNameKeywords);
+      if (allowedSenderNameGroups.length > 0) {
+        const { matchedGroups } = matchParsedKeywordGroups(senderNameHay, allowedSenderNameGroups, { caseInsensitive });
+        if (matchedGroups.length === 0) {
+          this.logger.info(`${logPrefix} [SKIP] Sender name did not match allowedSenderNameKeywords`);
+          return;
+        }
+        this.logger.info(`${logPrefix} [FILTER] Sender name allowed keyword matched: ${formatKeywordGroups(matchedGroups)}`);
+      }
+    } catch (e: any) {
+      this.logger.error(`${logPrefix} [ERROR] Sender name keyword filter failed: ${String(e?.message || e)}`);
     }
 
     const textHay = collectMessageTextPieces(message).join("\n");
@@ -2544,6 +2618,7 @@ export class Bot {
           rule: feishuRuntime.rule,
           message,
           isWebhook,
+          senderNameHay,
           textHay,
           hasTextForKeywords,
           caseInsensitive,

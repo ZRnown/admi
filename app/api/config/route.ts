@@ -315,6 +315,8 @@ interface FrontendMapping {
   // 规则级别的过滤配置
   allowedUsersIds?: string[];
   mutedUsersIds?: string[];
+  allowedSenderNameKeywords?: string[];
+  blockedSenderNameKeywords?: string[];
   blockedKeywords?: string[];
   excludeKeywords?: string[];
   ocrBlockedKeywords?: string[];
@@ -643,6 +645,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     return {
       allowedUsersIds: [],
       mutedUsersIds: [],
+      allowedSenderNameKeywords: [],
+      blockedSenderNameKeywords: [],
       blockedKeywords: [],
       excludeKeywords: [],
       ocrBlockedKeywords: [],
@@ -683,6 +687,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
     mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
+    allowedSenderNameKeywords: Array.isArray(raw.allowedSenderNameKeywords) ? raw.allowedSenderNameKeywords.map(String).filter(Boolean) : [],
+    blockedSenderNameKeywords: Array.isArray(raw.blockedSenderNameKeywords) ? raw.blockedSenderNameKeywords.map(String).filter(Boolean) : [],
     blockedKeywords: Array.isArray(raw.blockedKeywords) ? raw.blockedKeywords.filter(Boolean) : [],
     excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
     ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
@@ -1210,6 +1216,8 @@ function accountToFrontend(
         longMessage: savedRule.longMessage || (account as any).channelLongMessage?.[channelId] || { enabled: false },
         allowedUsersIds: (savedRule.allowedUsersIds || []).map(String),
         mutedUsersIds: (savedRule.mutedUsersIds || []).map(String),
+        allowedSenderNameKeywords: (savedRule.allowedSenderNameKeywords || []).map(String),
+        blockedSenderNameKeywords: (savedRule.blockedSenderNameKeywords || []).map(String),
         blockedKeywords: savedRule.blockedKeywords || [],
         excludeKeywords: savedRule.excludeKeywords || [],
         ocrBlockedKeywords: savedRule.ocrBlockedKeywords || [],
@@ -1254,6 +1262,8 @@ function accountToFrontend(
         longMessage: (account as any).channelLongMessage?.[channelId] || { enabled: false },
         allowedUsersIds: [],
         mutedUsersIds: [],
+        allowedSenderNameKeywords: [],
+        blockedSenderNameKeywords: [],
         blockedKeywords: [],
         excludeKeywords: [],
         ocrBlockedKeywords: [],
@@ -1865,6 +1875,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           longMessage: mapping.longMessage,
           allowedUsersIds: mapping.allowedUsersIds || [],
           mutedUsersIds: mapping.mutedUsersIds || [],
+          allowedSenderNameKeywords: mapping.allowedSenderNameKeywords || [],
+          blockedSenderNameKeywords: mapping.blockedSenderNameKeywords || [],
           blockedKeywords: mapping.blockedKeywords || [],
           excludeKeywords: mapping.excludeKeywords || [],
           ocrBlockedKeywords: mapping.ocrBlockedKeywords || [],

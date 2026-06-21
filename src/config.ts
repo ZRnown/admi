@@ -263,6 +263,8 @@ export interface RuleLevelConfig {
   // 用户过滤
   allowedUsersIds?: ChannelId[];
   mutedUsersIds?: ChannelId[];
+  allowedSenderNameKeywords?: string[];
+  blockedSenderNameKeywords?: string[];
   // 关键词触发（至少命中一个才转发）
   blockedKeywords?: string[];
   // 屏蔽关键词（命中则不转发）
@@ -1092,6 +1094,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     return {
       allowedUsersIds: [],
       mutedUsersIds: [],
+      allowedSenderNameKeywords: [],
+      blockedSenderNameKeywords: [],
       blockedKeywords: [],
       excludeKeywords: [],
       ocrBlockedKeywords: [],
@@ -1130,6 +1134,8 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
     mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
+    allowedSenderNameKeywords: Array.isArray(raw.allowedSenderNameKeywords) ? raw.allowedSenderNameKeywords.map(String).filter(Boolean) : [],
+    blockedSenderNameKeywords: Array.isArray(raw.blockedSenderNameKeywords) ? raw.blockedSenderNameKeywords.map(String).filter(Boolean) : [],
     blockedKeywords: Array.isArray(raw.blockedKeywords) ? raw.blockedKeywords.filter(Boolean) : [],
     excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
     ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
@@ -1740,6 +1746,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           // RuleLevelConfig 规则级别过滤配置
           allowedUsersIds: Array.isArray(m.allowedUsersIds) ? m.allowedUsersIds : [],
           mutedUsersIds: Array.isArray(m.mutedUsersIds) ? m.mutedUsersIds : [],
+          allowedSenderNameKeywords: Array.isArray(m.allowedSenderNameKeywords) ? m.allowedSenderNameKeywords : [],
+          blockedSenderNameKeywords: Array.isArray(m.blockedSenderNameKeywords) ? m.blockedSenderNameKeywords : [],
           blockedKeywords: Array.isArray(m.blockedKeywords) ? m.blockedKeywords : [],
           excludeKeywords: Array.isArray(m.excludeKeywords) ? m.excludeKeywords : [],
           ocrBlockedKeywords: Array.isArray(m.ocrBlockedKeywords) ? m.ocrBlockedKeywords : [],
@@ -1827,6 +1835,8 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             // RuleLevelConfig 规则级别过滤配置
             allowedUsersIds: Array.isArray(mapping.allowedUsersIds) ? mapping.allowedUsersIds : [],
             mutedUsersIds: Array.isArray(mapping.mutedUsersIds) ? mapping.mutedUsersIds : [],
+            allowedSenderNameKeywords: Array.isArray(mapping.allowedSenderNameKeywords) ? mapping.allowedSenderNameKeywords : [],
+            blockedSenderNameKeywords: Array.isArray(mapping.blockedSenderNameKeywords) ? mapping.blockedSenderNameKeywords : [],
             blockedKeywords: Array.isArray(mapping.blockedKeywords) ? mapping.blockedKeywords : [],
             excludeKeywords: Array.isArray(mapping.excludeKeywords) ? mapping.excludeKeywords : [],
             ocrBlockedKeywords: Array.isArray(mapping.ocrBlockedKeywords) ? mapping.ocrBlockedKeywords : [],
