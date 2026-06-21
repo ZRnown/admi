@@ -117,14 +117,23 @@ test("SafeW group list is expandable and keeps cached groups when refresh return
   assert.match(accountActionRoute, /refreshedCount: fetchedGroups\.length/);
 });
 
-test("forwarding type selector exposes Discord to DingTalk by default", () => {
-  assert.match(html, /const DEFAULT_ENABLED_FORWARDING_TYPES = \['discord-to-dingtalk'\]/);
-  assert.match(html, /enabledForwardingTypes: DEFAULT_ENABLED_FORWARDING_TYPES\.slice\(\)/);
-  assert.match(html, /function isForwardingTypeEnabled\(type\)/);
-  assert.match(html, /isForwardingTypeEnabled\('discord-to-dingtalk'\)[\s\S]*Discord → 钉钉/);
-  assert.doesNotMatch(html, /\(!state\.enabledForwardingTypes \|\| state\.enabledForwardingTypes\.includes\('discord-to-discord'\)\)/);
-  assert.match(html, /forwardingType: getDefaultForwardingType\(\)/);
-  assert.match(html, /currentForwardingType = newAcc\.forwardingType/);
+test("forwarding type selector follows enabled forwarding types from config", () => {
+  [
+    "discord-to-discord",
+    "discord-to-telegram",
+    "telegram-to-discord",
+    "telegram-to-telegram",
+    "telegram-to-dingtalk",
+    "discord-to-feishu",
+    "discord-to-dingtalk",
+  ].forEach((type) => {
+    assert.match(
+      html,
+      new RegExp(`!state\\.enabledForwardingTypes \\|\\| state\\.enabledForwardingTypes\\.includes\\('${type}'\\)`),
+    );
+  });
+  assert.match(html, /enabledForwardingTypes: data\.enabledForwardingTypes \|\| null/);
+  assert.match(html, /forwardingType: 'discord-to-discord'/);
 });
 
 test("mobile client instances keep their name and start stop controls", () => {

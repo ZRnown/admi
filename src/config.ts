@@ -37,7 +37,7 @@ const MOBILE_CLIENT_FORWARDING_TYPES: ForwardingType[] = [
   "discord-to-mobile-client",
   "telegram-to-mobile-client",
 ];
-const DEFAULT_ENABLED_FORWARDING_TYPES: ForwardingType[] = ["discord-to-dingtalk"];
+const DEFAULT_ENABLED_FORWARDING_TYPES: ForwardingType[] = [...FORWARDING_TYPES];
 
 function resolveConfigPath(): string {
   if (process.env.CONFIG_PATH) {

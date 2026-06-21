@@ -5,10 +5,10 @@ const { join } = require("node:path");
 
 const source = readFileSync(join(__dirname, "../src/config.ts"), "utf8");
 
-test("admin config exposes Discord to DingTalk forwarding by default", () => {
+test("admin config exposes all forwarding types by default", () => {
   assert.match(
     source,
-    /const DEFAULT_ENABLED_FORWARDING_TYPES: ForwardingType\[\] = \["discord-to-dingtalk"\]/,
+    /const DEFAULT_ENABLED_FORWARDING_TYPES: ForwardingType\[\] = \[\.\.\.FORWARDING_TYPES\]/,
   );
   assert.match(source, /function normalizeEnabledForwardingTypesForAdmin\(types\?: ForwardingType\[\]\): ForwardingType\[\]/);
   assert.match(source, /const validTypes = new Set<ForwardingType>\(FORWARDING_TYPES\)/);
