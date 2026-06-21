@@ -957,7 +957,7 @@ export class Bot {
         return false;
       }
     }
-    const blockedSenderNameGroups = parseKeywordGroups(rule.blockedSenderNameKeywords);
+    const blockedSenderNameGroups = parseKeywordGroups(rule.blockedSenderNameKeywords || rule.blockedAuthorNameKeywords);
     if (blockedSenderNameGroups.length > 0) {
       const { matchedGroups } = matchParsedKeywordGroups(senderNameHay, blockedSenderNameGroups, { caseInsensitive });
       if (matchedGroups.length > 0) {
@@ -1164,7 +1164,7 @@ export class Bot {
       allowedUsersIds: (rule.allowedUsersIds || []).map((x: any) => String(x)).filter(Boolean),
       mutedUsersIds: (rule.mutedUsersIds || []).map((x: any) => String(x)).filter(Boolean),
       allowedSenderNameKeywords: (rule.allowedSenderNameKeywords || []).map((x: any) => String(x)).filter(Boolean),
-      blockedSenderNameKeywords: (rule.blockedSenderNameKeywords || []).map((x: any) => String(x)).filter(Boolean),
+      blockedSenderNameKeywords: (rule.blockedSenderNameKeywords || rule.blockedAuthorNameKeywords || []).map((x: any) => String(x)).filter(Boolean),
       blockedKeywords: (rule.blockedKeywords || []).filter(Boolean),
       excludeKeywords: (rule.excludeKeywords || []).filter(Boolean),
       ocrBlockedKeywords: (rule.ocrBlockedKeywords || []).filter(Boolean),

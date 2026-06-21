@@ -11542,7 +11542,7 @@
         allowedUsersIds: [...(mapping.allowedUsersIds || [])],
         mutedUsersIds: [...(mapping.mutedUsersIds || [])],
         allowedSenderNameKeywords: [...(mapping.allowedSenderNameKeywords || [])],
-        blockedSenderNameKeywords: [...(mapping.blockedSenderNameKeywords || [])],
+        blockedSenderNameKeywords: [...(mapping.blockedSenderNameKeywords || mapping.blockedAuthorNameKeywords || [])],
         blockedKeywords: [...(mapping.blockedKeywords || [])],
         excludeKeywords: [...(mapping.excludeKeywords || [])],
         ocrBlockedKeywords: [...(mapping.ocrBlockedKeywords || [])],

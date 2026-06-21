@@ -11,8 +11,11 @@ test("rule-level sender name keyword filters are preserved by config API", () =>
   assert.match(routeSource, /allowedSenderNameKeywords\?: string\[\];/);
   assert.match(routeSource, /blockedSenderNameKeywords\?: string\[\];/);
   assert.match(routeSource, /allowedSenderNameKeywords:\s*Array\.isArray\(raw\.allowedSenderNameKeywords\)/);
+  assert.match(routeSource, /raw\.blockedAuthorNameKeywords/);
   assert.match(routeSource, /allowedSenderNameKeywords:\s*\(savedRule\.allowedSenderNameKeywords \|\| \[\]\)\.map\(String\)/);
+  assert.match(routeSource, /savedRule\.blockedSenderNameKeywords \|\| savedRule\.blockedAuthorNameKeywords/);
   assert.match(routeSource, /allowedSenderNameKeywords:\s*mapping\.allowedSenderNameKeywords \|\| \[\]/);
+  assert.match(routeSource, /mapping\.blockedSenderNameKeywords \|\| mapping\.blockedAuthorNameKeywords/);
 });
 
 test("rule dialog exposes and saves sender name keyword filters", () => {
@@ -21,12 +24,14 @@ test("rule dialog exposes and saves sender name keyword filters", () => {
   assert.match(html, /handleRuleKeywordEnter\(this, 'allowedSenderNameKeywords'\)/);
   assert.match(html, /handleRuleKeywordEnter\(this, 'blockedSenderNameKeywords'\)/);
   assert.match(html, /mapping\.allowedSenderNameKeywords = \[\.\.\.ruleConfigData\.allowedSenderNameKeywords\]/);
+  assert.match(html, /mapping\.blockedSenderNameKeywords \|\| mapping\.blockedAuthorNameKeywords/);
   assert.match(html, /mapping\.blockedSenderNameKeywords = \[\.\.\.ruleConfigData\.blockedSenderNameKeywords\]/);
 });
 
 test("discord runtime filters by sender display names", () => {
   assert.match(botSource, /function buildSenderNameKeywordHaystack\(message: Message, isWebhook: boolean, webhookName\?: string\): string/);
   assert.match(botSource, /parseKeywordGroups\(ruleConfig\.blockedSenderNameKeywords\)/);
+  assert.match(botSource, /rule\.blockedSenderNameKeywords \|\| rule\.blockedAuthorNameKeywords/);
   assert.match(botSource, /parseKeywordGroups\(ruleConfig\.allowedSenderNameKeywords\)/);
   assert.match(botSource, /Sender name did not match allowedSenderNameKeywords/);
   assert.match(botSource, /senderNameHay,/);

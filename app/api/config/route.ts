@@ -317,6 +317,7 @@ interface FrontendMapping {
   mutedUsersIds?: string[];
   allowedSenderNameKeywords?: string[];
   blockedSenderNameKeywords?: string[];
+  blockedAuthorNameKeywords?: string[];
   blockedKeywords?: string[];
   excludeKeywords?: string[];
   ocrBlockedKeywords?: string[];
@@ -688,7 +689,12 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
     mutedUsersIds: Array.isArray(raw.mutedUsersIds) ? raw.mutedUsersIds.map(String).filter(Boolean) : [],
     allowedSenderNameKeywords: Array.isArray(raw.allowedSenderNameKeywords) ? raw.allowedSenderNameKeywords.map(String).filter(Boolean) : [],
-    blockedSenderNameKeywords: Array.isArray(raw.blockedSenderNameKeywords) ? raw.blockedSenderNameKeywords.map(String).filter(Boolean) : [],
+    blockedSenderNameKeywords: Array.isArray(raw.blockedSenderNameKeywords)
+      ? raw.blockedSenderNameKeywords.map(String).filter(Boolean)
+      : Array.isArray(raw.blockedAuthorNameKeywords)
+        ? raw.blockedAuthorNameKeywords.map(String).filter(Boolean)
+        : [],
+    blockedAuthorNameKeywords: [],
     blockedKeywords: Array.isArray(raw.blockedKeywords) ? raw.blockedKeywords.filter(Boolean) : [],
     excludeKeywords: Array.isArray(raw.excludeKeywords) ? raw.excludeKeywords.filter(Boolean) : [],
     ocrBlockedKeywords: Array.isArray(raw.ocrBlockedKeywords) ? raw.ocrBlockedKeywords.filter(Boolean) : [],
@@ -1217,7 +1223,7 @@ function accountToFrontend(
         allowedUsersIds: (savedRule.allowedUsersIds || []).map(String),
         mutedUsersIds: (savedRule.mutedUsersIds || []).map(String),
         allowedSenderNameKeywords: (savedRule.allowedSenderNameKeywords || []).map(String),
-        blockedSenderNameKeywords: (savedRule.blockedSenderNameKeywords || []).map(String),
+        blockedSenderNameKeywords: (savedRule.blockedSenderNameKeywords || savedRule.blockedAuthorNameKeywords || []).map(String),
         blockedKeywords: savedRule.blockedKeywords || [],
         excludeKeywords: savedRule.excludeKeywords || [],
         ocrBlockedKeywords: savedRule.ocrBlockedKeywords || [],
@@ -1876,7 +1882,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           allowedUsersIds: mapping.allowedUsersIds || [],
           mutedUsersIds: mapping.mutedUsersIds || [],
           allowedSenderNameKeywords: mapping.allowedSenderNameKeywords || [],
-          blockedSenderNameKeywords: mapping.blockedSenderNameKeywords || [],
+          blockedSenderNameKeywords: mapping.blockedSenderNameKeywords || mapping.blockedAuthorNameKeywords || [],
           blockedKeywords: mapping.blockedKeywords || [],
           excludeKeywords: mapping.excludeKeywords || [],
           ocrBlockedKeywords: mapping.ocrBlockedKeywords || [],
