@@ -2212,7 +2212,7 @@ export class Bot {
       this.logger.info(`${logPrefix} [COMPONENTS] Found ${messageComponents.length} component(s), no link buttons parsed`);
     }
     discordContent = appendDiscordComponentLinks(discordContent, messageComponents);
-    const feishuContentWithLinks = appendDiscordComponentLinks(feishuContentRaw, messageComponents);
+    const feishuContentWithLinks = appendDiscordComponentLinks(feishuContentRaw, messageComponents, { format: "markdown" });
 
     // 根据配置决定是否伪装为源用户头像和昵称
     // 对于 webhook 消息，使用 webhook 的名称和头像

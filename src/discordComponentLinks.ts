@@ -49,11 +49,20 @@ export function extractDiscordComponentLinks(components: any[] | undefined | nul
   return links;
 }
 
-export function appendDiscordComponentLinks(content: string, components: any[] | undefined | null): string {
+export function appendDiscordComponentLinks(
+  content: string,
+  components: any[] | undefined | null,
+  options?: { format?: "plain" | "markdown" },
+): string {
   const links = extractDiscordComponentLinks(components);
   if (links.length === 0) return content;
 
-  const lines = links.map((link) => `${link.label}: ${link.url}`);
+  const format = options?.format || "plain";
+  const lines = links.map((link) =>
+    format === "markdown"
+      ? `[${link.label.replace(/[[\]\\]/g, "\\$&")}](${link.url})`
+      : `${link.label}: ${link.url}`,
+  );
   const base = String(content || "").trim();
   return [base, ...lines].filter(Boolean).join("\n");
 }

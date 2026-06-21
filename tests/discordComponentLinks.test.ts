@@ -67,6 +67,18 @@ test("appendDiscordComponentLinks adds links after content and dedupes urls", ()
   assert.equal(content, "@everyone\nText: https://example.com/text");
 });
 
+test("appendDiscordComponentLinks can render links as markdown", () => {
+  const content = appendDiscordComponentLinks("content", [
+    {
+      components: [
+        { label: "HTML", url: "https://example.com/html" },
+      ],
+    },
+  ], { format: "markdown" });
+
+  assert.equal(content, "content\n[HTML](https://example.com/html)");
+});
+
 test("sequential dedupe signature includes component links", () => {
   const source = readFileSync(path.join(__dirname, "..", "src", "bot.ts"), "utf8");
 

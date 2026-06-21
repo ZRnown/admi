@@ -20,6 +20,27 @@ function resolveSecret(value?: string): string {
   return value;
 }
 
+const MARKDOWN_LINK_RE = /(?<!!)\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/gi;
+
+function pushFeishuTextWithLinks(elements: any[], value: string) {
+  const text = String(value || "");
+  if (!text) return;
+
+  let lastIndex = 0;
+  MARKDOWN_LINK_RE.lastIndex = 0;
+  for (const match of text.matchAll(MARKDOWN_LINK_RE)) {
+    const index = typeof match.index === "number" ? match.index : 0;
+    if (index > lastIndex) {
+      elements.push({ tag: "text", text: text.slice(lastIndex, index) });
+    }
+    elements.push({ tag: "a", text: match[1], href: match[2] });
+    lastIndex = index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    elements.push({ tag: "text", text: text.slice(lastIndex) });
+  }
+}
+
 // 飞书发送负载，与原有结构保持一致，方便 Bot 复用
 export interface FeishuSendPayload {
   content: string;
@@ -248,13 +269,13 @@ export class FeishuSender {
     const bodyText = data.content || "";
 
     if (headerText || bodyText) {
-      elements.push({ tag: "text", text: headerText + bodyText + "\n" });
+      pushFeishuTextWithLinks(elements, headerText + bodyText + "\n");
     }
 
     if (data.embeds) {
       for (const e of data.embeds) {
         if (e?.description) {
-          elements.push({ tag: "text", text: `\n> ${e.description}` });
+          pushFeishuTextWithLinks(elements, `\n> ${e.description}`);
         }
       }
     }
