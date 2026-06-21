@@ -26,3 +26,15 @@ test("config API preserves Feishu mapping rows", () => {
   assert.match(configRouteSource, /const feishuMappings = normalizeFeishuMappings\(\(dto as any\)\.feishuMappings\);/);
   assert.match(configRouteSource, /feishuMappings: shouldPreserveFeishuTargets \? \(base as any\)\.feishuMappings \|\| \[\] : feishuMappings/);
 });
+
+test("Feishu rules can hide Discord source links", () => {
+  assert.match(configRouteSource, /hideDiscordLinks\?: boolean;/);
+  assert.match(configRouteSource, /hideDiscordLinks:\s*raw\.hideDiscordLinks === true \? true : undefined,/);
+  assert.match(configRouteSource, /hideDiscordLinks:\s*savedRule\.hideDiscordLinks,/);
+  assert.match(configRouteSource, /hideDiscordLinks:\s*mapping\.hideDiscordLinks,/);
+  assert.match(html, /id="ruleHideDiscordLinks"/);
+  assert.match(html, /mapping\.hideDiscordLinks = currentRuleConfigType === 'discord-to-feishu'/);
+  assert.match(botSource, /function hideDiscordLinksInText\(value: string\): string/);
+  assert.match(botSource, /hideDiscordLinksInText\(feishuContent\)/);
+  assert.match(botSource, /hideDiscordLinksInEmbeds\(finalFeishuEmbeds\)/);
+});

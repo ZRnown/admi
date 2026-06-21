@@ -11119,6 +11119,7 @@
       ignoreChineseThreshold: 100,
       stripEnglish: false,
       stripChinese: false,
+      hideDiscordLinks: false,
       watermarkMode: "inherit",
       watermarkRemovalMode: 'inherit',
       watermarkRemovalKeywords: [],
@@ -11140,6 +11141,22 @@
     };
 
     // 渲染规则配置标签
+    function ensureRuleHideDiscordLinksControl() {
+      if (document.getElementById('ruleHideDiscordLinksSection')) return;
+      const showSourceInput = document.getElementById('ruleShowSourceIdentity');
+      const container = showSourceInput ? showSourceInput.closest('.border.border-slate-200.rounded-lg.p-4') : null;
+      if (!container) return;
+      container.insertAdjacentHTML('beforeend', `
+        <div id="ruleHideDiscordLinksSection" class="hidden mt-3 border-t border-slate-100 pt-3">
+          <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" id="ruleHideDiscordLinks" class="h-4 w-4 rounded border-slate-300">
+            Hide Discord links in Feishu messages
+          </label>
+          <p class="text-xs text-slate-500 mt-1">Feishu will keep link labels as plain text and remove discord.com / discord.gg URLs.</p>
+        </div>
+      `);
+    }
+
     function renderRuleTags(field) {
       const containerId = `rule${field.charAt(0).toUpperCase() + field.slice(1)}Tags`;
       const container = document.getElementById(containerId);
@@ -11522,6 +11539,7 @@
         ignoreChineseThreshold: mapping.ignoreChineseThreshold ?? 100,
         stripEnglish: mapping.stripEnglish === true,
         stripChinese: mapping.stripChinese === true,
+        hideDiscordLinks: mapping.hideDiscordLinks === true,
         watermarkMode,
         watermarkRemovalMode,
         watermarkRemovalKeywords: [...(mapping.watermarkRemoval?.triggerKeywords || [])],
@@ -11559,6 +11577,8 @@
       document.getElementById('ruleIgnoreChineseThreshold').value = ruleConfigData.ignoreChineseThreshold ?? 100;
       document.getElementById('ruleStripEnglish').checked = ruleConfigData.stripEnglish;
       document.getElementById('ruleStripChinese').checked = ruleConfigData.stripChinese;
+      ensureRuleHideDiscordLinksControl();
+      document.getElementById('ruleHideDiscordLinks').checked = ruleConfigData.hideDiscordLinks;
 
       const standbySection = document.getElementById('ruleStandbySection');
       const supportsStandby = ['discord-to-telegram', 'telegram-to-discord', 'telegram-to-telegram', 'telegram-to-dingtalk', 'discord-to-discord', 'discord-to-feishu', 'discord-to-dingtalk'].includes(forwardingType);
@@ -11567,6 +11587,14 @@
           standbySection.classList.remove('hidden');
         } else {
           standbySection.classList.add('hidden');
+        }
+      }
+      const hideDiscordLinksSection = document.getElementById('ruleHideDiscordLinksSection');
+      if (hideDiscordLinksSection) {
+        if (forwardingType === 'discord-to-feishu') {
+          hideDiscordLinksSection.classList.remove('hidden');
+        } else {
+          hideDiscordLinksSection.classList.add('hidden');
         }
       }
       if (supportsStandby) {
@@ -11714,6 +11742,9 @@
       mapping.ignoreChinese = document.getElementById('ruleIgnoreChinese').checked || undefined;
       mapping.stripEnglish = document.getElementById('ruleStripEnglish').checked || undefined;
       mapping.stripChinese = document.getElementById('ruleStripChinese').checked || undefined;
+      mapping.hideDiscordLinks = currentRuleConfigType === 'discord-to-feishu'
+        ? (document.getElementById('ruleHideDiscordLinks').checked || undefined)
+        : undefined;
       const ruleEnglishThreshold = parseInt(document.getElementById('ruleIgnoreEnglishThreshold').value, 10);
       const ruleChineseThreshold = parseInt(document.getElementById('ruleIgnoreChineseThreshold').value, 10);
       mapping.ignoreEnglishThreshold = Number.isFinite(ruleEnglishThreshold) ? ruleEnglishThreshold : undefined;

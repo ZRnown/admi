@@ -297,6 +297,7 @@ interface FrontendMapping {
   discordSenderType?: "account" | "webhook";
   discordSenderAccountId?: string;
   showSourceIdentity?: boolean;
+  hideDiscordLinks?: boolean;
   safewAccountId?: string;
   dingtalkSecret?: string;
   inputMode?: "manual" | "select";
@@ -649,6 +650,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       longMessage: undefined,
       replacementsDictionary: {},
       showSourceIdentity: undefined,
+      hideDiscordLinks: undefined,
       ignoreSelf: undefined,
       ignoreBot: undefined,
       onlyBot: undefined,
@@ -699,6 +701,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         ? raw.replacementsDictionary
         : {},
     showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
+    hideDiscordLinks: raw.hideDiscordLinks === true ? true : undefined,
     ignoreSelf: raw.ignoreSelf === true ? true : undefined,
     ignoreBot: raw.ignoreBot === true ? true : undefined,
     onlyBot: raw.onlyBot === true ? true : undefined,
@@ -1213,6 +1216,7 @@ function accountToFrontend(
         ocrTriggerKeywords: savedRule.ocrTriggerKeywords || [],
         replacementsDictionary: savedRule.replacementsDictionary || {},
         showSourceIdentity: savedRule.showSourceIdentity,
+        hideDiscordLinks: savedRule.hideDiscordLinks,
         // 规则级别的忽略配置
         ignoreSelf: savedRule.ignoreSelf,
         ignoreBot: savedRule.ignoreBot,
@@ -1867,6 +1871,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           ocrTriggerKeywords: mapping.ocrTriggerKeywords || [],
           replacementsDictionary: mapping.replacementsDictionary || {},
           showSourceIdentity: mapping.showSourceIdentity,
+          hideDiscordLinks: mapping.hideDiscordLinks,
           // 规则级别的忽略配置
           ignoreSelf: mapping.ignoreSelf,
           ignoreBot: mapping.ignoreBot,

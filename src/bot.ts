@@ -63,6 +63,38 @@ const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i;
 const VIDEO_EXT_RE = /\.(mp4|mov|webm|mkv|avi|flv)(?:$|[?#])/i;
 const AUDIO_EXT_RE = /\.(mp3|wav|ogg|flac|m4a|aac)(?:$|[?#])/i;
 const DOCUMENT_EXT_RE = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|rtf)(?:$|[?#])/i;
+const DISCORD_URL_SOURCE = String.raw`https?:\/\/(?:[a-z0-9-]+\.)?(?:discord(?:app)?\.com|discord\.gg)\/[^\s)>]+`;
+const DISCORD_MARKDOWN_LINK_RE = new RegExp(String.raw`\[([^\]]+)\]\((${DISCORD_URL_SOURCE})\)`, "giu");
+const DISCORD_URL_RE = new RegExp(DISCORD_URL_SOURCE, "giu");
+const DISCORD_SINGLE_URL_RE = new RegExp(DISCORD_URL_SOURCE, "iu");
+
+function hideDiscordLinksInText(value: string): string {
+  return value
+    .replace(DISCORD_MARKDOWN_LINK_RE, "$1")
+    .replace(DISCORD_URL_RE, "")
+    .replace(/[ \t]+$/gmu, "");
+}
+
+function hideDiscordLinksInEmbeds(embeds: any[] | undefined): any[] | undefined {
+  if (!embeds) return embeds;
+  return embeds.map((embed) => {
+    if (!embed || typeof embed !== "object") return embed;
+    return {
+      ...embed,
+      title: typeof embed.title === "string" ? hideDiscordLinksInText(embed.title) : embed.title,
+      description:
+        typeof embed.description === "string" ? hideDiscordLinksInText(embed.description) : embed.description,
+      url: typeof embed.url === "string" && DISCORD_SINGLE_URL_RE.test(embed.url) ? undefined : embed.url,
+      fields: Array.isArray(embed.fields)
+        ? embed.fields.map((field: any) => ({
+            ...field,
+            name: typeof field?.name === "string" ? hideDiscordLinksInText(field.name) : field?.name,
+            value: typeof field?.value === "string" ? hideDiscordLinksInText(field.value) : field?.value,
+          }))
+        : embed.fields,
+    };
+  });
+}
 
 type FeishuRuntimeSender = {
   sender: FeishuSender;
@@ -996,6 +1028,7 @@ export class Bot {
     };
     replacementsDictionary: Record<string, string>;
     showSourceIdentity?: boolean;
+    hideDiscordLinks?: boolean;
     ignoreSelf?: boolean;
     ignoreBot?: boolean;
     onlyBot?: boolean;
@@ -1055,6 +1088,7 @@ export class Bot {
         longMessage: undefined,
         replacementsDictionary: {},
         showSourceIdentity: undefined,
+        hideDiscordLinks: undefined,
         ignoreSelf: undefined,
         ignoreBot: undefined,
         onlyBot: undefined,
@@ -1096,6 +1130,7 @@ export class Bot {
           : undefined,
       replacementsDictionary: rule.replacementsDictionary || {},
       showSourceIdentity: rule.showSourceIdentity,
+      hideDiscordLinks: rule.hideDiscordLinks,
       ignoreSelf: rule.ignoreSelf,
       ignoreBot: rule.ignoreBot,
       onlyBot: rule.onlyBot,
@@ -2518,8 +2553,11 @@ export class Bot {
           continue;
         }
         try {
+          const hideDiscordLinks = feishuRuntime.rule?.hideDiscordLinks === true || ruleConfig.hideDiscordLinks === true;
+          const contentForFeishu = hideDiscordLinks ? hideDiscordLinksInText(feishuContent) : feishuContent;
+          const embedsForFeishu = hideDiscordLinks ? hideDiscordLinksInEmbeds(finalFeishuEmbeds) : finalFeishuEmbeds;
           await feishuSender.send({
-            content: feishuContent,
+            content: contentForFeishu,
             username: username,
             avatarUrl: avatarUrl,
             attachments: finalUploads.map((u) => ({
@@ -2529,12 +2567,12 @@ export class Bot {
               watermarkRemoval: u.watermarkRemoval,
               watermarkRemovalState: u.watermarkRemovalState,
             })),
-            embeds: finalFeishuEmbeds && finalFeishuEmbeds.length > 0 ? finalFeishuEmbeds : undefined,
+            embeds: embedsForFeishu && embedsForFeishu.length > 0 ? embedsForFeishu : undefined,
             watermark: effectiveWatermarks[0],
             watermarkSecondary: effectiveWatermarks[1],
             watermarks: effectiveWatermarks,
           });
-          const feishuPreview = formatLogPreview(feishuContent);
+          const feishuPreview = formatLogPreview(contentForFeishu);
           const imageCount = finalUploads.filter((u) => u.isImage).length;
           const logMsg =
             `${logPrefix} [FEISHU] 转发成功 [${senderIndex + 1}/${feishuSendersForThis.length}] | 来自: ${authorLabel} | 源: ${message.channelId} | ` +

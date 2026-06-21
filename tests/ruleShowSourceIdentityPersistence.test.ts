@@ -37,14 +37,10 @@ test("runtime forwarding prefers rule-level showSourceIdentity before global fal
   );
 });
 
-test("rule config modal saves showSourceIdentity for telegram mobile client rules", () => {
+test("rule config modal saves showSourceIdentity for generic mapping rules", () => {
   assert.match(htmlSource, /showSourceIdentity:\s*false,/);
   assert.match(
     htmlSource,
-    /currentRuleConfigType === 'discord-to-telegram' \|\| currentRuleConfigType === 'telegram-to-discord' \|\| currentRuleConfigType === 'telegram-to-telegram' \|\| currentRuleConfigType === 'telegram-to-mobile-client'/,
-  );
-  assert.match(
-    htmlSource,
-    /mapping\.showSourceIdentity = document\.getElementById\('ruleShowSourceIdentity'\)\.checked \|\| undefined;/,
+    /else \{\s*if \(!acc\.mappings\) acc\.mappings = \[\];\s*mapping = acc\.mappings\[currentRuleConfigIndex\];\s*\}[\s\S]*mapping\.showSourceIdentity = document\.getElementById\('ruleShowSourceIdentity'\)\.checked \|\| undefined;/,
   );
 });

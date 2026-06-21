@@ -281,6 +281,7 @@ export interface RuleLevelConfig {
   replacementsDictionary?: Record<string, string>;
   // 使用源用户的昵称和头像（规则级别）
   showSourceIdentity?: boolean;
+  hideDiscordLinks?: boolean;
   // 忽略自己的消息（规则级别）
   ignoreSelf?: boolean;
   // 忽略机器人消息（规则级别）
@@ -1098,6 +1099,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       longMessage: undefined,
       replacementsDictionary: {},
       showSourceIdentity: undefined,
+      hideDiscordLinks: undefined,
       ignoreSelf: undefined,
       ignoreBot: undefined,
       ignoreImages: undefined,
@@ -1146,6 +1148,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
         ? raw.replacementsDictionary
         : {},
     showSourceIdentity: raw.showSourceIdentity === true ? true : undefined,
+    hideDiscordLinks: raw.hideDiscordLinks === true ? true : undefined,
     ignoreSelf: raw.ignoreSelf === true ? true : undefined,
     ignoreBot: raw.ignoreBot === true ? true : undefined,
     onlyBot: raw.onlyBot === true ? true : undefined,
@@ -1752,6 +1755,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
               : undefined,
           replacementsDictionary: typeof m.replacementsDictionary === 'object' && m.replacementsDictionary ? m.replacementsDictionary : {},
           showSourceIdentity: m.showSourceIdentity === true ? true : undefined,
+          hideDiscordLinks: m.hideDiscordLinks === true ? true : undefined,
           // 规则级别忽略配置
           ignoreSelf: m.ignoreSelf === true ? true : undefined,
           ignoreBot: m.ignoreBot === true ? true : undefined,
@@ -1829,6 +1833,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             ocrTriggerKeywords: Array.isArray(mapping.ocrTriggerKeywords) ? mapping.ocrTriggerKeywords : [],
             replacementsDictionary: typeof mapping.replacementsDictionary === 'object' && mapping.replacementsDictionary ? mapping.replacementsDictionary : {},
             showSourceIdentity: mapping.showSourceIdentity === true ? true : undefined,
+            hideDiscordLinks: mapping.hideDiscordLinks === true ? true : undefined,
             ignoreSelf: mapping.ignoreSelf === true ? true : undefined,
             ignoreBot: mapping.ignoreBot === true ? true : undefined,
             ignoreImages: mapping.ignoreImages === true ? true : undefined,
