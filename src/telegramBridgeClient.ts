@@ -66,6 +66,7 @@ export interface HandleDiscordMessageParams {
         attempted?: boolean;
         failed?: boolean;
       };
+      watermarkCover?: any;
     }>;
     embeds?: any[];
   };

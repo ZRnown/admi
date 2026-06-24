@@ -10,7 +10,8 @@ import {
   type WatermarkRemovalConfig,
   type WatermarkRemovalRuntimeState,
 } from "./watermarkRemoval";
-import type { WatermarkConfig } from "./config";
+import { applyWatermarkCoverToImageBuffer } from "./watermarkCover";
+import type { WatermarkConfig, WatermarkCoverConfig } from "./config";
 
 const MASKED_SECRET = "********";
 
@@ -53,6 +54,7 @@ export interface FeishuSendPayload {
     isImage?: boolean;
     watermarkRemoval?: WatermarkRemovalConfig;
     watermarkRemovalState?: WatermarkRemovalRuntimeState;
+    watermarkCover?: WatermarkCoverConfig;
   }>;
   embeds?: any[];
   watermark?: WatermarkConfig;
@@ -140,6 +142,7 @@ export class FeishuSender {
     watermarks?: WatermarkConfig[],
     watermarkRemoval?: WatermarkRemovalConfig,
     watermarkRemovalState?: WatermarkRemovalRuntimeState,
+    watermarkCover?: WatermarkCoverConfig,
   ): Promise<string | null> {
     try {
       // 2.1 下载图片 Buffer
@@ -175,9 +178,13 @@ export class FeishuSender {
         removalAttempted,
         removalFailed,
       });
-      const finalBuffer = shouldWatermark
-        ? await applyWatermarksToBuffer(imgBuffer, effectiveWatermarks)
-        : imgBuffer;
+      let finalBuffer =
+        watermarkCover && watermarkCover.applyToImages !== false
+          ? await applyWatermarkCoverToImageBuffer(imgBuffer, watermarkCover)
+          : imgBuffer;
+      if (shouldWatermark) {
+        finalBuffer = await applyWatermarksToBuffer(finalBuffer, effectiveWatermarks);
+      }
       if (!shouldWatermark && removalAttempted && removalFailed && effectiveWatermarks.length > 0) {
         console.warn("[FeishuSender] 已跳过追加新水印（原因：去水印失败）");
       }
@@ -317,6 +324,7 @@ export class FeishuSender {
             watermarks,
             att.watermarkRemoval,
             att.watermarkRemovalState,
+            att.watermarkCover,
           );
           if (key) {
             imageKeys.push(key);
@@ -461,6 +469,116 @@ export class FeishuSender {
       console.error(err.error, res);
       return err;
     }
+  }
+
+  async manageChatMembers(params: {
+    action: "add" | "remove";
+    chatIds: string[];
+    memberIds: string[];
+    memberIdType?: "open_id" | "user_id" | "union_id";
+  }): Promise<Array<{ chatId: string; ok: boolean; raw: any }>> {
+    const token = await this.getToken();
+    const memberIdType = params.memberIdType || "open_id";
+    const method = params.action === "remove" ? "DELETE" : "POST";
+    const memberIds = Array.from(new Set(params.memberIds.map((id) => id.trim()).filter(Boolean)));
+    const chatIds = Array.from(new Set(params.chatIds.map((id) => id.trim()).filter(Boolean)));
+
+    const results = [];
+    for (const chatId of chatIds) {
+      const url = new URL(
+        `https://open.feishu.cn/open-apis/im/v1/chats/${encodeURIComponent(chatId)}/members?member_id_type=${memberIdType}`,
+      );
+      const raw = await this.request(url, JSON.stringify({ id_list: memberIds }), method, token);
+      results.push({ chatId, ok: raw?.code === 0, raw });
+    }
+    return results;
+  }
+
+  async resolveOpenIdsByContacts(inputs: string[]): Promise<{
+    memberIds: string[];
+    unresolved: string[];
+    raw: any;
+  }> {
+    const token = await this.getToken();
+    const directOpenIds = new Set<string>();
+    const emails = new Set<string>();
+    const mobiles = new Set<string>();
+    const originalContacts = Array.from(new Set(inputs.map((item) => item.trim()).filter(Boolean)));
+
+    for (const input of originalContacts) {
+      if (/^ou_[A-Za-z0-9_-]+$/.test(input)) {
+        directOpenIds.add(input);
+      } else if (input.includes("@")) {
+        emails.add(input);
+      } else {
+        mobiles.add(input.replace(/[\s-]/g, ""));
+      }
+    }
+
+    const payload: { emails?: string[]; mobiles?: string[] } = {};
+    if (emails.size > 0) payload.emails = Array.from(emails);
+    if (mobiles.size > 0) payload.mobiles = Array.from(mobiles);
+    if (!payload.emails && !payload.mobiles) {
+      return { memberIds: Array.from(directOpenIds), unresolved: [], raw: { code: 0, data: { user_list: [] } } };
+    }
+
+    const url = new URL("https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id");
+    const raw: any = await this.request(url, JSON.stringify(payload), "POST", token);
+    const users = Array.isArray(raw?.data?.user_list)
+      ? raw.data.user_list
+      : Array.isArray(raw?.data?.items)
+        ? raw.data.items
+        : [];
+    const memberIds = new Set<string>(directOpenIds);
+    const resolvedContacts = new Set<string>();
+
+    for (const user of users) {
+      const id = String(user?.user_id || user?.open_id || "").trim();
+      if (id) memberIds.add(id);
+      if (user?.email) resolvedContacts.add(String(user.email).toLowerCase());
+      if (user?.mobile) resolvedContacts.add(String(user.mobile).replace(/[\s-]/g, ""));
+    }
+
+    const unresolved = originalContacts.filter((input) => {
+      if (/^ou_[A-Za-z0-9_-]+$/.test(input)) return false;
+      const key = input.includes("@") ? input.toLowerCase() : input.replace(/[\s-]/g, "");
+      return !resolvedContacts.has(key);
+    });
+
+    return { memberIds: Array.from(memberIds), unresolved, raw };
+  }
+
+  async listChatMembers(
+    chatId: string,
+    memberIdType: "open_id" | "user_id" | "union_id" = "open_id",
+  ): Promise<{ items?: any[]; raw: any }> {
+    const token = await this.getToken();
+    const items: any[] = [];
+    let pageToken = "";
+
+    do {
+      const url = new URL(
+        `https://open.feishu.cn/open-apis/im/v1/chats/${encodeURIComponent(chatId)}/members`,
+      );
+      url.searchParams.set("member_id_type", memberIdType);
+      url.searchParams.set("page_size", "100");
+      if (pageToken) {
+        url.searchParams.set("page_token", pageToken);
+      }
+
+      const raw: any = await this.request(url, "", "GET", token);
+      if (raw?.code !== 0) {
+        return { raw };
+      }
+      const pageItems = Array.isArray(raw?.data?.items) ? raw.data.items : [];
+      items.push(...pageItems);
+      pageToken = raw?.data?.has_more ? String(raw?.data?.page_token || "") : "";
+      if (!pageToken) {
+        return { items, raw };
+      }
+    } while (pageToken);
+
+    return { items, raw: { code: 0 } };
   }
 
   // 通用 HTTP 请求

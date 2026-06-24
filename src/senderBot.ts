@@ -3,7 +3,7 @@ import https from "node:https";
 import path from "node:path";
 import { URL, fileURLToPath } from "node:url";
 
-import { ChannelId, WatermarkConfig } from "./config.js";
+import { ChannelId, WatermarkConfig, type WatermarkCoverConfig } from "./config.js";
 import { applyWatermarksToBuffer, resolveWatermarkList } from "./watermark.js";
 import {
   removeWatermarkFromImageUrl,
@@ -11,6 +11,10 @@ import {
   type WatermarkRemovalConfig,
   type WatermarkRemovalRuntimeState,
 } from "./watermarkRemoval.js";
+import {
+  applyWatermarkCoverToImageBuffer,
+  applyWatermarkCoverToVideoBuffer,
+} from "./watermarkCover.js";
 import { formatSize } from "./format.js";
 import { stripLanguages } from "./languageFilter.js";
 import { normalizeUploadFileDescriptor } from "./uploadMediaMetadata.js";
@@ -421,8 +425,10 @@ export class SenderBot {
       localPath?: string;
       filename: string;
       isImage?: boolean;
+      isVideo?: boolean;
       watermarkRemoval?: WatermarkRemovalConfig;
       watermarkRemovalState?: WatermarkRemovalRuntimeState;
+      watermarkCover?: WatermarkCoverConfig;
     }>,
     watermark?: WatermarkConfig,
     watermarkSecondary?: WatermarkConfig,
@@ -473,6 +479,7 @@ export class SenderBot {
           continue;
         }
         const isImageLike = Boolean(u.isImage || looksLikeImage(buf));
+        const isVideoLike = Boolean(u.isVideo || /\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(u.filename || ""));
         const shouldWatermark = shouldApplyWatermarkAfterRemoval({
           hasWatermarks: effectiveWatermarks.length > 0,
           isImage: isImageLike,
@@ -480,11 +487,21 @@ export class SenderBot {
           removalFailed,
         });
         let finalBuffer = buf;
+        if (u.watermarkCover && isImageLike && u.watermarkCover.applyToImages !== false) {
+          finalBuffer = await applyWatermarkCoverToImageBuffer(finalBuffer, u.watermarkCover);
+        } else if (u.watermarkCover && isVideoLike && u.watermarkCover.applyToVideos === true) {
+          try {
+            finalBuffer = await applyWatermarkCoverToVideoBuffer(finalBuffer, u.filename, u.watermarkCover);
+          } catch (error: any) {
+            console.error(`[色块遮挡] 视频处理失败，保留原视频: ${u.filename} ${String(error?.message || error)}`);
+          }
+        }
         if (shouldWatermark) {
-          finalBuffer = await applyWatermarksToBuffer(buf, effectiveWatermarks);
-          if (finalBuffer !== buf) {
+          const beforeWatermark = finalBuffer;
+          finalBuffer = await applyWatermarksToBuffer(finalBuffer, effectiveWatermarks);
+          if (finalBuffer !== beforeWatermark) {
             console.log(
-              `[水印] 已处理图片: ${u.filename} (${formatSize(buf.length)} -> ${formatSize(finalBuffer.length)})`,
+              `[水印] 已处理图片: ${u.filename} (${formatSize(beforeWatermark.length)} -> ${formatSize(finalBuffer.length)})`,
             );
           } else {
             console.log(`[水印] 图片未发生变化: ${u.filename}`);
@@ -990,6 +1007,7 @@ export class SenderBot {
       isVideo?: boolean;
       watermarkRemoval?: WatermarkRemovalConfig;
       watermarkRemovalState?: WatermarkRemovalRuntimeState;
+      watermarkCover?: WatermarkCoverConfig;
     }>;
     components?: any[];
     // 可选：覆盖当前消息是否启用翻译；未设置则沿用实例级 enableTranslation

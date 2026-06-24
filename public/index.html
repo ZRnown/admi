@@ -688,6 +688,7 @@
 
     let openModalCount = 0;
     const manualRegionPreviewState = new Map();
+    const watermarkCoverPreviewState = new Map();
 
     function recoverTransientUiState() {
       if (!window.UiResilience || typeof window.UiResilience.resetTransientUiState !== 'function') {
@@ -6891,6 +6892,7 @@
       const scheduledBroadcast = ensureScheduledBroadcast(acc);
       const watermarkList = getWatermarkList(acc);
       const watermarkRemoval = ensureWatermarkRemovalConfig(acc);
+      const watermarkCover = ensureWatermarkCoverConfig(acc);
       const supportsWatermarkRemoval = ['discord-to-discord', 'discord-to-telegram', 'discord-to-feishu'].includes(forwardingType);
       const showScheduledLibrary = true;
 
@@ -7216,6 +7218,7 @@
               </div>
               <p class="text-xs text-slate-500 mt-2">在飞书开发者后台创建企业自建应用，开通 im:resource:upload 和 im:message:send_as_bot 权限</p>
               <p class="text-xs text-amber-600 mt-1">未填写 AppID/Secret 时只能走 Webhook 文本转发，图片/视频无法转发。</p>
+              ${renderFeishuMemberTool(acc)}
             </div>
             ` : ''}
 
@@ -7923,6 +7926,88 @@
               </div>
             </div>
             <p class="text-xs text-slate-500">如果这里填写了关键词，OCR 模式会优先按关键词命中来判断是否调用去水印；不填时才回退到边缘文字启发式。</p>
+          </div>
+        </div>
+        ` : ''}
+
+        ${supportsWatermarkRemoval ? `
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+          <div class="px-6 py-4 border-b border-slate-100 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 class="font-semibold text-slate-800">色块遮挡水印</h2>
+              <p class="text-xs text-slate-500 mt-1">适合固定位置的图片或视频水印；拖出区域后，转发时用色块盖住对应位置。</p>
+            </div>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" ${watermarkCover.enabled === true ? 'checked' : ''} onchange="updateWatermarkCoverField('enabled', this.checked)"
+                class="h-4 w-4 rounded border-slate-300">
+              启用遮挡
+            </label>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="grid gap-4 md:grid-cols-4">
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" ${watermarkCover.applyToImages !== false ? 'checked' : ''} onchange="updateWatermarkCoverField('applyToImages', this.checked)"
+                  class="h-4 w-4 rounded border-slate-300">
+                处理图片
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" ${watermarkCover.applyToVideos === true ? 'checked' : ''} onchange="updateWatermarkCoverField('applyToVideos', this.checked)"
+                  class="h-4 w-4 rounded border-slate-300">
+                处理视频
+              </label>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">默认颜色</label>
+                <input type="color" value="${escapeHtml(getWatermarkCoverDefault('color'))}" onchange="updateWatermarkCoverDefault('color', this.value)"
+                  class="h-10 w-full rounded border border-slate-200 px-2 py-1">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">默认透明度 %</label>
+                <input type="number" min="0" max="100" value="${escapeHtml(String(getWatermarkCoverDefault('opacity')))}" onchange="updateWatermarkCoverDefault('opacity', this.value)"
+                  class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+              </div>
+            </div>
+            <div class="grid gap-4 md:grid-cols-3">
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">默认填充方式</label>
+                <select onchange="updateWatermarkCoverDefault('fillMode', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="solid" ${getWatermarkCoverDefault('fillMode') === 'solid' ? 'selected' : ''}>固定颜色</option>
+                  <option value="auto" ${getWatermarkCoverDefault('fillMode') === 'auto' ? 'selected' : ''}>自动取周围颜色</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-600 mb-1">默认适用画面</label>
+                <select onchange="updateWatermarkCoverDefault('aspect', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
+                  <option value="all" ${getWatermarkCoverDefault('aspect') === 'all' ? 'selected' : ''}>全部</option>
+                  <option value="landscape" ${getWatermarkCoverDefault('aspect') === 'landscape' ? 'selected' : ''}>横图/横屏</option>
+                  <option value="portrait" ${getWatermarkCoverDefault('aspect') === 'portrait' ? 'selected' : ''}>竖图/竖屏</option>
+                  <option value="square" ${getWatermarkCoverDefault('aspect') === 'square' ? 'selected' : ''}>方图</option>
+                </select>
+              </div>
+              <div class="flex items-end">
+                <button onclick="clearWatermarkCoverRegions('${acc.id}')"
+                  class="w-full rounded border border-rose-100 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50">清空遮挡区域</button>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h3 class="text-sm font-semibold text-slate-800">遮挡区域</h3>
+                  <p class="mt-1 text-xs text-slate-500">上传参考图后拖拽框选；保存的是百分比位置，图片和视频会按实际尺寸自动换算。</p>
+                </div>
+                <label class="inline-flex cursor-pointer items-center rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">
+                  选择参考图
+                  <input type="file" accept="image/*" class="hidden" onchange="handleWatermarkCoverImage('${acc.id}', this)">
+                </label>
+              </div>
+              <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+                <div id="watermarkCoverPreview-${acc.id}"></div>
+                <div>
+                  <div class="mb-2 text-xs font-medium text-slate-600">已保存遮挡区域</div>
+                  <div id="watermarkCoverRows-${acc.id}" class="space-y-2">${renderWatermarkCoverRows(acc.id)}</div>
+                </div>
+              </div>
+            </div>
+            <p class="text-xs text-slate-500">视频遮挡需要服务器安装 ffmpeg；如果 ffmpeg 不可用，会保留原视频继续转发。</p>
           </div>
         </div>
         ` : ''}
@@ -8751,6 +8836,249 @@
       }
     }
 
+    function splitFeishuBatchInput(value) {
+      return String(value || '')
+        .split(/[\s,，;；]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    function getFeishuMemberToolElements(accountId) {
+      const domId = getFeishuMemberToolDomId(accountId);
+      return {
+        chatList: document.getElementById(`feishuMemberChatList-${domId}`),
+        memberList: document.getElementById(`feishuMemberUserList-${domId}`),
+        manualChats: document.getElementById(`feishuMemberManualChats-${domId}`),
+        users: document.getElementById(`feishuMemberUsers-${domId}`),
+        idType: document.getElementById(`feishuMemberIdType-${domId}`),
+        result: document.getElementById(`feishuMemberResult-${domId}`),
+      };
+    }
+
+    function getAccountById(accountId) {
+      return (state.accounts || []).find((item) => item.id === accountId) || null;
+    }
+
+    function collectFeishuRuleChatIds(acc) {
+      const entries = getFeishuMappings(acc);
+      const ids = [];
+      entries.forEach((entry) => {
+        const target = String(entry.webhookUrl || '').trim();
+        if (/^oc_[A-Za-z0-9_-]+$/.test(target)) {
+          ids.push(target);
+        }
+      });
+      return Array.from(new Set(ids));
+    }
+
+    function fillFeishuMemberChatsFromRules(accountId) {
+      const acc = getAccountById(accountId) || getActiveAccount();
+      const els = getFeishuMemberToolElements(accountId);
+      const chatIds = collectFeishuRuleChatIds(acc);
+      if (els.manualChats) {
+        els.manualChats.value = chatIds.join('\n');
+      }
+      if (els.result) {
+        els.result.className = chatIds.length ? 'text-xs text-emerald-600' : 'text-xs text-amber-600';
+        els.result.textContent = chatIds.length
+          ? `已填入 ${chatIds.length} 个当前规则群`
+          : '当前飞书规则里没有可直接管理的 Chat ID（oc_...）';
+      }
+    }
+
+    function getSelectedFeishuMemberChatIds(accountId) {
+      const els = getFeishuMemberToolElements(accountId);
+      const selected = els.chatList
+        ? Array.from(els.chatList.querySelectorAll('input[data-chat-id]:checked')).map((input) => input.dataset.chatId)
+        : [];
+      const manual = splitFeishuBatchInput(els.manualChats?.value || '');
+      return Array.from(new Set([...selected, ...manual].filter(Boolean)));
+    }
+
+    function selectAllFeishuMemberChats(accountId, checked) {
+      const els = getFeishuMemberToolElements(accountId);
+      if (!els.chatList) return;
+      els.chatList.querySelectorAll('input[data-chat-id]').forEach((input) => {
+        input.checked = checked;
+      });
+    }
+
+    function getSelectedFeishuMemberIds(accountId) {
+      const els = getFeishuMemberToolElements(accountId);
+      return els.memberList
+        ? Array.from(els.memberList.querySelectorAll('input[data-member-id]:checked'))
+            .map((input) => input.dataset.memberId)
+            .filter(Boolean)
+        : [];
+    }
+
+    async function fetchFeishuMemberChats(accountId) {
+      const els = getFeishuMemberToolElements(accountId);
+      if (els.chatList) {
+        els.chatList.innerHTML = '<div class="text-xs text-slate-500">正在获取飞书群列表...</div>';
+      }
+      try {
+        const res = await fetch('/api/feishu/chats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || `请求失败(${res.status})`);
+        }
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!els.chatList) return;
+        if (items.length === 0) {
+          els.chatList.innerHTML = '<div class="text-xs text-amber-600">没有获取到群，请确认机器人已经加入飞书群，并且应用有读取群列表权限。</div>';
+          return;
+        }
+        els.chatList.innerHTML = `
+          <div class="max-h-56 overflow-auto rounded-md border border-slate-200 bg-white divide-y divide-slate-100">
+            ${items.map((it) => {
+              const chatId = escapeHtml(String(it.chat_id || ''));
+              const name = escapeHtml(String(it.name || '未命名群'));
+              const rawChatId = String(it.chat_id || '');
+              const rawName = String(it.name || '未命名群');
+              return `
+                <div class="flex items-center gap-3 px-3 py-2 hover:bg-slate-50">
+                  <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                    <input type="checkbox" data-chat-id="${chatId}" class="h-4 w-4 rounded border-slate-300">
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-sm text-slate-700">${name}</span>
+                      <span class="block truncate font-mono text-[11px] text-slate-400">${chatId}</span>
+                    </span>
+                  </label>
+                  <button type="button" onclick="fetchFeishuChatMembers('${escapeJsString(accountId)}', '${escapeJsString(rawChatId)}', '${escapeJsString(rawName)}')"
+                    class="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100">
+                    查看成员
+                  </button>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      } catch (e) {
+        if (els.chatList) {
+          els.chatList.innerHTML = `<div class="text-xs text-red-500">获取群列表失败：${escapeHtml(e?.message || String(e))}</div>`;
+        }
+      }
+    }
+
+    async function fetchFeishuChatMembers(accountId, chatId, chatName) {
+      const els = getFeishuMemberToolElements(accountId);
+      if (els.chatList) {
+        els.chatList.querySelectorAll('input[data-chat-id]').forEach((input) => {
+          if (input.dataset.chatId === chatId) input.checked = true;
+        });
+      }
+      if (els.memberList) {
+        els.memberList.innerHTML = `<div class="text-xs text-slate-500">正在获取「${escapeHtml(chatName)}」成员...</div>`;
+      }
+      try {
+        const res = await fetch('/api/feishu/members/list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId, chatId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || `请求失败(${res.status})`);
+        }
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!els.memberList) return;
+        if (items.length === 0) {
+          els.memberList.innerHTML = `<div class="text-xs text-amber-600">「${escapeHtml(chatName)}」没有获取到成员，或应用没有读取成员权限。</div>`;
+          return;
+        }
+        els.memberList.innerHTML = `
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="text-xs font-medium text-slate-600">「${escapeHtml(chatName)}」成员，共 ${items.length} 人</div>
+            <button type="button" onclick="getFeishuMemberToolElements('${escapeJsString(accountId)}').memberList.querySelectorAll('input[data-member-id]').forEach((input) => input.checked = true)"
+              class="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100">全选成员</button>
+          </div>
+          <div class="mt-2 max-h-56 overflow-auto rounded-md border border-slate-200 bg-white divide-y divide-slate-100">
+            ${items.map((it) => {
+              const memberId = escapeHtml(String(it.member_id || it.user_id || it.open_id || ''));
+              const name = escapeHtml(String(it.name || it.member_name || it.nickname || it.email || it.mobile || '未命名成员'));
+              const subtitle = escapeHtml(String(it.email || it.mobile || it.member_id || it.user_id || it.open_id || ''));
+              return `
+                <label class="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-slate-50">
+                  <input type="checkbox" data-member-id="${memberId}" class="h-4 w-4 rounded border-slate-300">
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate text-sm text-slate-700">${name}</span>
+                    <span class="block truncate font-mono text-[11px] text-slate-400">${subtitle}</span>
+                  </span>
+                </label>
+              `;
+            }).join('')}
+          </div>
+        `;
+      } catch (e) {
+        if (els.memberList) {
+          els.memberList.innerHTML = `<div class="text-xs text-red-500">获取成员失败：${escapeHtml(e?.message || String(e))}</div>`;
+        }
+      }
+    }
+
+    async function submitFeishuMemberBatch(action, accountId) {
+      const els = getFeishuMemberToolElements(accountId);
+      const chatIds = getSelectedFeishuMemberChatIds(accountId);
+      const selectedMemberIds = action === 'remove' ? getSelectedFeishuMemberIds(accountId) : [];
+      const memberIds = Array.from(new Set([...selectedMemberIds, ...splitFeishuBatchInput(els.users?.value || '')]));
+      const memberIdType = selectedMemberIds.length ? 'contact' : (els.idType?.value || 'contact');
+      if (els.result) {
+        els.result.className = 'text-xs text-slate-500';
+        els.result.textContent = '正在提交...';
+      }
+      if (chatIds.length === 0) {
+        if (els.result) {
+          els.result.className = 'text-xs text-red-500';
+          els.result.textContent = '请先刷新群列表并勾选群，或在高级选项里填写 Chat ID。';
+        }
+        return;
+      }
+      if (memberIds.length === 0) {
+        if (els.result) {
+          els.result.className = 'text-xs text-red-500';
+          els.result.textContent = '请填写至少一个手机号、邮箱或成员 ID。';
+        }
+        return;
+      }
+      try {
+        const res = await fetch('/api/feishu/members', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accountId,
+            action,
+            memberIdType,
+            chatIds,
+            memberIds,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || `请求失败(${res.status})`);
+        }
+        const failures = (data.results || []).filter((item) => !item.ok);
+        if (els.result) {
+          els.result.className = failures.length ? 'text-xs text-amber-600' : 'text-xs text-emerald-600';
+          const unresolved = Array.isArray(data.unresolvedContacts) && data.unresolvedContacts.length
+            ? `；未找到：${data.unresolvedContacts.join('、')}`
+            : '';
+          els.result.textContent = failures.length
+            ? `完成 ${data.okCount || 0}/${data.total || 0} 个群，失败：${failures.map((item) => `${item.chatId}:${item.raw?.msg || item.raw?.code || '失败'}`).join('；')}${unresolved}`
+            : `${action === 'add' ? '拉人' : '踢人'}完成：${data.okCount || 0}/${data.total || 0} 个群，成员 ${data.resolvedMemberCount || memberIds.length} 个${unresolved}`;
+        }
+      } catch (e) {
+        if (els.result) {
+          els.result.className = 'text-xs text-red-500';
+          els.result.textContent = `操作失败：${e?.message || e}`;
+        }
+      }
+    }
+
     function renderReplacements(replacements) {
       return replacements.map((r, idx) => `
         <div class="flex gap-2 items-center">
@@ -8823,6 +9151,99 @@
           ${paginationHtml}
         </div>
 
+      `;
+    }
+
+    function getFeishuMemberToolDomId(accountId) {
+      return String(accountId || 'active').replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    function renderFeishuMemberTool(acc) {
+      const domId = getFeishuMemberToolDomId(acc?.id);
+      return `
+        <div class="mt-4 rounded-lg border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 class="text-sm font-medium text-slate-800">飞书群成员批量管理</h4>
+              <p class="text-xs text-slate-500 mt-1">先刷新群列表勾选群，再粘贴成员手机号或邮箱，一键拉人或踢人。</p>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <label class="block text-xs font-medium text-slate-600">1. 选择要操作的飞书群</label>
+              <div class="flex flex-wrap items-center gap-2">
+                <button type="button" onclick="fetchFeishuMemberChats('${escapeJsString(acc?.id || '')}')"
+                  class="rounded-md bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100">
+                  刷新群列表
+                </button>
+                <button type="button" onclick="selectAllFeishuMemberChats('${escapeJsString(acc?.id || '')}', true)"
+                  class="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-100">
+                  全选
+                </button>
+                <button type="button" onclick="selectAllFeishuMemberChats('${escapeJsString(acc?.id || '')}', false)"
+                  class="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-100">
+                  清空
+                </button>
+              </div>
+            </div>
+            <div id="feishuMemberChatList-${domId}" class="rounded-md border border-dashed border-slate-200 bg-white/70 p-3">
+              <div class="text-xs text-slate-500">点击“刷新群列表”后勾选要拉人或踢人的群。</div>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <label class="block text-xs font-medium text-slate-600">查看群成员并勾选要踢出的人</label>
+            <div id="feishuMemberUserList-${domId}" class="rounded-md border border-dashed border-slate-200 bg-white/70 p-3">
+              <div class="text-xs text-slate-500">在上方群列表点击“查看成员”后，这里会显示群成员。</div>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">2. 填写成员手机号或邮箱</label>
+            <textarea id="feishuMemberUsers-${domId}" rows="4"
+              placeholder="13800138000&#10;user@example.com"
+              class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"></textarea>
+          </div>
+          <details class="rounded-md border border-slate-200 bg-white px-3 py-2">
+            <summary class="cursor-pointer text-xs font-medium text-slate-600">高级：手动填写群 ID 或使用成员 ID</summary>
+            <div class="mt-3 grid gap-3 md:grid-cols-2">
+              <div>
+                <div class="mb-1 flex items-center justify-between gap-2">
+                  <label class="block text-xs font-medium text-slate-600">手动群 Chat ID</label>
+                  <button type="button" onclick="fillFeishuMemberChatsFromRules('${escapeJsString(acc?.id || '')}')"
+                    class="text-[11px] rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-600 hover:bg-slate-100">
+                    使用当前规则群
+                  </button>
+                </div>
+                <textarea id="feishuMemberManualChats-${domId}" rows="3"
+                  placeholder="oc_xxx&#10;oc_yyy"
+                  class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono focus:border-indigo-500 focus:outline-none"></textarea>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-600 mb-1">成员识别方式</label>
+                <select id="feishuMemberIdType-${domId}" class="w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-xs focus:border-indigo-500 focus:outline-none">
+                  <option value="contact">手机号/邮箱（推荐）</option>
+                  <option value="open_id">open_id</option>
+                  <option value="user_id">user_id</option>
+                  <option value="union_id">union_id</option>
+                </select>
+                <p class="mt-2 text-[11px] text-slate-500">默认会把手机号/邮箱自动换成飞书 open_id。只有你已经知道飞书 ID 时才需要改这里。</p>
+              </div>
+            </div>
+          </details>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="submitFeishuMemberBatch('add', '${escapeJsString(acc?.id || '')}')"
+              class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500">
+              批量拉人
+            </button>
+            <button type="button" onclick="submitFeishuMemberBatch('remove', '${escapeJsString(acc?.id || '')}')"
+              class="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
+              批量踢人
+            </button>
+            <span id="feishuMemberResult-${domId}" class="text-xs text-slate-500"></span>
+          </div>
+          <div class="text-[11px] text-slate-500">
+            需要飞书应用拥有通讯录用户 ID 查询权限和群成员管理权限，并且机器人已经在目标群里。
+          </div>
+        </div>
       `;
     }
 
@@ -9580,6 +10001,95 @@
       return acc.watermarkRemoval;
     }
 
+    function ensureWatermarkCoverConfig(acc) {
+      if (!acc) return { enabled: false, applyToImages: true, applyToVideos: false, regions: [] };
+      if (!acc.watermarkCover || typeof acc.watermarkCover !== 'object') {
+        acc.watermarkCover = {
+          enabled: false,
+          applyToImages: true,
+          applyToVideos: false,
+          regions: []
+        };
+      }
+      acc.watermarkCover.enabled = acc.watermarkCover.enabled === true;
+      acc.watermarkCover.applyToImages = acc.watermarkCover.applyToImages !== false;
+      acc.watermarkCover.applyToVideos = acc.watermarkCover.applyToVideos === true;
+      if (!Array.isArray(acc.watermarkCover.regions)) {
+        acc.watermarkCover.regions = [];
+      }
+      acc.watermarkCover.regions = acc.watermarkCover.regions.map(normalizeWatermarkCoverRegion).filter(Boolean);
+      return acc.watermarkCover;
+    }
+
+    function getWatermarkCoverDefault(field) {
+      const acc = getActiveAccount();
+      const config = ensureWatermarkCoverConfig(acc);
+      const first = Array.isArray(config.regions) && config.regions.length > 0 ? config.regions[config.regions.length - 1] : {};
+      if (field === 'color') return config.defaultColor || first.color || '#000000';
+      if (field === 'opacity') return Number.isFinite(Number(config.defaultOpacity)) ? Number(config.defaultOpacity) : Number.isFinite(Number(first.opacity)) ? Number(first.opacity) : 85;
+      if (field === 'fillMode') return config.defaultFillMode === 'auto' ? 'auto' : first.fillMode === 'auto' ? 'auto' : 'solid';
+      if (field === 'aspect') return ['landscape', 'portrait', 'square'].includes(config.defaultAspect) ? config.defaultAspect : ['landscape', 'portrait', 'square'].includes(first.aspect) ? first.aspect : 'all';
+      return '';
+    }
+
+    function normalizeWatermarkCoverRegion(region) {
+      if (!region || typeof region !== 'object') return null;
+      const base = normalizeManualRegion(region);
+      if (!base) return null;
+      const colorRaw = typeof region.color === 'string' ? region.color.trim() : '';
+      const color = /^#?[0-9a-fA-F]{6}$/.test(colorRaw)
+        ? (colorRaw.startsWith('#') ? colorRaw : `#${colorRaw}`)
+        : '#000000';
+      const opacityRaw = Number(region.opacity);
+      const fillMode = region.fillMode === 'auto' ? 'auto' : 'solid';
+      const aspect = ['landscape', 'portrait', 'square'].includes(region.aspect) ? region.aspect : 'all';
+      return {
+        ...base,
+        color,
+        opacity: Number.isFinite(opacityRaw) ? Math.max(0, Math.min(100, Math.round(opacityRaw))) : 85,
+        fillMode,
+        aspect
+      };
+    }
+
+    function updateWatermarkCoverField(field, value) {
+      const acc = getActiveAccount();
+      const config = ensureWatermarkCoverConfig(acc);
+      if (field === 'enabled') config.enabled = value === true;
+      if (field === 'applyToImages') config.applyToImages = value === true;
+      if (field === 'applyToVideos') config.applyToVideos = value === true;
+      saveConfig();
+      render();
+    }
+
+    function updateWatermarkCoverDefault(field, value) {
+      const acc = getActiveAccount();
+      const config = ensureWatermarkCoverConfig(acc);
+      const target = config.regions[config.regions.length - 1] || {};
+      if (field === 'color') {
+        target.color = /^#?[0-9a-fA-F]{6}$/.test(String(value || '').trim()) ? String(value).trim() : '#000000';
+        config.defaultColor = target.color;
+      }
+      if (field === 'opacity') {
+        const parsed = Number(value);
+        target.opacity = Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : 85;
+        config.defaultOpacity = target.opacity;
+      }
+      if (field === 'fillMode') {
+        target.fillMode = value === 'auto' ? 'auto' : 'solid';
+        config.defaultFillMode = target.fillMode;
+      }
+      if (field === 'aspect') {
+        target.aspect = ['landscape', 'portrait', 'square'].includes(value) ? value : 'all';
+        config.defaultAspect = target.aspect;
+      }
+      if (config.regions.length > 0) {
+        config.regions[config.regions.length - 1] = normalizeWatermarkCoverRegion(target);
+        saveConfig();
+        refreshWatermarkCoverPanel(acc.id);
+      }
+    }
+
     function clearWatermarkBalance(accountId) {
       if (!accountId) return;
       watermarkBalanceCache.delete(accountId);
@@ -9921,6 +10431,222 @@
           onpointerup="finishManualRegionDraw('${accountId}', event)"
           onpointercancel="finishManualRegionDraw('${accountId}', event)">
           <img id="manualRegionImage-${accountId}" src="${escapeHtml(preview.url)}" draggable="false" class="block max-h-[360px] max-w-full object-contain">
+          ${boxes}
+        </div>
+      `;
+    }
+
+    function renderWatermarkCoverRows(accountId) {
+      const acc = state.accounts.find((item) => item.id === accountId) || getActiveAccount();
+      const config = ensureWatermarkCoverConfig(acc);
+      const regions = Array.isArray(config.regions) ? config.regions : [];
+      if (regions.length === 0) {
+        return '<div class="text-xs text-slate-400 py-2">还没有遮挡区域。上传参考图后，在图上拖拽水印位置。</div>';
+      }
+      return regions.map((region, idx) => `
+        <div class="rounded border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+          <div class="mb-2 grid grid-cols-[1fr_auto] gap-2">
+            <input value="${escapeHtml(region.label || `遮挡 ${idx + 1}`)}"
+              onchange="updateWatermarkCoverRegion('${accountId}', ${idx}, 'label', this.value)"
+              class="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
+            <button onclick="removeWatermarkCoverRegion('${accountId}', ${idx})"
+              class="rounded border border-rose-100 px-2 py-1 text-rose-600 hover:bg-rose-50">删除</button>
+          </div>
+          <div class="mb-2 font-mono text-slate-500">
+            x ${formatPercentValue(region.x)}% · y ${formatPercentValue(region.y)}% · w ${formatPercentValue(region.width)}% · h ${formatPercentValue(region.height)}%
+          </div>
+          <div class="grid gap-2 sm:grid-cols-4">
+            <input type="color" value="${escapeHtml(region.color || '#000000')}" onchange="updateWatermarkCoverRegion('${accountId}', ${idx}, 'color', this.value)"
+              class="h-8 w-full rounded border border-slate-200 px-1 py-1">
+            <input type="number" min="0" max="100" value="${Number.isFinite(Number(region.opacity)) ? Number(region.opacity) : 85}" onchange="updateWatermarkCoverRegion('${accountId}', ${idx}, 'opacity', this.value)"
+              class="rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
+            <select onchange="updateWatermarkCoverRegion('${accountId}', ${idx}, 'fillMode', this.value)"
+              class="rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
+              <option value="solid" ${region.fillMode === 'auto' ? '' : 'selected'}>固定颜色</option>
+              <option value="auto" ${region.fillMode === 'auto' ? 'selected' : ''}>自动取色</option>
+            </select>
+            <select onchange="updateWatermarkCoverRegion('${accountId}', ${idx}, 'aspect', this.value)"
+              class="rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
+              <option value="all" ${region.aspect === 'all' || !region.aspect ? 'selected' : ''}>全部</option>
+              <option value="landscape" ${region.aspect === 'landscape' ? 'selected' : ''}>横图</option>
+              <option value="portrait" ${region.aspect === 'portrait' ? 'selected' : ''}>竖图</option>
+              <option value="square" ${region.aspect === 'square' ? 'selected' : ''}>方图</option>
+            </select>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function refreshWatermarkCoverPanel(accountId) {
+      const rows = document.getElementById(`watermarkCoverRows-${accountId}`);
+      if (rows) rows.innerHTML = renderWatermarkCoverRows(accountId);
+      renderWatermarkCoverPreview(accountId);
+    }
+
+    function updateWatermarkCoverRegion(accountId, idx, field, value) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkCoverConfig(acc);
+      if (!config.regions[idx]) return;
+      const next = { ...config.regions[idx] };
+      if (field === 'label') next.label = String(value || '').trim() || `遮挡 ${idx + 1}`;
+      if (field === 'color') next.color = /^#?[0-9a-fA-F]{6}$/.test(String(value || '').trim()) ? String(value).trim() : '#000000';
+      if (field === 'opacity') {
+        const parsed = Number(value);
+        next.opacity = Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : 85;
+      }
+      if (field === 'fillMode') next.fillMode = value === 'auto' ? 'auto' : 'solid';
+      if (field === 'aspect') next.aspect = ['landscape', 'portrait', 'square'].includes(value) ? value : 'all';
+      config.regions[idx] = normalizeWatermarkCoverRegion(next);
+      saveConfig();
+      refreshWatermarkCoverPanel(accountId);
+    }
+
+    function removeWatermarkCoverRegion(accountId, idx) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkCoverConfig(acc);
+      if (idx < 0 || idx >= config.regions.length) return;
+      config.regions.splice(idx, 1);
+      saveConfig();
+      refreshWatermarkCoverPanel(accountId);
+    }
+
+    function clearWatermarkCoverRegions(accountId) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkCoverConfig(acc);
+      config.regions = [];
+      saveConfig();
+      refreshWatermarkCoverPanel(accountId);
+    }
+
+    function addWatermarkCoverRegion(accountId, region) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkCoverConfig(acc);
+      const normalized = normalizeWatermarkCoverRegion({
+        ...region,
+        label: region.label || `遮挡 ${config.regions.length + 1}`,
+        color: getWatermarkCoverDefault('color'),
+        opacity: getWatermarkCoverDefault('opacity'),
+        fillMode: getWatermarkCoverDefault('fillMode'),
+        aspect: getWatermarkCoverDefault('aspect')
+      });
+      if (!normalized) return;
+      config.regions.push(normalized);
+      config.enabled = true;
+      saveConfig();
+      refreshWatermarkCoverPanel(accountId);
+    }
+
+    function handleWatermarkCoverImage(accountId, input) {
+      const file = input?.files?.[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      const previous = watermarkCoverPreviewState.get(accountId);
+      if (previous?.url) URL.revokeObjectURL(previous.url);
+      watermarkCoverPreviewState.set(accountId, { url, drawing: null });
+      renderWatermarkCoverPreview(accountId);
+    }
+
+    function getWatermarkCoverImagePoint(accountId, event) {
+      const img = document.getElementById(`watermarkCoverImage-${accountId}`);
+      if (!img) return null;
+      const rect = img.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      return {
+        x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+        y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
+      };
+    }
+
+    function beginWatermarkCoverDraw(accountId, event) {
+      const point = getWatermarkCoverImagePoint(accountId, event);
+      if (!point) return;
+      event.preventDefault();
+      if (typeof event.currentTarget?.setPointerCapture === 'function' && typeof event.pointerId === 'number') {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      const stateEntry = watermarkCoverPreviewState.get(accountId) || {};
+      stateEntry.drawing = { startX: point.x, startY: point.y, endX: point.x, endY: point.y };
+      watermarkCoverPreviewState.set(accountId, stateEntry);
+      renderWatermarkCoverPreview(accountId);
+    }
+
+    function moveWatermarkCoverDraw(accountId, event) {
+      const stateEntry = watermarkCoverPreviewState.get(accountId);
+      if (!stateEntry?.drawing) return;
+      const point = getWatermarkCoverImagePoint(accountId, event);
+      if (!point) return;
+      stateEntry.drawing.endX = point.x;
+      stateEntry.drawing.endY = point.y;
+      renderWatermarkCoverPreview(accountId);
+    }
+
+    function finishWatermarkCoverDraw(accountId, event) {
+      const stateEntry = watermarkCoverPreviewState.get(accountId);
+      if (!stateEntry?.drawing) return;
+      const point = getWatermarkCoverImagePoint(accountId, event);
+      if (point) {
+        stateEntry.drawing.endX = point.x;
+        stateEntry.drawing.endY = point.y;
+      }
+      const d = stateEntry.drawing;
+      stateEntry.drawing = null;
+      watermarkCoverPreviewState.set(accountId, stateEntry);
+      const x = Math.min(d.startX, d.endX);
+      const y = Math.min(d.startY, d.endY);
+      const width = Math.abs(d.endX - d.startX);
+      const height = Math.abs(d.endY - d.startY);
+      if (width >= 0.01 && height >= 0.01) {
+        addWatermarkCoverRegion(accountId, { x, y, width, height });
+      } else {
+        renderWatermarkCoverPreview(accountId);
+      }
+    }
+
+    function renderWatermarkCoverPreview(accountId) {
+      const wrap = document.getElementById(`watermarkCoverPreview-${accountId}`);
+      if (!wrap) return;
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkCoverConfig(acc);
+      const preview = watermarkCoverPreviewState.get(accountId);
+      const regions = Array.isArray(config.regions) ? config.regions : [];
+      const drawing = preview?.drawing;
+      const drawingBox = drawing
+        ? {
+            x: Math.min(drawing.startX, drawing.endX),
+            y: Math.min(drawing.startY, drawing.endY),
+            width: Math.abs(drawing.endX - drawing.startX),
+            height: Math.abs(drawing.endY - drawing.startY),
+            label: '新遮挡',
+            color: getWatermarkCoverDefault('color'),
+            opacity: getWatermarkCoverDefault('opacity')
+          }
+        : null;
+      if (!preview?.url) {
+        wrap.innerHTML = '<div class="flex min-h-[180px] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400">选择一张参考图后，在这里拖拽遮挡区域</div>';
+        return;
+      }
+      const boxes = [...regions, ...(drawingBox ? [drawingBox] : [])].map((region, idx) => {
+        const bg = region.color || '#000000';
+        const opacity = Math.max(0, Math.min(100, Number(region.opacity) || 85)) / 100;
+        return `
+          <div class="absolute border-2 ${idx >= regions.length ? 'border-amber-400' : 'border-cyan-400'}"
+            style="left:${region.x * 100}%;top:${region.y * 100}%;width:${region.width * 100}%;height:${region.height * 100}%;background:${escapeHtml(bg)};opacity:${opacity}">
+            <span class="absolute left-0 top-0 -translate-y-full rounded-t bg-slate-900 px-1.5 py-0.5 text-[10px] text-white opacity-100">${escapeHtml(region.label || `遮挡 ${idx + 1}`)}</span>
+          </div>
+        `;
+      }).join('');
+      wrap.innerHTML = `
+        <div class="relative inline-block max-w-full select-none overflow-hidden rounded-lg border border-slate-200 bg-slate-950"
+          onpointerdown="beginWatermarkCoverDraw('${accountId}', event)"
+          onpointermove="moveWatermarkCoverDraw('${accountId}', event)"
+          onpointerup="finishWatermarkCoverDraw('${accountId}', event)"
+          onpointercancel="finishWatermarkCoverDraw('${accountId}', event)">
+          <img id="watermarkCoverImage-${accountId}" src="${escapeHtml(preview.url)}" draggable="false" class="block max-h-[360px] max-w-full object-contain">
           ${boxes}
         </div>
       `;
@@ -12198,6 +12924,12 @@
           iopaintMaskMode: 'protect-text',
           iopaintMaskPadding: 8,
           manualRegions: []
+        },
+        watermarkCover: {
+          enabled: false,
+          applyToImages: true,
+          applyToVideos: false,
+          regions: []
         },
         scheduledContents: [],
         scheduledBroadcast: { enabled: false, intervalMinutes: 60, contentIds: [] },

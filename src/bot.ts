@@ -7,7 +7,7 @@ import {
   Channel as AnyChannel,
 } from "discord.js";
 
-import { Config, WatermarkConfig } from "./config.js";
+import { Config, WatermarkConfig, type WatermarkCoverConfig } from "./config.js";
 import { formatSize } from "./format.js";
 import { SenderBot } from "./senderBot.js";
 import { FeishuSender } from "./feishuSender.js";
@@ -36,6 +36,7 @@ import {
   type WatermarkRemovalConfig,
   type WatermarkRemovalRuntimeState,
 } from "./watermarkRemoval.js";
+import { resolveWatermarkCoverConfig } from "./watermarkCover.js";
 import { recordForwardStat } from "./forwardStats.js";
 import { applyReplacementDictionaryToEmbeds, stripEmbedText, stripEmbedTitles } from "./embedUtils.js";
 import { appendDiscordComponentLinks, extractDiscordComponentLinks } from "./discordComponentLinks.js";
@@ -1092,6 +1093,7 @@ export class Bot {
     watermarkSecondary?: WatermarkConfig;
     watermarks?: WatermarkConfig[];
     watermarkRemoval?: WatermarkRemovalConfig;
+    watermarkCover?: WatermarkCoverConfig;
     standbyMode?: {
       enabled: boolean;
       mainChannelId: string;
@@ -1154,6 +1156,7 @@ export class Bot {
         watermarkSecondary: undefined,
         watermarks: undefined,
         watermarkRemoval: undefined,
+        watermarkCover: undefined,
         standbyMode: undefined,
         mobileClientCategoryName: undefined,
         mobileClientChannelName: undefined,
@@ -1198,6 +1201,7 @@ export class Bot {
       watermarkSecondary: rule.watermarkSecondary,
       watermarks: rule.watermarks,
       watermarkRemoval: rule.watermarkRemoval,
+      watermarkCover: rule.watermarkCover,
       standbyMode: rule.standbyMode,
       mobileClientCategoryName:
         typeof rule.mobileClientCategoryName === "string" && rule.mobileClientCategoryName.trim()
@@ -1441,6 +1445,10 @@ export class Bot {
     const effectiveWatermarkRemoval = resolveWatermarkRemovalConfig(
       (this.config as any).watermarkRemoval,
       ruleConfig.watermarkRemoval,
+    );
+    const effectiveWatermarkCover = resolveWatermarkCoverConfig(
+      (this.config as any).watermarkCover,
+      ruleConfig.watermarkCover,
     );
     const shouldDetectWatermarkWithOcr = shouldUseOcrWatermarkDetection(effectiveWatermarkRemoval);
     const watermarkRemovalTriggerGroups = parseKeywordGroups(effectiveWatermarkRemoval?.triggerKeywords);
@@ -2269,6 +2277,7 @@ export class Bot {
       isVideo?: boolean;
       watermarkRemoval?: WatermarkRemovalConfig;
       watermarkRemovalState?: WatermarkRemovalRuntimeState;
+      watermarkCover?: WatermarkCoverConfig;
     }> = [];
     let hasCurrentImage = false;
     let imageIndex = 0;
@@ -2289,30 +2298,44 @@ export class Bot {
         isImage?: boolean;
         isVideo?: boolean;
       }) => {
+        let decorated: typeof item & {
+          sourceUrl?: string;
+          watermarkRemoval?: WatermarkRemovalConfig;
+          watermarkRemovalState?: WatermarkRemovalRuntimeState;
+          watermarkCover?: WatermarkCoverConfig;
+        } = item;
+        if (
+          effectiveWatermarkCover &&
+          ((item.isImage && effectiveWatermarkCover.applyToImages !== false) ||
+            (item.isVideo && effectiveWatermarkCover.applyToVideos === true))
+        ) {
+          decorated = { ...decorated, watermarkCover: effectiveWatermarkCover };
+        }
         if (!item.isImage || !effectiveWatermarkRemoval) {
-          return item;
+          return decorated;
         }
         const prepared = getPreparedImageAsset(item.url);
         if (prepared) {
           return {
-            ...item,
+            ...decorated,
             url: prepared.forwardUrl,
             sourceUrl: prepared.originalUrl,
             watermarkRemovalState: prepared.watermarkRemovalState,
           };
         }
         if (effectiveWatermarkRemoval.mode === "always") {
-          return { ...item, watermarkRemoval: effectiveWatermarkRemoval };
+          return { ...decorated, watermarkRemoval: effectiveWatermarkRemoval };
         }
         const normalized = normalizeImageUrl(item.url);
         if (watermarkRemovalTargets.has(item.url) || (normalized && watermarkRemovalTargets.has(normalized))) {
-          return { ...item, watermarkRemoval: effectiveWatermarkRemoval };
+          return { ...decorated, watermarkRemoval: effectiveWatermarkRemoval };
         }
-        return item;
+        return decorated;
       };
       const shouldUploadEmbedImagesForFeishu = feishuSendersForThis.length > 0 && !skipImages;
       const shouldRewriteEmbedImages =
-        ((effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval) || shouldUploadEmbedImagesForFeishu) && !skipImages;
+        ((effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval || !!effectiveWatermarkCover) ||
+          shouldUploadEmbedImagesForFeishu) && !skipImages;
 
       for (const att of message.attachments.values()) {
         const url = att.url;
@@ -2459,7 +2482,7 @@ export class Bot {
         }
       }
     }
-    if (effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval) {
+    if (effectiveWatermarks.length > 0 || !!effectiveWatermarkRemoval || !!effectiveWatermarkCover) {
       extraEmbeds = replaceEmbedImageUrls(extraEmbeds, finalImageUrlToFilename);
     }
     const toSend = [{
@@ -2641,6 +2664,7 @@ export class Bot {
               isImage: u.isImage,
               watermarkRemoval: u.watermarkRemoval,
               watermarkRemovalState: u.watermarkRemovalState,
+              watermarkCover: u.watermarkCover,
             })),
             embeds: embedsForFeishu && embedsForFeishu.length > 0 ? embedsForFeishu : undefined,
             watermark: effectiveWatermarks[0],
@@ -2832,6 +2856,7 @@ export class Bot {
                   contentType: u.isImage ? "image/jpeg" : u.isVideo ? "video/mp4" : "application/octet-stream",
                   watermarkRemoval: u.watermarkRemoval,
                   watermarkRemovalState: u.watermarkRemovalState,
+                  watermarkCover: u.watermarkCover,
                 })),
                 embeds: finalTelegramEmbeds && finalTelegramEmbeds.length > 0 ? finalTelegramEmbeds : undefined,
                 watermark: effectiveWatermarks[0],

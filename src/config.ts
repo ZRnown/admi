@@ -239,6 +239,28 @@ export interface WatermarkRemovalConfig {
   manualRegions?: WatermarkRemovalManualRegion[];
 }
 
+export type WatermarkCoverFillMode = "solid" | "auto";
+export type WatermarkCoverAspect = "all" | "landscape" | "portrait" | "square";
+
+export interface WatermarkCoverRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label?: string;
+  color?: string;
+  opacity?: number;
+  fillMode?: WatermarkCoverFillMode;
+  aspect?: WatermarkCoverAspect;
+}
+
+export interface WatermarkCoverConfig {
+  enabled?: boolean;
+  applyToImages?: boolean;
+  applyToVideos?: boolean;
+  regions?: WatermarkCoverRegion[];
+}
+
 export type ScheduledMediaType = "image" | "video";
 export type ScheduledMediaSource = "local" | "url";
 
@@ -311,6 +333,7 @@ export interface RuleLevelConfig {
   watermarkSecondary?: WatermarkConfig;
   watermarks?: WatermarkList;
   watermarkRemoval?: WatermarkRemovalConfig;
+  watermarkCover?: WatermarkCoverConfig;
   scheduledBroadcast?: ScheduledBroadcastConfig;
   standbyMode?: {
     enabled: boolean;
@@ -468,6 +491,7 @@ export interface LegacyConfig {
   watermarks?: WatermarkList;
   watermarkEnabled?: boolean;
   watermarkRemoval?: WatermarkRemovalConfig;
+  watermarkCover?: WatermarkCoverConfig;
   scheduledContents?: ScheduledContentItem[];
   scheduledBroadcast?: ScheduledBroadcastConfig;
   historyScan?: {
@@ -614,6 +638,7 @@ export interface AccountConfig extends LegacyConfig {
   watermarks?: WatermarkList;
   watermarkEnabled?: boolean;
   watermarkRemoval?: WatermarkRemovalConfig;
+  watermarkCover?: WatermarkCoverConfig;
   // Telegram认证配置（用于Discord→Telegram）
   telegramBotToken?: string;
   // Telegram Client配置（用于Telegram→Discord）
@@ -991,6 +1016,56 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
   };
 }
 
+function normalizeWatermarkCoverConfig(raw: any): WatermarkCoverConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const regions = Array.isArray(raw.regions)
+    ? raw.regions
+        .map((item: any) => {
+          if (!item || typeof item !== "object") return undefined;
+          const x = Number(item.x);
+          const y = Number(item.y);
+          const width = Number(item.width);
+          const height = Number(item.height);
+          if (![x, y, width, height].every(Number.isFinite)) return undefined;
+          const clampedX = Math.max(0, Math.min(1, x));
+          const clampedY = Math.max(0, Math.min(1, y));
+          const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
+          const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
+          if (clampedWidth <= 0 || clampedHeight <= 0) return undefined;
+          const label = typeof item.label === "string" && item.label.trim() ? item.label.trim() : undefined;
+          const color = typeof item.color === "string" && /^#?[0-9a-fA-F]{6}$/.test(item.color.trim())
+            ? (item.color.trim().startsWith("#") ? item.color.trim() : `#${item.color.trim()}`)
+            : undefined;
+          const opacity = Number(item.opacity);
+          const fillMode = item.fillMode === "auto" ? "auto" : "solid";
+          const aspect =
+            item.aspect === "landscape" || item.aspect === "portrait" || item.aspect === "square" ? item.aspect : "all";
+          return {
+            x: clampedX,
+            y: clampedY,
+            width: clampedWidth,
+            height: clampedHeight,
+            label,
+            color,
+            opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(100, Math.round(opacity))) : undefined,
+            fillMode,
+            aspect,
+          };
+        })
+        .filter((item: any): item is WatermarkCoverRegion => Boolean(item))
+    : undefined;
+  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(regions && regions.length > 0);
+  if (!enabled && raw.regions === undefined && raw.applyToImages === undefined && raw.applyToVideos === undefined) {
+    return undefined;
+  }
+  return {
+    enabled,
+    applyToImages: raw.applyToImages === false ? false : true,
+    applyToVideos: raw.applyToVideos === true,
+    regions: regions && regions.length > 0 ? regions : [],
+  };
+}
+
 function normalizeScheduledContentItem(raw: any): ScheduledContentItem | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const id =
@@ -1121,6 +1196,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermarkSecondary: undefined,
       watermarks: undefined,
       watermarkRemoval: undefined,
+      watermarkCover: undefined,
       scheduledBroadcast: undefined,
       standbyMode: undefined,
       inputMode: undefined,
@@ -1130,6 +1206,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
   const watermarkSecondary = normalizeWatermarkConfig(raw.watermarkSecondary);
   const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(raw.watermarks), watermark, watermarkSecondary);
   const watermarkRemoval = normalizeWatermarkRemovalConfig(raw.watermarkRemoval);
+  const watermarkCover = normalizeWatermarkCoverConfig(raw.watermarkCover);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(raw.scheduledBroadcast);
   const standbyMode = normalizeStandbyMode(raw.standbyMode);
   return {
@@ -1188,6 +1265,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermarkSecondary,
     watermarks,
     watermarkRemoval,
+    watermarkCover,
     scheduledBroadcast,
     standbyMode,
     inputMode:
@@ -1689,6 +1767,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
   );
   const watermarkEnabled = input?.watermarkEnabled === false ? false : true;
   const watermarkRemoval = normalizeWatermarkRemovalConfig(input?.watermarkRemoval);
+  const watermarkCover = normalizeWatermarkCoverConfig(input?.watermarkCover);
   const scheduledContents = normalizeScheduledContentList(input?.scheduledContents);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(input?.scheduledBroadcast);
   const mobileClientTarget = normalizeMobileClientTargetConfig(input?.mobileClientTarget);
@@ -1735,6 +1814,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
         const watermarkSecondary = normalizeWatermarkConfig(m.watermarkSecondary);
         const watermarks = mergeLegacyWatermarks(normalizeWatermarkList(m.watermarks), watermark, watermarkSecondary);
         const watermarkRemoval = normalizeWatermarkRemovalConfig(m.watermarkRemoval);
+        const watermarkCover = normalizeWatermarkCoverConfig(m.watermarkCover);
         return {
           ...normalizedRule,
           mobileClientCategoryName:
@@ -1801,6 +1881,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
           watermarkSecondary,
           watermarks,
           watermarkRemoval,
+          watermarkCover,
           scheduledBroadcast: normalizeScheduledBroadcastConfig(m.scheduledBroadcast),
           standbyMode: normalizeStandbyMode(m.standbyMode),
         };
@@ -1821,6 +1902,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             watermarkSecondary,
           );
           const watermarkRemoval = normalizeWatermarkRemovalConfig(mapping.watermarkRemoval);
+          const watermarkCover = normalizeWatermarkCoverConfig(mapping.watermarkCover);
           const scheduledBroadcast = normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast);
           return {
             ...normalizedMapping,
@@ -1884,6 +1966,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
             watermarkSecondary,
             watermarks,
             watermarkRemoval,
+            watermarkCover,
             scheduledBroadcast,
             standbyMode: normalizeStandbyMode(mapping.standbyMode),
           };
@@ -1951,6 +2034,7 @@ function normalizeAccount(input: any, fallbackName = "未命名账号"): Account
     watermarkSecondary: accountWatermarkSecondary,
     watermarks: accountWatermarks,
     watermarkEnabled,
+    watermarkCover,
     scheduledContents,
     scheduledBroadcast,
     historyScan: input?.historyScan,
@@ -2471,6 +2555,7 @@ export function accountToLegacyConfig(account?: AccountConfig): LegacyConfig {
     watermarkSecondary: account.watermarkSecondary,
     watermarks: account.watermarks,
     watermarkRemoval: account.watermarkRemoval,
+    watermarkCover: account.watermarkCover,
     scheduledContents: account.scheduledContents,
     scheduledBroadcast: account.scheduledBroadcast,
     historyScan: account.historyScan,

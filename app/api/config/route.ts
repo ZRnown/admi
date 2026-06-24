@@ -17,6 +17,7 @@ import {
   type RuleLevelConfig,
   type TruthSocialConfig,
   type WatermarkConfig,
+  type WatermarkCoverConfig,
   type WatermarkRemovalConfig,
   type XSourceConfig,
   type ScheduledBroadcastConfig,
@@ -343,6 +344,7 @@ interface FrontendMapping {
   watermarks?: WatermarkConfig[];
   watermarkEnabled?: boolean;
   watermarkRemoval?: WatermarkRemovalConfig;
+  watermarkCover?: WatermarkCoverConfig;
   targetWebhookName?: string;
   targetWebhookAvatarUrl?: string;
   scheduledBroadcast?: ScheduledBroadcastConfig;
@@ -437,6 +439,7 @@ interface FrontendAccount {
   watermarks?: WatermarkConfig[];
   watermarkEnabled?: boolean;
   watermarkRemoval?: WatermarkRemovalConfig;
+  watermarkCover?: WatermarkCoverConfig;
   scheduledContents?: ScheduledContentItem[];
   scheduledBroadcast?: ScheduledBroadcastConfig;
   // OCR 图片检测相关
@@ -641,6 +644,61 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
   };
 }
 
+function normalizeFrontendWatermarkCover(raw: any): WatermarkCoverConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const regions = Array.isArray(raw.regions)
+    ? raw.regions
+        .map((item: any) => {
+          if (!item || typeof item !== "object") return undefined;
+          const x = Number(item.x);
+          const y = Number(item.y);
+          const width = Number(item.width);
+          const height = Number(item.height);
+          if (![x, y, width, height].every(Number.isFinite)) return undefined;
+          const clampedX = Math.max(0, Math.min(1, x));
+          const clampedY = Math.max(0, Math.min(1, y));
+          const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
+          const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
+          if (clampedWidth <= 0 || clampedHeight <= 0) return undefined;
+          const label = typeof item.label === "string" && item.label.trim() ? item.label.trim() : undefined;
+          const color =
+            typeof item.color === "string" && /^#?[0-9a-fA-F]{6}$/.test(item.color.trim())
+              ? item.color.trim().startsWith("#")
+                ? item.color.trim()
+                : `#${item.color.trim()}`
+              : undefined;
+          const opacity = Number(item.opacity);
+          const fillMode = item.fillMode === "auto" ? "auto" : "solid";
+          const aspect =
+            item.aspect === "landscape" || item.aspect === "portrait" || item.aspect === "square"
+              ? item.aspect
+              : "all";
+          return {
+            x: clampedX,
+            y: clampedY,
+            width: clampedWidth,
+            height: clampedHeight,
+            label,
+            color,
+            opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(100, Math.round(opacity))) : undefined,
+            fillMode,
+            aspect,
+          };
+        })
+        .filter(Boolean)
+    : undefined;
+  const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(regions && regions.length > 0);
+  if (!enabled && raw.regions === undefined && raw.applyToImages === undefined && raw.applyToVideos === undefined) {
+    return undefined;
+  }
+  return {
+    enabled,
+    applyToImages: raw.applyToImages === false ? false : true,
+    applyToVideos: raw.applyToVideos === true,
+    regions: regions && regions.length > 0 ? (regions as any) : [],
+  };
+}
+
 function normalizeRuleConfig(raw: any): RuleLevelConfig {
   if (!raw || typeof raw !== "object") {
     return {
@@ -673,6 +731,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
       watermarkSecondary: undefined,
       watermarks: undefined,
       watermarkRemoval: undefined,
+      watermarkCover: undefined,
       targetWebhookName: undefined,
       targetWebhookAvatarUrl: undefined,
       scheduledBroadcast: undefined,
@@ -684,6 +743,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     raw.watermarkSecondary && typeof raw.watermarkSecondary === "object" ? raw.watermarkSecondary : undefined;
   const watermarks = resolveFrontendWatermarks(raw.watermarks, watermark, watermarkSecondary);
   const watermarkRemoval = normalizeFrontendWatermarkRemoval(raw.watermarkRemoval);
+  const watermarkCover = normalizeFrontendWatermarkCover(raw.watermarkCover);
   const scheduledBroadcast = normalizeScheduledBroadcastConfig(raw.scheduledBroadcast);
   return {
     allowedUsersIds: Array.isArray(raw.allowedUsersIds) ? raw.allowedUsersIds.map(String).filter(Boolean) : [],
@@ -741,6 +801,7 @@ function normalizeRuleConfig(raw: any): RuleLevelConfig {
     watermarkSecondary,
     watermarks,
     watermarkRemoval,
+    watermarkCover,
     targetWebhookName: typeof raw.targetWebhookName === "string" && raw.targetWebhookName.trim() ? raw.targetWebhookName.trim() : undefined,
     targetWebhookAvatarUrl: typeof raw.targetWebhookAvatarUrl === "string" && raw.targetWebhookAvatarUrl.trim() ? raw.targetWebhookAvatarUrl.trim() : undefined,
     scheduledBroadcast,
@@ -1249,6 +1310,7 @@ function accountToFrontend(
         watermarkSecondary: savedRule.watermarkSecondary,
         watermarks: resolvedWatermarks,
         watermarkRemoval: normalizeFrontendWatermarkRemoval((savedRule as any).watermarkRemoval),
+        watermarkCover: normalizeFrontendWatermarkCover((savedRule as any).watermarkCover),
         scheduledBroadcast: normalizeScheduledBroadcastConfig(savedRule.scheduledBroadcast),
       });
     }
@@ -1279,6 +1341,7 @@ function accountToFrontend(
         watermarkSecondary: undefined,
         watermarks: undefined,
         watermarkRemoval: undefined,
+        watermarkCover: undefined,
         scheduledBroadcast: undefined,
       });
     }
@@ -1370,6 +1433,13 @@ function accountToFrontend(
         iopaintModel: "lama",
         iopaintStrategy: "crop",
         iopaintMaskMode: "protect-text",
+      },
+    watermarkCover:
+      normalizeFrontendWatermarkCover((account as any).watermarkCover) || {
+        enabled: false,
+        applyToImages: true,
+        applyToVideos: false,
+        regions: [],
       },
     scheduledContents: normalizeScheduledContentList(account.scheduledContents),
     scheduledBroadcast: normalizeScheduledBroadcastConfig(account.scheduledBroadcast),
@@ -1703,6 +1773,12 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
         iopaintStrategy: "crop",
         iopaintMaskMode: "protect-text",
       },
+      watermarkCover: {
+        enabled: false,
+        applyToImages: true,
+        applyToVideos: false,
+        regions: [],
+      },
       feishuStyle: "style1",
     } as AccountConfig);
 
@@ -1908,6 +1984,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           watermarkSecondary: mapping.watermarkSecondary,
           watermarks: mappingWatermarks,
           watermarkRemoval: normalizeFrontendWatermarkRemoval(mapping.watermarkRemoval),
+          watermarkCover: normalizeFrontendWatermarkCover(mapping.watermarkCover),
           scheduledBroadcast: normalizeScheduledBroadcastConfig(mapping.scheduledBroadcast),
         });
       }
@@ -2009,6 +2086,8 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
   if (dto.watermarkRemoval?.enabled === false) {
     resolvedAccountWatermarkRemoval.enabled = false;
   }
+  const resolvedAccountWatermarkCover =
+    normalizeFrontendWatermarkCover(dto.watermarkCover) ?? normalizeFrontendWatermarkCover((base as any).watermarkCover);
   const resolvedScheduledContents = normalizeScheduledContentList(dto.scheduledContents);
   const resolvedScheduledBroadcast = normalizeScheduledBroadcastConfig(dto.scheduledBroadcast);
   const mergedDiscordLogin = mergeDiscordLogin(dto.discordLogin, base.discordLogin);
@@ -2196,6 +2275,7 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
               : undefined,
         }
       : undefined,
+    watermarkCover: resolvedAccountWatermarkCover,
     scheduledContents: resolvedScheduledContents ?? base.scheduledContents,
     scheduledBroadcast: resolvedScheduledBroadcast ?? base.scheduledBroadcast,
     ocrServerUrl: typeof dto.ocrServerUrl === "string" && dto.ocrServerUrl.trim() ? dto.ocrServerUrl.trim() : "http://localhost:9003",
