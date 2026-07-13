@@ -357,7 +357,7 @@ test("resolveWatermarkRemovalConfig enables IOPaint without Wavespeed key", () =
     iopaintModel: "migan",
     iopaintStrategy: "crop",
     iopaintMaskMode: "protect-text",
-    manualRegions: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4, label: "center" }],
+    manualRegions: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4, angle: 0, label: "center" }],
     apiKey: undefined,
     triggerKeywords: undefined,
   });
@@ -396,6 +396,40 @@ test("resolveIOPaintManualMaskBlocks converts percent regions to watermark boxes
       },
     ],
   );
+});
+
+test("resolveIOPaintManualMaskBlocks rotates fixed regions around their center", () => {
+  assert.deepEqual(
+    resolveIOPaintManualMaskBlocks(
+      [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4, angle: 90, label: "diagonal" }],
+      1000,
+      500,
+    ),
+    [
+      {
+        text: "diagonal",
+        maskRole: "watermark",
+        box: [
+          [350, 50],
+          [350, 350],
+          [150, 350],
+          [150, 50],
+        ],
+      },
+    ],
+  );
+});
+
+test("resolveWatermarkRemovalConfig preserves fixed-region mode", () => {
+  const resolved = resolveWatermarkRemovalConfig({
+    enabled: true,
+    mode: "fixed",
+    provider: "iopaint",
+    manualRegions: [{ x: 0.2, y: 0.3, width: 0.2, height: 0.1, angle: -25 }],
+  });
+
+  assert.equal(resolved?.mode, "fixed");
+  assert.equal(resolved?.manualRegions?.[0]?.angle, -25);
 });
 
 test("resolveWatermarkRemovalConfig keeps Wavespeed compatible when api key exists", () => {

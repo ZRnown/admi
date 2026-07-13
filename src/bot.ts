@@ -1499,6 +1499,8 @@ export class Bot {
                   effectiveWatermarkRemoval &&
                     (
                       effectiveWatermarkRemoval.mode === "always" ||
+                      (effectiveWatermarkRemoval.mode === "fixed" &&
+                        (effectiveWatermarkRemoval.manualRegions?.length || 0) > 0) ||
                       watermarkRemovalTargets.has(attachment.url) ||
                       (normalizedUrl && watermarkRemovalTargets.has(normalizedUrl))
                     ),
@@ -2051,7 +2053,11 @@ export class Bot {
             watermarkRemovalState: prepared.watermarkRemovalState,
           };
         }
-        if (effectiveWatermarkRemoval.mode === "always") {
+        if (
+          effectiveWatermarkRemoval.mode === "always" ||
+          (effectiveWatermarkRemoval.mode === "fixed" &&
+            (effectiveWatermarkRemoval.manualRegions?.length || 0) > 0)
+        ) {
           return { ...item, watermarkRemoval: effectiveWatermarkRemoval };
         }
         const normalized = normalizeImageUrl(item.url);

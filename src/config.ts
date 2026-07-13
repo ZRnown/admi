@@ -207,7 +207,7 @@ export interface WatermarkConfig {
 
 export type WatermarkList = WatermarkConfig[];
 
-export type WatermarkRemovalMode = "ocr" | "always";
+export type WatermarkRemovalMode = "ocr" | "always" | "fixed";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
@@ -218,6 +218,7 @@ export interface WatermarkRemovalManualRegion {
   y: number;
   width: number;
   height: number;
+  angle?: number;
   label?: string;
 }
 
@@ -806,7 +807,7 @@ function mergeLegacyWatermarks(
 function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
-  const mode: WatermarkRemovalMode = raw.mode === "ocr" ? "ocr" : "always";
+  const mode: WatermarkRemovalMode = raw.mode === "ocr" || raw.mode === "fixed" ? raw.mode : "always";
   const provider: WatermarkRemovalProvider = raw.provider === "iopaint" ? "iopaint" : apiKey ? "wavespeed" : "iopaint";
   const triggerKeywords = Array.isArray(raw.triggerKeywords)
     ? raw.triggerKeywords.map((item: any) => String(item || "").trim()).filter(Boolean)
@@ -833,8 +834,10 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
           const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
           const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
           if (clampedWidth <= 0 || clampedHeight <= 0) return undefined;
+          const rawAngle = Number(item.angle);
+          const angle = Number.isFinite(rawAngle) ? ((rawAngle % 360) + 540) % 360 - 180 : 0;
           const label = typeof item.label === "string" && item.label.trim() ? item.label.trim() : undefined;
-          return { x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight, label };
+          return { x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight, angle, label };
         })
         .filter((item: any): item is WatermarkRemovalManualRegion => Boolean(item))
     : undefined;

@@ -334,6 +334,7 @@
                 <option value="inherit">继承全局</option>
                 <option value="ocr">OCR 检测后去除</option>
                 <option value="always">直接去除</option>
+                <option value="fixed">固定区域去除</option>
                 <option value="disable">强制关闭</option>
               </select>
             </div>
@@ -7724,6 +7725,7 @@
                 <select onchange="updateWatermarkRemovalField('mode', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   <option value="ocr" ${watermarkRemoval.mode === 'ocr' ? 'selected' : ''}>OCR 检测后去除</option>
                   <option value="always" ${watermarkRemoval.mode === 'always' ? 'selected' : ''}>直接去除</option>
+                  <option value="fixed" ${watermarkRemoval.mode === 'fixed' ? 'selected' : ''}>固定区域去除</option>
                 </select>
               </div>
               <div>
@@ -9387,7 +9389,7 @@
           manualRegions: []
         };
       }
-      if (acc.watermarkRemoval.mode !== 'always' && acc.watermarkRemoval.mode !== 'ocr') {
+      if (!['always', 'ocr', 'fixed'].includes(acc.watermarkRemoval.mode)) {
         acc.watermarkRemoval.mode = 'ocr';
       }
       if (acc.watermarkRemoval.provider !== 'iopaint' && acc.watermarkRemoval.provider !== 'wavespeed') {
@@ -9578,8 +9580,10 @@
       const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
       const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
       if (clampedWidth <= 0 || clampedHeight <= 0) return null;
+      const rawAngle = Number(region.angle);
+      const angle = Number.isFinite(rawAngle) ? ((rawAngle % 360) + 540) % 360 - 180 : 0;
       const label = typeof region.label === 'string' && region.label.trim() ? region.label.trim() : undefined;
-      return { x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight, label };
+      return { x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight, angle, label };
     }
 
     function renderManualRegionRows(accountId) {
@@ -9597,6 +9601,15 @@
               class="mb-1 w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none">
             <div class="font-mono text-slate-500">
               x ${formatPercentValue(region.x)}% · y ${formatPercentValue(region.y)}% · w ${formatPercentValue(region.width)}% · h ${formatPercentValue(region.height)}%
+            </div>
+            <div class="mt-2 grid grid-cols-[auto_1fr_64px] items-center gap-2">
+              <span class="text-slate-500">角度</span>
+              <input type="range" min="-180" max="180" step="1" value="${Number(region.angle) || 0}"
+                aria-label="区域旋转角度" oninput="updateManualRegionAngle('${accountId}', ${idx}, this.value, false)"
+                onchange="updateManualRegionAngle('${accountId}', ${idx}, this.value, true)" class="w-full">
+              <input type="number" min="-180" max="180" step="1" value="${Number(region.angle) || 0}"
+                aria-label="区域旋转角度数值" onchange="updateManualRegionAngle('${accountId}', ${idx}, this.value, true)"
+                class="w-full rounded border border-slate-200 bg-white px-2 py-1 text-right text-xs focus:border-indigo-500 focus:outline-none">
             </div>
           </div>
           <button onclick="removeManualRegion('${accountId}', ${idx})"
@@ -9619,6 +9632,21 @@
       config.manualRegions[idx].label = String(value || '').trim() || `区域 ${idx + 1}`;
       saveConfig();
       refreshManualRegionPanel(accountId);
+    }
+
+    function updateManualRegionAngle(accountId, idx, value, persist) {
+      const acc = state.accounts.find((item) => item.id === accountId);
+      if (!acc) return;
+      const config = ensureWatermarkRemovalConfig(acc);
+      if (!Array.isArray(config.manualRegions) || !config.manualRegions[idx]) return;
+      const parsed = Number(value);
+      config.manualRegions[idx].angle = Number.isFinite(parsed) ? Math.max(-180, Math.min(180, parsed)) : 0;
+      if (persist) {
+        saveConfig();
+        refreshManualRegionPanel(accountId);
+      } else {
+        renderManualRegionPreview(accountId);
+      }
     }
 
     function removeManualRegion(accountId, idx) {
@@ -9649,6 +9677,7 @@
       if (!Array.isArray(config.manualRegions)) config.manualRegions = [];
       config.manualRegions.push({
         ...normalized,
+        angle: normalized.angle || 0,
         label: normalized.label || `区域 ${config.manualRegions.length + 1}`
       });
       saveConfig();
@@ -9735,6 +9764,7 @@
             y: Math.min(drawing.startY, drawing.endY),
             width: Math.abs(drawing.endX - drawing.startX),
             height: Math.abs(drawing.endY - drawing.startY),
+            angle: 0,
             label: '新区域'
           }
         : null;
@@ -9744,7 +9774,7 @@
       }
       const boxes = [...regions, ...(drawingBox ? [drawingBox] : [])].map((region, idx) => `
         <div class="absolute border-2 ${idx >= regions.length ? 'border-amber-400 bg-amber-300/20' : 'border-indigo-500 bg-indigo-500/15'}"
-          style="left:${region.x * 100}%;top:${region.y * 100}%;width:${region.width * 100}%;height:${region.height * 100}%">
+          style="left:${region.x * 100}%;top:${region.y * 100}%;width:${region.width * 100}%;height:${region.height * 100}%;transform:rotate(${Number(region.angle) || 0}deg);transform-origin:center">
           <span class="absolute left-0 top-0 -translate-y-full rounded-t bg-slate-900 px-1.5 py-0.5 text-[10px] text-white">${escapeHtml(region.label || `区域 ${idx + 1}`)}</span>
         </div>
       `).join('');
@@ -9766,9 +9796,10 @@
       if (field === 'enabled') {
         config.enabled = value === true;
       } else if (field === 'mode') {
-        config.mode = value === 'always' ? 'always' : 'ocr';
+        config.mode = ['always', 'fixed'].includes(value) ? value : 'ocr';
+        if (config.mode === 'fixed') config.provider = 'iopaint';
       } else if (field === 'provider') {
-        config.provider = value === 'iopaint' ? 'iopaint' : 'wavespeed';
+        config.provider = config.mode === 'fixed' || value === 'iopaint' ? 'iopaint' : 'wavespeed';
         clearWatermarkBalance(acc.id);
       } else if (field === 'apiKey') {
         config.apiKey = value || '';
@@ -11335,7 +11366,9 @@
       if (mapping.watermarkRemoval && mapping.watermarkRemoval.enabled === false) {
         watermarkRemovalMode = 'disable';
       } else if (mapping.watermarkRemoval && mapping.watermarkRemoval.enabled === true) {
-        watermarkRemovalMode = mapping.watermarkRemoval.mode === 'ocr' ? 'ocr' : 'always';
+        watermarkRemovalMode = ['ocr', 'fixed'].includes(mapping.watermarkRemoval.mode)
+          ? mapping.watermarkRemoval.mode
+          : 'always';
       }
       const globalSchedule = acc.scheduledBroadcast || {};
       const ruleSchedule = mapping.scheduledBroadcast || {};
@@ -11645,7 +11678,7 @@
       } else {
         mapping.watermarkRemoval = {
           enabled: true,
-          mode: watermarkRemovalMode === 'ocr' ? 'ocr' : 'always',
+          mode: ['ocr', 'fixed'].includes(watermarkRemovalMode) ? watermarkRemovalMode : 'always',
           triggerKeywords: [...(ruleConfigData.watermarkRemovalKeywords || [])]
         };
       }

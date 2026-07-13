@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Jimp from "jimp";
 
-export type WatermarkRemovalMode = "ocr" | "always";
+export type WatermarkRemovalMode = "ocr" | "always" | "fixed";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
@@ -16,6 +16,7 @@ export interface WatermarkRemovalManualRegion {
   y: number;
   width: number;
   height: number;
+  angle?: number;
   label?: string;
 }
 
@@ -177,7 +178,7 @@ function normalizeOptionalNonNegativeInt(input: unknown): number | undefined {
 function normalizeManualRegions(input: unknown): WatermarkRemovalManualRegion[] | undefined {
   if (!Array.isArray(input)) return undefined;
   const regions = input
-    .map((item) => {
+    .map((item): WatermarkRemovalManualRegion | undefined => {
       if (!item || typeof item !== "object") return undefined;
       const source = item as Record<string, unknown>;
       const x = Number(source.x);
@@ -190,12 +191,15 @@ function normalizeManualRegions(input: unknown): WatermarkRemovalManualRegion[] 
       const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
       const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
       if (clampedWidth <= 0 || clampedHeight <= 0) return undefined;
+      const rawAngle = Number(source.angle);
+      const angle = Number.isFinite(rawAngle) ? ((rawAngle % 360) + 540) % 360 - 180 : 0;
       const label = typeof source.label === "string" && source.label.trim() ? source.label.trim() : undefined;
       return {
         x: clampedX,
         y: clampedY,
         width: clampedWidth,
         height: clampedHeight,
+        angle,
         ...(label ? { label } : {}),
       };
     })
@@ -260,7 +264,7 @@ export function resolveWatermarkRemovalConfig(
 
   const resolved: WatermarkRemovalConfig = {
     enabled: true,
-    mode: merged.mode === "ocr" ? "ocr" : "always",
+    mode: merged.mode === "ocr" || merged.mode === "fixed" ? merged.mode : "always",
     provider,
     apiKey,
     triggerKeywords: normalizeTriggerKeywords(merged.triggerKeywords),
@@ -286,7 +290,7 @@ export function shouldUseOcrWatermarkDetection(config?: WatermarkRemovalConfig):
 export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalConfig): boolean {
   if (!config || typeof config !== "object") return false;
   if (config.enabled === true || config.enabled === false) return true;
-  if (config.mode === "ocr" || config.mode === "always") return true;
+  if (config.mode === "ocr" || config.mode === "always" || config.mode === "fixed") return true;
   if (config.provider === "wavespeed" || config.provider === "iopaint") return true;
   if (typeof config.apiKey === "string" && config.apiKey.trim().length > 0) return true;
   if (Array.isArray(config.triggerKeywords) && config.triggerKeywords.length > 0) return true;
@@ -589,25 +593,52 @@ export function resolveIOPaintManualMaskBlocks(
   regions: WatermarkRemovalManualRegion[] | undefined,
   imageWidth: number,
   imageHeight: number,
+  padding = 0,
 ): OcrTextBlock[] {
   const normalized = normalizeManualRegions(regions);
   if (!normalized || imageWidth <= 0 || imageHeight <= 0) return [];
   return normalized.map((region) => {
-    const minX = Math.max(0, Math.min(imageWidth, Math.round(region.x * imageWidth)));
-    const minY = Math.max(0, Math.min(imageHeight, Math.round(region.y * imageHeight)));
-    const maxX = Math.max(minX, Math.min(imageWidth, Math.round((region.x + region.width) * imageWidth)));
-    const maxY = Math.max(minY, Math.min(imageHeight, Math.round((region.y + region.height) * imageHeight)));
+    const minX = Math.max(0, Math.min(imageWidth, Math.round(region.x * imageWidth) - padding));
+    const minY = Math.max(0, Math.min(imageHeight, Math.round(region.y * imageHeight) - padding));
+    const maxX = Math.max(minX, Math.min(imageWidth, Math.round((region.x + region.width) * imageWidth) + padding));
+    const maxY = Math.max(minY, Math.min(imageHeight, Math.round((region.y + region.height) * imageHeight) + padding));
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const radians = ((region.angle || 0) * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const rotatePoint = (x: number, y: number) => {
+      const dx = x - centerX;
+      const dy = y - centerY;
+      return [
+        Math.max(0, Math.min(imageWidth, Math.round(centerX + dx * cos - dy * sin))),
+        Math.max(0, Math.min(imageHeight, Math.round(centerY + dx * sin + dy * cos))),
+      ];
+    };
     return {
       text: region.label || "manual-region",
       maskRole: "watermark",
       box: [
-        [minX, minY],
-        [maxX, minY],
-        [maxX, maxY],
-        [minX, maxY],
+        rotatePoint(minX, minY),
+        rotatePoint(maxX, minY),
+        rotatePoint(maxX, maxY),
+        rotatePoint(minX, maxY),
       ],
     };
   });
+}
+
+function isPointInPolygon(x: number, y: number, polygon: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i]?.[0] ?? 0;
+    const yi = polygon[i]?.[1] ?? 0;
+    const xj = polygon[j]?.[0] ?? 0;
+    const yj = polygon[j]?.[1] ?? 0;
+    const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi || Number.EPSILON) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
 }
 
 function expandMaskBox(box: IOPaintMaskBox, padding: number, imageWidth: number, imageHeight: number): IOPaintMaskBox {
@@ -821,12 +852,11 @@ async function createMaskForImage(
 ): Promise<void> {
   const image = await Jimp.read(imagePath);
   const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
-  const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, image.bitmap.width, image.bitmap.height);
-  const mergedBlocks = [...manualBlocks, ...(Array.isArray(blocks) ? blocks : [])];
-  const regions = resolveIOPaintMaskRegions(mergedBlocks, padding, image.bitmap.width, image.bitmap.height);
+  const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, image.bitmap.width, image.bitmap.height, padding);
+  const regions = resolveIOPaintMaskRegions(blocks, padding, image.bitmap.width, image.bitmap.height);
   const boxes = regions.watermarkBoxes;
 
-  if (boxes.length === 0) {
+  if (boxes.length === 0 && manualBlocks.length === 0) {
     const width = Math.max(1, Math.round(image.bitmap.width * 0.46));
     const height = Math.max(1, Math.round(image.bitmap.height * 0.22));
     const x = Math.max(0, image.bitmap.width - width);
@@ -857,6 +887,29 @@ async function createMaskForImage(
       mask.bitmap.data[idx + 2] = 255;
       mask.bitmap.data[idx + 3] = 255;
     });
+  }
+
+  for (const block of manualBlocks) {
+    const polygon = block.box || [];
+    const metrics = extractBoxMetrics(block);
+    if (!metrics || polygon.length < 3) continue;
+    const left = Math.max(0, Math.floor(metrics.minX));
+    const top = Math.max(0, Math.floor(metrics.minY));
+    const right = Math.min(image.bitmap.width, Math.ceil(metrics.maxX));
+    const bottom = Math.min(image.bitmap.height, Math.ceil(metrics.maxY));
+    mask.scan(
+      left,
+      top,
+      Math.max(1, right - left),
+      Math.max(1, bottom - top),
+      (x: number, y: number, idx: number) => {
+        if (!isPointInPolygon(x, y, polygon)) return;
+        mask.bitmap.data[idx] = 255;
+        mask.bitmap.data[idx + 1] = 255;
+        mask.bitmap.data[idx + 2] = 255;
+        mask.bitmap.data[idx + 3] = 255;
+      },
+    );
   }
 
   await mask.writeAsync(maskPath);

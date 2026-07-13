@@ -520,7 +520,7 @@ function normalizeFeishuTargets(raw: any): Record<string, FeishuTargetConfig> {
 function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
-  const mode = raw.mode === "ocr" ? "ocr" : "always";
+  const mode = raw.mode === "ocr" || raw.mode === "fixed" ? raw.mode : "always";
   const provider = raw.provider === "iopaint" ? "iopaint" : apiKey ? "wavespeed" : "iopaint";
   const triggerKeywords = Array.isArray(raw.triggerKeywords)
     ? raw.triggerKeywords.map((item: any) => String(item || "").trim()).filter(Boolean)
@@ -546,8 +546,10 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
           const clampedWidth = Math.max(0, Math.min(1 - clampedX, width));
           const clampedHeight = Math.max(0, Math.min(1 - clampedY, height));
           if (clampedWidth <= 0 || clampedHeight <= 0) return undefined;
+          const rawAngle = Number(item.angle);
+          const angle = Number.isFinite(rawAngle) ? ((rawAngle % 360) + 540) % 360 - 180 : 0;
           const label = typeof item.label === "string" && item.label.trim() ? item.label.trim() : undefined;
-          return { x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight, label };
+          return { x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight, angle, label };
         })
         .filter(Boolean)
     : undefined;
@@ -1830,9 +1832,11 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           mode:
             resolvedAccountWatermarkRemoval.mode === "ocr"
               ? "ocr"
-              : resolvedAccountWatermarkRemoval.mode === "always"
-                ? "always"
-                : undefined,
+              : resolvedAccountWatermarkRemoval.mode === "fixed"
+                ? "fixed"
+                : resolvedAccountWatermarkRemoval.mode === "always"
+                  ? "always"
+                  : undefined,
           apiKey: resolvedAccountWatermarkRemoval.apiKey,
           triggerKeywords: Array.isArray(resolvedAccountWatermarkRemoval.triggerKeywords)
             ? resolvedAccountWatermarkRemoval.triggerKeywords
@@ -1858,6 +1862,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           iopaintMaskPadding:
             resolvedAccountWatermarkRemoval.provider === "iopaint"
               ? resolvedAccountWatermarkRemoval.iopaintMaskPadding
+              : undefined,
+          manualRegions:
+            resolvedAccountWatermarkRemoval.provider === "iopaint"
+              ? resolvedAccountWatermarkRemoval.manualRegions
               : undefined,
         }
       : undefined,
