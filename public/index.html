@@ -7755,6 +7755,7 @@
                 <select onchange="updateWatermarkRemovalField('iopaintMaskMode', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   <option value="protect-text" ${watermarkRemoval.iopaintMaskMode === 'protect-text' ? 'selected' : ''}>保护 OCR 文字</option>
                   <option value="smart-color" ${watermarkRemoval.iopaintMaskMode === 'smart-color' ? 'selected' : ''}>智能颜色保护（白底黑字）</option>
+                  <option value="warm-color" ${watermarkRemoval.iopaintMaskMode === 'warm-color' ? 'selected' : ''}>暖色水印保护（变色背景）</option>
                   <option value="box" ${watermarkRemoval.iopaintMaskMode === 'box' ? 'selected' : ''}>OCR 框整块</option>
                 </select>
               </div>
@@ -9418,7 +9419,7 @@
       if (!['crop', 'resize', 'original'].includes(acc.watermarkRemoval.iopaintStrategy)) {
         acc.watermarkRemoval.iopaintStrategy = 'crop';
       }
-      if (!['protect-text', 'smart-color', 'box'].includes(acc.watermarkRemoval.iopaintMaskMode)) {
+      if (!['protect-text', 'smart-color', 'warm-color', 'box'].includes(acc.watermarkRemoval.iopaintMaskMode)) {
         acc.watermarkRemoval.iopaintMaskMode = 'protect-text';
       }
       if (!Array.isArray(acc.watermarkRemoval.manualRegions)) {
@@ -9958,7 +9959,7 @@
       } else if (field === 'iopaintStrategy') {
         config.iopaintStrategy = ['crop', 'resize', 'original'].includes(value) ? value : 'crop';
       } else if (field === 'iopaintMaskMode') {
-        config.iopaintMaskMode = ['protect-text', 'smart-color', 'box'].includes(value) ? value : 'protect-text';
+        config.iopaintMaskMode = ['protect-text', 'smart-color', 'warm-color', 'box'].includes(value) ? value : 'protect-text';
       } else if (field === 'iopaintMaskPadding') {
         const parsed = Number(value);
         config.iopaintMaskPadding = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 8;
@@ -11180,7 +11181,7 @@
       if (!['iopaint', 'wavespeed'].includes(config.provider)) config.provider = 'iopaint';
       if (!['lama', 'migan', 'mat'].includes(config.iopaintModel)) config.iopaintModel = 'lama';
       if (!['crop', 'resize', 'original'].includes(config.iopaintStrategy)) config.iopaintStrategy = 'crop';
-      if (!['protect-text', 'smart-color', 'box'].includes(config.iopaintMaskMode)) config.iopaintMaskMode = 'protect-text';
+      if (!['protect-text', 'smart-color', 'warm-color', 'box'].includes(config.iopaintMaskMode)) config.iopaintMaskMode = 'protect-text';
       if (!Number.isFinite(Number(config.iopaintMaskPadding))) config.iopaintMaskPadding = 8;
       if (!Array.isArray(config.manualRegions)) config.manualRegions = [];
       if (!/^#[0-9a-f]{6}$/i.test(config.maskColor || '')) config.maskColor = '#000000';
@@ -11270,6 +11271,7 @@
             <select onchange="updateRuleWatermarkRemovalField('iopaintMaskMode', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm">
               <option value="protect-text" ${config.iopaintMaskMode === 'protect-text' ? 'selected' : ''}>保护 OCR 文字</option>
               <option value="smart-color" ${config.iopaintMaskMode === 'smart-color' ? 'selected' : ''}>智能颜色保护（白底黑字）</option>
+              <option value="warm-color" ${config.iopaintMaskMode === 'warm-color' ? 'selected' : ''}>暖色水印保护（变色背景）</option>
               <option value="box" ${config.iopaintMaskMode === 'box' ? 'selected' : ''}>OCR 框整块</option>
             </select>
           </div>` : ''}

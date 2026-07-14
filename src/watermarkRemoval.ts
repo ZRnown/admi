@@ -9,7 +9,7 @@ export type WatermarkRemovalMode = "ocr" | "always" | "fixed" | "mask";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
-export type IOPaintMaskMode = "protect-text" | "smart-color" | "box";
+export type IOPaintMaskMode = "protect-text" | "smart-color" | "warm-color" | "box";
 
 export interface WatermarkRemovalManualRegion {
   x: number;
@@ -174,6 +174,7 @@ function normalizeIOPaintStrategy(input: unknown): IOPaintStrategy {
 }
 
 function normalizeIOPaintMaskMode(input: unknown): IOPaintMaskMode {
+  if (input === "warm-color") return "warm-color";
   if (input === "smart-color") return "smart-color";
   if (input === "box") return "box";
   return "protect-text";
@@ -314,6 +315,7 @@ export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalCon
   if (
     config.iopaintMaskMode === "protect-text" ||
     config.iopaintMaskMode === "smart-color" ||
+    config.iopaintMaskMode === "warm-color" ||
     config.iopaintMaskMode === "box"
   ) return true;
   if (typeof config.iopaintMaskPadding === "number" && Number.isFinite(config.iopaintMaskPadding)) return true;
@@ -901,6 +903,26 @@ export function shouldPaintSmartColorMaskPixel(
   return !nearDarkText && getPixelLuminance(r, g, b) < 253;
 }
 
+export function shouldPaintWarmColorMaskPixel(
+  r: number,
+  g: number,
+  b: number,
+  nearDarkText: boolean,
+): boolean {
+  if (nearDarkText) return false;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max <= 125 || max === min) return false;
+  const saturation = ((max - min) / max) * 255;
+  if (saturation <= 35) return false;
+  let hueDegrees = 0;
+  if (max === r) hueDegrees = 60 * (((g - b) / (max - min)) % 6);
+  else if (max === g) hueDegrees = 60 * ((b - r) / (max - min) + 2);
+  else hueDegrees = 60 * ((r - g) / (max - min) + 4);
+  if (hueDegrees < 0) hueDegrees += 360;
+  return hueDegrees / 2 < 24;
+}
+
 async function neutralizeProtectedDarkText(
   sourcePath: string,
   targetPath: string,
@@ -951,7 +973,8 @@ async function createMaskForImage(
   const image = await Jimp.read(imagePath);
   const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
   const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, image.bitmap.width, image.bitmap.height, padding);
-  const darkTextMap = maskMode === "smart-color" ? buildDarkTextMap(image) : undefined;
+  const colorProtectMode = maskMode === "smart-color" || maskMode === "warm-color";
+  const darkTextMap = colorProtectMode ? buildDarkTextMap(image) : undefined;
   const regions = resolveIOPaintMaskRegions(blocks, padding, image.bitmap.width, image.bitmap.height);
   const boxes = regions.watermarkBoxes;
 
@@ -1005,12 +1028,13 @@ async function createMaskForImage(
         if (!isPointInPolygon(x, y, polygon)) return;
         if (darkTextMap) {
           const sourceIdx = (y * image.bitmap.width + x) * 4;
-          const shouldPaint = shouldPaintSmartColorMaskPixel(
-            image.bitmap.data[sourceIdx],
-            image.bitmap.data[sourceIdx + 1],
-            image.bitmap.data[sourceIdx + 2],
-            hasDarkTextNeighbor(darkTextMap, image.bitmap.width, image.bitmap.height, x, y),
-          );
+          const r = image.bitmap.data[sourceIdx];
+          const g = image.bitmap.data[sourceIdx + 1];
+          const b = image.bitmap.data[sourceIdx + 2];
+          const nearDarkText = hasDarkTextNeighbor(darkTextMap, image.bitmap.width, image.bitmap.height, x, y);
+          const shouldPaint = maskMode === "warm-color"
+            ? shouldPaintWarmColorMaskPixel(r, g, b, nearDarkText)
+            : shouldPaintSmartColorMaskPixel(r, g, b, nearDarkText);
           if (!shouldPaint) return;
         }
         mask.bitmap.data[idx] = 255;
@@ -1152,7 +1176,7 @@ async function removeWatermarkWithIOPaint(
       await runOpenCvInpaint(inputPath, maskPath, generatedPath);
     }
 
-    if (effective.iopaintMaskMode === "smart-color") {
+    if (effective.iopaintMaskMode === "smart-color" || effective.iopaintMaskMode === "warm-color") {
       await neutralizeProtectedDarkText(inputPath, generatedPath, effective.manualRegions, padding);
     }
     await repairOverlappedOcrText(inputPath, generatedPath, maskBlocks, effective.iopaintMaskMode || "protect-text");

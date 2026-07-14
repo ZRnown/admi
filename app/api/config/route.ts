@@ -528,7 +528,13 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
   const iopaintModel = raw.iopaintModel === "migan" || raw.iopaintModel === "mat" ? raw.iopaintModel : "lama";
   const iopaintStrategy = raw.iopaintStrategy === "resize" || raw.iopaintStrategy === "original" ? raw.iopaintStrategy : "crop";
   const iopaintMaskMode =
-    raw.iopaintMaskMode === "box" ? "box" : raw.iopaintMaskMode === "smart-color" ? "smart-color" : "protect-text";
+    raw.iopaintMaskMode === "box"
+      ? "box"
+      : raw.iopaintMaskMode === "smart-color"
+        ? "smart-color"
+        : raw.iopaintMaskMode === "warm-color"
+          ? "warm-color"
+          : "protect-text";
   const parsedMaskPadding = Number(raw.iopaintMaskPadding);
   const iopaintMaskPadding = Number.isFinite(parsedMaskPadding) && parsedMaskPadding >= 0
     ? Math.floor(parsedMaskPadding)

@@ -29,5 +29,6 @@ test("account-level IOPaint fields persist before rerendering", () => {
 
 test("smart color protection is available for account and rule removal settings", () => {
   assert.match(html, /value="smart-color"[^>]*>智能颜色保护（白底黑字）<\/option>/);
-  assert.match(html, /\['protect-text', 'smart-color', 'box'\]/);
+  assert.match(html, /value="warm-color"[^>]*>暖色水印保护（变色背景）<\/option>/);
+  assert.match(html, /\['protect-text', 'smart-color', 'warm-color', 'box'\]/);
 });

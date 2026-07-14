@@ -22,6 +22,7 @@ import {
   shouldApplyWatermarkAfterRemoval,
   shouldPaintIOPaintMaskPoint,
   shouldPaintSmartColorMaskPixel,
+  shouldPaintWarmColorMaskPixel,
   shouldPersistWatermarkRemovalConfig,
   shouldRetryWaveSpeedStatus,
 } from "../src/watermarkRemoval.ts";
@@ -534,6 +535,20 @@ test("smart color mask removes light watermark pixels and protects dark text", (
     iopaintMaskMode: "smart-color",
   });
   assert.equal(resolved?.iopaintMaskMode, "smart-color");
+});
+
+test("warm color mask removes orange-red watermarks without selecting yellow backgrounds", () => {
+  assert.equal(shouldPaintWarmColorMaskPixel(224, 145, 120, false), true);
+  assert.equal(shouldPaintWarmColorMaskPixel(255, 247, 185, false), false);
+  assert.equal(shouldPaintWarmColorMaskPixel(20, 20, 20, true), false);
+
+  const resolved = resolveWatermarkRemovalConfig({
+    enabled: true,
+    mode: "fixed",
+    provider: "iopaint",
+    iopaintMaskMode: "warm-color",
+  });
+  assert.equal(resolved?.iopaintMaskMode, "warm-color");
 });
 
 test("shouldPaintIOPaintMaskPoint protects non-watermark OCR text without color checks", () => {
