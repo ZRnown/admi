@@ -439,6 +439,30 @@ test("resolveWatermarkRemovalConfig preserves fixed-region mode", () => {
   assert.equal(resolved?.manualRegions?.[0]?.angle, -25);
 });
 
+test("resolveWatermarkRemovalConfig lets each rule override fixed-region settings", () => {
+  const resolved = resolveWatermarkRemovalConfig(
+    {
+      enabled: true,
+      mode: "fixed",
+      provider: "iopaint",
+      iopaintModel: "lama",
+      manualRegions: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.2, angle: 0 }],
+    },
+    {
+      enabled: true,
+      mode: "fixed",
+      provider: "iopaint",
+      iopaintModel: "migan",
+      manualRegions: [{ x: 0.55, y: 0.6, width: 0.3, height: 0.15, angle: -32 }],
+    },
+  );
+
+  assert.equal(resolved?.iopaintModel, "migan");
+  assert.deepEqual(resolved?.manualRegions, [
+    { x: 0.55, y: 0.6, width: 0.3, height: 0.15, angle: -32 },
+  ]);
+});
+
 test("resolveWatermarkRemovalConfig preserves mask mode and cover color", () => {
   const resolved = resolveWatermarkRemovalConfig({
     enabled: true,
