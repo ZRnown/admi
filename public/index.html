@@ -9964,7 +9964,7 @@
       } else if (field === 'maskColor') {
         config.maskColor = /^#[0-9a-f]{6}$/i.test(value || '') ? String(value).toLowerCase() : '#000000';
       }
-      persistManualRegionTarget(accountId);
+      saveConfig();
       render();
     }
 

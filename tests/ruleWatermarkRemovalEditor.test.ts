@@ -18,3 +18,11 @@ test("manual removal regions support moving and rotating on the reference image"
   assert.match(html, /onpointerdown="beginManualRegionMove\('\$\{accountId\}', \$\{idx\}, event\)"/);
   assert.match(html, /onpointerdown="beginManualRegionRotate\('\$\{accountId\}', \$\{idx\}, event\)"/);
 });
+
+test("account-level IOPaint fields persist before rerendering", () => {
+  const start = html.indexOf("function updateWatermarkRemovalField(");
+  const end = html.indexOf("function ensureWatermarkItem(", start);
+  const updateFunction = start >= 0 && end > start ? html.slice(start, end) : "";
+  assert.match(updateFunction, /saveConfig\(\);\s*render\(\);/);
+  assert.doesNotMatch(updateFunction, /persistManualRegionTarget\(accountId\)/);
+});
