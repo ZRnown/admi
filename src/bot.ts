@@ -1501,6 +1501,8 @@ export class Bot {
                       effectiveWatermarkRemoval.mode === "always" ||
                       (effectiveWatermarkRemoval.mode === "fixed" &&
                         (effectiveWatermarkRemoval.manualRegions?.length || 0) > 0) ||
+                      (effectiveWatermarkRemoval.mode === "mask" &&
+                        (effectiveWatermarkRemoval.manualRegions?.length || 0) > 0) ||
                       watermarkRemovalTargets.has(attachment.url) ||
                       (normalizedUrl && watermarkRemovalTargets.has(normalizedUrl))
                     ),
@@ -2056,6 +2058,8 @@ export class Bot {
         if (
           effectiveWatermarkRemoval.mode === "always" ||
           (effectiveWatermarkRemoval.mode === "fixed" &&
+            (effectiveWatermarkRemoval.manualRegions?.length || 0) > 0) ||
+          (effectiveWatermarkRemoval.mode === "mask" &&
             (effectiveWatermarkRemoval.manualRegions?.length || 0) > 0)
         ) {
           return { ...item, watermarkRemoval: effectiveWatermarkRemoval };

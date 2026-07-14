@@ -207,7 +207,7 @@ export interface WatermarkConfig {
 
 export type WatermarkList = WatermarkConfig[];
 
-export type WatermarkRemovalMode = "ocr" | "always" | "fixed";
+export type WatermarkRemovalMode = "ocr" | "always" | "fixed" | "mask";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
@@ -233,6 +233,7 @@ export interface WatermarkRemovalConfig {
   iopaintMaskMode?: IOPaintMaskMode;
   iopaintMaskPadding?: number;
   manualRegions?: WatermarkRemovalManualRegion[];
+  maskColor?: string;
 }
 
 export type ScheduledMediaType = "image" | "video";
@@ -807,7 +808,8 @@ function mergeLegacyWatermarks(
 function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
-  const mode: WatermarkRemovalMode = raw.mode === "ocr" || raw.mode === "fixed" ? raw.mode : "always";
+  const mode: WatermarkRemovalMode =
+    raw.mode === "ocr" || raw.mode === "fixed" || raw.mode === "mask" ? raw.mode : "always";
   const provider: WatermarkRemovalProvider = raw.provider === "iopaint" ? "iopaint" : apiKey ? "wavespeed" : "iopaint";
   const triggerKeywords = Array.isArray(raw.triggerKeywords)
     ? raw.triggerKeywords.map((item: any) => String(item || "").trim()).filter(Boolean)
@@ -841,6 +843,9 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
         })
         .filter((item: any): item is WatermarkRemovalManualRegion => Boolean(item))
     : undefined;
+  const maskColor = typeof raw.maskColor === "string" && /^#[0-9a-f]{6}$/i.test(raw.maskColor.trim())
+    ? raw.maskColor.trim().toLowerCase()
+    : "#000000";
   const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey || provider === "iopaint");
   if (
     !enabled &&
@@ -867,6 +872,7 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
     iopaintMaskMode: provider === "iopaint" ? iopaintMaskMode : undefined,
     iopaintMaskPadding: provider === "iopaint" ? iopaintMaskPadding : undefined,
     manualRegions: provider === "iopaint" && manualRegions && manualRegions.length > 0 ? manualRegions : undefined,
+    maskColor: provider === "iopaint" ? maskColor : undefined,
   };
 }
 

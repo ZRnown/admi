@@ -1,5 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import Jimp from "jimp";
 
 import {
   __resetWaveSpeedRateLimiterForTests,
@@ -8,6 +13,7 @@ import {
   getIOPaintTextRepairBlocks,
   matchWatermarkRemovalTriggerKeywords,
   prepareImageForOcrAndForward,
+  removeWatermarkFromImageUrl,
   resolveIOPaintManualMaskBlocks,
   resolveIOPaintMaskRegions,
   resolveIOPaintTextRepairFontConfig,
@@ -358,6 +364,7 @@ test("resolveWatermarkRemovalConfig enables IOPaint without Wavespeed key", () =
     iopaintStrategy: "crop",
     iopaintMaskMode: "protect-text",
     manualRegions: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4, angle: 0, label: "center" }],
+    maskColor: "#000000",
     apiKey: undefined,
     triggerKeywords: undefined,
   });
@@ -430,6 +437,44 @@ test("resolveWatermarkRemovalConfig preserves fixed-region mode", () => {
 
   assert.equal(resolved?.mode, "fixed");
   assert.equal(resolved?.manualRegions?.[0]?.angle, -25);
+});
+
+test("resolveWatermarkRemovalConfig preserves mask mode and cover color", () => {
+  const resolved = resolveWatermarkRemovalConfig({
+    enabled: true,
+    mode: "mask",
+    provider: "iopaint",
+    maskColor: "#12ABef",
+    manualRegions: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.2 }],
+  });
+
+  assert.equal(resolved?.mode, "mask");
+  assert.equal(resolved?.maskColor, "#12abef");
+});
+
+test("mask mode covers only the configured fixed region", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "admi-mask-test-"));
+  const inputPath = path.join(tempDir, "input.png");
+  let outputPath: string | undefined;
+  try {
+    const source = await new Jimp(100, 100, 0xffffffff);
+    await source.writeAsync(inputPath);
+    const outputUrl = await removeWatermarkFromImageUrl(inputPath, {
+      enabled: true,
+      mode: "mask",
+      provider: "iopaint",
+      iopaintMaskPadding: 0,
+      maskColor: "#ff0000",
+      manualRegions: [{ x: 0.25, y: 0.25, width: 0.5, height: 0.5 }],
+    });
+    outputPath = outputUrl.startsWith("file://") ? fileURLToPath(outputUrl) : outputUrl;
+    const result = await Jimp.read(outputPath);
+    assert.equal(result.getPixelColor(50, 50), 0xff0000ff);
+    assert.equal(result.getPixelColor(10, 10), 0xffffffff);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    if (outputPath) await fs.rm(outputPath, { force: true });
+  }
 });
 
 test("resolveWatermarkRemovalConfig keeps Wavespeed compatible when api key exists", () => {

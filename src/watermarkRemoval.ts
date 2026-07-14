@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Jimp from "jimp";
 
-export type WatermarkRemovalMode = "ocr" | "always" | "fixed";
+export type WatermarkRemovalMode = "ocr" | "always" | "fixed" | "mask";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
@@ -31,6 +31,7 @@ export interface WatermarkRemovalConfig {
   iopaintMaskMode?: IOPaintMaskMode;
   iopaintMaskPadding?: number;
   manualRegions?: WatermarkRemovalManualRegion[];
+  maskColor?: string;
 }
 
 export interface OcrTextBlock {
@@ -175,6 +176,10 @@ function normalizeOptionalNonNegativeInt(input: unknown): number | undefined {
   return Math.floor(value);
 }
 
+function normalizeMaskColor(input: unknown): string {
+  return typeof input === "string" && /^#[0-9a-f]{6}$/i.test(input.trim()) ? input.trim().toLowerCase() : "#000000";
+}
+
 function normalizeManualRegions(input: unknown): WatermarkRemovalManualRegion[] | undefined {
   if (!Array.isArray(input)) return undefined;
   const regions = input
@@ -264,7 +269,7 @@ export function resolveWatermarkRemovalConfig(
 
   const resolved: WatermarkRemovalConfig = {
     enabled: true,
-    mode: merged.mode === "ocr" || merged.mode === "fixed" ? merged.mode : "always",
+    mode: merged.mode === "ocr" || merged.mode === "fixed" || merged.mode === "mask" ? merged.mode : "always",
     provider,
     apiKey,
     triggerKeywords: normalizeTriggerKeywords(merged.triggerKeywords),
@@ -278,6 +283,7 @@ export function resolveWatermarkRemovalConfig(
       resolved.iopaintMaskPadding = maskPadding;
     }
     resolved.manualRegions = normalizeManualRegions(merged.manualRegions);
+    resolved.maskColor = normalizeMaskColor(merged.maskColor);
   }
   return resolved;
 }
@@ -290,7 +296,7 @@ export function shouldUseOcrWatermarkDetection(config?: WatermarkRemovalConfig):
 export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalConfig): boolean {
   if (!config || typeof config !== "object") return false;
   if (config.enabled === true || config.enabled === false) return true;
-  if (config.mode === "ocr" || config.mode === "always" || config.mode === "fixed") return true;
+  if (config.mode === "ocr" || config.mode === "always" || config.mode === "fixed" || config.mode === "mask") return true;
   if (config.provider === "wavespeed" || config.provider === "iopaint") return true;
   if (typeof config.apiKey === "string" && config.apiKey.trim().length > 0) return true;
   if (Array.isArray(config.triggerKeywords) && config.triggerKeywords.length > 0) return true;
@@ -299,6 +305,7 @@ export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalCon
   if (config.iopaintMaskMode === "protect-text" || config.iopaintMaskMode === "box") return true;
   if (typeof config.iopaintMaskPadding === "number" && Number.isFinite(config.iopaintMaskPadding)) return true;
   if (Array.isArray(config.manualRegions) && config.manualRegions.length > 0) return true;
+  if (typeof config.maskColor === "string" && config.maskColor.trim().length > 0) return true;
   return false;
 }
 
@@ -1036,6 +1043,41 @@ async function removeWatermarkWithIOPaint(
   }
 }
 
+async function coverWatermarkRegions(imageUrl: string, config: WatermarkRemovalConfig): Promise<string> {
+  const regions = config.manualRegions;
+  if (!regions || regions.length === 0) return imageUrl;
+  const buffer = isLocalReadableUrl(imageUrl)
+    ? await fs.readFile(normalizeLocalFilePath(imageUrl))
+    : await downloadBufferFromUrl(imageUrl);
+  const image = await Jimp.read(buffer);
+  const padding = config.iopaintMaskPadding ?? IOPAINT_MASK_PADDING;
+  const blocks = resolveIOPaintManualMaskBlocks(regions, image.bitmap.width, image.bitmap.height, padding);
+  const color = normalizeMaskColor(config.maskColor);
+  const rgb = Number.parseInt(color.slice(1), 16);
+
+  for (const block of blocks) {
+    const polygon = block.box || [];
+    const metrics = extractBoxMetrics(block);
+    if (!metrics || polygon.length < 3) continue;
+    const left = Math.max(0, Math.floor(metrics.minX));
+    const top = Math.max(0, Math.floor(metrics.minY));
+    const right = Math.min(image.bitmap.width, Math.ceil(metrics.maxX));
+    const bottom = Math.min(image.bitmap.height, Math.ceil(metrics.maxY));
+    image.scan(left, top, Math.max(1, right - left), Math.max(1, bottom - top), (x: number, y: number, idx: number) => {
+      if (!isPointInPolygon(x, y, polygon)) return;
+      image.bitmap.data[idx] = (rgb >> 16) & 0xff;
+      image.bitmap.data[idx + 1] = (rgb >> 8) & 0xff;
+      image.bitmap.data[idx + 2] = rgb & 0xff;
+      image.bitmap.data[idx + 3] = 0xff;
+    });
+  }
+
+  await fs.mkdir(IOPAINT_OUTPUT_DIR, { recursive: true });
+  const filename = `${Date.now()}_${randomUUID().slice(0, 8)}.png`;
+  await image.writeAsync(path.join(IOPAINT_OUTPUT_DIR, filename));
+  return buildRemovedImageUrl(filename);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1134,6 +1176,11 @@ export async function removeWatermarkFromImageUrl(
   const effective = resolveWatermarkRemovalConfig(config);
   if (!effective || !imageUrl) {
     return imageUrl;
+  }
+
+  if (effective.mode === "mask") {
+    if (!URL_RE.test(imageUrl) && !isLocalReadableUrl(imageUrl)) return imageUrl;
+    return coverWatermarkRegions(imageUrl, effective);
   }
 
   if (effective.provider === "iopaint") {

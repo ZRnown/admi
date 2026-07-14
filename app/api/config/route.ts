@@ -520,7 +520,7 @@ function normalizeFeishuTargets(raw: any): Record<string, FeishuTargetConfig> {
 function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const apiKey = typeof raw.apiKey === "string" && raw.apiKey.trim() ? raw.apiKey.trim() : undefined;
-  const mode = raw.mode === "ocr" || raw.mode === "fixed" ? raw.mode : "always";
+  const mode = raw.mode === "ocr" || raw.mode === "fixed" || raw.mode === "mask" ? raw.mode : "always";
   const provider = raw.provider === "iopaint" ? "iopaint" : apiKey ? "wavespeed" : "iopaint";
   const triggerKeywords = Array.isArray(raw.triggerKeywords)
     ? raw.triggerKeywords.map((item: any) => String(item || "").trim()).filter(Boolean)
@@ -553,6 +553,9 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
         })
         .filter(Boolean)
     : undefined;
+  const maskColor = typeof raw.maskColor === "string" && /^#[0-9a-f]{6}$/i.test(raw.maskColor.trim())
+    ? raw.maskColor.trim().toLowerCase()
+    : "#000000";
   const enabled = raw.enabled === true ? true : raw.enabled === false ? false : Boolean(apiKey || provider === "iopaint");
   if (
     !enabled &&
@@ -579,6 +582,7 @@ function normalizeFrontendWatermarkRemoval(raw: any): WatermarkRemovalConfig | u
     iopaintMaskMode: provider === "iopaint" ? iopaintMaskMode : undefined,
     iopaintMaskPadding: provider === "iopaint" ? iopaintMaskPadding : undefined,
     manualRegions: provider === "iopaint" && manualRegions && manualRegions.length > 0 ? manualRegions : undefined,
+    maskColor: provider === "iopaint" ? maskColor : undefined,
   };
 }
 
@@ -1834,9 +1838,11 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
               ? "ocr"
               : resolvedAccountWatermarkRemoval.mode === "fixed"
                 ? "fixed"
-                : resolvedAccountWatermarkRemoval.mode === "always"
-                  ? "always"
-                  : undefined,
+                : resolvedAccountWatermarkRemoval.mode === "mask"
+                  ? "mask"
+                  : resolvedAccountWatermarkRemoval.mode === "always"
+                    ? "always"
+                    : undefined,
           apiKey: resolvedAccountWatermarkRemoval.apiKey,
           triggerKeywords: Array.isArray(resolvedAccountWatermarkRemoval.triggerKeywords)
             ? resolvedAccountWatermarkRemoval.triggerKeywords
@@ -1866,6 +1872,10 @@ function dtoToAccount(dto: FrontendAccount, fallback?: AccountConfig): AccountCo
           manualRegions:
             resolvedAccountWatermarkRemoval.provider === "iopaint"
               ? resolvedAccountWatermarkRemoval.manualRegions
+              : undefined,
+          maskColor:
+            resolvedAccountWatermarkRemoval.provider === "iopaint"
+              ? resolvedAccountWatermarkRemoval.maskColor
               : undefined,
         }
       : undefined,
