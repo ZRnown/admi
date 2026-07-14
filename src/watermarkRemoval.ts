@@ -96,9 +96,17 @@ const WAVESPEED_ENDPOINT = "https://api.wavespeed.ai/api/v3/wavespeed-ai/image-w
 const WAVESPEED_MIN_INTERVAL_MS = parseNonNegativeInt(process.env.WAVESPEED_MIN_INTERVAL_MS, 2000);
 const WAVESPEED_RATE_LIMIT_WINDOW_MS = parseNonNegativeInt(process.env.WAVESPEED_RATE_LIMIT_WINDOW_MS, 60_000);
 const WAVESPEED_RATE_LIMIT_MAX_REQUESTS = parseNonNegativeInt(process.env.WAVESPEED_RATE_LIMIT_MAX_REQUESTS, 10);
-const IOPAINT_BIN = process.env.IOPAINT_BIN || "/root/iopaint-test/bin/iopaint";
+const IOPAINT_BIN =
+  process.env.IOPAINT_BIN ||
+  (process.platform === "win32"
+    ? path.join(process.cwd(), ".data", "iopaint-venv", "Scripts", "iopaint.exe")
+    : "/root/iopaint-test/bin/iopaint");
 const IOPAINT_DEVICE = process.env.IOPAINT_DEVICE || "cpu";
-const IOPAINT_MODEL_DIR = process.env.IOPAINT_MODEL_DIR || "/root/iopaint-model-cache";
+const IOPAINT_MODEL_DIR =
+  process.env.IOPAINT_MODEL_DIR ||
+  (process.platform === "win32"
+    ? path.join(process.cwd(), ".data", "iopaint-model-cache")
+    : "/root/iopaint-model-cache");
 const IOPAINT_TIMEOUT_MS = parseNonNegativeInt(process.env.IOPAINT_TIMEOUT_MS, 120_000);
 const IOPAINT_MASK_PADDING = parseNonNegativeInt(process.env.IOPAINT_MASK_PADDING, 8);
 const IOPAINT_WORK_DIR = process.env.IOPAINT_WORK_DIR || path.join(process.cwd(), ".data", "iopaint_jobs");
@@ -957,6 +965,18 @@ function runCommand(command: string, args: string[], options: { cwd?: string; ti
   });
 }
 
+async function runOpenCvInpaint(inputPath: string, maskPath: string, outputPath: string): Promise<void> {
+  const pythonBin =
+    process.env.PYTHON || process.env.PYTHON_BIN || process.env.PYTHON_EXECUTABLE ||
+    (process.platform === "win32" ? "python" : "python3");
+  const scriptPath = path.join(process.cwd(), "scripts", "opencv_inpaint.py");
+  await runCommand(
+    pythonBin,
+    ["-B", scriptPath, "--image", inputPath, "--mask", maskPath, "--output", outputPath],
+    { timeoutMs: IOPAINT_TIMEOUT_MS },
+  );
+}
+
 async function removeWatermarkWithIOPaint(
   imageUrl: string,
   config: WatermarkRemovalConfig,
@@ -1010,29 +1030,34 @@ async function removeWatermarkWithIOPaint(
       ),
     );
 
-    await runCommand(
-      IOPAINT_BIN,
-      [
-        "run",
-        "--model",
-        effective.iopaintModel || "lama",
-        "--device",
-        IOPAINT_DEVICE,
-        "--image",
-        inputDir,
-        "--mask",
-        maskDir,
-        "--output",
-        outputDir,
-        "--config",
-        configPath,
-        "--model-dir",
-        IOPAINT_MODEL_DIR,
-      ],
-      { timeoutMs: IOPAINT_TIMEOUT_MS },
-    );
-
     const generatedPath = path.join(outputDir, "image.png");
+    try {
+      await runCommand(
+        IOPAINT_BIN,
+        [
+          "run",
+          "--model",
+          effective.iopaintModel || "lama",
+          "--device",
+          IOPAINT_DEVICE,
+          "--image",
+          inputDir,
+          "--mask",
+          maskDir,
+          "--output",
+          outputDir,
+          "--config",
+          configPath,
+          "--model-dir",
+          IOPAINT_MODEL_DIR,
+        ],
+        { timeoutMs: IOPAINT_TIMEOUT_MS },
+      );
+    } catch (error: any) {
+      console.warn(`[去水印] IOPaint 不可用，改用 OpenCV 修复: ${String(error?.message || error)}`);
+      await runOpenCvInpaint(inputPath, maskPath, generatedPath);
+    }
+
     await repairOverlappedOcrText(inputPath, generatedPath, maskBlocks, effective.iopaintMaskMode || "protect-text");
     const filename = `${Date.now()}_${jobId.slice(0, 8)}.png`;
     const savedPath = path.join(IOPAINT_OUTPUT_DIR, filename);
