@@ -108,9 +108,31 @@ const IOPAINT_MODEL_DIR =
     ? path.join(process.cwd(), ".data", "iopaint-model-cache")
     : "/root/iopaint-model-cache");
 const IOPAINT_TIMEOUT_MS = parseNonNegativeInt(process.env.IOPAINT_TIMEOUT_MS, 120_000);
+const IOPAINT_MAX_CONCURRENCY = Math.max(1, parseNonNegativeInt(process.env.IOPAINT_MAX_CONCURRENCY, 1));
 const IOPAINT_MASK_PADDING = parseNonNegativeInt(process.env.IOPAINT_MASK_PADDING, 8);
 const IOPAINT_WORK_DIR = process.env.IOPAINT_WORK_DIR || path.join(process.cwd(), ".data", "iopaint_jobs");
 const IOPAINT_OUTPUT_DIR = process.env.IOPAINT_OUTPUT_DIR || path.join(process.cwd(), ".data", "watermark_removed");
+
+let activeIOPaintJobs = 0;
+const iopaintJobWaiters: Array<() => void> = [];
+
+async function acquireIOPaintSlot(): Promise<() => void> {
+  if (activeIOPaintJobs < IOPAINT_MAX_CONCURRENCY) {
+    activeIOPaintJobs += 1;
+  } else {
+    console.log(`[去水印] IOPaint 已达到并发上限 ${IOPAINT_MAX_CONCURRENCY}，任务排队等待`);
+    await new Promise<void>((resolve) => iopaintJobWaiters.push(resolve));
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const next = iopaintJobWaiters.shift();
+    if (next) next();
+    else activeIOPaintJobs = Math.max(0, activeIOPaintJobs - 1);
+  };
+}
 const IOPAINT_PROTECT_BOX_SHRINK_RATIO = Math.min(
   0.45,
   Math.max(0, Number(process.env.IOPAINT_PROTECT_BOX_SHRINK_RATIO ?? "0.08")),
@@ -1102,6 +1124,7 @@ async function removeWatermarkWithIOPaint(
 ): Promise<string> {
   const effective = resolveWatermarkRemovalConfig(config);
   if (!effective || effective.provider !== "iopaint") return imageUrl;
+  const releaseIOPaintSlot = await acquireIOPaintSlot();
 
   const jobId = randomUUID();
   const workDir = path.join(IOPAINT_WORK_DIR, jobId);
@@ -1186,6 +1209,7 @@ async function removeWatermarkWithIOPaint(
     return buildRemovedImageUrl(filename);
   } finally {
     await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    releaseIOPaintSlot();
   }
 }
 
