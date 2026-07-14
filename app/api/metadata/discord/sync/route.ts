@@ -8,7 +8,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawnSync } from "child_process";
 import { promises as fs } from "fs";
+import https from "https";
 import path from "path";
+import { ProxyAgent } from "proxy-agent";
+import { getMultiConfig } from "@/src/config";
 import {
   DISCORD_PRIVATE_SCOPE_ID,
   mergeDiscordGuildCacheEntry,
@@ -21,7 +24,7 @@ function hydrateDiscordChannelsViaSelfbot(
   token: string,
   type: string | undefined,
   guildIds: string[],
-  options?: { includePrivateChannels?: boolean },
+  options?: { includePrivateChannels?: boolean; proxyUrl?: string },
 ): { channelsByGuild: Record<string, any[]>; privateChannels: any[] } {
   if (!token || (guildIds.length === 0 && !options?.includePrivateChannels)) {
     return { channelsByGuild: {}, privateChannels: [] };
@@ -35,6 +38,7 @@ function hydrateDiscordChannelsViaSelfbot(
     type,
     guildIds,
     includePrivateChannels: options?.includePrivateChannels === true,
+    proxyUrl: options?.proxyUrl,
   });
   const result = spawnSync(
     pythonBin,
@@ -108,39 +112,64 @@ function buildAuthCandidates(token: string, type?: string) {
 }
 
 // Discord API 请求
-async function discordFetch(endpoint: string, token: string) {
-  const res = await fetch(`${DISCORD_API}${endpoint}`, {
-    headers: {
-      Authorization: token,
-      "Content-Type": "application/json",
-    },
+async function discordFetch(endpoint: string, token: string, proxyUrl?: string) {
+  const agent = proxyUrl
+    ? new ProxyAgent({ getProxyForUrl: () => proxyUrl })
+    : undefined;
+
+  return await new Promise<any>((resolve, reject) => {
+    const request = https.request(
+      `${DISCORD_API}${endpoint}`,
+      {
+        method: "GET",
+        agent,
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json",
+          "User-Agent": "DiscordBot (https://discord.com, 1.0)",
+        },
+      },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => (body += chunk));
+        response.on("end", () => {
+          const status = response.statusCode || 500;
+          if (status < 200 || status >= 300) {
+            reject(new Error(`Discord API error: ${status} ${body}`));
+            return;
+          }
+          try {
+            resolve(body ? JSON.parse(body) : {});
+          } catch (error: any) {
+            reject(new Error(`Discord API response parse failed: ${error?.message || error}`));
+          }
+        });
+      },
+    );
+    request.on("error", reject);
+    request.setTimeout(20000, () => request.destroy(new Error("Discord API request timed out")));
+    request.end();
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Discord API error: ${res.status} ${text}`);
-  }
-
-  return res.json();
 }
 
 // 获取当前用户信息
-async function getCurrentUser(token: string) {
-  return discordFetch("/users/@me", token);
+async function getCurrentUser(token: string, proxyUrl?: string) {
+  return discordFetch("/users/@me", token, proxyUrl);
 }
 
 // 获取用户的服务器列表
-async function getGuilds(token: string) {
-  return discordFetch("/users/@me/guilds", token);
+async function getGuilds(token: string, proxyUrl?: string) {
+  return discordFetch("/users/@me/guilds", token, proxyUrl);
 }
 
 // 获取服务器的频道列表
-async function getGuildChannels(token: string, guildId: string) {
-  return discordFetch(`/guilds/${guildId}/channels`, token);
+async function getGuildChannels(token: string, guildId: string, proxyUrl?: string) {
+  return discordFetch(`/guilds/${guildId}/channels`, token, proxyUrl);
 }
 
-async function getPrivateChannels(token: string) {
-  return discordFetch("/users/@me/channels", token);
+async function getPrivateChannels(token: string, proxyUrl?: string) {
+  return discordFetch("/users/@me/channels", token, proxyUrl);
 }
 
 function resolvePrivateChannelName(channel: any): string {
@@ -185,6 +214,10 @@ export async function POST(request: NextRequest) {
 
     await ensureDataDir();
 
+    const multi = await getMultiConfig();
+    const libraryAccount = (multi.discordAccounts || []).find((account) => account.id === accountId);
+    const proxyUrl = libraryAccount?.proxyUrl || process.env.PROXY_URL || undefined;
+
     const authCandidates = buildAuthCandidates(String(token), type);
     if (authCandidates.length === 0) {
       return NextResponse.json({ error: "缺少有效 token 参数" }, { status: 400 });
@@ -197,7 +230,7 @@ export async function POST(request: NextRequest) {
     try {
       for (const candidate of authCandidates) {
         try {
-          user = await getCurrentUser(candidate);
+          user = await getCurrentUser(candidate, proxyUrl);
           authToken = candidate;
           break;
         } catch (e) {
@@ -217,7 +250,7 @@ export async function POST(request: NextRequest) {
     // 获取服务器列表
     let guilds = [];
     try {
-      guilds = await getGuilds(authToken);
+      guilds = await getGuilds(authToken, proxyUrl);
     } catch (e: any) {
       return NextResponse.json({
         error: "获取服务器列表失败",
@@ -258,7 +291,7 @@ export async function POST(request: NextRequest) {
       const cacheKey = `${accountId}:${guild.id}`;
       const existingChannels = Array.isArray(channelsCache[cacheKey]) ? channelsCache[cacheKey] : undefined;
       try {
-        const channels = await getGuildChannels(authToken, guild.id);
+        const channels = await getGuildChannels(authToken, guild.id, proxyUrl);
         channelsData[guild.id] = channels.map((c: any) => ({
           id: c.id,
           name: c.name,
@@ -273,7 +306,7 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      const privateResponse = await getPrivateChannels(authToken);
+      const privateResponse = await getPrivateChannels(authToken, proxyUrl);
       privateChannels = Array.isArray(privateResponse) ? privateResponse.map(normalizePrivateChannel) : [];
     } catch (error) {
       privateChannels = [];
@@ -284,7 +317,7 @@ export async function POST(request: NextRequest) {
         stripBotPrefix(String(token)),
         type,
         failedGuildIds,
-        { includePrivateChannels: privateChannels.length === 0 },
+        { includePrivateChannels: privateChannels.length === 0, proxyUrl },
       );
       for (const guildId of failedGuildIds) {
         const hydrated = Array.isArray(fallbackPayload.channelsByGuild[guildId]) ? fallbackPayload.channelsByGuild[guildId] : [];

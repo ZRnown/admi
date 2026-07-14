@@ -16,13 +16,21 @@ except Exception as e:
 
 
 class MetadataSession:
-    def __init__(self, account_id: str, token: str, client_type: str, ipc: IPCServer):
+    def __init__(
+        self,
+        account_id: str,
+        token: str,
+        client_type: str,
+        ipc: IPCServer,
+        proxy_url: Optional[str] = None,
+    ):
         if discord is None:
             raise RuntimeError("discord.py-self is not available")
         self.account_id = account_id
         self.token = token
         self.client_type = client_type
         self.ipc = ipc
+        self.proxy_url = proxy_url
         self.client: Optional[discord.Client] = None
         self.task: Optional[asyncio.Task] = None
         self.ready_event: asyncio.Event = asyncio.Event()
@@ -37,9 +45,9 @@ class MetadataSession:
             intents.guilds = True
             intents.members = True
             intents.messages = True
-            self.client = discord.Client(intents=intents)
+            self.client = discord.Client(intents=intents, proxy=self.proxy_url)
         else:
-            self.client = discord.Client()
+            self.client = discord.Client(proxy=self.proxy_url)
 
         @self.client.event
         async def on_ready():
@@ -299,7 +307,13 @@ class DiscordMetadataService:
             client_type = primary_entry.get("type") or "selfbot"
             session = self.sessions_by_token.get(token)
             if not session:
-                session = MetadataSession(primary_id, token, client_type, self.ipc_server)
+                session = MetadataSession(
+                    primary_id,
+                    token,
+                    client_type,
+                    self.ipc_server,
+                    primary_entry.get("proxyUrl"),
+                )
                 self.sessions_by_token[token] = session
                 await session.start()
             for entry in group:

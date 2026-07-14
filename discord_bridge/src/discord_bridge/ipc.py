@@ -10,6 +10,11 @@ from typing import Dict, Any, Callable, Optional
 from loguru import logger
 
 
+class _ThreadedStdinReader:
+    async def readline(self):
+        return await asyncio.to_thread(sys.stdin.buffer.readline)
+
+
 class IPCServer:
     """IPC服务器"""
 
@@ -18,10 +23,20 @@ class IPCServer:
         self.running = False
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
+        self._use_threaded_stdio = False
+        self._write_lock = asyncio.Lock()
 
     async def start(self):
         """启动IPC服务器"""
         logger.info("Starting IPC server...")
+
+        if sys.platform == "win32":
+            self._use_threaded_stdio = True
+            self._reader = _ThreadedStdinReader()
+            self.running = True
+            logger.info("IPC server started")
+            await self._message_loop()
+            return
 
         # 使用stdio进行通信
         loop = asyncio.get_event_loop()
@@ -171,8 +186,13 @@ class IPCServer:
     async def _send_message(self, message: Dict[str, Any]):
         """发送消息到stdout"""
         try:
-            if self._writer:
-                json_str = json.dumps(message, ensure_ascii=False)
+            json_str = json.dumps(message, ensure_ascii=False)
+            payload = (json_str + "\n").encode("utf-8")
+            if self._use_threaded_stdio:
+                async with self._write_lock:
+                    sys.stdout.buffer.write(payload)
+                    sys.stdout.buffer.flush()
+            elif self._writer:
                 self._writer.write((json_str + "\n").encode('utf-8'))
                 await self._writer.drain()
         except Exception as e:

@@ -2535,7 +2535,10 @@ async function hasDiscordMetadataAccounts(config: MultiConfig): Promise<boolean>
 }
 
 async function ensureDiscordMetadataBridgeRunning(config: MultiConfig) {
-  if (discordMetadataBridgeManager.isRunning()) return true;
+  if (discordMetadataBridgeManager.isRunning()) {
+    setupDiscordMetadataBridgeClient();
+    return true;
+  }
   if (!(await hasDiscordMetadataAccounts(config))) {
     return false;
   }
@@ -2581,6 +2584,7 @@ async function syncConfigToDiscordMetadataBridge(config: MultiConfig) {
       token: normalizeDiscordToken(account.token),
       type: account.type === "bot" ? "bot" : "selfbot",
       enabled: account.loginRequested === true,
+      proxyUrl: account.proxyUrl || getEnv().PROXY_URL,
     });
   }
   for (const account of config.discordAccounts || []) {
@@ -2591,6 +2595,7 @@ async function syncConfigToDiscordMetadataBridge(config: MultiConfig) {
       token: normalizeDiscordToken(account.token),
       type: account.type === "bot" ? "bot" : "selfbot",
       enabled: true,
+      proxyUrl: account.proxyUrl || getEnv().PROXY_URL,
     });
   }
   if (discordMetadataBridgeClient) {
@@ -4299,7 +4304,10 @@ function hasDiscordListeningAccounts(config: MultiConfig): boolean {
 }
 
 async function ensureDiscordBridgeRunning(config: MultiConfig) {
-  if (discordBridgeManager.isRunning()) return true;
+  if (discordBridgeManager.isRunning()) {
+    setupDiscordBridgeClient();
+    return true;
+  }
   if (!hasDiscordListeningAccounts(config)) {
     return false;
   }
@@ -4357,6 +4365,7 @@ async function syncConfigToDiscordBridge(config: MultiConfig) {
       token: normalizedToken,
       type: account.type === "bot" ? "bot" : "selfbot",
       enabled: shouldConnect,
+      proxyUrl: account.proxyUrl || getEnv().PROXY_URL,
       listenChannels: Array.from(listenChannels),
     });
   }
@@ -4375,6 +4384,7 @@ async function syncConfigToDiscordBridge(config: MultiConfig) {
       token: normalizedToken,
       type: account.type === "bot" ? "bot" : "selfbot",
       enabled: true,
+      proxyUrl: account.proxyUrl || getEnv().PROXY_URL,
       // 使用不可用频道ID占位，保持会话在线但不接收消息
       listenChannels: ["0"],
     });

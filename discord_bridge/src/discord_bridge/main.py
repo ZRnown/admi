@@ -23,7 +23,14 @@ class DiscordAccountSession:
     当多个账号使用相同的 token 时，只创建一个 Discord 客户端，
     但会将消息分发给所有使用该 token 的账号。
     """
-    def __init__(self, account_id: str, token: str, client_type: str, ipc: IPCServer):
+    def __init__(
+        self,
+        account_id: str,
+        token: str,
+        client_type: str,
+        ipc: IPCServer,
+        proxy_url: Optional[str] = None,
+    ):
         if discord is None:
             raise RuntimeError("discord.py-self is not available")
 
@@ -31,6 +38,7 @@ class DiscordAccountSession:
         self.token = token
         self.client_type = client_type
         self.ipc = ipc
+        self.proxy_url = proxy_url
         self.listen_channels: Set[int] = set()
         self.client: Optional[discord.Client] = None
         self.task: Optional[asyncio.Task] = None
@@ -237,10 +245,10 @@ class DiscordAccountSession:
             intents.guilds = True
             intents.members = True
             intents.messages = True
-            self.client = discord.Client(intents=intents)
+            self.client = discord.Client(intents=intents, proxy=self.proxy_url)
         else:
             # 兼容旧版/精简版 discord.py-self
-            self.client = discord.Client()
+            self.client = discord.Client(proxy=self.proxy_url)
 
         @self.client.event
         async def on_ready():
@@ -659,7 +667,13 @@ class DiscordBridge:
 
             if not session:
                 # 创建新 session
-                session = DiscordAccountSession(primary_id, token, client_type, self.ipc_server)
+                session = DiscordAccountSession(
+                    primary_id,
+                    token,
+                    client_type,
+                    self.ipc_server,
+                    primary_entry.get("proxyUrl"),
+                )
                 self.sessions_by_token[token] = session
                 await session.start()
                 if len(group) > 1:

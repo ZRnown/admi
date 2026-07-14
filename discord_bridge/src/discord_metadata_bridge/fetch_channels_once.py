@@ -56,6 +56,7 @@ async def _run(payload: Dict[str, Any]) -> Dict[str, Any]:
     guild_ids = [str(item) for item in (payload.get("guildIds") or []) if str(item).strip()]
     include_private_channels = payload.get("includePrivateChannels") is True
     client_type = payload.get("type") or "selfbot"
+    proxy_url = payload.get("proxyUrl") or None
     if not token or (not guild_ids and not include_private_channels):
         return {"success": False, "error": "missing token or guildIds"}
 
@@ -64,9 +65,9 @@ async def _run(payload: Dict[str, Any]) -> Dict[str, Any]:
         intents.guilds = True
         intents.members = True
         intents.messages = True
-        client = discord.Client(intents=intents)
+        client = discord.Client(intents=intents, proxy=proxy_url)
     else:
-        client = discord.Client()
+        client = discord.Client(proxy=proxy_url)
 
     future: asyncio.Future = asyncio.get_running_loop().create_future()
 

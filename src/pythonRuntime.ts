@@ -23,6 +23,8 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
 function buildLocalVenvCandidates(root?: string): string[] {
   if (!root) return [];
   return [
+    path.join(root, ".venv", "Scripts", "python.exe"),
+    path.join(root, ".venv", "Scripts", "python"),
     path.join(root, ".venv", "bin", "python"),
     path.join(root, ".venv", "bin", "python3"),
   ];
@@ -48,7 +50,7 @@ export function buildPythonCandidates(options: PythonResolveOptions = {}): strin
 
 function defaultPythonCandidateCheck(candidate: string): boolean {
   const result = spawnSync(candidate, ["-V"], { stdio: "ignore" });
-  return !result.error;
+  return !result.error && result.status === 0;
 }
 
 export function resolvePythonBin(

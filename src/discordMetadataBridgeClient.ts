@@ -23,6 +23,7 @@ export interface DiscordMetadataBridgeAccountConfig {
   token: string;
   type?: "bot" | "selfbot";
   enabled?: boolean;
+  proxyUrl?: string;
 }
 
 export interface DiscordMetadataBridgeUpdateConfigParams {

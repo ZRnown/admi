@@ -27,6 +27,7 @@ export interface DiscordBridgeAccountConfig {
   token: string;
   type?: "bot" | "selfbot";
   enabled?: boolean;
+  proxyUrl?: string;
   listenChannels?: string[];
 }
 
