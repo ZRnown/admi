@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Jimp from "jimp";
+import sharp from "sharp";
 
 import {
   __resetWaveSpeedRateLimiterForTests,
@@ -485,6 +486,37 @@ test("mask mode covers only the configured fixed region", async () => {
   try {
     const source = await new Jimp(100, 100, 0xffffffff);
     await source.writeAsync(inputPath);
+    const outputUrl = await removeWatermarkFromImageUrl(inputPath, {
+      enabled: true,
+      mode: "mask",
+      provider: "iopaint",
+      iopaintMaskPadding: 0,
+      maskColor: "#ff0000",
+      manualRegions: [{ x: 0.25, y: 0.25, width: 0.5, height: 0.5 }],
+    });
+    outputPath = outputUrl.startsWith("file://") ? fileURLToPath(outputUrl) : outputUrl;
+    const result = await Jimp.read(outputPath);
+    assert.equal(result.getPixelColor(50, 50), 0xff0000ff);
+    assert.equal(result.getPixelColor(10, 10), 0xffffffff);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    if (outputPath) await fs.rm(outputPath, { force: true });
+  }
+});
+
+test("mask mode accepts Discord WebP images", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "admi-webp-mask-test-"));
+  const inputPath = path.join(tempDir, "image0.webp");
+  let outputPath: string | undefined;
+  try {
+    await sharp({
+      create: {
+        width: 100,
+        height: 100,
+        channels: 4,
+        background: { r: 255, g: 255, b: 255, alpha: 1 },
+      },
+    }).webp().toFile(inputPath);
     const outputUrl = await removeWatermarkFromImageUrl(inputPath, {
       enabled: true,
       mode: "mask",

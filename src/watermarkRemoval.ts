@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Jimp from "jimp";
+import sharp from "sharp";
 
 export type WatermarkRemovalMode = "ocr" | "always" | "fixed" | "mask";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
@@ -576,6 +577,25 @@ function isLocalReadableUrl(input: string): boolean {
   return input.startsWith("file://") || path.isAbsolute(input);
 }
 
+function isWebpBuffer(buffer: Buffer): boolean {
+  return (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buffer.subarray(8, 12).toString("ascii") === "WEBP"
+  );
+}
+
+async function readJimpImage(input: string | Buffer): Promise<Awaited<ReturnType<typeof Jimp.read>>> {
+  try {
+    return await Jimp.read(input);
+  } catch (error) {
+    const buffer = Buffer.isBuffer(input) ? input : await fs.readFile(input);
+    if (!isWebpBuffer(buffer)) throw error;
+    const pngBuffer = await sharp(buffer, { animated: false }).png().toBuffer();
+    return Jimp.read(pngBuffer);
+  }
+}
+
 function resolveOutputPublicBaseUrl(): string | undefined {
   return firstNonEmptyString(
     process.env.WATERMARK_REMOVED_BASE_URL,
@@ -858,7 +878,7 @@ async function repairOverlappedOcrText(
   const canvas = createCanvas(target.width, target.height);
   const ctx = canvas.getContext("2d");
   ctx.drawImage(target, 0, 0);
-  const sourceImage = await Jimp.read(sourcePath);
+  const sourceImage = await readJimpImage(sourcePath);
 
   for (const block of repairBlocks) {
     const text = String(block.text || "").trim();
@@ -952,8 +972,8 @@ async function neutralizeProtectedDarkText(
   padding: number,
 ): Promise<void> {
   if (!manualRegions?.length) return;
-  const source = await Jimp.read(sourcePath);
-  const target = await Jimp.read(targetPath);
+  const source = await readJimpImage(sourcePath);
+  const target = await readJimpImage(targetPath);
   const { width, height } = source.bitmap;
   const darkMap = buildDarkTextMap(source);
   const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, width, height, padding);
@@ -992,7 +1012,7 @@ async function createMaskForImage(
   maskMode: IOPaintMaskMode,
   manualRegions?: WatermarkRemovalManualRegion[],
 ): Promise<void> {
-  const image = await Jimp.read(imagePath);
+  const image = await readJimpImage(imagePath);
   const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
   const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, image.bitmap.width, image.bitmap.height, padding);
   const colorProtectMode = maskMode === "smart-color" || maskMode === "warm-color";
@@ -1226,7 +1246,7 @@ async function coverWatermarkRegions(imageUrl: string, config: WatermarkRemovalC
   const buffer = isLocalReadableUrl(imageUrl)
     ? await fs.readFile(normalizeLocalFilePath(imageUrl))
     : await downloadBufferFromUrl(imageUrl);
-  const image = await Jimp.read(buffer);
+  const image = await readJimpImage(buffer);
   const padding = config.iopaintMaskPadding ?? IOPAINT_MASK_PADDING;
   const blocks = resolveIOPaintManualMaskBlocks(regions, image.bitmap.width, image.bitmap.height, padding);
   const color = normalizeMaskColor(config.maskColor);
