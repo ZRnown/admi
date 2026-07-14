@@ -334,7 +334,7 @@
                 <option value="inherit">继承全局</option>
                 <option value="ocr">OCR 检测后去除</option>
                 <option value="always">直接去除</option>
-                <option value="fixed">固定区域去除</option>
+                <option value="fixed">遮挡模式（固定区域）</option>
                 <option value="disable">强制关闭</option>
               </select>
             </div>
@@ -7725,7 +7725,7 @@
                 <select onchange="updateWatermarkRemovalField('mode', this.value)" class="w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
                   <option value="ocr" ${watermarkRemoval.mode === 'ocr' ? 'selected' : ''}>OCR 检测后去除</option>
                   <option value="always" ${watermarkRemoval.mode === 'always' ? 'selected' : ''}>直接去除</option>
-                  <option value="fixed" ${watermarkRemoval.mode === 'fixed' ? 'selected' : ''}>固定区域去除</option>
+                  <option value="fixed" ${watermarkRemoval.mode === 'fixed' ? 'selected' : ''}>遮挡模式（固定区域）</option>
                 </select>
               </div>
               <div>
@@ -7776,11 +7776,12 @@
                 <div><span class="font-medium text-slate-800">OCR 框整块</span>：遮得更狠，文字和水印重合时容易误伤正常内容。</div>
               </div>
             </div>
+            ${watermarkRemoval.mode === 'fixed' ? `
             <div class="rounded-lg border border-slate-200 bg-white p-4">
               <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
-                  <h3 class="text-sm font-semibold text-slate-800">手动水印区域</h3>
-                  <p class="mt-1 text-xs text-slate-500">上传一张参考图，在图上拖拽水印位置；保存的是百分比区域，可适配不同图片尺寸。</p>
+                  <h3 class="text-sm font-semibold text-slate-800">遮挡区域</h3>
+                  <p class="mt-1 text-xs text-slate-500">上传一张参考图，在图上拖拽需要去除的位置；区域按百分比保存，可旋转并适配不同图片尺寸。</p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                   <label class="inline-flex cursor-pointer items-center rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">
@@ -7799,6 +7800,7 @@
                 </div>
               </div>
             </div>
+            ` : ''}
             ` : `
             <div class="grid gap-4 md:grid-cols-3">
               <div class="md:col-span-1">
@@ -7809,6 +7811,7 @@
               </div>
             </div>
             ` }
+            ${watermarkRemoval.mode === 'ocr' ? `
             <div>
               <label class="block text-xs text-slate-600 mb-2">去水印 OCR 关键词（命中才调用）</label>
               <div class="flex flex-wrap gap-2 mb-3">
@@ -7823,6 +7826,7 @@
               </div>
             </div>
             <p class="text-xs text-slate-500">如果这里填写了关键词，OCR 模式会优先按关键词命中来判断是否调用去水印；不填时才回退到边缘文字启发式。</p>
+            ` : ''}
           </div>
         </div>
         ` : ''}
