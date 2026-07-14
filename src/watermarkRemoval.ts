@@ -1172,34 +1172,41 @@ async function removeWatermarkWithIOPaint(
     );
 
     const generatedPath = path.join(outputDir, "image.png");
-    try {
-      await runCommand(
-        IOPAINT_BIN,
-        [
-          "run",
-          "--model",
-          effective.iopaintModel || "lama",
-          "--device",
-          IOPAINT_DEVICE,
-          "--image",
-          inputDir,
-          "--mask",
-          maskDir,
-          "--output",
-          outputDir,
-          "--config",
-          configPath,
-          "--model-dir",
-          IOPAINT_MODEL_DIR,
-        ],
-        { timeoutMs: IOPAINT_TIMEOUT_MS },
-      );
-    } catch (error: any) {
-      console.warn(`[去水印] IOPaint 不可用，改用 OpenCV 修复: ${String(error?.message || error)}`);
+    const useColorProtectedOpenCv =
+      effective.iopaintMaskMode === "smart-color" || effective.iopaintMaskMode === "warm-color";
+    if (useColorProtectedOpenCv) {
+      console.log(`[去水印] ${effective.iopaintMaskMode} 使用低内存 OpenCV 修复`);
       await runOpenCvInpaint(inputPath, maskPath, generatedPath);
+    } else {
+      try {
+        await runCommand(
+          IOPAINT_BIN,
+          [
+            "run",
+            "--model",
+            effective.iopaintModel || "lama",
+            "--device",
+            IOPAINT_DEVICE,
+            "--image",
+            inputDir,
+            "--mask",
+            maskDir,
+            "--output",
+            outputDir,
+            "--config",
+            configPath,
+            "--model-dir",
+            IOPAINT_MODEL_DIR,
+          ],
+          { timeoutMs: IOPAINT_TIMEOUT_MS },
+        );
+      } catch (error: any) {
+        console.warn(`[去水印] IOPaint 不可用，改用 OpenCV 修复: ${String(error?.message || error)}`);
+        await runOpenCvInpaint(inputPath, maskPath, generatedPath);
+      }
     }
 
-    if (effective.iopaintMaskMode === "smart-color" || effective.iopaintMaskMode === "warm-color") {
+    if (useColorProtectedOpenCv) {
       await neutralizeProtectedDarkText(inputPath, generatedPath, effective.manualRegions, padding);
     }
     await repairOverlappedOcrText(inputPath, generatedPath, maskBlocks, effective.iopaintMaskMode || "protect-text");
