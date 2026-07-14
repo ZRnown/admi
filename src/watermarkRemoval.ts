@@ -9,7 +9,7 @@ export type WatermarkRemovalMode = "ocr" | "always" | "fixed" | "mask";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
-export type IOPaintMaskMode = "protect-text" | "box";
+export type IOPaintMaskMode = "protect-text" | "smart-color" | "box";
 
 export interface WatermarkRemovalManualRegion {
   x: number;
@@ -174,6 +174,7 @@ function normalizeIOPaintStrategy(input: unknown): IOPaintStrategy {
 }
 
 function normalizeIOPaintMaskMode(input: unknown): IOPaintMaskMode {
+  if (input === "smart-color") return "smart-color";
   if (input === "box") return "box";
   return "protect-text";
 }
@@ -310,7 +311,11 @@ export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalCon
   if (Array.isArray(config.triggerKeywords) && config.triggerKeywords.length > 0) return true;
   if (config.iopaintModel === "lama" || config.iopaintModel === "migan" || config.iopaintModel === "mat") return true;
   if (config.iopaintStrategy === "crop" || config.iopaintStrategy === "resize" || config.iopaintStrategy === "original") return true;
-  if (config.iopaintMaskMode === "protect-text" || config.iopaintMaskMode === "box") return true;
+  if (
+    config.iopaintMaskMode === "protect-text" ||
+    config.iopaintMaskMode === "smart-color" ||
+    config.iopaintMaskMode === "box"
+  ) return true;
   if (typeof config.iopaintMaskPadding === "number" && Number.isFinite(config.iopaintMaskPadding)) return true;
   if (Array.isArray(config.manualRegions) && config.manualRegions.length > 0) return true;
   if (typeof config.maskColor === "string" && config.maskColor.trim().length > 0) return true;
@@ -857,6 +862,84 @@ async function repairOverlappedOcrText(
   await fs.writeFile(targetPath, canvas.toBuffer("image/png"));
 }
 
+function getPixelLuminance(r: number, g: number, b: number): number {
+  return Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+}
+
+function buildDarkTextMap(image: any): Uint8Array {
+  const width = image.bitmap.width;
+  const darkMap = new Uint8Array(width * image.bitmap.height);
+  image.scan(0, 0, width, image.bitmap.height, (x: number, y: number, idx: number) => {
+    const luminance = getPixelLuminance(
+      image.bitmap.data[idx],
+      image.bitmap.data[idx + 1],
+      image.bitmap.data[idx + 2],
+    );
+    if (luminance < 135) darkMap[y * width + x] = 1;
+  });
+  return darkMap;
+}
+
+function hasDarkTextNeighbor(darkMap: Uint8Array, width: number, height: number, x: number, y: number): boolean {
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    const sampleY = y + offsetY;
+    if (sampleY < 0 || sampleY >= height) continue;
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      const sampleX = x + offsetX;
+      if (sampleX >= 0 && sampleX < width && darkMap[sampleY * width + sampleX]) return true;
+    }
+  }
+  return false;
+}
+
+export function shouldPaintSmartColorMaskPixel(
+  r: number,
+  g: number,
+  b: number,
+  nearDarkText: boolean,
+): boolean {
+  return !nearDarkText && getPixelLuminance(r, g, b) < 253;
+}
+
+async function neutralizeProtectedDarkText(
+  sourcePath: string,
+  targetPath: string,
+  manualRegions: WatermarkRemovalManualRegion[] | undefined,
+  padding: number,
+): Promise<void> {
+  if (!manualRegions?.length) return;
+  const source = await Jimp.read(sourcePath);
+  const target = await Jimp.read(targetPath);
+  const { width, height } = source.bitmap;
+  const darkMap = buildDarkTextMap(source);
+  const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, width, height, padding);
+
+  for (const block of manualBlocks) {
+    const polygon = block.box || [];
+    const metrics = extractBoxMetrics(block);
+    if (!metrics || polygon.length < 3) continue;
+    const left = Math.max(0, Math.floor(metrics.minX));
+    const top = Math.max(0, Math.floor(metrics.minY));
+    const right = Math.min(width, Math.ceil(metrics.maxX));
+    const bottom = Math.min(height, Math.ceil(metrics.maxY));
+    source.scan(left, top, Math.max(1, right - left), Math.max(1, bottom - top), (x: number, y: number, idx: number) => {
+      if (!isPointInPolygon(x, y, polygon) || !hasDarkTextNeighbor(darkMap, width, height, x, y)) return;
+      const r = source.bitmap.data[idx];
+      const g = source.bitmap.data[idx + 1];
+      const b = source.bitmap.data[idx + 2];
+      if (r - Math.max(g, b) <= 4) return;
+      const luminance = getPixelLuminance(r, g, b);
+      const targetIdx = (y * width + x) * 4;
+      target.bitmap.data[targetIdx] = luminance;
+      target.bitmap.data[targetIdx + 1] = luminance;
+      target.bitmap.data[targetIdx + 2] = luminance;
+      target.bitmap.data[targetIdx + 3] = source.bitmap.data[idx + 3];
+    });
+  }
+
+  await target.writeAsync(targetPath);
+}
+
 async function createMaskForImage(
   imagePath: string,
   maskPath: string,
@@ -868,6 +951,7 @@ async function createMaskForImage(
   const image = await Jimp.read(imagePath);
   const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
   const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, image.bitmap.width, image.bitmap.height, padding);
+  const darkTextMap = maskMode === "smart-color" ? buildDarkTextMap(image) : undefined;
   const regions = resolveIOPaintMaskRegions(blocks, padding, image.bitmap.width, image.bitmap.height);
   const boxes = regions.watermarkBoxes;
 
@@ -919,6 +1003,16 @@ async function createMaskForImage(
       Math.max(1, bottom - top),
       (x: number, y: number, idx: number) => {
         if (!isPointInPolygon(x, y, polygon)) return;
+        if (darkTextMap) {
+          const sourceIdx = (y * image.bitmap.width + x) * 4;
+          const shouldPaint = shouldPaintSmartColorMaskPixel(
+            image.bitmap.data[sourceIdx],
+            image.bitmap.data[sourceIdx + 1],
+            image.bitmap.data[sourceIdx + 2],
+            hasDarkTextNeighbor(darkTextMap, image.bitmap.width, image.bitmap.height, x, y),
+          );
+          if (!shouldPaint) return;
+        }
         mask.bitmap.data[idx] = 255;
         mask.bitmap.data[idx + 1] = 255;
         mask.bitmap.data[idx + 2] = 255;
@@ -1058,6 +1152,9 @@ async function removeWatermarkWithIOPaint(
       await runOpenCvInpaint(inputPath, maskPath, generatedPath);
     }
 
+    if (effective.iopaintMaskMode === "smart-color") {
+      await neutralizeProtectedDarkText(inputPath, generatedPath, effective.manualRegions, padding);
+    }
     await repairOverlappedOcrText(inputPath, generatedPath, maskBlocks, effective.iopaintMaskMode || "protect-text");
     const filename = `${Date.now()}_${jobId.slice(0, 8)}.png`;
     const savedPath = path.join(IOPAINT_OUTPUT_DIR, filename);

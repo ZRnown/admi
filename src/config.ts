@@ -211,7 +211,7 @@ export type WatermarkRemovalMode = "ocr" | "always" | "fixed" | "mask";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
-export type IOPaintMaskMode = "protect-text" | "box";
+export type IOPaintMaskMode = "protect-text" | "smart-color" | "box";
 
 export interface WatermarkRemovalManualRegion {
   x: number;
@@ -817,7 +817,8 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
   const iopaintModel: IOPaintModel = raw.iopaintModel === "migan" || raw.iopaintModel === "mat" ? raw.iopaintModel : "lama";
   const iopaintStrategy: IOPaintStrategy =
     raw.iopaintStrategy === "resize" || raw.iopaintStrategy === "original" ? raw.iopaintStrategy : "crop";
-  const iopaintMaskMode: IOPaintMaskMode = raw.iopaintMaskMode === "box" ? "box" : "protect-text";
+  const iopaintMaskMode: IOPaintMaskMode =
+    raw.iopaintMaskMode === "box" ? "box" : raw.iopaintMaskMode === "smart-color" ? "smart-color" : "protect-text";
   const parsedMaskPadding = Number(raw.iopaintMaskPadding);
   const iopaintMaskPadding = Number.isFinite(parsedMaskPadding) && parsedMaskPadding >= 0
     ? Math.floor(parsedMaskPadding)
