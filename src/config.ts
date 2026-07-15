@@ -211,7 +211,7 @@ export type WatermarkRemovalMode = "ocr" | "always" | "fixed" | "mask";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
-export type IOPaintMaskMode = "protect-text" | "smart-color" | "warm-color" | "box";
+export type IOPaintMaskMode = "protect-text" | "smart-color" | "warm-color" | "warm-hybrid" | "box";
 
 export interface WatermarkRemovalManualRegion {
   x: number;
@@ -818,7 +818,9 @@ function normalizeWatermarkRemovalConfig(raw: any): WatermarkRemovalConfig | und
   const iopaintStrategy: IOPaintStrategy =
     raw.iopaintStrategy === "resize" || raw.iopaintStrategy === "original" ? raw.iopaintStrategy : "crop";
   const iopaintMaskMode: IOPaintMaskMode =
-    raw.iopaintMaskMode === "box"
+    raw.iopaintMaskMode === "warm-hybrid"
+      ? "warm-hybrid"
+      : raw.iopaintMaskMode === "box"
       ? "box"
       : raw.iopaintMaskMode === "smart-color"
         ? "smart-color"

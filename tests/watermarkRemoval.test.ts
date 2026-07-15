@@ -23,6 +23,7 @@ import {
   shouldApplyWatermarkAfterRemoval,
   shouldPaintIOPaintMaskPoint,
   shouldPaintSmartColorMaskPixel,
+  shouldPaintWarmHybridMaskPixel,
   shouldPaintWarmColorMaskPixel,
   shouldPersistWatermarkRemovalConfig,
   shouldRetryWaveSpeedStatus,
@@ -581,6 +582,21 @@ test("warm color mask removes orange-red watermarks without selecting yellow bac
     iopaintMaskMode: "warm-color",
   });
   assert.equal(resolved?.iopaintMaskMode, "warm-color");
+});
+
+test("warm hybrid mask includes faint warm watermark edges without selecting yellow backgrounds", () => {
+  assert.equal(shouldPaintWarmHybridMaskPixel(224, 185, 150), true);
+  assert.equal(shouldPaintWarmHybridMaskPixel(224, 185, 150, true), false);
+  assert.equal(shouldPaintWarmHybridMaskPixel(255, 247, 185), false);
+  assert.equal(shouldPaintWarmHybridMaskPixel(25, 23, 20), false);
+
+  const resolved = resolveWatermarkRemovalConfig({
+    enabled: true,
+    mode: "fixed",
+    provider: "iopaint",
+    iopaintMaskMode: "warm-hybrid",
+  });
+  assert.equal(resolved?.iopaintMaskMode, "warm-hybrid");
 });
 
 test("shouldPaintIOPaintMaskPoint protects non-watermark OCR text without color checks", () => {

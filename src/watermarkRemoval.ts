@@ -10,7 +10,7 @@ export type WatermarkRemovalMode = "ocr" | "always" | "fixed" | "mask";
 export type WatermarkRemovalProvider = "wavespeed" | "iopaint";
 export type IOPaintModel = "lama" | "migan" | "mat";
 export type IOPaintStrategy = "crop" | "resize" | "original";
-export type IOPaintMaskMode = "protect-text" | "smart-color" | "warm-color" | "box";
+export type IOPaintMaskMode = "protect-text" | "smart-color" | "warm-color" | "warm-hybrid" | "box";
 
 export interface WatermarkRemovalManualRegion {
   x: number;
@@ -197,6 +197,7 @@ function normalizeIOPaintStrategy(input: unknown): IOPaintStrategy {
 }
 
 function normalizeIOPaintMaskMode(input: unknown): IOPaintMaskMode {
+  if (input === "warm-hybrid") return "warm-hybrid";
   if (input === "warm-color") return "warm-color";
   if (input === "smart-color") return "smart-color";
   if (input === "box") return "box";
@@ -339,6 +340,7 @@ export function shouldPersistWatermarkRemovalConfig(config?: WatermarkRemovalCon
     config.iopaintMaskMode === "protect-text" ||
     config.iopaintMaskMode === "smart-color" ||
     config.iopaintMaskMode === "warm-color" ||
+    config.iopaintMaskMode === "warm-hybrid" ||
     config.iopaintMaskMode === "box"
   ) return true;
   if (typeof config.iopaintMaskPadding === "number" && Number.isFinite(config.iopaintMaskPadding)) return true;
@@ -965,6 +967,21 @@ export function shouldPaintWarmColorMaskPixel(
   return hueDegrees / 2 < 24;
 }
 
+export function shouldPaintWarmHybridMaskPixel(r: number, g: number, b: number, nearDarkText = false): boolean {
+  if (nearDarkText) return false;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max < 105 || max === min || r - g < 6 || r - b < 10) return false;
+  const saturation = ((max - min) / max) * 255;
+  if (saturation < 18) return false;
+  let hueDegrees = 0;
+  if (max === r) hueDegrees = 60 * (((g - b) / (max - min)) % 6);
+  else if (max === g) hueDegrees = 60 * ((b - r) / (max - min) + 2);
+  else hueDegrees = 60 * ((r - g) / (max - min) + 4);
+  if (hueDegrees < 0) hueDegrees += 360;
+  return hueDegrees / 2 <= 25;
+}
+
 async function neutralizeProtectedDarkText(
   sourcePath: string,
   targetPath: string,
@@ -1015,7 +1032,8 @@ async function createMaskForImage(
   const image = await readJimpImage(imagePath);
   const mask = new Jimp(image.bitmap.width, image.bitmap.height, 0x000000ff);
   const manualBlocks = resolveIOPaintManualMaskBlocks(manualRegions, image.bitmap.width, image.bitmap.height, padding);
-  const colorProtectMode = maskMode === "smart-color" || maskMode === "warm-color";
+  const colorProtectMode =
+    maskMode === "smart-color" || maskMode === "warm-color" || maskMode === "warm-hybrid";
   const darkTextMap = colorProtectMode ? buildDarkTextMap(image) : undefined;
   const regions = resolveIOPaintMaskRegions(blocks, padding, image.bitmap.width, image.bitmap.height);
   const boxes = regions.watermarkBoxes;
@@ -1074,9 +1092,11 @@ async function createMaskForImage(
           const g = image.bitmap.data[sourceIdx + 1];
           const b = image.bitmap.data[sourceIdx + 2];
           const nearDarkText = hasDarkTextNeighbor(darkTextMap, image.bitmap.width, image.bitmap.height, x, y);
-          const shouldPaint = maskMode === "warm-color"
-            ? shouldPaintWarmColorMaskPixel(r, g, b, nearDarkText)
-            : shouldPaintSmartColorMaskPixel(r, g, b, nearDarkText);
+          const shouldPaint = maskMode === "warm-hybrid"
+            ? shouldPaintWarmHybridMaskPixel(r, g, b, nearDarkText)
+            : maskMode === "warm-color"
+              ? shouldPaintWarmColorMaskPixel(r, g, b, nearDarkText)
+              : shouldPaintSmartColorMaskPixel(r, g, b, nearDarkText);
           if (!shouldPaint) return;
         }
         mask.bitmap.data[idx] = 255;
@@ -1125,14 +1145,19 @@ function runCommand(command: string, args: string[], options: { cwd?: string; ti
   });
 }
 
-async function runOpenCvInpaint(inputPath: string, maskPath: string, outputPath: string): Promise<void> {
+async function runOpenCvInpaint(
+  inputPath: string,
+  maskPath: string,
+  outputPath: string,
+  mode: "inpaint" | "warm-hybrid" = "inpaint",
+): Promise<void> {
   const pythonBin =
     process.env.PYTHON || process.env.PYTHON_BIN || process.env.PYTHON_EXECUTABLE ||
     (process.platform === "win32" ? "python" : "python3");
   const scriptPath = path.join(process.cwd(), "scripts", "opencv_inpaint.py");
   await runCommand(
     pythonBin,
-    ["-B", scriptPath, "--image", inputPath, "--mask", maskPath, "--output", outputPath],
+    ["-B", scriptPath, "--image", inputPath, "--mask", maskPath, "--output", outputPath, "--mode", mode],
     { timeoutMs: IOPAINT_TIMEOUT_MS },
   );
 }
@@ -1193,10 +1218,17 @@ async function removeWatermarkWithIOPaint(
 
     const generatedPath = path.join(outputDir, "image.png");
     const useColorProtectedOpenCv =
-      effective.iopaintMaskMode === "smart-color" || effective.iopaintMaskMode === "warm-color";
+      effective.iopaintMaskMode === "smart-color" ||
+      effective.iopaintMaskMode === "warm-color" ||
+      effective.iopaintMaskMode === "warm-hybrid";
     if (useColorProtectedOpenCv) {
       console.log(`[去水印] ${effective.iopaintMaskMode} 使用低内存 OpenCV 修复`);
-      await runOpenCvInpaint(inputPath, maskPath, generatedPath);
+      await runOpenCvInpaint(
+        inputPath,
+        maskPath,
+        generatedPath,
+        effective.iopaintMaskMode === "warm-hybrid" ? "warm-hybrid" : "inpaint",
+      );
     } else {
       try {
         await runCommand(
@@ -1226,7 +1258,7 @@ async function removeWatermarkWithIOPaint(
       }
     }
 
-    if (useColorProtectedOpenCv) {
+    if (useColorProtectedOpenCv && effective.iopaintMaskMode !== "warm-hybrid") {
       await neutralizeProtectedDarkText(inputPath, generatedPath, effective.manualRegions, padding);
     }
     await repairOverlappedOcrText(inputPath, generatedPath, maskBlocks, effective.iopaintMaskMode || "protect-text");
