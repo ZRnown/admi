@@ -25,3 +25,12 @@ test("replacement handles split Chinese-English rules with case-insensitive Engl
     "猛a社 猛A社",
   );
 });
+
+test("empty replacement removes a configured keyword without dropping the message", () => {
+  assert.equal(
+    replaceDescription("保留内容 VIP 继续转发", {
+      vip: "",
+    }),
+    "保留内容  继续转发",
+  );
+});
