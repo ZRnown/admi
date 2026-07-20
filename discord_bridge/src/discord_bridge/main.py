@@ -2,6 +2,8 @@ import asyncio
 import sys
 import os
 import inspect
+from collections import deque
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Set
 
 from loguru import logger
@@ -9,6 +11,18 @@ from loguru import logger
 from .ipc import IPCServer
 
 LATE_MEDIA_REFETCH_SECONDS = float(os.getenv("DISCORD_LATE_MEDIA_REFETCH_SECONDS", "2.5"))
+RESUME_CATCHUP_LOOKBACK_SECONDS = max(
+    0.0,
+    float(os.getenv("DISCORD_RESUME_CATCHUP_LOOKBACK_SECONDS", "120")),
+)
+RESUME_CATCHUP_MAX_MESSAGES_PER_CHANNEL = max(
+    1,
+    int(os.getenv("DISCORD_RESUME_CATCHUP_MAX_MESSAGES_PER_CHANNEL", "100")),
+)
+RECENT_MESSAGE_ID_LIMIT = max(
+    100,
+    int(os.getenv("DISCORD_RECENT_MESSAGE_ID_LIMIT", "5000")),
+)
 
 try:
     import discord
@@ -46,6 +60,10 @@ class DiscordAccountSession:
         self.user_payload: Optional[Dict[str, Any]] = None
         self.last_status: Optional[Dict[str, Any]] = None
         self.login_timeout_seconds = int(os.getenv("DISCORD_LOGIN_TIMEOUT_SECONDS", "120"))
+        self._disconnect_started_at: Optional[datetime] = None
+        self._catchup_task: Optional[asyncio.Task] = None
+        self._recent_message_ids = deque()
+        self._recent_message_id_set: Set[str] = set()
         # 共享此客户端的所有账号 ID 及其监听频道
         self.shared_accounts: Dict[str, Set[int]] = {account_id: set()}
         self._build_client()
@@ -57,6 +75,112 @@ class DiscordAccountSession:
         if error:
             payload["error"] = error
         self.last_status = payload
+
+    def _remember_message_id(self, message_id: Any) -> None:
+        normalized = str(message_id or "").strip()
+        if not normalized or normalized in self._recent_message_id_set:
+            return
+        while len(self._recent_message_ids) >= RECENT_MESSAGE_ID_LIMIT:
+            expired = self._recent_message_ids.popleft()
+            self._recent_message_id_set.discard(expired)
+        self._recent_message_ids.append(normalized)
+        self._recent_message_id_set.add(normalized)
+
+    def _target_accounts_for_channel(self, channel_id: int) -> list[str]:
+        return [
+            account_id
+            for account_id, channels in self.shared_accounts.items()
+            if not channels or channel_id in channels
+        ]
+
+    async def _dispatch_message(self, message: Any, *, allow_late_media: bool) -> bool:
+        channel = getattr(message, "channel", None)
+        channel_id = getattr(channel, "id", None)
+        message_id = str(getattr(message, "id", "") or "")
+        if channel_id is None or not message_id:
+            return False
+        if message_id in self._recent_message_id_set:
+            return False
+
+        target_accounts = self._target_accounts_for_channel(int(channel_id))
+        if not target_accounts:
+            return False
+
+        if getattr(message, "reference", None) and getattr(message.reference, "message_id", None):
+            try:
+                if hasattr(message, "fetch_reference"):
+                    resolved_ref = await message.fetch_reference()
+                    if resolved_ref is not None:
+                        setattr(message, "_resolved_reference", resolved_ref)
+            except Exception:
+                pass
+
+        for account_id in target_accounts:
+            payload = build_message_payload(message, account_id)
+            await self.ipc.send_notification("discord_message", payload)
+
+        self._remember_message_id(message_id)
+        if allow_late_media and not self._message_has_media(message):
+            asyncio.create_task(self._emit_late_media_update(message, list(target_accounts)))
+        return True
+
+    async def _resolve_listen_channel(self, channel_id: int) -> Any:
+        if not self.client:
+            return None
+        channel = None
+        get_channel = getattr(self.client, "get_channel", None)
+        if callable(get_channel):
+            channel = get_channel(channel_id)
+        if channel is None:
+            fetch_channel = getattr(self.client, "fetch_channel", None)
+            if callable(fetch_channel):
+                channel = await fetch_channel(channel_id)
+        return channel
+
+    async def _recover_missed_messages(self, disconnected_at: datetime) -> None:
+        if not self.client or RESUME_CATCHUP_LOOKBACK_SECONDS <= 0:
+            return
+
+        after = disconnected_at - timedelta(seconds=RESUME_CATCHUP_LOOKBACK_SECONDS)
+        recovered = 0
+        checked_channels = 0
+        for channel_id in sorted(self.listen_channels):
+            if channel_id <= 0:
+                continue
+            try:
+                channel = await self._resolve_listen_channel(channel_id)
+                history = getattr(channel, "history", None) if channel is not None else None
+                if not callable(history):
+                    continue
+                checked_channels += 1
+                async for message in history(
+                    limit=RESUME_CATCHUP_MAX_MESSAGES_PER_CHANNEL,
+                    after=after,
+                    oldest_first=True,
+                ):
+                    if await self._dispatch_message(message, allow_late_media=False):
+                        recovered += 1
+            except Exception as exc:
+                logger.debug(f"Resume catch-up skipped channel {channel_id}: {exc}")
+
+        logger.info(
+            f"Discord resume catch-up completed | account={self.account_id} "
+            f"channels={checked_channels} recovered={recovered}"
+        )
+
+    async def _drain_resume_catchup(self) -> None:
+        await asyncio.sleep(1)
+        while self._disconnect_started_at is not None:
+            disconnected_at = self._disconnect_started_at
+            self._disconnect_started_at = None
+            await self._recover_missed_messages(disconnected_at)
+
+    def _schedule_resume_catchup(self) -> None:
+        if self._disconnect_started_at is None:
+            return
+        if self._catchup_task and not self._catchup_task.done():
+            return
+        self._catchup_task = asyncio.create_task(self._drain_resume_catchup())
 
     def _asset_to_string(self, value: Any) -> Optional[str]:
         if value is None:
@@ -290,9 +414,12 @@ class DiscordAccountSession:
                 logger.info(
                     f"Discord账号已连接 | 账号={self.account_id} | 用户={user_label or '未知'}"
                 )
+            self._schedule_resume_catchup()
 
         @self.client.event
         async def on_disconnect():
+            if self._disconnect_started_at is None:
+                self._disconnect_started_at = datetime.now(timezone.utc)
             self._remember_status("disconnected")
             # 为所有共享此客户端的账号发送断开通知
             for acc_id in self.shared_accounts.keys():
@@ -316,43 +443,14 @@ class DiscordAccountSession:
                     },
                 )
             logger.info(f"Discord account {self.account_id} resumed")
+            self._schedule_resume_catchup()
 
         @self.client.event
         async def on_message(message: Any):
             if message is None:
                 return
             try:
-                channel_id = getattr(message.channel, "id", None)
-                if channel_id is None:
-                    return
-                channel_id_int = int(channel_id)
-
-                # 找出所有监听此频道的账号
-                target_accounts = []
-                for acc_id, channels in self.shared_accounts.items():
-                    # 如果账号没有配置监听频道（空集合），则监听所有频道
-                    # 否则只监听配置的频道
-                    if not channels or channel_id_int in channels:
-                        target_accounts.append(acc_id)
-
-                if not target_accounts:
-                    return
-
-                if getattr(message, "reference", None) and getattr(message.reference, "message_id", None):
-                    try:
-                        if hasattr(message, "fetch_reference"):
-                            resolved_ref = await message.fetch_reference()
-                            if resolved_ref is not None:
-                                setattr(message, "_resolved_reference", resolved_ref)
-                    except Exception:
-                        pass
-
-                # 为每个监听此频道的账号发送消息
-                for acc_id in target_accounts:
-                    payload = build_message_payload(message, acc_id)
-                    await self.ipc.send_notification("discord_message", payload)
-                if not self._message_has_media(message):
-                    asyncio.create_task(self._emit_late_media_update(message, list(target_accounts)))
+                await self._dispatch_message(message, allow_late_media=True)
             except Exception as exc:
                 logger.error(f"Failed to handle message: {exc}")
 

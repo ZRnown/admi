@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -61,14 +62,14 @@ class _FakeChannel:
 
 
 class _FakeMessage:
-    def __init__(self, message_id, attachments=None):
+    def __init__(self, message_id, attachments=None, channel=None, created_at=None):
         self.id = message_id
-        self.channel = _FakeChannel()
+        self.channel = channel or _FakeChannel()
         self.attachments = attachments or []
         self.embeds = []
         self.author = None
         self.guild = None
-        self.created_at = None
+        self.created_at = created_at
         self.content = "late image"
         self.mentions = []
         self.role_mentions = []
@@ -112,3 +113,43 @@ def test_late_media_refetch_emits_message_update(monkeypatch):
     assert payload["id"] == "456"
     assert payload["lateMediaRefetch"] is True
     assert payload["attachments"][0]["filename"] == "chart.png"
+
+
+def test_resume_catchup_emits_unseen_messages_once(monkeypatch):
+    monkeypatch.setattr(bridge_main.discord, "Intents", _FakeIntents, raising=False)
+    monkeypatch.setattr(bridge_main.discord, "Client", _FakeClient)
+
+    class _HistoryChannel:
+        id = 123
+
+        def __init__(self):
+            now = datetime.now(timezone.utc)
+            self.messages = [
+                _FakeMessage(1001, channel=self, created_at=now - timedelta(seconds=10)),
+                _FakeMessage(1002, channel=self, created_at=now - timedelta(seconds=5)),
+            ]
+
+        def history(self, **kwargs):
+            async def _iterate():
+                for message in self.messages:
+                    yield message
+
+            return _iterate()
+
+    channel = _HistoryChannel()
+
+    class _HistoryClient(_FakeClient):
+        def get_channel(self, channel_id):
+            return channel if channel_id == channel.id else None
+
+    ipc = _FakeIPC()
+    session = bridge_main.DiscordAccountSession("primary", "token", "selfbot", ipc)
+    session.client = _HistoryClient()
+    session.update_listen_channels("primary", [channel.id])
+    session._remember_message_id("1001")
+
+    asyncio.run(session._recover_missed_messages(datetime.now(timezone.utc) - timedelta(seconds=30)))
+    asyncio.run(session._recover_missed_messages(datetime.now(timezone.utc) - timedelta(seconds=30)))
+
+    messages = [payload for method, payload in ipc.notifications if method == "discord_message"]
+    assert [payload["id"] for payload in messages] == ["1002"]
