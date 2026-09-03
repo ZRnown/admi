@@ -2131,6 +2131,7 @@
     let cachedTelegramToDiscordGuilds = {};  // { accountId: guilds[] }
     let cachedTelegramToDiscordGuildsLoading = {};
     let cachedTelegramToDiscordChannels = {};  // { accountId:guildId: channels[] }
+    const discordChannelReloadInFlight = new Set();
     let discordSelectSearchQueries = {};
     let discordSelectDropdownOpen = {};
 
@@ -2751,6 +2752,31 @@
       if (searchSource === 'telegramToDiscordGuilds') {
         const guilds = getTelegramToDiscordGuildSelectionItems(accountId, select.value || select.dataset.selectedId || '');
         void autoSyncDiscordGuildsForSelect(accountId, { guilds, target: 'telegramToDiscord' });
+        return;
+      }
+      if (searchSource === 'cachedChannels') {
+        const guildId = select.dataset.guildId || '';
+        if (!guildId || isDiscordPrivateScope(guildId)) return;
+        const cacheKey = `${accountId}:${guildId}`;
+        const channels = getDiscordChannelsForScope(accountId, guildId, 'source');
+        if (channels.length > 0 || discordChannelReloadInFlight.has(cacheKey)) return;
+
+        discordChannelReloadInFlight.add(cacheKey);
+        void fetchDiscordChannels(accountId, guildId, { force: true })
+          .then(async (freshChannels) => {
+            if (freshChannels.length === 0 && !discordAutoSyncAttempted.has(accountId)) {
+              discordAutoSyncAttempted.add(accountId);
+              const result = await syncDiscordAccountDataOnly(accountId);
+              if (result?.success) {
+                await fetchDiscordChannels(accountId, guildId, { force: true });
+              }
+            }
+          })
+          .catch((error) => console.error('[同步] Discord 频道列表重载失败', error))
+          .finally(() => {
+            discordChannelReloadInFlight.delete(cacheKey);
+            refreshCachedChannelSelects(accountId, guildId);
+          });
       }
     }
 
