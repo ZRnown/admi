@@ -2165,7 +2165,10 @@
       if (fetchedAt && Date.now() - fetchedAt < GUILD_FETCH_COOLDOWN_MS) {
         return false;
       }
-      return !Array.isArray(cachedGuildsByAccount[accountId]);
+      // 空数组不是有效的服务器缓存：可能是账号刚登录、同步尚未完成，
+      // 或上一次请求暂时失败。允许后续新规则再次触发同步。
+      const guilds = cachedGuildsByAccount[accountId];
+      return !Array.isArray(guilds) || guilds.length === 0;
     }
 
     function getDiscordMetadataAccountId(acc) {
@@ -2552,6 +2555,19 @@
       cachedGuildsLoading[accountId] = true;
       cachedGuildsAccountId = accountId;
       fetchDiscordGuilds(accountId)
+        .then((guilds) => {
+          // 缓存可能来自服务启动前或账号刚切换时，此时主动同步一次，
+          // 否则新建规则只能一直看到空的服务器列表。
+          if (Array.isArray(guilds) && guilds.length === 0) {
+            return syncDiscordAccountDataOnly(accountId).then((result) => {
+              if (result?.success) {
+                return fetchDiscordGuilds(accountId);
+              }
+              return result;
+            });
+          }
+          return null;
+        })
         .finally(() => {
           delete cachedGuildsLoading[accountId];
           refreshCachedGuildSelects();
@@ -4289,6 +4305,12 @@
                   <input type="password" value="${escapeHtml(item.token || '')}" onchange="updateDiscordLibraryField('${item.id}', 'token', this.value)"
                     placeholder="可直接填写 Token" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
                 </div>
+                <div class="md:col-span-2">
+                  <label class="block text-xs text-slate-600 mb-1">代理地址（可选）</label>
+                  <input type="url" value="${escapeHtml(item.proxyUrl || '')}" onchange="updateDiscordLibraryField('${item.id}', 'proxyUrl', this.value.trim())"
+                    placeholder="http://127.0.0.1:7890" class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+                  <p class="mt-1 text-[11px] text-slate-500">支持 HTTP/HTTPS 代理；留空时使用服务端 PROXY_URL。</p>
+                </div>
                 ${item.type === 'bot' ? '' : `
                 <div>
                   <label class="block text-xs text-slate-600 mb-1">邮箱（可选）</label>
@@ -4772,6 +4794,7 @@
           remark: remark || '',
           type: 'selfbot',
           token: '',
+          proxyUrl: '',
           email: '',
           password: '',
           loginEnabled: true
@@ -5689,6 +5712,13 @@
             <div class="md:col-span-2">
             </div>
             `}
+            <div class="md:col-span-2">
+              <label class="block text-xs text-slate-600 mb-1">代理地址（可选）</label>
+              <input type="url" value="${escapeHtml(account.proxyUrl || '')}" onchange="updateLibraryAccountField('discord', '${account.id}', 'proxyUrl', this.value.trim())"
+                placeholder="http://127.0.0.1:7890"
+                class="w-full rounded border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none">
+              <p class="mt-1 text-[11px] text-slate-500">用于 Discord 登录、消息监听、频道同步和发送；留空时使用服务端 PROXY_URL。</p>
+            </div>
           </div>
         `;
       }
@@ -8894,6 +8924,23 @@
     function updateField(field, value) {
       const acc = getActiveAccount();
       acc[field] = value;
+      // 切换 Discord 监听账号后立即同步服务器列表。
+      // 新账号通常没有本地缓存，仅依赖渲染时读取缓存会导致新规则看不到服务器。
+      if (field === 'discordAccountId') {
+        const accountId = String(value || '').trim();
+        if (accountId) {
+          // 先清理旧账号的选择器状态，避免短暂显示旧服务器。
+          cachedGuildsAccountId = accountId;
+          void syncDiscordAccountDataOnly(accountId)
+            .then(async (result) => {
+              if (!result?.success) return result;
+              await fetchDiscordGuilds(accountId);
+              refreshCachedGuildSelects();
+              return result;
+            })
+            .catch((error) => console.error('[同步] Discord 服务器列表失败', error));
+        }
+      }
       // 当启用自动翻译时，自动将所有频道的翻译方向设为"自动检测"
       if (field === 'enableTranslation' && value === true) {
         if (!acc.channelTranslateDirection) acc.channelTranslateDirection = {};
@@ -8993,6 +9040,7 @@
         remark: '',
         type: 'selfbot',
         token: '',
+        proxyUrl: '',
         email: '',
         password: '',
         loginEnabled: true
