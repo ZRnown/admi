@@ -2410,6 +2410,16 @@
         closeAllDiscordSearchableSelects(selectId);
         discordSelectDropdownOpen[selectId] = true;
         refreshDiscordSelectOptions(selectId);
+        const select = document.getElementById(selectId);
+        if (select?.dataset.searchSource === 'cachedChannels') {
+          const accountId = select.dataset.accountId || '';
+          const guildId = select.dataset.guildId || '';
+          if (accountId && guildId && !isDiscordPrivateScope(guildId)) {
+            void fetchDiscordChannels(accountId, guildId, { force: true })
+              .then(() => refreshDiscordSelectOptions(selectId, undefined, { lightweight: false }))
+              .catch((error) => console.warn('[Discord频道] 打开下拉刷新失败', error));
+          }
+        }
         maybeAutoSyncDiscordSelectGuilds(selectId);
         requestAnimationFrame(() => {
           const searchInput = document.getElementById(`${selectId}-search`);
