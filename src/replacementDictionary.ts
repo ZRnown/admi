@@ -27,7 +27,9 @@ function buildLineRemovalPattern(from: string): RegExp | null {
   // Time metadata is commonly emitted as `时间: ...` or `时间：...`.
   // Treat the label as a line-level removal so the timestamp does not remain.
   if (!/^(?:时间|time)(?::|：)?$/iu.test(cleaned)) return null;
-  return /^[ \t]*(?:时间|time)[ \t]*(?::|：)[^\r\n]*(?:\r?\n|$)/gimu;
+  // Discord forwarding may wrap metadata labels in Markdown emphasis, e.g.
+  // `**时间**: ...` or `__Time__: ...`; remove the whole line in either form.
+  return /^[ \t]*(?:(?:\*\*|__)[ \t]*)?(?:时间|time)(?:[ \t]*(?:\*\*|__))?[ \t]*(?::|：)[^\r\n]*(?:\r?\n|$)/gimu;
 }
 
 export function applyReplacementDictionary(
