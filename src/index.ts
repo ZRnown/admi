@@ -125,6 +125,12 @@ const discordLoginRequestFile = path.resolve(process.cwd(), ".data", "discord_lo
 const discordLoginResponseFile = path.resolve(process.cwd(), ".data", "discord_login_response.json");
 const discordGuildsCacheFile = path.resolve(process.cwd(), ".data", "discord_guilds_cache.json");
 const discordChannelsCacheFile = path.resolve(process.cwd(), ".data", "discord_channels_cache.json");
+
+async function writeJsonAtomically(filePath: string, value: unknown) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(tempPath, JSON.stringify(value, null, 2));
+  await fs.rename(tempPath, filePath);
+}
 const telegramDialogsCacheFile = path.resolve(process.cwd(), ".data", "telegram_dialogs_cache.json");
 const ocrClients = new Map<string, { url: string; client: OCRClient }>();
 const translationSenders = new Map<string, { key: string; sender: SenderBot }>();
@@ -1210,7 +1216,7 @@ async function writeDiscordGuildsCache(accountId: string, client: any) {
       guilds: guilds,
       updatedAt: new Date().toISOString(),
     });
-    await fs.writeFile(discordGuildsCacheFile, JSON.stringify(cache, null, 2));
+    await writeJsonAtomically(discordGuildsCacheFile, cache);
 
     // 同时写入频道缓存
     await writeDiscordChannelsCache(accountId, client);
@@ -1246,7 +1252,7 @@ async function writeDiscordChannelsCache(accountId: string, client: any) {
       cache[key] = channels;
     }
 
-    await fs.writeFile(discordChannelsCacheFile, JSON.stringify(cache, null, 2));
+    await writeJsonAtomically(discordChannelsCacheFile, cache);
   } catch (e) {
     console.error("写入 Discord 频道缓存失败:", e);
   }
@@ -1297,8 +1303,8 @@ async function writeDiscordGuildsCacheSnapshot(
     }
     const privateCacheKey = `${accountId}:@private`;
     channelCache[privateCacheKey] = mergeDiscordPrivateChannelCache(channelCache[privateCacheKey], privateChannels);
-    await fs.writeFile(discordGuildsCacheFile, JSON.stringify(guildCache, null, 2));
-    await fs.writeFile(discordChannelsCacheFile, JSON.stringify(channelCache, null, 2));
+    await writeJsonAtomically(discordGuildsCacheFile, guildCache);
+    await writeJsonAtomically(discordChannelsCacheFile, channelCache);
   } catch (e) {
     console.error("写入 Discord live cache snapshot 失败:", e);
   }
