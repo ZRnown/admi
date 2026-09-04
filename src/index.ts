@@ -1080,6 +1080,26 @@ function normalizeDiscordToken(raw?: string): string {
   return trimmed;
 }
 
+// Shared Discord sessions may be referenced by several library/instance IDs.
+// Keep metadata caches available under every equivalent ID so the UI and bot
+// resolve the same guild/channel data regardless of which alias they use.
+function getDiscordCacheAccountIds(accountId: string): string[] {
+  const ids = new Set<string>([String(accountId || "").trim()]);
+  const libraryAccounts = currentConfig?.discordAccounts || [];
+  const source = libraryAccounts.find((account: any) => String(account?.id || "") === String(accountId || ""));
+  const sourceKey = source ? buildDiscordShareKey(source as any) : null;
+  if (sourceKey) {
+    for (const account of libraryAccounts) {
+      if (buildDiscordShareKey(account as any) === sourceKey && account?.id) ids.add(String(account.id));
+    }
+  }
+  for (const account of currentConfig?.accounts || []) {
+    const linked = String((account as any)?.discordAccountId || "").trim();
+    if (linked && ids.has(linked) && account?.id) ids.add(String(account.id));
+  }
+  return Array.from(ids).filter(Boolean);
+}
+
 function normalizeDiscordRuntimeState(state?: string): string {
   const value = String(state || "").toLowerCase();
   if (!value || value === "stopped") return "idle";
@@ -1211,11 +1231,14 @@ async function writeDiscordGuildsCache(accountId: string, client: any) {
     }
 
     // 更新缓存（包含用户信息和服务器列表）
-    cache[accountId] = mergeDiscordGuildCacheEntry(cache[accountId], {
+    const cacheEntry = {
       user: userInfo,
       guilds: guilds,
       updatedAt: new Date().toISOString(),
-    });
+    };
+    for (const cacheAccountId of getDiscordCacheAccountIds(accountId)) {
+      cache[cacheAccountId] = mergeDiscordGuildCacheEntry(cache[cacheAccountId], cacheEntry);
+    }
     await writeJsonAtomically(discordGuildsCacheFile, cache);
 
     // 同时写入频道缓存
@@ -1239,8 +1262,8 @@ async function writeDiscordChannelsCache(accountId: string, client: any) {
     }
 
     // 遍历所有服务器，写入频道
+    const cacheAccountIds = getDiscordCacheAccountIds(accountId);
     for (const guild of client.guilds.cache.values()) {
-      const key = `${accountId}:${guild.id}`;
       const channels = Array.from((guild as any).channels?.cache?.values() || [])
         .filter((ch: any) => ch.type === 0 || ch.type === 2 || ch.type === 4 || ch.type === 5)
         .map((ch: any) => ({
@@ -1249,7 +1272,9 @@ async function writeDiscordChannelsCache(accountId: string, client: any) {
           type: ch.type,
           parentId: ch.parentId,
         }));
-      cache[key] = channels;
+      for (const cacheAccountId of cacheAccountIds) {
+        cache[`${cacheAccountId}:${guild.id}`] = channels;
+      }
     }
 
     await writeJsonAtomically(discordChannelsCacheFile, cache);
