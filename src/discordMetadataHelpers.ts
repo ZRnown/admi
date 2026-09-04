@@ -59,6 +59,15 @@ function buildDiscordMetadataAccountIds(
     }
   }
 
+  for (const account of (config as any)?.discordAccounts || []) {
+    const instanceId = String(account?.id || "").trim();
+    const libraryId = String(account?.discordAccountId || "").trim();
+    if (normalizedAccountId === instanceId || normalizedAccountId === libraryId) {
+      add(instanceId);
+      add(libraryId);
+    }
+  }
+
   return Array.from(ids);
 }
 

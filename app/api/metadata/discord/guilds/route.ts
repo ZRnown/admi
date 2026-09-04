@@ -8,6 +8,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { getMultiConfig } from "@/src/config";
+import { resolveDiscordGuildsFromCache, resolveDiscordPrivateChannelsFromCache } from "@/src/discordMetadataHelpers";
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,7 +26,10 @@ export async function POST(request: NextRequest) {
     try {
       const data = await fs.readFile(cacheFile, "utf-8");
       const cache = JSON.parse(data);
+      const config = await getMultiConfig();
       const accountData = cache[accountId];
+      const resolvedGuilds = resolveDiscordGuildsFromCache(cache, String(accountId), config as any);
+      const resolvedPrivateChannels = resolveDiscordPrivateChannelsFromCache(cache, String(accountId), config as any);
       let channelsCount = 0;
       let updatedAt: string | undefined = undefined;
 
@@ -58,6 +63,15 @@ export async function POST(request: NextRequest) {
       }
 
       // 兼容新旧格式
+      if (resolvedGuilds.length > 0 || resolvedPrivateChannels.length > 0) {
+        return NextResponse.json({
+          user: accountData?.user || null,
+          guilds: resolvedGuilds,
+          privateChannels: resolvedPrivateChannels,
+          channelsCount,
+          updatedAt,
+        });
+      }
       if (accountData && typeof accountData === 'object' && !Array.isArray(accountData)) {
         // 新格式：{ user: {...}, guilds: [...] }
         return NextResponse.json({
