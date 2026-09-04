@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { resolveDiscordChannelsFromCache } from "@/src/discordMetadataHelpers";
+import { getMultiConfig } from "@/src/config";
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,10 +28,14 @@ export async function POST(request: NextRequest) {
       const cache = JSON.parse(data);
       let config: any = null;
       try {
-        const raw = await fs.readFile(configFile, "utf-8");
-        config = JSON.parse(raw);
+        config = await getMultiConfig();
       } catch {
-        config = null;
+        try {
+          const raw = await fs.readFile(configFile, "utf-8");
+          config = JSON.parse(raw);
+        } catch {
+          config = null;
+        }
       }
       const channels = resolveDiscordChannelsFromCache(cache, String(accountId), String(guildId), config);
       return NextResponse.json({ channels });
